@@ -2,7 +2,6 @@
 #include "move.h"
 #include "ViconInterface.h"
 #include "ViconInfo.h"
-#include "ViconTrigger.h"
 #include <thread>
 #include <mutex>
 #include <shared_mutex> 
@@ -25,21 +24,23 @@
 // Global variables for cleanup
 k_api::Base::BaseClient* g_right_base = nullptr;
 k_api::BaseCyclic::BaseCyclicClient* g_right_base_cyclic = nullptr;
+k_api::BaseCyclic::BaseCyclicClient* g_right_base_cyclic_gripper = nullptr;
 k_api::Base::BaseClient* g_left_base = nullptr;
 k_api::BaseCyclic::BaseCyclicClient* g_left_base_cyclic = nullptr;
+k_api::BaseCyclic::BaseCyclicClient* g_left_base_cyclic_gripper = nullptr;
 std::atomic<bool> motion_flag{true};
 
 void cleanup_and_exit() {
     std::cout << "\nPerforming emergency shutdown..." << std::endl;
     motion_flag.store(false);
 
-    // Open gripper
-    if (g_right_base_cyclic) {
+    // Open right gripper
+    if (g_right_base_cyclic_gripper) {
         try {
-            move_gripper(g_right_base_cyclic, 0);
-            std::cout << "Gripper opened" << std::endl;
+            move_gripper(g_right_base_cyclic_gripper, 0);
+            std::cout << "Right gripper opened" << std::endl;
         } catch (...) {
-            std::cout << "Failed to open gripper" << std::endl;
+            std::cout << "Failed to open right gripper" << std::endl;
         }
     }
     
@@ -55,12 +56,13 @@ void cleanup_and_exit() {
         }
     }
 
-    if (g_left_base_cyclic) {
+    // Open left gripper
+    if (g_left_base_cyclic_gripper) {
         try {
-            move_gripper(g_left_base_cyclic, 0);
-            std::cout << "Gripper opened" << std::endl;
+            move_gripper(g_left_base_cyclic_gripper, 0);
+            std::cout << "Left gripper opened" << std::endl;
         } catch (...) {
-            std::cout << "Failed to open gripper" << std::endl;
+            std::cout << "Failed to open left gripper" << std::endl;
         }
     }
     
@@ -140,6 +142,16 @@ int main(){
     auto right_router_monitor = new k_api::RouterClient(right_transport_monitor, error_callback);
     right_transport_monitor->connect(right_ip_address, PORT_REAL_TIME);
    
+    // LEFT ARM - UDP connection for gripper control
+    auto left_transport_gripper = new k_api::TransportClientUdp();
+    auto left_router_gripper = new k_api::RouterClient(left_transport_gripper, error_callback);
+    left_transport_gripper->connect(left_ip_address, PORT_REAL_TIME);
+   
+    // RIGHT ARM - UDP connection for gripper control
+    auto right_transport_gripper = new k_api::TransportClientUdp();
+    auto right_router_gripper = new k_api::RouterClient(right_transport_gripper, error_callback);
+    right_transport_gripper->connect(right_ip_address, PORT_REAL_TIME);
+   
     // Session setup for both arms
     auto create_session_info = k_api::Session::CreateSessionInfo();
     create_session_info.set_username("admin");
@@ -166,6 +178,14 @@ int main(){
     // RIGHT ARM - Session manager for monitoring
     auto right_session_manager_monitor = new k_api::SessionManager(right_router_monitor);
     right_session_manager_monitor->CreateSession(create_session_info);
+   
+    // LEFT ARM - Session manager for gripper
+    auto left_session_manager_gripper = new k_api::SessionManager(left_router_gripper);
+    left_session_manager_gripper->CreateSession(create_session_info);
+   
+    // RIGHT ARM - Session manager for gripper
+    auto right_session_manager_gripper = new k_api::SessionManager(right_router_gripper);
+    right_session_manager_gripper->CreateSession(create_session_info);
  
     // Create service clients for LEFT ARM
     auto left_base = new k_api::Base::BaseClient(left_router);
@@ -187,6 +207,15 @@ int main(){
     // Create monitoring service clients
     auto left_base_cyclic_monitor = new k_api::BaseCyclic::BaseCyclicClient(left_router_monitor);
     auto right_base_cyclic_monitor = new k_api::BaseCyclic::BaseCyclicClient(right_router_monitor);
+   
+    // Create gripper service clients
+    auto left_base_cyclic_gripper = new k_api::BaseCyclic::BaseCyclicClient(left_router_gripper);
+    auto right_base_cyclic_gripper = new k_api::BaseCyclic::BaseCyclicClient(right_router_gripper);
+   
+    // Set global pointers for gripper cleanup
+    g_left_base_cyclic_gripper = left_base_cyclic_gripper;
+    g_right_base_cyclic_gripper = right_base_cyclic_gripper;
+
 
     k_api::BaseCyclic::Feedback left_base_feedback;
     k_api::BaseCyclic::Command left_base_command;
@@ -220,6 +249,11 @@ int main(){
     std::atomic<int> state_idx{0};
     std::atomic<int> prev_state_idx{0};
 
+
+    std::atomic<bool> left_admittance{false};
+    std::atomic<bool> right_admittance{false};
+
+
     JointTrajectory right_joint_trajectory;
     JointTrajectory left_joint_trajectory;
 
@@ -230,6 +264,8 @@ int main(){
 
     Dynamics left_robot(robot_urdf_path);
     Dynamics right_robot(robot_urdf_path);
+
+
 
     TubeInfo tube_info;
     HumanInfo human_info;
@@ -387,6 +423,7 @@ int main(){
     left_joint_trajectory.vel.push_back(q_init_vel);
     left_joint_trajectory.acc.push_back(q_init_acc);
 
+    
 
     std::thread record_thread([&](){
 
@@ -422,7 +459,9 @@ int main(){
         csv_file << "tube_centroid_x,tube_centroid_y,tube_centroid_z,tube_direction_x,tube_direction_y,tube_direction_z,";
         // Human info headers
         csv_file << "human_RFIN_x,human_RFIN_y,human_RFIN_z,human_LFIN_x,human_LFIN_y,human_LFIN_z,";
-        csv_file << "human_RFHD_x,human_RFHD_y,human_RFHD_z,human_LFHD_x,human_LFHD_y,human_LFHD_z,";
+        csv_file << "human_RHIP_x,human_RHIP_y,human_RHIP_z,human_LHIP_x,human_LHIP_y,human_LHIP_z,";
+        csv_file << "human_CLAV_x,human_CLAV_y,human_CLAV_z,human_STRN_x,human_STRN_y,human_STRN_z,";
+        csv_file << "human_HEAD_x,human_HEAD_y,human_HEAD_z,";
         // Individual marker headers
         csv_file << "right_base1_x,right_base1_y,right_base1_z,right_base2_x,right_base2_y,right_base2_z,right_base3_x,right_base3_y,right_base3_z,";
         csv_file << "left_base1_x,left_base1_y,left_base1_z,left_base2_x,left_base2_y,left_base2_z,left_base3_x,left_base3_y,left_base3_z,";
@@ -432,7 +471,7 @@ int main(){
         csv_file << "tube_end1_x,tube_end1_y,tube_end1_z,tube_end2_x,tube_end2_y,tube_end2_z,tube_end3_x,tube_end3_y,tube_end3_z,";
         csv_file << "tube_mid1_x,tube_mid1_y,tube_mid1_z,tube_mid2_x,tube_mid2_y,tube_mid2_z,tube_mid3_x,tube_mid3_y,tube_mid3_z,";
         // Head and target headers
-        csv_file << "head_x,head_y,head_z,target_x,target_y,target_z,state_idx" << std::endl;
+        csv_file << "target_x,target_y,target_z,state_idx" << std::endl;
 
         while (true) {
             
@@ -455,6 +494,8 @@ int main(){
             TubeInfo tube_info_snapshot;
             HumanInfo human_info_snapshot;
             Eigen::Vector3d head_info_snapshot;
+            Eigen::Vector3d lfin_info_snapshot;
+            Eigen::Vector3d rfin_info_snapshot;
             gtsam::Point3 target_info_snapshot;
             std::vector<double> q_cur_left_snapshot;
             std::vector<double> q_cur_right_snapshot;
@@ -480,6 +521,8 @@ int main(){
                 human_info_snapshot = human_info;
                 target_info_snapshot = target_info;
                 head_info_snapshot = head_info;
+                lfin_info_snapshot = lfin_info;
+                rfin_info_snapshot = rfin_info;
                 
                 // Helper function to safely get marker data
                 auto safeGetMarker = [&vicon](const std::string& name) -> MarkerData {
@@ -609,10 +652,13 @@ int main(){
                      << tube_info_snapshot.direction.x() << "," << tube_info_snapshot.direction.y() << "," << tube_info_snapshot.direction.z() << ",";
             
             // Human info - specific markers
-            csv_file << human_info_snapshot.RFIN.x() << "," << human_info_snapshot.RFIN.y() << "," << human_info_snapshot.RFIN.z() << ","
-                     << human_info_snapshot.LFIN.x() << "," << human_info_snapshot.LFIN.y() << "," << human_info_snapshot.LFIN.z() << ","
-                     << human_info_snapshot.RFHD.x() << "," << human_info_snapshot.RFHD.y() << "," << human_info_snapshot.RFHD.z() << ","
-                     << human_info_snapshot.LFHD.x() << "," << human_info_snapshot.LFHD.y() << "," << human_info_snapshot.LFHD.z() << ",";
+            csv_file << rfin_info_snapshot.x() << "," << rfin_info_snapshot.y() << "," << rfin_info_snapshot.z() << ","
+                     << lfin_info_snapshot.x() << "," << lfin_info_snapshot.y() << "," << lfin_info_snapshot.z() << ","
+                     << human_info_snapshot.RHIP.x() << "," << human_info_snapshot.RHIP.y() << "," << human_info_snapshot.RHIP.z() << ","
+                     << human_info_snapshot.LHIP.x() << "," << human_info_snapshot.LHIP.y() << "," << human_info_snapshot.LHIP.z() << ","
+                     << human_info_snapshot.CLAV.x() << "," << human_info_snapshot.CLAV.y() << "," << human_info_snapshot.CLAV.z() << ","
+                     << human_info_snapshot.STRN.x() << "," << human_info_snapshot.STRN.y() << "," << human_info_snapshot.STRN.z() << ","
+                     << head_info_snapshot.x() << "," << head_info_snapshot.y() << "," << head_info_snapshot.z() << ",";
             
             // Individual marker data - right base
             for(const auto& marker : right_base_data_snapshot) {
@@ -644,8 +690,7 @@ int main(){
             }
             
             // Head and target data
-            csv_file << head_info_snapshot.x() << "," << head_info_snapshot.y() << "," << head_info_snapshot.z() << ","
-                     << target_info_snapshot.x() << "," << target_info_snapshot.y() << "," << target_info_snapshot.z() << ","
+            csv_file << target_info_snapshot.x() << "," << target_info_snapshot.y() << "," << target_info_snapshot.z() << ","
                      << state_idx << std::endl;
             
             csv_file.flush();
@@ -656,12 +701,16 @@ int main(){
     
     record_thread.detach();
 
+    // std::cin.get();
+
 
     std::cout << "Resetting gripper pos\n";
-    move_gripper(right_base_cyclic, 0);
-    move_gripper(left_base_cyclic,  0);
+    move_gripper(right_base_cyclic_gripper, 0);
+    move_gripper(left_base_cyclic_gripper,  0);
 
     // std::cin.get();
+
+    std::atomic<bool> left_motion_flag{true};
 
     // Set actuators in torque mode
     auto control_mode_message = k_api::ActuatorConfig::ControlModeInformation();
@@ -682,10 +731,11 @@ int main(){
             right_base_command, right_robot, right_joint_trajectory, 
             right_base_frame, JOINT_CONTROL_FREQUENCY,
             std::ref(motion_flag), std::ref(right_execution_ongoing_flag),
-            std::ref(right_chicken_flag), std::ref(vicon_data_mutex), dh_params_path,
-            std::ref(replan_counter), 
-            std::ref(replan_triggered), std::ref(new_trajectory_ready), 
-            std::ref(new_joint_trajectory), std::ref(trajectory_mutex), std::ref(right_record));
+            std::ref(right_chicken_flag), std::ref(vicon_data_mutex), 
+            dh_params_path,
+            std::ref(replan_counter), std::ref(replan_triggered), 
+            std::ref(new_trajectory_ready), std::ref(new_joint_trajectory), 
+            std::ref(trajectory_mutex), std::ref(right_admittance));
     });
 
     std::thread left_robot_execution_thread;
@@ -693,11 +743,11 @@ int main(){
         joint_impedance_control_execution(left_base,left_base_cyclic,left_actuator_config, left_base_feedback, 
             left_base_command, left_robot, left_joint_trajectory, 
             left_base_frame, JOINT_CONTROL_FREQUENCY, 
-            std::ref(motion_flag), std::ref(left_execution_ongoing_flag),
+            std::ref(left_motion_flag), std::ref(left_execution_ongoing_flag),
             std::ref(left_chicken_flag), std::ref(vicon_data_mutex), dh_params_path,
-            std::ref(replan_counter), 
-            std::ref(replan_triggered), std::ref(new_trajectory_ready), 
-            std::ref(new_joint_trajectory), std::ref(trajectory_mutex), std::ref(left_record));
+            std::ref(replan_counter), std::ref(replan_triggered), 
+            std::ref(new_trajectory_ready), std::ref(new_joint_trajectory), 
+            std::ref(trajectory_mutex), std::ref(left_admittance));
     });
 
       
@@ -705,13 +755,56 @@ int main(){
     left_robot_execution_thread.detach();
 
 
-    std::cin.get();
+    // std::cin.get();
 
-    left_chicken_flag.store(true);
+    // left_motion_flag.store(false);
+    // std::this_thread::sleep_for(std::chrono::milliseconds(3)); 
 
-    std::cin.get();
+    // left_motion_flag.store(true);
 
-    while(true){
+    // control_mode_message.set_control_mode(k_api::ActuatorConfig::ControlMode::POSITION);
+    // for (int id = 1; id < ACTUATOR_COUNT+1; id++)
+    // {
+    //     left_actuator_config->SetControlMode(control_mode_message, id);
+    // }
+
+    // left_robot_execution_thread = std::thread([&]() {
+    //     joint_position_control_execution(left_base,left_base_cyclic,left_actuator_config, left_base_feedback, 
+    //         left_base_command, left_robot, left_joint_trajectory, 
+    //         left_base_frame, JOINT_CONTROL_FREQUENCY, 
+    //         std::ref(left_motion_flag), std::ref(left_execution_ongoing_flag),
+    //         std::ref(left_chicken_flag), std::ref(vicon_data_mutex), dh_params_path,
+    //         std::ref(replan_counter), std::ref(replan_triggered), 
+    //         std::ref(new_trajectory_ready), std::ref(new_joint_trajectory), 
+    //         std::ref(trajectory_mutex), std::ref(left_admittance));
+    // });
+
+    // left_robot_execution_thread.detach();
+
+
+    // std::cin.get();
+
+    // left_chicken_flag.store(true);
+
+    // std::cout << "Press enter to to proceed to state 1\n";
+    // std::cin.get();
+
+    // state_idx.store(1);
+
+    // std::cout << "Press enter to to proceed to state 2\n";
+    // std::cin.get();
+
+    // state_idx.store(2);
+
+    std::thread manual_toggle;
+    manual_toggle = std::thread([&]() {
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000)); 
+        state_idx.store(1);
+        
+    });
+
+    while(prev_state_idx.load() != 2){
         state_transition(
             std::ref(state_idx), 
             std::ref(prev_state_idx),
@@ -732,8 +825,8 @@ int main(){
             q_init_right,
             right_arm,
             left_arm,
-            left_base_cyclic,
-            right_base_cyclic,
+            left_base_cyclic_gripper,
+            right_base_cyclic_gripper,
             left_joint_trajectory,
             right_joint_trajectory,
             new_joint_trajectory,
@@ -741,11 +834,40 @@ int main(){
             std::ref(right_execution_ongoing_flag),
             std::ref(left_chicken_flag),
             std::ref(right_chicken_flag),
-            std::ref(trajectory_mutex)
+            std::ref(left_admittance),
+            std::ref(right_admittance),
+            std::ref(trajectory_mutex),
+            false
         );
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
     }
+
+    left_motion_flag.store(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3)); 
+    left_motion_flag.store(true);
+
+    control_mode_message.set_control_mode(k_api::ActuatorConfig::ControlMode::POSITION);
+    for (int id = 1; id < ACTUATOR_COUNT+1; id++)
+    {
+        left_actuator_config->SetControlMode(control_mode_message, id);
+    }
+
+    left_robot_execution_thread = std::thread([&]() {
+        joint_position_control_execution(left_base,left_base_cyclic,left_actuator_config, left_base_feedback, 
+            left_base_command, left_robot, left_joint_trajectory, 
+            left_base_frame, JOINT_CONTROL_FREQUENCY, 
+            std::ref(left_motion_flag), std::ref(left_execution_ongoing_flag),
+            std::ref(left_chicken_flag), std::ref(vicon_data_mutex), dh_params_path,
+            std::ref(replan_counter), std::ref(replan_triggered), 
+            std::ref(new_trajectory_ready), std::ref(new_joint_trajectory), 
+            std::ref(trajectory_mutex), std::ref(left_admittance));
+    });
+
+    left_robot_execution_thread.detach();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5)); 
+
+    left_chicken_flag.store(true);
 
     while(true);
 

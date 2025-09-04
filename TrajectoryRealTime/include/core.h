@@ -27,8 +27,7 @@ bool plan_action(
     std::atomic<bool>& right_execution_ongoing_flag,
     std::atomic<bool>& left_chicken_flag,
     std::atomic<bool>& right_chicken_flag,
-    std::mutex& trajectory_mutex,
-    bool mirrored = false
+    std::mutex& trajectory_mutex
 );
 
 void state_transition(
@@ -60,10 +59,16 @@ void state_transition(
     std::atomic<bool>& right_execution_ongoing_flag,
     std::atomic<bool>& left_chicken_flag,
     std::atomic<bool>& right_chicken_flag,
-    std::mutex& trajectory_mutex);
+    std::atomic<bool>& left_admittance_flag,
+    std::atomic<bool>& right_admittance_flag,
+    std::mutex& trajectory_mutex, bool mirror);
 
 
-void state_transition_mirrored(
+void mirror_trajectory(JointTrajectory& original_trajectory, JointTrajectory& mirrored_trajectory, bool target_only = false);
+
+
+
+void state_transition_test(
     std::atomic<int>& state_idx, 
     std::atomic<int>& prev_state_idx,
     std::shared_mutex& vicon_data_mutex,
@@ -92,10 +97,7 @@ void state_transition_mirrored(
     std::atomic<bool>& right_execution_ongoing_flag,
     std::atomic<bool>& left_chicken_flag,
     std::atomic<bool>& right_chicken_flag,
-    std::mutex& trajectory_mutex);
-
-
-void mirror_trajectory(JointTrajectory& original_trajectory, JointTrajectory& mirrored_trajectory, bool target_only = false);
-
-
+    std::atomic<bool>& left_admittance_flag,
+    std::atomic<bool>& right_admittance_flag,
+    std::mutex& trajectory_mutex, bool mirror);
 

@@ -11,7 +11,7 @@ except ImportError:
     print("SciPy not available, using simple exponential smoothing")
 
 # Read the CSV data
-data = pd.read_csv('../experimental_results/TolgaHomingDidnotTriggerTubeWasAtTarget.csv')
+data = pd.read_csv('../experimental_results/08_25_14_59.csv')
 
 # Time vector (10ms per iteration)
 dt = 0.01  # 10ms

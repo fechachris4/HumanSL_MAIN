@@ -27,8 +27,7 @@ bool plan_action(
     std::atomic<bool>& right_execution_ongoing_flag,
     std::atomic<bool>& left_chicken_flag,
     std::atomic<bool>& right_chicken_flag,
-    std::mutex& trajectory_mutex,
-    bool mirrored
+    std::mutex& trajectory_mutex
 ) {
 
         JointTrajectory left_new_joint_trajectory;
@@ -78,7 +77,7 @@ bool plan_action(
         switch(trigger_id){
             case 1: // Right arm engages pipe
             {
-                double approach_offset_y = 0.3;
+                double approach_offset_y = 0.34;
                 double approach_offset_z = 0.1;
                 double approach_time_sec = 3.0;
 
@@ -106,7 +105,7 @@ bool plan_action(
             }
             case 2: // Right arm grasps pipe
             {
-                double grasp_time_sec = 1.5;
+                double grasp_time_sec = 2.0;
 
                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
                 q_cur_right_snapshot = std_vec1;
@@ -123,13 +122,13 @@ bool plan_action(
 
             case 3: // Right arm moves pipe task space controlled
             {
-                double move_time_sec = 6;
-                double move_time_step = 5;
+                double move_time_sec = 4;
+                double move_time_step = 10;
                 double intermediate_point_percentage = 0.35;
                 double intermediate_point_height = 0.25;
 
-                double move_offset_from_base_y = 0.5; // position the gripper furter behind human
-                double move_offset_from_head_x = -0.15; // positive means moving the end pose towards human left
+                double move_offset_from_base_y = 0.45; // position the gripper furter behind human
+                double move_offset_from_head_x = 0.32; // positive means moving the end pose towards human left
                 double move_offset_from_head_z = 0.25;
 
                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
@@ -164,9 +163,9 @@ bool plan_action(
 
             case 4: // Left arm approaches pipe
             {
-                double approach_offset_y = 0.30;
+                double approach_offset_y = 0.27;
                 double approach_offset_z = 0.15;
-                double approach_time_sec = 3.0;
+                double approach_time_sec = 4.0;
 
                 gtsam::Pose3 right_ee_pose = right_arm.forward_kinematics(right_base_frame_snapshot, q_cur_right_snapshot); 
 
@@ -195,7 +194,7 @@ bool plan_action(
                 std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
                 q_cur_left_snapshot = std_vec1;
 
-                left_arm.plan_cartesian_z(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, true);
+                left_arm.plan_cartesian_z(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, tube_info_snapshot, 2.0, JOINT_CONTROL_FREQUENCY, true);
                 visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
                 saveTrajectoryResultToYAML(left_arm.result_logs,"plan_5");
 
@@ -209,7 +208,7 @@ bool plan_action(
                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
                 q_cur_right_snapshot = std_vec1;
 
-                right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, false);
+                right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 2.0, JOINT_CONTROL_FREQUENCY, false);
                 
                 right_arm_in_motion = true;
                 break;
@@ -217,39 +216,76 @@ bool plan_action(
 
             case 7: // Right arm moves back to default position
             {
-                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-                q_cur_right_snapshot = std_vec1;
+                // std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                // q_cur_right_snapshot = std_vec1;
 
-                double disengage_time_sec = 3.0;
+                // double disengage_time_sec = 3.0;
 
-                right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
-                right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, q_init_right, 
-                                    right_base_frame_snapshot, disengage_time_sec, 
-                                    GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
+                // right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
+                // right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, q_init_right, 
+                //                     right_base_frame_snapshot, disengage_time_sec, 
+                //                     GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
                 
-                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_7");
+                // visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                // saveTrajectoryResultToYAML(right_arm.result_logs,"plan_7");
                 
-                right_arm_in_motion = true;
+                // right_arm_in_motion = true;
                 break;
             }
 
             case 8: // Left arm moves to target
             {
+                std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec1;
+
                 gtsam::Pose3 start_pose = left_arm.forward_kinematics(left_base_frame_snapshot,q_cur_left_snapshot);
                 gtsam::Pose3 target_pose = left_arm.installtion_pose(target_info, start_pose);
-                double move_time_sec = 3.0; 
-                int move_time_step = 5;
-                double intermediate_point_height = 0.0;
+                double move_time_sec = 4.0; 
+                int move_time_step = 3;
+                double intermediate_point_height = 0.01;
                 double intermediate_point_percentage = 0.5;
 
-                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
-                left_arm.plan_task(left_new_joint_trajectory, start_pose, target_pose, 
-                                    left_base_frame_snapshot, q_cur_left_snapshot, 
-                                    move_time_sec, move_time_step, intermediate_point_percentage, 
-                                    intermediate_point_height, JOINT_CONTROL_FREQUENCY, true);
+                std::cout << "\nTarget Installation Pose: " << target_pose << "\n\n";
 
-                visualizeTrajectory(left_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
+                // left_arm.plan_joint(left_new_joint_trajectory, 
+                //      q_cur_left_snapshot,
+                //      left_base_frame_snapshot, 
+                //      target_pose, 
+                //      move_time_sec,
+                //      move_time_step,
+                //      JOINT_CONTROL_FREQUENCY,
+                //      1.0, 0.05);
+
+                left_arm.plan_task(left_new_joint_trajectory, 
+                     start_pose,
+                     target_pose, 
+                     left_base_frame_snapshot, 
+                     q_cur_left_snapshot,
+                     move_time_sec,
+                     move_time_step,
+                     intermediate_point_percentage,
+                     intermediate_point_height,
+                     JOINT_CONTROL_FREQUENCY,
+                     true,
+                     0.1, 0.5);
+
+
+                // void plan_task(JointTrajectory& trajectory, 
+                //     const gtsam::Pose3& start_pose,
+                //     const gtsam::Pose3& end_pose,
+                //     const gtsam::Pose3& base_pose,
+                //     const std::vector<double>& current_joint_pos,
+                //     const double total_time_sec,
+                //     const int total_time_step,
+                //     const double percentage,
+                //     const double height,
+                //     const int control_frequency,
+                //     bool target_pose_only = false,
+                //     double y_pos_tolerance = 0.1,
+                //     double y_rot_tolerance = 0.01);
+
+                visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_8");
                 
                 left_arm_in_motion = true;
@@ -460,6 +496,9 @@ bool plan_action(
         
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
+        // std::cout << "Planned, press enter to execute\n";
+        // std::cin.get();
+
 
         
         if(right_arm_in_motion){
@@ -467,35 +506,9 @@ bool plan_action(
             right_chicken_flag.store(false);
             right_execution_ongoing_flag.store(true);
 
-            if(mirrored && (trigger_id == 1 || trigger_id == 2 || trigger_id == 3 || trigger_id == 15 || trigger_id == 16 || trigger_id == 17)){
-                left_new_joint_trajectory = left_joint_trajectory;
-                mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
-
-                if(trigger_id == 3){
-
-                    left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
-                    std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-                    q_cur_left_snapshot = std_vec1;
-                    std::vector<double> std_vec2(left_new_joint_trajectory.pos.back().data(), left_new_joint_trajectory.pos.back().data() + left_new_joint_trajectory.pos.back().size());
-                    left_arm.plan_joint(left_new_joint_trajectory, 
-                        q_cur_left_snapshot, 
-                        std_vec2,
-                        left_base_frame_snapshot,
-                        3.0, 
-                        10,
-                        JOINT_CONTROL_FREQUENCY); 
-                    }
-
-                visualizeTrajectory(left_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, left_base_frame_snapshot);
-
-                std::lock_guard<std::mutex> lock(trajectory_mutex);
-                right_joint_trajectory = std::move(right_new_joint_trajectory);
-                left_joint_trajectory = std::move(left_new_joint_trajectory);
-            }
-            else{
-                std::lock_guard<std::mutex> lock(trajectory_mutex);
-                right_joint_trajectory = std::move(right_new_joint_trajectory);
-            }
+            std::lock_guard<std::mutex> lock(trajectory_mutex);
+            right_joint_trajectory = std::move(right_new_joint_trajectory);
+            
         }
 
         if(left_arm_in_motion){
@@ -503,31 +516,9 @@ bool plan_action(
             left_chicken_flag.store(false);
             left_execution_ongoing_flag.store(true);
 
-            if(mirrored && (trigger_id == 8)){
-                right_new_joint_trajectory = right_joint_trajectory;
-                mirror_trajectory(left_new_joint_trajectory, right_new_joint_trajectory);
-
-                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-                q_cur_right_snapshot = std_vec1;
-
-                std::vector<double> std_vec2(right_new_joint_trajectory.pos.back().data(), right_new_joint_trajectory.pos.back().data() + right_new_joint_trajectory.pos.back().size());
-
-                right_arm.plan_joint(right_new_joint_trajectory, 
-                     q_cur_right_snapshot, 
-                     std_vec2,
-                     right_base_frame_snapshot,
-                     3.0, 
-                     10,
-                     JOINT_CONTROL_FREQUENCY); 
-
-                std::lock_guard<std::mutex> lock(trajectory_mutex);
-                right_joint_trajectory = std::move(right_new_joint_trajectory);
-                left_joint_trajectory = std::move(left_new_joint_trajectory);
-            }
-            else{
-                std::lock_guard<std::mutex> lock(trajectory_mutex);
-                left_joint_trajectory = std::move(left_new_joint_trajectory);
-            }
+            std::lock_guard<std::mutex> lock(trajectory_mutex);
+            left_joint_trajectory = std::move(left_new_joint_trajectory);
+        
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -537,572 +528,569 @@ bool plan_action(
 }
 
 
-// bool plan_action_mirror(
-//     int trigger_id,
-//     std::shared_mutex& vicon_data_mutex,
-//     std::shared_mutex& joint_data_mutex,
-//     gtsam::Pose3& left_base_frame,
-//     gtsam::Pose3& right_base_frame,
-//     TubeInfo& tube_info,
-//     HumanInfo& human_info,
-//     gtsam::Point3& target_info,
-//     Eigen::Vector3d& head_info,
-//     Eigen::Vector3d& init_tube_pos,
-//     std::vector<double>& q_cur_left,
-//     std::vector<double>& q_cur_right,
-//     std::vector<double>& q_init_left,
-//     std::vector<double>& q_init_right,
-//     Gen3Arm& right_arm,
-//     Gen3Arm& left_arm,
-//     JointTrajectory& left_joint_trajectory,
-//     JointTrajectory& right_joint_trajectory,
-//     std::atomic<bool>& left_execution_ongoing_flag,
-//     std::atomic<bool>& right_execution_ongoing_flag,
-//     std::atomic<bool>& left_chicken_flag,
-//     std::atomic<bool>& right_chicken_flag,
-//     std::mutex& trajectory_mutex,
-// ) {
+bool plan_action_mirror(
+    int trigger_id,
+    std::shared_mutex& vicon_data_mutex,
+    std::shared_mutex& joint_data_mutex,
+    gtsam::Pose3& left_base_frame,
+    gtsam::Pose3& right_base_frame,
+    TubeInfo& tube_info,
+    HumanInfo& human_info,
+    gtsam::Point3& target_info,
+    Eigen::Vector3d& head_info,
+    Eigen::Vector3d& init_tube_pos,
+    std::vector<double>& q_cur_left,
+    std::vector<double>& q_cur_right,
+    std::vector<double>& q_init_left,
+    std::vector<double>& q_init_right,
+    Gen3Arm& right_arm,
+    Gen3Arm& left_arm,
+    JointTrajectory& left_joint_trajectory,
+    JointTrajectory& right_joint_trajectory,
+    std::atomic<bool>& left_execution_ongoing_flag,
+    std::atomic<bool>& right_execution_ongoing_flag,
+    std::atomic<bool>& left_chicken_flag,
+    std::atomic<bool>& right_chicken_flag,
+    std::mutex& trajectory_mutex
+) {
 
-//         JointTrajectory left_new_joint_trajectory;
-//         JointTrajectory right_new_joint_trajectory;
+        JointTrajectory left_new_joint_trajectory;
+        JointTrajectory right_new_joint_trajectory;
 
-//         gtsam::Pose3 left_base_frame_snapshot;
-//         gtsam::Pose3 right_base_frame_snapshot;
-//         TubeInfo tube_info_snapshot;
-//         HumanInfo human_info_snapshot;
-//         Eigen::Vector3d head_info_snapshot;
-//         gtsam::Point3 target_info_snapshot;
-//         std::vector<double> q_cur_left_snapshot;
-//         std::vector<double> q_cur_right_snapshot;
+        gtsam::Pose3 left_base_frame_snapshot;
+        gtsam::Pose3 right_base_frame_snapshot;
+        TubeInfo tube_info_snapshot;
+        HumanInfo human_info_snapshot;
+        Eigen::Vector3d head_info_snapshot;
+        gtsam::Point3 target_info_snapshot;
+        std::vector<double> q_cur_left_snapshot;
+        std::vector<double> q_cur_right_snapshot;
         
-//         {
-//             std::shared_lock<std::shared_mutex> vicon_lock(vicon_data_mutex);
-//             left_base_frame_snapshot = left_base_frame;
-//             right_base_frame_snapshot = right_base_frame; 
-//             tube_info_snapshot = tube_info;
-//             human_info_snapshot = human_info;
-//             target_info_snapshot = target_info;
-//             head_info_snapshot = head_info;
-//         }
+        {
+            std::shared_lock<std::shared_mutex> vicon_lock(vicon_data_mutex);
+            left_base_frame_snapshot = left_base_frame;
+            right_base_frame_snapshot = right_base_frame; 
+            tube_info_snapshot = tube_info;
+            human_info_snapshot = human_info;
+            target_info_snapshot = target_info;
+            head_info_snapshot = head_info;
+        }
 
-//         {   
-//             std::shared_lock<std::shared_mutex> joint_lock(joint_data_mutex);
-//             q_cur_left_snapshot = shiftAngle(q_cur_left);
-//             q_cur_right_snapshot = shiftAngle(q_cur_right);
-//         }
+        {   
+            std::shared_lock<std::shared_mutex> joint_lock(joint_data_mutex);
+            q_cur_left_snapshot = shiftAngle(q_cur_left);
+            q_cur_right_snapshot = shiftAngle(q_cur_right);
+        }
 
-//         std::cout << "Left angle snap shot: ";
-//         for(auto& k : q_cur_left_snapshot){std::cout << k << ", ";}
-//         std::cout << "\n";
+        std::cout << "Left angle snap shot: ";
+        for(auto& k : q_cur_left_snapshot){std::cout << k << ", ";}
+        std::cout << "\n";
 
-//         std::cout << "Right angle snap shot: ";
-//         for(auto& k : q_cur_right_snapshot){std::cout << k << ", ";}
-//         std::cout << "\n";
+        std::cout << "Right angle snap shot: ";
+        for(auto& k : q_cur_right_snapshot){std::cout << k << ", ";}
+        std::cout << "\n";
 
-//         std::cout << "Right Base pose: " << right_base_frame_snapshot << "\n";
+        std::cout << "Right Base pose: " << right_base_frame_snapshot << "\n";
 
-//         std::cout << "left Base pose: " << left_base_frame_snapshot << "\n";
+        std::cout << "left Base pose: " << left_base_frame_snapshot << "\n";
 
-//         bool right_arm_in_motion = false;
-//         bool left_arm_in_motion = false;
+        bool right_arm_in_motion = false;
+        bool left_arm_in_motion = false;
 
         
-//         switch(trigger_id){
-//             case 1: // Right arm engages pipe
-//             {
-//                 double approach_offset_y = 0.3;
-//                 double approach_offset_z = 0.1;
-//                 double approach_time_sec = 3.0;
+        switch(trigger_id){
+            case 1: // Right arm engages pipe
+            {
+                double approach_offset_y = 0.34;
+                double approach_offset_z = 0.1;
+                double approach_time_sec = 4.0;
 
-//                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, true, left_base_frame_snapshot, q_cur_left_snapshot);
-//                 right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, 
-//                                     tube_info_snapshot,
-//                                     approach_offset_y, approach_offset_z, 
-//                                     approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY, 0.01,0.01);
+                right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, true, left_base_frame_snapshot, q_cur_left_snapshot);
+                right_arm.plan_joint(right_new_joint_trajectory, q_init_right, right_base_frame_snapshot, 
+                                    tube_info_snapshot,
+                                    approach_offset_y, approach_offset_z, 
+                                    approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY, 0.01,0.01);
 
-//                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_1");
+                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_1");
 
-//                 left_new_joint_trajectory = left_joint_trajectory;
-//                 mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
+                left_new_joint_trajectory = left_joint_trajectory;
+                mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
 
-//                 std::cout << "tube pose: ";
-//                 for(auto& k : tube_info_snapshot.centroid) {std::cout<< k << ", ";}
-//                 std::cout << "\n";
+                std::cout << "tube pose: ";
+                for(auto& k : tube_info_snapshot.centroid) {std::cout<< k << ", ";}
+                std::cout << "\n";
 
-//                 std::cout << "fiunal joint pos: ";
-//                 for(auto& k : right_new_joint_trajectory.pos.back()) {std::cout<< k << ", ";}
-//                 std::cout << "\n";
-//                 gtsam::Vector dummy_vec = right_new_joint_trajectory.pos.back() * (M_PI/180);
-//                 gtsam::Pose3 final_pose = forwardKinematics(right_arm.dh_params_, dummy_vec, right_base_frame_snapshot);
-//                 std::cout << "Final pose: " << final_pose << "\n";
+                std::cout << "fiunal joint pos: ";
+                for(auto& k : right_new_joint_trajectory.pos.back()) {std::cout<< k << ", ";}
+                std::cout << "\n";
+                gtsam::Vector dummy_vec = right_new_joint_trajectory.pos.back() * (M_PI/180);
+                gtsam::Pose3 final_pose = forwardKinematics(right_arm.dh_params_, dummy_vec, right_base_frame_snapshot);
+                std::cout << "Final pose: " << final_pose << "\n";
 
-//                 right_arm_in_motion = true;
-//                 left_arm_in_motion = true;
+                right_arm_in_motion = true;
+                left_arm_in_motion = true;
 
-//                 break;
-//             }
-//             case 2: // Right arm grasps pipe
-//             {
-//                 double grasp_time_sec = 1.5;
+                break;
+            }
+            case 2: // Right arm grasps pipe
+            {
+                double grasp_time_sec = 2.0;
 
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
 
-//                 right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, grasp_time_sec, JOINT_CONTROL_FREQUENCY, true);
+                right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, grasp_time_sec, JOINT_CONTROL_FREQUENCY, true);
             
-//                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_2");
+                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_2");
 
-//                 left_new_joint_trajectory = left_joint_trajectory;
-//                 mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
+                left_new_joint_trajectory = left_joint_trajectory;
+                mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
 
-//                 right_arm_in_motion = true;
-//                 left_arm_in_motion = true;
+                right_arm_in_motion = true;
+                left_arm_in_motion = true;
                 
-//                 break;
-//             }
+                break;
+            }
 
-//             case 3: // Right arm moves pipe task space controlled
-//             {
-//                 double move_time_sec = 6;
-//                 double move_time_step = 3.5;
-//                 double intermediate_point_percentage = 0.35;
-//                 double intermediate_point_height = 0.25;
+            case 3: // Right arm moves pipe task space controlled
+            {
+                double move_time_sec = 4;
+                double move_time_step = 10;
+                double intermediate_point_percentage = 0.35;
+                double intermediate_point_height = 0.25;
 
-//                 double move_offset_from_base_y = 0.5; // position the gripper furter behind human
-//                 double move_offset_from_head_x = -0.15; // positive means moving the end pose towards human left
-//                 double move_offset_from_head_z = 0.20;
+                double move_offset_from_base_y = 0.45; // position the gripper furter behind human
+                double move_offset_from_head_x = 0.32; // positive means moving the end pose towards human left
+                double move_offset_from_head_z = 0.22;
 
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
-//                 // q_cur_right_snapshot[3] = -85;
-//                 // q_cur_right_snapshot[5] = -60;
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
+                // q_cur_right_snapshot[3] = -85;
+                // q_cur_right_snapshot[5] = -60;
 
-//                 std::cout << "here 1\n";
+                std::cout << "here 1\n";
                 
-//                 gtsam::Pose3 start_pose = right_arm.forward_kinematics(right_base_frame_snapshot,q_cur_right_snapshot);
-//                 gtsam::Pose3 target_pose = right_arm.over_head_pose(head_info_snapshot, right_base_frame_snapshot, start_pose, 
-//                                                                     move_offset_from_base_y, 
-//                                                                     move_offset_from_head_x, 
-//                                                                     move_offset_from_head_z);
+                gtsam::Pose3 start_pose = right_arm.forward_kinematics(right_base_frame_snapshot,q_cur_right_snapshot);
+                gtsam::Pose3 target_pose = right_arm.over_head_pose(head_info_snapshot, right_base_frame_snapshot, start_pose, 
+                                                                    move_offset_from_base_y, 
+                                                                    move_offset_from_head_x, 
+                                                                    move_offset_from_head_z);
     
-//                 std::cout << "Over head target pose: \n";
-//                 std::cout << target_pose << "\n";
+                std::cout << "Over head target pose: \n";
+                std::cout << target_pose << "\n";
 
-//                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
-//                 right_arm.plan_task(right_new_joint_trajectory, start_pose, target_pose, 
-//                                     right_base_frame_snapshot, q_cur_right_snapshot, 
-//                                     move_time_sec, move_time_step, intermediate_point_percentage, 
-//                                     intermediate_point_height, JOINT_CONTROL_FREQUENCY, false, 0.1, 0.01);
+                right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
+                right_arm.plan_task(right_new_joint_trajectory, start_pose, target_pose, 
+                                    right_base_frame_snapshot, q_cur_right_snapshot, 
+                                    move_time_sec, move_time_step, intermediate_point_percentage, 
+                                    intermediate_point_height, JOINT_CONTROL_FREQUENCY, false, 0.1, 0.01);
 
-//                 std::vector<double> final_right(right_new_joint_trajectory.pos.back().data(), 
-//                                                 right_new_joint_trajectory.pos.back().data() + 
-//                                                     right_new_joint_trajectory.pos.back().size());
-
-
-//                 double approach_offset_y = 0.30;
-//                 double approach_offset_z = 0.15;
-//                 double approach_time_sec = 3.5;
+                std::vector<double> final_right(right_new_joint_trajectory.pos.back().data(), 
+                                                right_new_joint_trajectory.pos.back().data() + 
+                                                    right_new_joint_trajectory.pos.back().size());
 
 
-//                 gtsam::Pose3 right_ee_pose = right_arm.forward_kinematics(right_base_frame_snapshot, final_right); 
+                double approach_offset_y = 0.26;
+                double approach_offset_z = 0.20;
+                double approach_time_sec = 4.0;
 
-//                 tube_info_snapshot.centroid = right_ee_pose.translation();
-//                 left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, final_right);
 
-//                 std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-//                 q_cur_left_snapshot = std_vec1;
+                gtsam::Pose3 right_ee_pose = right_arm.forward_kinematics(right_base_frame_snapshot, final_right); 
 
-//                 left_arm.plan_joint(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, 
-//                                     tube_info_snapshot,
-//                                     approach_offset_y, approach_offset_z, 
-//                                     approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY, false, 0.01, 0.05);
+                tube_info_snapshot.centroid = right_ee_pose.translation();
+                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, final_right);
+
+                std::vector<double> std_vec4(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec4;
+
+                left_arm.plan_joint(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, 
+                                    tube_info_snapshot,
+                                    approach_offset_y, approach_offset_z, 
+                                    approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY, false, 0.01, 0.05);
                 
                 
 
-//                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_3");
+                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_3");
 
-//                 visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(left_arm.result_logs,"plan_4");
+                visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
+                saveTrajectoryResultToYAML(left_arm.result_logs,"plan_4");
                 
-//                 left_arm_in_motion = true;
-//                 right_arm_in_motion = true;
+                left_arm_in_motion = true;
+                right_arm_in_motion = true;
                 
-//                 break;
-//             }
+                break;
+            }
 
 
-//             case 5: // Left arm grasps pipe
-//             {
+            case 5: // Left arm grasps pipe
+            {
 
-//                 std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-//                 q_cur_left_snapshot = std_vec1;
+                std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec1;
 
-//                 left_arm.plan_cartesian_z(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, true);
-//                 visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(left_arm.result_logs,"plan_5");
+                left_arm.plan_cartesian_z(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, tube_info_snapshot, 2.0, JOINT_CONTROL_FREQUENCY, true);
+                visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
+                saveTrajectoryResultToYAML(left_arm.result_logs,"plan_5");
 
-//                 left_arm_in_motion = true;
-//                 break;
-//             }
+                left_arm_in_motion = true;
+                break;
+            }
 
-//             case 6: // Right arm disengages pipe
-//             {
+            case 6: // Right arm disengages pipe
+            {
                 
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
 
-//                 right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, false);
+                right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 2.0, JOINT_CONTROL_FREQUENCY, false);
                 
-//                 right_arm_in_motion = true;
-//                 break;
-//             }
+                right_arm_in_motion = true;
+                break;
+            }
 
 
-//             case 8: // Left arm moves to target
-//             {
-//                 gtsam::Pose3 start_pose = left_arm.forward_kinematics(left_base_frame_snapshot,q_cur_left_snapshot);
-//                 gtsam::Pose3 target_pose = left_arm.installtion_pose(target_info, start_pose);
-//                 double move_time_sec = 3.0; 
-//                 int move_time_step = 5;
-//                 double intermediate_point_height = 0.0;
-//                 double intermediate_point_percentage = 0.5;
+            case 8: // Left arm moves to target
+            {
+                std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec1;
 
-//                 left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
-//                 left_arm.plan_task(left_new_joint_trajectory, start_pose, target_pose, 
-//                                     left_base_frame_snapshot, q_cur_left_snapshot, 
-//                                     move_time_sec, move_time_step, intermediate_point_percentage, 
-//                                     intermediate_point_height, JOINT_CONTROL_FREQUENCY, true);
+                gtsam::Pose3 start_pose = left_arm.forward_kinematics(left_base_frame_snapshot,q_cur_left_snapshot);
+                gtsam::Pose3 target_pose = left_arm.installtion_pose(target_info_snapshot, start_pose);
+                double move_time_sec = 4.0; 
+                int move_time_step = 3;
+                double intermediate_point_height = 0.05;
+                double intermediate_point_percentage = 0.5;
 
-//                 visualizeTrajectory(left_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_8");
+                std::cout << "left arm to target pose: " << target_pose << "\n";
 
-//                 gtsam::Point3 right_target_pos = target_pose.translation();
+                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
+                // left_arm.plan_task(left_new_joint_trajectory, start_pose, target_pose, 
+                //                     left_base_frame_snapshot, q_cur_left_snapshot, 
+                //                     move_time_sec, move_time_step, intermediate_point_percentage, 
+                //                     intermediate_point_height, JOINT_CONTROL_FREQUENCY, true, 1, 0.5);
 
-//                 double dist_x = target_pose.translation().x() - head_info.x();
-//                 double target_x = head_info.x() - dist_x;
+                // left_arm.plan_joint(left_new_joint_trajectory, 
+                //      q_cur_left_snapshot,
+                //      left_base_frame_snapshot, 
+                //      target_pose, 
+                //      move_time_sec,
+                //      move_time_step,
+                //      JOINT_CONTROL_FREQUENCY,
+                //      1.0, 0.5);
 
-//                 gtsam::Point3 right_target_pos(target_x, target_pose.translation().y(), target_pose.translation().z());
-//                 gtsam::Point3 right_target_pose(target_pose.rotation(), right_target_pos);
+                left_arm.plan_task(left_new_joint_trajectory, 
+                     start_pose,
+                     target_pose, 
+                     left_base_frame_snapshot, 
+                     q_cur_left_snapshot,
+                     move_time_sec,
+                     move_time_step,
+                     intermediate_point_percentage,
+                     intermediate_point_height,
+                     JOINT_CONTROL_FREQUENCY,
+                     false,
+                     0.1, 0.5);
 
-//                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
-//                 right_arm.plan_task(right_new_joint_trajectory, start_pose, target_pose, 
-//                                     right_base_frame_snapshot, q_cur_right_snapshot, 
-//                                     move_time_sec, move_time_step, intermediate_point_percentage, 
-//                                     intermediate_point_height, JOINT_CONTROL_FREQUENCY, true);
+                visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
+                saveTrajectoryResultToYAML(left_arm.result_logs,"plan_8");
+
+                // double dist_x = target_pose.translation().x() - head_info.x();
+                // double target_x = head_info.x() - dist_x;
+
+                // std::vector<double> std_vec2(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                // q_cur_right_snapshot = std_vec2;
+
+                // gtsam::Pose3 right_start_pose = right_arm.forward_kinematics(right_base_frame_snapshot,q_cur_right_snapshot);
+
+                // gtsam::Point3 right_target_pos(target_x, target_pose.translation().y(), target_pose.translation().z());
+                // gtsam::Pose3 right_target_pose(target_pose.rotation(), right_target_pos);
+                
+                // std::cout << "right arm to target pose: " << right_target_pose << "\n\n\n";
+
+                // std::cout << "right arm to target pose: " << right_start_pose << "\n\n\n";
+
+
+                // right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
+                // right_arm.plan_task(right_new_joint_trajectory, right_start_pose, right_target_pose, 
+                //                     right_base_frame_snapshot, q_cur_right_snapshot, 
+                //                     move_time_sec, move_time_step, intermediate_point_percentage, 
+                //                     intermediate_point_height, JOINT_CONTROL_FREQUENCY, true, 1, 1);
+
+                // visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                // saveTrajectoryResultToYAML(right_arm.result_logs,"plan_9");
 
 
                 
-//                 left_arm_in_motion = true;
-//                 right_arm_in_motion = true;
+                left_arm_in_motion = true;
+                // right_arm_in_motion = true;
 
-//                 break;
-//             }
+                break;
+            }
 
-//             case 9: // Left arm moves to target
-//             {
-//                 left_chicken_flag.store(true);
-//                 break;
-//             }
+            case 9: // Left arm moves to target
+            {
+                left_chicken_flag.store(true);
+                break;
+            }
 
-//             case 10: // left arm moves pipe task space controlled
-//             {
-//                 double move_time_sec = 3;
-//                 double move_time_step = 4;
-//                 double intermediate_point_percentage = 0.35;
-//                 double intermediate_point_height = 0.20;
+            case 10: // left arm moves pipe task space controlled
+            {
+                double move_time_sec = 3;
+                double move_time_step = 4;
+                double intermediate_point_percentage = 0.35;
+                double intermediate_point_height = 0.20;
 
 
-//                 std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-//                 q_cur_left_snapshot = std_vec1;
+                std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec1;
 
-//                 gtsam::Pose3 start_pose = left_arm.forward_kinematics(left_base_frame_snapshot,q_cur_left_snapshot);
+                gtsam::Pose3 start_pose = left_arm.forward_kinematics(left_base_frame_snapshot,q_cur_left_snapshot);
                 
-//                 double move_offset_from_base_y = start_pose.translation().y() - left_base_frame_snapshot.translation().y() + 0.1; // position the gripper furter behind human
-//                 double move_offset_from_head_x = 0.10; // positive means moving the end pose towards human left
-//                 double move_offset_from_head_z = 0.20;
+                double move_offset_from_base_y = start_pose.translation().y() - left_base_frame_snapshot.translation().y() + 0.1; // position the gripper furter behind human
+                double move_offset_from_head_x = 0.10; // positive means moving the end pose towards human left
+                double move_offset_from_head_z = 0.20;
                 
-//                 gtsam::Pose3 target_pose = left_arm.over_head_pose(head_info_snapshot, left_base_frame_snapshot, start_pose, 
-//                                                                     move_offset_from_base_y, 
-//                                                                     move_offset_from_head_x, 
-//                                                                     move_offset_from_head_z);
+                gtsam::Pose3 target_pose = left_arm.over_head_pose(head_info_snapshot, left_base_frame_snapshot, start_pose, 
+                                                                    move_offset_from_base_y, 
+                                                                    move_offset_from_head_x, 
+                                                                    move_offset_from_head_z);
     
 
-//                 left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
-//                 left_arm.plan_task(left_new_joint_trajectory, start_pose, target_pose, 
-//                                     left_base_frame_snapshot, q_cur_left_snapshot, 
-//                                     move_time_sec, move_time_step, intermediate_point_percentage, 
-//                                     intermediate_point_height, JOINT_CONTROL_FREQUENCY);
+                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
+                left_arm.plan_task(left_new_joint_trajectory, start_pose, target_pose, 
+                                    left_base_frame_snapshot, q_cur_left_snapshot, 
+                                    move_time_sec, move_time_step, intermediate_point_percentage, 
+                                    intermediate_point_height, JOINT_CONTROL_FREQUENCY);
 
-//                 visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(left_arm.result_logs,"plan_10");
+                visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
+                saveTrajectoryResultToYAML(left_arm.result_logs,"plan_10");
 
-//                 std::vector<double> final_left(left_new_joint_trajectory.pos.back().data(), 
-//                                                 left_new_joint_trajectory.pos.back().data() + 
-//                                                     left_new_joint_trajectory.pos.back().size());
-
-
-//                 double approach_offset_y = 0.30;
-//                 double approach_offset_z = 0.15;
-//                 double approach_time_sec = 3.5;
+                std::vector<double> final_left(left_new_joint_trajectory.pos.back().data(), 
+                                                left_new_joint_trajectory.pos.back().data() + 
+                                                    left_new_joint_trajectory.pos.back().size());
 
 
-//                 gtsam::Pose3 left_ee_pose = left_arm.forward_kinematics(left_base_frame_snapshot, final_left); 
+                double approach_offset_y = 0.30;
+                double approach_offset_z = 0.15;
+                double approach_time_sec = 3.5;
 
-//                 tube_info_snapshot.centroid = left_ee_pose.translation();
-//                 left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, final_left);
 
-//                 std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-//                 q_cur_left_snapshot = std_vec1;
+                gtsam::Pose3 left_ee_pose = left_arm.forward_kinematics(left_base_frame_snapshot, final_left); 
 
-//                 left_arm.plan_joint(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, 
-//                                     tube_info_snapshot,
-//                                     approach_offset_y, approach_offset_z, 
-//                                     approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY, false, 0.01, 0.05);
+                tube_info_snapshot.centroid = left_ee_pose.translation();
+                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, final_left);
+
+                std::vector<double> std_vec2(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec2;
+
+                left_arm.plan_joint(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, 
+                                    tube_info_snapshot,
+                                    approach_offset_y, approach_offset_z, 
+                                    approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY, false, 0.01, 0.05);
                 
 
-//                 left_arm_in_motion = true;
-//                 break;
-//             }
+                left_arm_in_motion = true;
+                break;
+            }
 
 
-//             case 11: // Right arm engages pipe
-//             {
-//                 double approach_offset_y = 0.5;
-//                 double approach_offset_z = 0.1;
-//                 double approach_time_sec = 3.0;
+            case 11: // Right arm engages pipe
+            {
+                double approach_offset_y = 0.5;
+                double approach_offset_z = 0.1;
+                double approach_time_sec = 3.0;
 
-//                 gtsam::Pose3 left_ee_pose = left_arm.forward_kinematics(left_base_frame_snapshot, q_cur_left_snapshot); 
+                gtsam::Pose3 left_ee_pose = left_arm.forward_kinematics(left_base_frame_snapshot, q_cur_left_snapshot); 
 
-//                 tube_info_snapshot.centroid = left_ee_pose.translation();
+                tube_info_snapshot.centroid = left_ee_pose.translation();
 
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
 
-//                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, true, left_base_frame_snapshot, q_cur_left_snapshot);
-//                 right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, 
-//                                     tube_info_snapshot,
-//                                     approach_offset_y, approach_offset_z, 
-//                                     approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
+                right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, true, left_base_frame_snapshot, q_cur_left_snapshot);
+                right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, 
+                                    tube_info_snapshot,
+                                    approach_offset_y, approach_offset_z, 
+                                    approach_time_sec, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
 
-//                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_11");
-//                 std::cout << "tube pose: ";
-//                 for(auto& k : tube_info_snapshot.centroid) {std::cout<< k << ", ";}
-//                 std::cout << "\n";
+                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_11");
+                std::cout << "tube pose: ";
+                for(auto& k : tube_info_snapshot.centroid) {std::cout<< k << ", ";}
+                std::cout << "\n";
 
-//                 std::cout << "fiunal joint pos: ";
-//                 for(auto& k : right_new_joint_trajectory.pos.back()) {std::cout<< k << ", ";}
-//                 std::cout << "\n";
-//                 gtsam::Vector dummy_vec = right_new_joint_trajectory.pos.back() * (M_PI/180);
-//                 gtsam::Pose3 final_pose = forwardKinematics(right_arm.dh_params_, dummy_vec, right_base_frame_snapshot);
-//                 std::cout << "Final pose: " << final_pose << "\n";
+                std::cout << "fiunal joint pos: ";
+                for(auto& k : right_new_joint_trajectory.pos.back()) {std::cout<< k << ", ";}
+                std::cout << "\n";
+                gtsam::Vector dummy_vec = right_new_joint_trajectory.pos.back() * (M_PI/180);
+                gtsam::Pose3 final_pose = forwardKinematics(right_arm.dh_params_, dummy_vec, right_base_frame_snapshot);
+                std::cout << "Final pose: " << final_pose << "\n";
                     
-//                 right_arm_in_motion = true;
-//                 break;
-//             }
+                right_arm_in_motion = true;
+                break;
+            }
 
-//             case 12: // Right arm grasps pipe
-//             {
-//                 double grasp_offset_y = 0.4;
-//                 double grasp_offset_z = 0.001;
-//                 double grasp_time_sec = 1.5;
+            case 12: // Right arm grasps pipe
+            {
+                double grasp_offset_y = 0.4;
+                double grasp_offset_z = 0.001;
+                double grasp_time_sec = 1.5;
 
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
 
-//                 right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, true);
+                right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, true);
             
-//                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_12");
+                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_12");
 
-//                 right_arm_in_motion = true;
+                right_arm_in_motion = true;
                 
-//                 break;
-//             }
+                break;
+            }
 
-//             case 13: // Left arm disengages pipe
-//             {
+            case 13: // Left arm disengages pipe
+            {
                 
-//                 std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-//                 q_cur_left_snapshot = std_vec1;
+                std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec1;
 
-//                 left_arm.plan_cartesian_z(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, false);
+                left_arm.plan_cartesian_z(left_new_joint_trajectory, q_cur_left_snapshot, left_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, false);
                 
-//                 left_arm_in_motion = true;
+                left_arm_in_motion = true;
 
-//                 break;
-//             }
+                break;
+            }
 
-//             case 14: // left arm moves back to default position
-//             {
-//                 std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-//                 q_cur_left_snapshot = std_vec1;
+            case 14: // left arm moves back to default position
+            {
+                std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
+                q_cur_left_snapshot = std_vec1;
 
-//                 double disengage_time_sec = 3.0;
+                double disengage_time_sec = 3.0;
 
-//                 left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
-//                 left_arm.plan_joint(left_new_joint_trajectory, q_cur_left_snapshot, q_init_left, 
-//                                     left_base_frame_snapshot, disengage_time_sec, 
-//                                     GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
+                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
+                left_arm.plan_joint(left_new_joint_trajectory, q_cur_left_snapshot, q_init_left, 
+                                    left_base_frame_snapshot, disengage_time_sec, 
+                                    GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
                 
-//                 visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(left_arm.result_logs,"plan_14");
+                visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
+                saveTrajectoryResultToYAML(left_arm.result_logs,"plan_14");
 
-//                 left_arm_in_motion = true;
+                left_arm_in_motion = true;
                 
-//                 break;
-//             }
+                break;
+            }
 
-//             case 15: // Right arm moves pipe task space controlled
-//             {
-//                 double move_time_sec = 3;
-//                 double move_time_step = 10;
-//                 double intermediate_point_percentage = 0.65;
-//                 double intermediate_point_height = 0.25;
+            case 15: // Right arm moves pipe task space controlled
+            {
+                double move_time_sec = 3;
+                double move_time_step = 10;
+                double intermediate_point_percentage = 0.65;
+                double intermediate_point_height = 0.25;
 
 
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
                 
-//                 gtsam::Pose3 start_pose = right_arm.forward_kinematics(right_base_frame_snapshot,q_cur_right_snapshot);
-//                 gtsam::Point3 target_pos(init_tube_pos.x(), start_pose.translation().y(), init_tube_pos.z());
+                gtsam::Pose3 start_pose = right_arm.forward_kinematics(right_base_frame_snapshot,q_cur_right_snapshot);
+                gtsam::Point3 target_pos(init_tube_pos.x(), start_pose.translation().y(), init_tube_pos.z());
             
-//                 gtsam::Rot3 base_rot = gtsam::Rot3::Rz(M_PI); // 180 degrees about z-axis
-//                 gtsam::Rot3 target_rot;
-//                 target_rot = base_rot * gtsam::Rot3::Ry(M_PI/4);  // 30 degrees about new y-axis
+                gtsam::Rot3 base_rot = gtsam::Rot3::Rz(M_PI); // 180 degrees about z-axis
+                gtsam::Rot3 target_rot;
+                target_rot = base_rot * gtsam::Rot3::Ry(M_PI/4);  // 30 degrees about new y-axis
                 
                 
-//                 gtsam::Pose3 target_pose(target_rot, target_pos);
+                gtsam::Pose3 target_pose(target_rot, target_pos);
     
 
-//                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
-//                 right_arm.plan_task(right_new_joint_trajectory, start_pose, target_pose, 
-//                                     right_base_frame_snapshot, q_cur_right_snapshot, 
-//                                     move_time_sec, move_time_step, intermediate_point_percentage, 
-//                                     intermediate_point_height, JOINT_CONTROL_FREQUENCY);
+                right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
+                right_arm.plan_task(right_new_joint_trajectory, start_pose, target_pose, 
+                                    right_base_frame_snapshot, q_cur_right_snapshot, 
+                                    move_time_sec, move_time_step, intermediate_point_percentage, 
+                                    intermediate_point_height, JOINT_CONTROL_FREQUENCY);
 
-//                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_15");
+                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_15");
 
-//                 right_arm_in_motion = true;
+                right_arm_in_motion = true;
                 
-//                 break;
-//             }
+                break;
+            }
 
-//             case 16: // Right arm disengages pipe
-//             {
+            case 16: // Right arm disengages pipe
+            {
                 
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
 
-//                 right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, false);
+                right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, 1.5, JOINT_CONTROL_FREQUENCY, false);
                 
-//                 right_arm_in_motion = true;
+                right_arm_in_motion = true;
 
-//                 break;
-//             }
+                break;
+            }
 
-//             case 17: // Right arm moves back to default position
-//             {
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
+            case 17: // Right arm moves back to default position
+            {
+                std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
+                q_cur_right_snapshot = std_vec1;
 
-//                 double disengage_time_sec = 3.0;
+                double disengage_time_sec = 3.0;
 
-//                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
-//                 right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, q_init_right, 
-//                                     right_base_frame_snapshot, disengage_time_sec, 
-//                                     GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
+                right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
+                right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, q_init_right, 
+                                    right_base_frame_snapshot, disengage_time_sec, 
+                                    GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY);
                 
-//                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
-//                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_17");
+                visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
+                saveTrajectoryResultToYAML(right_arm.result_logs,"plan_17");
                 
-//                 right_arm_in_motion = true;
+                right_arm_in_motion = true;
 
-//                 break;
-//             }
+                break;
+            }
             
-//         }
+        }
+
+        // std::cout << "Planned, press enter to execute\n";
+        // std::cin.get();
+
         
-//         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+        
 
 
         
-//         if(right_arm_in_motion){
+        if(right_arm_in_motion){
    
-//             right_chicken_flag.store(false);
-//             right_execution_ongoing_flag.store(true);
+            right_chicken_flag.store(false);
+            right_execution_ongoing_flag.store(true);
 
-//             if(mirrored && (trigger_id == 1 || trigger_id == 2 || trigger_id == 3 || trigger_id == 15 || trigger_id == 16 || trigger_id == 17)){
-//                 left_new_joint_trajectory = left_joint_trajectory;
-//                 mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
+            
+            std::lock_guard<std::mutex> lock(trajectory_mutex);
+            right_joint_trajectory = std::move(right_new_joint_trajectory);
+            
+        }
 
-//                 if(trigger_id == 3){
+        if(left_arm_in_motion){
 
-//                     left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, q_cur_right_snapshot);
-//                     std::vector<double> std_vec1(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
-//                     q_cur_left_snapshot = std_vec1;
-//                     std::vector<double> std_vec2(left_new_joint_trajectory.pos.back().data(), left_new_joint_trajectory.pos.back().data() + left_new_joint_trajectory.pos.back().size());
-//                     left_arm.plan_joint(left_new_joint_trajectory, 
-//                         q_cur_left_snapshot, 
-//                         std_vec2,
-//                         left_base_frame_snapshot,
-//                         3.0, 
-//                         10,
-//                         JOINT_CONTROL_FREQUENCY); 
-//                     }
+            left_chicken_flag.store(false);
+            left_execution_ongoing_flag.store(true);
 
-//                 visualizeTrajectory(left_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, left_base_frame_snapshot);
+            std::lock_guard<std::mutex> lock(trajectory_mutex);
+            left_joint_trajectory = std::move(left_new_joint_trajectory);
+        
+        }
 
-//                 std::lock_guard<std::mutex> lock(trajectory_mutex);
-//                 right_joint_trajectory = std::move(right_new_joint_trajectory);
-//                 left_joint_trajectory = std::move(left_new_joint_trajectory);
-//             }
-//             else{
-//                 std::lock_guard<std::mutex> lock(trajectory_mutex);
-//                 right_joint_trajectory = std::move(right_new_joint_trajectory);
-//             }
-//         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
 
-//         if(left_arm_in_motion){
-
-//             left_chicken_flag.store(false);
-//             left_execution_ongoing_flag.store(true);
-
-//             if(mirrored && (trigger_id == 8)){
-//                 right_new_joint_trajectory = right_joint_trajectory;
-//                 mirror_trajectory(left_new_joint_trajectory, right_new_joint_trajectory);
-
-//                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
-//                 q_cur_right_snapshot = std_vec1;
-
-//                 std::vector<double> std_vec2(right_new_joint_trajectory.pos.back().data(), right_new_joint_trajectory.pos.back().data() + right_new_joint_trajectory.pos.back().size());
-
-//                 right_arm.plan_joint(right_new_joint_trajectory, 
-//                      q_cur_right_snapshot, 
-//                      std_vec2,
-//                      right_base_frame_snapshot,
-//                      3.0, 
-//                      10,
-//                      JOINT_CONTROL_FREQUENCY); 
-
-//                 std::lock_guard<std::mutex> lock(trajectory_mutex);
-//                 right_joint_trajectory = std::move(right_new_joint_trajectory);
-//                 left_joint_trajectory = std::move(left_new_joint_trajectory);
-//             }
-//             else{
-//                 std::lock_guard<std::mutex> lock(trajectory_mutex);
-//                 left_joint_trajectory = std::move(left_new_joint_trajectory);
-//             }
-//         }
-
-//         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-
-//         return true;  // Success
-// }
+        return true;  // Success
+}
 
 
 void state_transition(
@@ -1134,122 +1122,109 @@ void state_transition(
     std::atomic<bool>& right_execution_ongoing_flag,
     std::atomic<bool>& left_chicken_flag,
     std::atomic<bool>& right_chicken_flag,
-    std::mutex& trajectory_mutex){
+    std::atomic<bool>& left_admittance_flag,
+    std::atomic<bool>& right_admittance_flag,
+    std::mutex& trajectory_mutex, bool mirror){
 
     int phase_idx;
     std::thread replan_thread;
 
     if(prev_state_idx.load() == 0 && state_idx.load() == 1){
 
-        phase_idx = 1;
-    
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        replan_thread =std::thread([&]() {
-            right_arm.replan(
-                        right_joint_trajectory, new_joint_trajectory, right_base_frame,
-                        std::ref(vicon_data_mutex), std::ref(joint_data_mutex),
-                        std::ref(trajectory_mutex), std::ref(replan_triggered), 
-                        std::ref(new_trajectory_ready), std::ref(right_execution_ongoing_flag),
-                        human_info, tube_info, left_base_frame, q_cur_left, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY
-                    );
-        });
-        replan_thread.join();
+        for(int i = 1; i <= 3; i++){
 
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        phase_idx = 2;
-    
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        move_gripper(right_base_cyclic, 50);
+            phase_idx = i;
 
-        phase_idx = 3;
+            if(!mirror){
+                plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
+                        tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
+                        left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
+            }
+            else{
+                plan_action_mirror(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
+                        tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
+                        left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
+            }
 
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        prev_state_idx.store(1);
+            if( i == 1 && !mirror){
+                replan_thread =std::thread([&]() {
+                right_arm.replan(
+                            right_joint_trajectory, new_joint_trajectory, right_base_frame,
+                            std::ref(vicon_data_mutex), std::ref(joint_data_mutex),
+                            std::ref(trajectory_mutex), std::ref(replan_triggered), 
+                            std::ref(new_trajectory_ready), std::ref(right_execution_ongoing_flag),
+                            human_info, tube_info, left_base_frame, q_cur_left, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY
+                        );
+                });
+                replan_thread.join();
+            }
+
+            while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+
+            if(i == 2){
+                move_gripper(right_base_cyclic, 55);
+            }
+
+            if( i == 3){
+                prev_state_idx.store(1);
+            }
+
+        }
     }
 
     if(prev_state_idx.load() == 1 && state_idx.load() == 2){
 
-        phase_idx = 4;
-    
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        replan_thread =std::thread([&]() {
-            left_arm.replan(
-                        left_joint_trajectory, new_joint_trajectory, left_base_frame,
-                        std::ref(vicon_data_mutex), std::ref(joint_data_mutex),
-                        std::ref(trajectory_mutex), std::ref(replan_triggered), 
-                        std::ref(new_trajectory_ready), std::ref(left_execution_ongoing_flag),
-                        human_info, tube_info, right_base_frame, q_cur_right, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY
-                    );
-        });
-        replan_thread.detach();
+        for(int i = 4; i <= 8; i++){
 
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+            phase_idx = i;
 
+            if(!mirror){
+                plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
+                        tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
+                        left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
+            }
+            else{
+                plan_action_mirror(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
+                        tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
+                        left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
+            }
 
-        phase_idx = 5;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+            if( i == 4 && !mirror){
 
-        move_gripper(right_base_cyclic, 0);
+                replan_thread =std::thread([&]() {
+                left_arm.replan(
+                            left_joint_trajectory, new_joint_trajectory, left_base_frame,
+                            std::ref(vicon_data_mutex), std::ref(joint_data_mutex),
+                            std::ref(trajectory_mutex), std::ref(replan_triggered), 
+                            std::ref(new_trajectory_ready), std::ref(left_execution_ongoing_flag),
+                            human_info, tube_info, right_base_frame, q_cur_right, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY
+                        );
+                });
+                replan_thread.detach();
+            }
 
-        phase_idx = 6;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        move_gripper(left_base_cyclic, 45);
-        
+            while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
 
-        phase_idx = 7;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+            if(i ==5){
+                move_gripper(right_base_cyclic, 0);
+            }
 
-        phase_idx = 8;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+            if(i == 6){
+                move_gripper(left_base_cyclic, 55);
+            }
 
+            if(i == 8-1){
+                left_admittance_flag.store(true);
+            }
 
-        phase_idx = 9;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
-        
-        prev_state_idx.store(2);
+            if(i == 8){
+                move_gripper(left_base_cyclic, 50);
+                prev_state_idx.store(2);
+            }
+
+        }
+
     }
-
 
     if(prev_state_idx.load() == 2 && state_idx.load() == 3){
         
@@ -1337,229 +1312,6 @@ void state_transition(
                     tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
                     left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
 
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        prev_state_idx.store(2);
-    }
-
-}
-
-void state_transition_mirrored(
-    std::atomic<int>& state_idx, 
-    std::atomic<int>& prev_state_idx,
-    std::shared_mutex& vicon_data_mutex,
-    std::shared_mutex& joint_data_mutex,
-    std::atomic<bool>& replan_triggered,
-    std::atomic<bool>& new_trajectory_ready,
-    gtsam::Pose3& left_base_frame,
-    gtsam::Pose3& right_base_frame,
-    TubeInfo& tube_info,
-    HumanInfo& human_info,
-    gtsam::Point3& target_info,
-    Eigen::Vector3d& head_info,
-    Eigen::Vector3d& init_tube_pos,
-    std::vector<double>& q_cur_left,
-    std::vector<double>& q_cur_right,
-    std::vector<double>& q_init_left,
-    std::vector<double>& q_init_right,
-    Gen3Arm& right_arm,
-    Gen3Arm& left_arm,
-    k_api::BaseCyclic::BaseCyclicClient* left_base_cyclic,
-    k_api::BaseCyclic::BaseCyclicClient* right_base_cyclic,
-    JointTrajectory& left_joint_trajectory,
-    JointTrajectory& right_joint_trajectory,
-    JointTrajectory& new_joint_trajectory,
-    std::atomic<bool>& left_execution_ongoing_flag,
-    std::atomic<bool>& right_execution_ongoing_flag,
-    std::atomic<bool>& left_chicken_flag,
-    std::atomic<bool>& right_chicken_flag,
-    std::mutex& trajectory_mutex){
-
-    int phase_idx;
-    std::thread replan_thread;
-
-    if(prev_state_idx.load() == 0 && state_idx.load() == 1){
-
-        phase_idx = 1;
-    
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-        
-        // replan_thread =std::thread([&]() {
-        //     right_arm.replan(
-        //                 right_joint_trajectory, new_joint_trajectory, right_base_frame,
-        //                 std::ref(vicon_data_mutex), std::ref(joint_data_mutex),
-        //                 std::ref(trajectory_mutex), std::ref(replan_triggered), 
-        //                 std::ref(new_trajectory_ready), std::ref(right_execution_ongoing_flag),
-        //                 human_info, tube_info, left_base_frame, q_cur_left, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY
-        //             );
-        // });
-        // replan_thread.join();
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10)); std::cout << "left: " << left_execution_ongoing_flag.load() <<" right: " << right_execution_ongoing_flag.load() <<"\n";}
-        
-        std::cout << "left: " << left_execution_ongoing_flag.load() <<" right: " << right_execution_ongoing_flag.load() <<"\n";
-        phase_idx = 2;
-    
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        move_gripper(right_base_cyclic, 50);
-
-        phase_idx = 3;
-
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        prev_state_idx.store(1);
-    }
-
-    if(prev_state_idx.load() == 1 && state_idx.load() == 2){
-
-        phase_idx = 4;
-    
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        replan_thread =std::thread([&]() {
-            left_arm.replan(
-                        left_joint_trajectory, new_joint_trajectory, left_base_frame,
-                        std::ref(vicon_data_mutex), std::ref(joint_data_mutex),
-                        std::ref(trajectory_mutex), std::ref(replan_triggered), 
-                        std::ref(new_trajectory_ready), std::ref(left_execution_ongoing_flag),
-                        human_info, tube_info, right_base_frame, q_cur_right, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY
-                    );
-        });
-        replan_thread.detach();
-
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-
-
-        phase_idx = 5;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-
-        move_gripper(right_base_cyclic, 0);
-
-        phase_idx = 6;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        move_gripper(left_base_cyclic, 45);
-        
-        phase_idx = 8;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-
-
-        phase_idx = 9;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        prev_state_idx.store(2);
-    }
-
-
-    if(prev_state_idx.load() == 2 && state_idx.load() == 3){
-        
-        phase_idx = 10;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-            
-        prev_state_idx.store(3);
-    }
-
-    if(prev_state_idx.load() == 3 && state_idx.load() == 2){
-
-        phase_idx = 11;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        replan_thread =std::thread([&]() {
-            right_arm.replan(
-                        right_joint_trajectory, new_joint_trajectory, right_base_frame,
-                        std::ref(vicon_data_mutex), std::ref(joint_data_mutex),
-                        std::ref(trajectory_mutex), std::ref(replan_triggered), 
-                        std::ref(new_trajectory_ready), std::ref(right_execution_ongoing_flag),
-                        human_info, tube_info, left_base_frame, q_cur_left, GPMP2_TIMESTEPS, JOINT_CONTROL_FREQUENCY
-                    );
-        });
-        replan_thread.join();
-        
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        phase_idx = 12;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-
-        move_gripper(left_base_cyclic, 0);
-
-        phase_idx = 13;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-
-        move_gripper(right_base_cyclic, 45);
-
-        phase_idx = 15;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-        
-        move_gripper(right_base_cyclic, 0);
-
-        phase_idx = 16;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
-        while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
-
-        phase_idx = 17;
-        
-        plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
-                    tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
-                    left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex, true);
-                    
         while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
         
         prev_state_idx.store(2);
@@ -1760,4 +1512,69 @@ void mirror_trajectory(JointTrajectory& original_trajectory, JointTrajectory& mi
         trajectory_to_be_mirrored.acc.push_back(acc);
     }
     mirrored_trajectory = std::move(trajectory_to_be_mirrored);
+}
+
+
+void state_transition_test(
+    std::atomic<int>& state_idx, 
+    std::atomic<int>& prev_state_idx,
+    std::shared_mutex& vicon_data_mutex,
+    std::shared_mutex& joint_data_mutex,
+    std::atomic<bool>& replan_triggered,
+    std::atomic<bool>& new_trajectory_ready,
+    gtsam::Pose3& left_base_frame,
+    gtsam::Pose3& right_base_frame,
+    TubeInfo& tube_info,
+    HumanInfo& human_info,
+    gtsam::Point3& target_info,
+    Eigen::Vector3d& head_info,
+    Eigen::Vector3d& init_tube_pos,
+    std::vector<double>& q_cur_left,
+    std::vector<double>& q_cur_right,
+    std::vector<double>& q_init_left,
+    std::vector<double>& q_init_right,
+    Gen3Arm& right_arm,
+    Gen3Arm& left_arm,
+    k_api::BaseCyclic::BaseCyclicClient* left_base_cyclic,
+    k_api::BaseCyclic::BaseCyclicClient* right_base_cyclic,
+    JointTrajectory& left_joint_trajectory,
+    JointTrajectory& right_joint_trajectory,
+    JointTrajectory& new_joint_trajectory,
+    std::atomic<bool>& left_execution_ongoing_flag,
+    std::atomic<bool>& right_execution_ongoing_flag,
+    std::atomic<bool>& left_chicken_flag,
+    std::atomic<bool>& right_chicken_flag,
+    std::atomic<bool>& left_admittance_flag,
+    std::atomic<bool>& right_admittance_flag,
+    std::mutex& trajectory_mutex, bool mirror){
+
+    int phase_idx;
+
+            phase_idx = 8;
+
+            if(!mirror){
+                plan_action(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
+                        tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
+                        left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
+            }
+            else{
+                plan_action_mirror(phase_idx, vicon_data_mutex, joint_data_mutex, left_base_frame, right_base_frame,
+                        tube_info, human_info, target_info, head_info, init_tube_pos, q_cur_left, q_cur_right, q_init_left, q_init_right, right_arm, left_arm, 
+                        left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
+            }
+
+            while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+
+            if(phase_idx ==5){
+                move_gripper(right_base_cyclic, 0);
+            }
+
+            if(phase_idx == 6){
+                move_gripper(left_base_cyclic, 51);
+            }
+
+            if(phase_idx == 8){
+                prev_state_idx.store(2);
+            }
+
 }

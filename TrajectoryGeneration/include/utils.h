@@ -62,14 +62,14 @@ struct C3D_Dataset {
 struct HumanInfo {
     std::vector<gtsam::Point3> human_points;  // 3D points from vicon readings
     HumanBoundingBox bounds;  // Bounding box of human points
-    gtsam::Point3 RFIN;
-    gtsam::Point3 LFIN;
-    gtsam::Point3 RFHD;
-    gtsam::Point3 LFHD;
-    bool RFIN_occluded;
-    bool LFIN_occluded;
-    bool RFHD_occluded;
-    bool LFHD_occluded;
+    gtsam::Point3 RHIP;
+    gtsam::Point3 LHIP;
+    gtsam::Point3 CLAV;
+    gtsam::Point3 STRN;
+    bool RHIP_occluded;
+    bool LHIP_occluded;
+    bool CLAV_occluded;
+    bool STRN_occluded;
 };
 
 struct TubeInfo {

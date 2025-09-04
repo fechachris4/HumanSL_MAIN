@@ -29,7 +29,7 @@
 
 void updateTubeInfo(TubeInfo& tube_info, std::vector<MarkerData>& tube_tip, std::vector<MarkerData>& tube_end);
 
-void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human);
+void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human, std::vector<MarkerData>& human_head, std::vector<MarkerData>& human_lfin, std::vector<MarkerData>& human_rfin, Eigen::Vector3d& head_snapshot, Eigen::Vector3d& lfin_snapshot, Eigen::Vector3d& rfin_snapshot);
 
 void updateTargetInfo(gtsam::Point3& target_info, std::vector<MarkerData>& target);
 

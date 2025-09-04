@@ -190,11 +190,11 @@ gtsam::Values InitializeTrajectory::initJointTrajectoryFromTarget(
     int success_count = 0;
     for(int i = 0; i < 10; i++){
         gtsam::Vector end_conf; 
-        std::cout << "  Attempt " << (i+1) << "/10: ";
+        // std::cout << "  Attempt " << (i+1) << "/10: ";
         if(solveIK(end_pose, base_pose, start_conf, end_conf, 100, 0.25)){
             wrapAngles(end_conf, start_conf);
             end_confs.push_back(end_conf);
-            std::cout << "SUCCESS\n";
+            // std::cout << "SUCCESS\n";
             success_count++;
             double magnitude = (end_conf - start_conf).norm();
 
@@ -203,7 +203,7 @@ gtsam::Values InitializeTrajectory::initJointTrajectoryFromTarget(
                 best_idx = end_confs.size()-1;
             }
         } else {
-            std::cout << "FAILED\n";
+            // std::cout << "FAILED\n";
         }
         
     }
@@ -312,7 +312,7 @@ gtsam::Values InitializeTrajectory::initJointTrajectoryFromVicon(
         double y_compensation = 0.0;
         if(tune_pose){
             if(j == 0) y_compensation = 0.0;
-            else y_compensation = (rand() % 15) / 100.0;
+            else y_compensation = (rand() % 9) / 100.0;
         }
 
         // Calculate modified tube point
@@ -336,9 +336,11 @@ gtsam::Values InitializeTrajectory::initJointTrajectoryFromVicon(
         for (int i = 0; i < 5; i++){
             double angle_deg = 0.0;
 
-            if(tune_pose){
-                angle_deg = (rand() % 41);
-            }
+            // if(tune_pose){
+            //     angle_deg = (rand() % 41);
+            // }
+
+            angle_deg = (rand() % 31) + 25;
             
             double angle_rad = angle_deg * M_PI / 180.0;
             
@@ -613,10 +615,16 @@ InitializeTrajectory::initTaskSpaceTrajectory(const gtsam::Pose3& start_pose,
     gtsam::Vector3 start_rpy = start_pose.rotation().rpy();
     gtsam::Vector3 end_rpy = end_pose.rotation().rpy();
     
+    // Add random variability to rotation around y-axis (pitch)
+    end_rpy(1) += ((rand() %10) - 5) * M_PI / 180.0;  // Add random rotation ±15 degrees
+    
     // Calculate the middle point for position spline
     gtsam::Vector3 line_point = start_pos + percentage * (end_pos - start_pos);
     gtsam::Vector3 middle_point = line_point;
-    middle_point.z() += height;  // Add height offset in z-direction
+
+    middle_point.z() += (rand() % 5)/100 + height;  // Add height offset in z-direction
+
+    double end_pos_y_offset = (rand() % 15)/100 - 0.07;
     
     // Create cubic spline coefficients for each dimension (x, y, z)
     // Using natural cubic spline through 3 points: t = [0, 0.5, 1]
@@ -634,7 +642,7 @@ InitializeTrajectory::initTaskSpaceTrajectory(const gtsam::Pose3& start_pose,
     
     // Get coefficients for each dimension
     auto coeffs_x = computeCubicSplineCoeffs(start_pos.x(), middle_point.x(), end_pos.x());
-    auto coeffs_y = computeCubicSplineCoeffs(start_pos.y(), middle_point.y(), end_pos.y());
+    auto coeffs_y = computeCubicSplineCoeffs(start_pos.y(), middle_point.y(), end_pos.y() + end_pos_y_offset);
     auto coeffs_z = computeCubicSplineCoeffs(start_pos.z(), middle_point.z(), end_pos.z());
     
     // Helper functions for angular interpolation

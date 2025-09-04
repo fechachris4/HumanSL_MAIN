@@ -13,6 +13,7 @@
 
 #include <gpmp2/gp/GaussianProcessPriorLinear.h>
 #include <gpmp2/obstacle/ObstacleSDFFactorArm.h>
+#include <gpmp2/obstacle/ObstacleSDFFactorGPArm.h>
 #include <gpmp2/obstacle/SignedDistanceField.h>
 #include <gpmp2/obstacle/SelfCollisionArm.h>
 

@@ -322,7 +322,7 @@ void Gen3Arm::plan_joint(JointTrajectory& trajectory,
             auto optimization_duration = std::chrono::duration_cast<std::chrono::milliseconds>(optimization_end_time - optimization_start_time);
             total_optimization_duration += optimization_duration;
 
-            if(result.final_error < 50.0) break;
+            if(result.final_error < 2000.0) break;
 
             counter++;
             best_final_error = (best_final_error > result.final_error) ? result.final_error : best_final_error;
@@ -805,7 +805,7 @@ void Gen3Arm::plan_task(JointTrajectory& trajectory,
         auto init_start_time = std::chrono::high_resolution_clock::now();
 
         if(target_pose_only){
-            try{
+            
                 init_values = 
                         initJointTrajectoryFromTarget(start_conf, end_pose, 
                                 base_pose, total_time_step);
@@ -818,22 +818,14 @@ void Gen3Arm::plan_task(JointTrajectory& trajectory,
                 // Set the last entry to end_pose
                 pose_trajectory[total_time_step] = end_pose;
                 
-            }
-            catch(const std::exception& e){
-                continue;
-            }
         }
         else{
-            try{
+    
                 init_values = 
                         initTaskSpaceTrajectory(start_pose, end_pose, 
                                 base_pose, start_conf, pose_trajectory,
                                     percentage, height, total_time_step); 
-                                                                    
-            }
-            catch(const std::exception& e){
-                continue;
-            }
+
         }
 
         auto init_end_time = std::chrono::high_resolution_clock::now();
@@ -854,11 +846,11 @@ void Gen3Arm::plan_task(JointTrajectory& trajectory,
         auto optimization_duration = std::chrono::duration_cast<std::chrono::milliseconds>(optimization_end_time - optimization_start_time);
         total_optimization_duration += optimization_duration;
 
-        if(result.final_error < 50.0) break;
+        if(result.final_error < 200.0) break;
 
         counter++;
         best_final_error = (best_final_error > result.final_error) ? result.final_error : best_final_error;
-        if(counter > 10) break;
+        if(counter > 50) break;
     }
 
     
@@ -872,8 +864,9 @@ void Gen3Arm::plan_task(JointTrajectory& trajectory,
 
     trajectory = convertTrajectory<JointTrajectory>(result, dt); 
 
-    if(counter > 10){ 
+    if(counter > 50){ 
             visualizeTrajectory(trajectory.pos, *arm_model, dataset_logs, base_pose);
+            saveTrajectoryResultToYAML(result_logs,"failed_task");
             
             throw std::runtime_error((std::stringstream{} << "Could not generate good enough trajectory, best final error: " << best_final_error << "\n").str());
     }

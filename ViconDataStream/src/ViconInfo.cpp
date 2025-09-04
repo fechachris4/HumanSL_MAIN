@@ -102,7 +102,7 @@ void updateTubeInfo(TubeInfo& tube_info, std::vector<MarkerData>& tube_tip, std:
 }
 
 
-void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human){
+void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human, std::vector<MarkerData>& human_head, std::vector<MarkerData>& human_lfin, std::vector<MarkerData>& human_rfin, Eigen::Vector3d& head_snapshot, Eigen::Vector3d& lfin_snapshot, Eigen::Vector3d& rfin_snapshot){
     
     std::vector<gtsam::Point3> human_points;
 
@@ -130,35 +130,102 @@ void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human){
 
         // std::cout << marker.name <<"\n";
 
-        if(marker.name == "human_RFIN"){
+        if(marker.name == "human_LHIP"){
             // std::cout << "Found RFIN" << "\n";
-            human_info.RFIN = gtsam::Point3(x, y, z);
-            human_info.RFIN_occluded = false;
+            human_info.LHIP = gtsam::Point3(x, y, z);
+            human_info.LHIP_occluded = false;
 
             // std::cout<< "Found RFIN\n";
         }
      
 
-        if(marker.name == "human_LFIN"){
-            human_info.LFIN = gtsam::Point3(x, y, z);
-            human_info.LFIN_occluded = false;
+        if(marker.name == "human_RHIP"){
+            human_info.RHIP = gtsam::Point3(x, y, z);
+            human_info.RHIP_occluded = false;
         }
       
 
-        if(marker.name == "human_RFHD"){
-            human_info.RFHD = gtsam::Point3(x, y, z);
-            human_info.RFHD_occluded = false;
+        if(marker.name == "human_CLAV"){
+            human_info.CLAV = gtsam::Point3(x, y, z);
+            human_info.CLAV_occluded = false;
         }
 
-        if(marker.name == "human_LFHD"){
-            human_info.LFHD = gtsam::Point3(x, y, z);
-            human_info.LFHD_occluded = false;
+        if(marker.name == "human_STRN"){
+            human_info.STRN = gtsam::Point3(x, y, z);
+            human_info.STRN_occluded = false;
         }
     
     }
     
     human_info.human_points = human_points;
     human_info.bounds = HumanBoundingBox{min_x, max_x, min_y, max_y, min_z, max_z};
+
+
+    // Calculate average position for head markers
+    double head_x_total = 0.0;
+    double head_y_total = 0.0;
+    double head_z_total = 0.0;
+    
+    for(auto marker : human_head){
+        double x = marker.x/1000;
+        double y = marker.y/1000;
+        double z = marker.z/1000;
+        
+        head_x_total += x;
+        head_y_total += y;
+        head_z_total += z;
+    }
+    
+    if (!human_head.empty()) {
+        head_x_total = head_x_total / human_head.size();
+        head_y_total = head_y_total / human_head.size();
+        head_z_total = head_z_total / human_head.size();
+        head_snapshot = Eigen::Vector3d(head_x_total, head_y_total, head_z_total);
+    }
+    
+    // Calculate average position for left finger markers
+    double lfin_x_total = 0.0;
+    double lfin_y_total = 0.0;
+    double lfin_z_total = 0.0;
+    
+    for(auto marker : human_lfin){
+        double x = marker.x/1000;
+        double y = marker.y/1000;
+        double z = marker.z/1000;
+        
+        lfin_x_total += x;
+        lfin_y_total += y;
+        lfin_z_total += z;
+    }
+    
+    if (!human_lfin.empty()) {
+        lfin_x_total = lfin_x_total / human_lfin.size();
+        lfin_y_total = lfin_y_total / human_lfin.size();
+        lfin_z_total = lfin_z_total / human_lfin.size();
+        lfin_snapshot = Eigen::Vector3d(lfin_x_total, lfin_y_total, lfin_z_total);
+    }
+    
+    // Calculate average position for right finger markers
+    double rfin_x_total = 0.0;
+    double rfin_y_total = 0.0;
+    double rfin_z_total = 0.0;
+    
+    for(auto marker : human_rfin){
+        double x = marker.x/1000;
+        double y = marker.y/1000;
+        double z = marker.z/1000;
+        
+        rfin_x_total += x;
+        rfin_y_total += y;
+        rfin_z_total += z;
+    }
+    
+    if (!human_rfin.empty()) {
+        rfin_x_total = rfin_x_total / human_rfin.size();
+        rfin_y_total = rfin_y_total / human_rfin.size();
+        rfin_z_total = rfin_z_total / human_rfin.size();
+        rfin_snapshot = Eigen::Vector3d(rfin_x_total, rfin_y_total, rfin_z_total);
+    }
 }
 
 void updateTargetInfo(gtsam::Point3& target_info, std::vector<MarkerData>& target){
@@ -243,11 +310,18 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
     
     std::vector<MarkerData> human = vicon.getMarkerPositions("human");
     std::vector<MarkerData> target= vicon.getMarkerPositions("target");
+
+    std::vector<MarkerData> human_head= vicon.getMarkerPositions("human_head");
+    std::vector<MarkerData> human_lfin= vicon.getMarkerPositions("human_lfin");
+    std::vector<MarkerData> human_rfin= vicon.getMarkerPositions("human_rfin");
     
     TubeInfo tube_info_snapshot;
+    Eigen::Vector3d head_snapshot;
+    Eigen::Vector3d lfin_snapshot;
+    Eigen::Vector3d rfin_snapshot;
 
     updateTubeInfo(tube_info_snapshot, tube_tip, tube_end, tube_mid);
-    updateHumanInfo(human_info, human);
+    updateHumanInfo(human_info, human, human_head, human_lfin, human_rfin, head_snapshot, lfin_snapshot, rfin_snapshot);
     updateTargetInfo(target_info, target);
 
     // Only push tube_info_snapshot if y-component is the dominant axis
@@ -347,53 +421,76 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
         gtsam::Pose3 right_base_guess2;
         gtsam::Pose3 left_base_guess2;
 
-        if(left_base_occluded){
 
-            // Find any non-occluded marker in left_base_data
-            MarkerData non_occluded_left_marker = left_base_data.front(); // fallback
-            for (const auto& marker : left_base_data) {
-                if (!marker.occluded) {
-                    non_occluded_left_marker = marker;
-                    break;
-                }
-            }
+        if(right_base_occluded && !left_base_occluded){
+            std::cout << "Right base occluded!\n";
+
+            if(!right_tip_occluded){
+
+                right_base_guess2 = updatePoseInfo1(right_tip_data, dh_params, right_conf);
             
-            right_base_guess2 = updatePoseInfo2(right_base_data, non_occluded_left_marker);
-
-            // Calculate left_base_guess2 using fixed transformation between left and right base
-            // The transformation is fixed, so we can derive left from right
-            gtsam::Pose3 left_to_right_transform = right_base.compose(left_base.inverse());
-            left_base_guess2 = left_to_right_transform.inverse().compose(right_base_guess2);
-
-        }
-        if(right_base_occluded){
+            }
             // Find any non-occluded marker in right_base_data
-            MarkerData non_occluded_right_marker = right_base_data.front(); // fallback
-            for (const auto& marker : right_base_data) {
-                if (!marker.occluded) {
-                    non_occluded_right_marker = marker;
-                    break;
+            else{
+                MarkerData non_occluded_right_marker = right_base_data.front(); // fallback
+                for (const auto& marker : right_base_data) {
+                    if (!marker.occluded) {
+                        non_occluded_right_marker = marker;
+                        break;
+                    }
                 }
-            }
-            
-            left_base_guess2 = updatePoseInfo2(left_base_data, non_occluded_right_marker);
+                
+                left_base_guess2 = updatePoseInfo2(left_base_data, non_occluded_right_marker);
 
-            // Calculate right_base_guess2 using fixed transformation between left and right base
-            // The transformation is fixed, so we can derive right from left
-            gtsam::Pose3 left_to_right_transform = right_base.compose(left_base.inverse());
-            right_base_guess2 = left_to_right_transform.compose(left_base_guess2);
+                // Calculate right_base_guess2 using fixed transformation between left and right base
+                // The transformation is fixed, so we can derive right from left
+                gtsam::Pose3 left_to_right_transform = right_base.compose(left_base.inverse());
+                right_base_guess2 = left_to_right_transform.compose(left_base_guess2);
+            }
         }
 
+        if(left_base_occluded && !right_base_occluded){
+            std::cout << "Left base occluded!\n";
+
+            if(!left_tip_occluded){
+
+                left_base_guess2 = updatePoseInfo1(left_tip_data, dh_params, left_conf);
+                // std::cout << "left guess from tip: " << left_base_guess2 <<"\n";
+            }
+
+            else{
+                // Find any non-occluded marker in left_base_data
+                MarkerData non_occluded_left_marker = left_base_data.front(); // fallback
+                for (const auto& marker : left_base_data) {
+                    if (!marker.occluded) {
+                        non_occluded_left_marker = marker;
+                        break;
+                    }
+                }
+                
+                right_base_guess2 = updatePoseInfo2(right_base_data, non_occluded_left_marker);
+
+                // Calculate left_base_guess2 using fixed transformation between left and right base
+                // The transformation is fixed, so we can derive left from right
+
+                // std::cout << "Cur avg left base: " << left_base << "\n";
+                // std::cout << "Cur avg right base: " << right_base << "\n";
+                gtsam::Pose3 right_to_left_transform = left_base.compose(right_base.inverse());
+                left_base_guess2 = right_base_guess2.compose(right_to_left_transform);
+            }
+        }
+
+        if(left_base_occluded && right_base_occluded && (!left_tip_occluded || !right_tip_occluded)){
+            if(!left_tip_occluded){
+                left_base_guess2 = updatePoseInfo1(left_tip_data, dh_params, left_conf);
+            }
+            if(!right_tip_occluded){
+                right_base_guess2 = updatePoseInfo1(right_tip_data, dh_params, right_conf);
+            }
+        }
+    
         left_base_current = left_base_guess2;
         right_base_current = right_base_guess2;
-        pose_updated = true;
-    }
-    else if(!left_tip_occluded && !right_tip_occluded){
-        gtsam::Pose3 left_base_guess1 = updatePoseInfo1(left_tip_data, dh_params, left_conf);
-        gtsam::Pose3 right_base_guess1 = updatePoseInfo1(right_tip_data, dh_params, right_conf);
-
-        left_base_current = left_base_guess1;
-        right_base_current = right_base_guess1;
         pose_updated = true;
     }
 
@@ -501,43 +598,22 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
     
     int max_size = 150;
 
-    {
-    double x = human_info.LFIN.x();
-    double y = human_info.LFIN.y();
-    double z = human_info.LFIN.z();
-
-    left_finger_pos_array.push_back(Eigen::Vector3d(x,y,z));
-
-    if(left_finger_pos_array.size() > max_size) left_finger_pos_array.pop_front();
-    }
     
-    {
-    double x = human_info.RFIN.x();
-    double y = human_info.RFIN.y();
-    double z = human_info.RFIN.z();
 
-    right_finger_pos_array.push_back(Eigen::Vector3d(x,y,z));
+    left_finger_pos_array.push_back(lfin_snapshot);
+    if(left_finger_pos_array.size() > max_size) left_finger_pos_array.pop_front();
+    
+
+
+    right_finger_pos_array.push_back(rfin_snapshot);
 
     if(right_finger_pos_array.size() > max_size) right_finger_pos_array.pop_front();
-    }
+    
 
-    {
-    double xr = human_info.RFHD.x();
-    double yr = human_info.RFHD.y();
-    double zr = human_info.RFHD.z();
-
-    double xl = human_info.LFHD.x();
-    double yl = human_info.LFHD.y();
-    double zl = human_info.LFHD.z();
-
-    double x = (xr+xl) /2;
-    double y = (yr+yl) /2;
-    double z = (zr+zl) /2;
-
-    forehead_pos_array.push_back(Eigen::Vector3d(x,y,z));
+    forehead_pos_array.push_back(head_snapshot);
 
     if(forehead_pos_array.size() > max_size) forehead_pos_array.pop_front();
-    }
+    
 
     Eigen::Vector3d avg_lfin = Eigen::Vector3d::Zero();
     Eigen::Vector3d avg_rfin = Eigen::Vector3d::Zero();
@@ -795,7 +871,7 @@ void state_monitor(Eigen::Vector3d& lfin_info, Eigen::Vector3d& rfin_info, Eigen
     }
 
 
-    if(rfin_on_tube && !lfin_on_tube && !tube_on_head){
+    if(rfin_on_tube && !lfin_on_tube){
         state_idx.store(1);
     }
     if(rfin_on_tube && lfin_on_tube && tube_on_head){

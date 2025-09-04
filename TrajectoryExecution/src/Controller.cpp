@@ -518,11 +518,18 @@ VectorXd Controller::joint_impedance_controller(Dynamics &robot, VectorXd& q, Ve
     // u = mass_matrix * ddq_d + coriolis_matrix * dq + gravity_matrix + K_joint * e_q + D_joint * e_dq + K_integral * integral_error;
     // u = mass_matrix * ddq_d + coriolis_matrix * dq + gravity_matrix + K_joint * e_q + D_joint * e_dq + K_integral * integral_error;
 
-    std::cout << "gravity force: ";
-    for(auto& i : gravity_matrix){std::cout << i << ", ";}
-    std::cout << "\n";
+    // std::cout << "gravity force: ";
+    // for(auto& i : gravity_matrix){std::cout << i << ", ";}
+    // std::cout << "\n";
 
-    u = (K_joint * e_q) + (D_joint * e_dq) + (K_integral * integral_error);
+    // u = (K_joint * e_q) + (D_joint * e_dq) + (K_integral * integral_error);
+    // u = (K_joint * e_q) + (D_joint * e_dq);
+
+    u = (K_joint * e_q) + (K_integral * integral_error);
+
+    
+    
+    
     // u[6] = K_joint.diagonal()[6] * e_q[6] + D_joint.diagonal()[6] * e_dq[6] + K_integral.diagonal()[6] * integral_error[6];
     // u = gravity + K_diag * eq + K_I * integral error (in position)
 
@@ -666,16 +673,20 @@ VectorXd Controller::chicken_head_velocity_controller(Dynamics& robot,
     double dt) {
     
     // Initialize outputs and variables
-    VectorXd dp(6), e(6);
+    VectorXd dp(6), e(6), de(6);
     
-    // Thread-local variable to store integral error
+    // Thread-local variables to store integral error and previous error
     static thread_local VectorXd e_buffer = VectorXd::Zero(6);
+    static thread_local VectorXd e_prev = VectorXd::Zero(6);
+    static thread_local bool first_call = true;
     
     // Create diagonal gain matrices
     Vector<double, 6> K_i_diag = 0.05 * K_p_diag.array();  // Integral gain
+    Vector<double, 6> K_d_diag = 2.0 * K_p_diag.array().sqrt();  // Derivative gain (critical damping)
     
     DiagonalMatrix<double, 6> K_p = K_p_diag.asDiagonal();
     DiagonalMatrix<double, 6> K_i = K_i_diag.asDiagonal();
+    DiagonalMatrix<double, 6> K_d = K_d_diag.asDiagonal();
     
     // Compute Jacobian
     MatrixXd jacobian = jaco_m(q);
@@ -709,11 +720,23 @@ VectorXd Controller::chicken_head_velocity_controller(Dynamics& robot,
         }
     }
     
+    // Calculate error derivative
+    if (first_call) {
+        de = VectorXd::Zero(6);
+        first_call = false;
+    } else {
+        de = (e - e_prev) / dt;
+    }
+    
+    // Store current error for next iteration
+    e_prev = e;
+    
     // Accumulate integral error
     e_buffer += e * dt;
     
-    // PI control to get desired Cartesian velocity
-    VectorXd dp_desired = -(K_p * e) - (K_i * e_buffer);
+    // PD control to get desired Cartesian velocity
+    // VectorXd dp_desired = -(K_p * e) - (K_i * e_buffer) - (K_d * de);  // Full PID
+    VectorXd dp_desired = -(K_p * e) - (K_d * de);  // PD control
     
     // Apply Butterworth filter to smooth the Cartesian velocity command
     dp_desired = butterworth_filter_pose(dp_desired);
@@ -722,9 +745,20 @@ VectorXd Controller::chicken_head_velocity_controller(Dynamics& robot,
     VectorXd dq_desired = pinv_jacobian * dp_desired;
     // VectorXd dq_desired_deg = dq_desired * (180.0/M_PI);
 
+    VectorXd gen3_JointVelLimits(7);
+    gen3_JointVelLimits << 40, 40, 40, 40, 40, 40, 40;
+
     std::cout << "Pose error in base frame coord: ";
     for(auto& i : e){std::cout << i << ", ";}
     std::cout<<"\n";
+
+    for (int i = 0; i < 7; i++) {
+        if(dq_desired[i] > gen3_JointVelLimits[i]){
+            dq_desired[i] = gen3_JointVelLimits[i];
+        }else if(dq_desired[i] < -gen3_JointVelLimits[i]){
+            dq_desired[i] = -gen3_JointVelLimits[i];
+        }
+    }
     
     return dq_desired;   
 }

@@ -2,7 +2,6 @@
 #include "move.h"
 #include "ViconInterface.h"
 #include "ViconInfo.h"
-#include "ViconTrigger.h"
 #include <thread>
 #include <mutex>
 #include <shared_mutex> 
@@ -220,6 +219,11 @@ int main(){
     std::atomic<int> state_idx{0};
     std::atomic<int> prev_state_idx{0};
 
+
+    std::atomic<bool> left_admittance{false};
+    std::atomic<bool> right_admittance{false};
+
+
     JointTrajectory right_joint_trajectory;
     JointTrajectory left_joint_trajectory;
 
@@ -230,6 +234,8 @@ int main(){
 
     Dynamics left_robot(robot_urdf_path);
     Dynamics right_robot(robot_urdf_path);
+
+
 
     TubeInfo tube_info;
     HumanInfo human_info;
@@ -422,7 +428,9 @@ int main(){
         csv_file << "tube_centroid_x,tube_centroid_y,tube_centroid_z,tube_direction_x,tube_direction_y,tube_direction_z,";
         // Human info headers
         csv_file << "human_RFIN_x,human_RFIN_y,human_RFIN_z,human_LFIN_x,human_LFIN_y,human_LFIN_z,";
-        csv_file << "human_RFHD_x,human_RFHD_y,human_RFHD_z,human_LFHD_x,human_LFHD_y,human_LFHD_z,";
+        csv_file << "human_RHIP_x,human_RHIP_y,human_RHIP_z,human_LHIP_x,human_LHIP_y,human_LHIP_z,";
+        csv_file << "human_CLAV_x,human_CLAV_y,human_CLAV_z,human_STRN_x,human_STRN_y,human_STRN_z,";
+        csv_file << "human_HEAD_x,human_HEAD_y,human_HEAD_z,";
         // Individual marker headers
         csv_file << "right_base1_x,right_base1_y,right_base1_z,right_base2_x,right_base2_y,right_base2_z,right_base3_x,right_base3_y,right_base3_z,";
         csv_file << "left_base1_x,left_base1_y,left_base1_z,left_base2_x,left_base2_y,left_base2_z,left_base3_x,left_base3_y,left_base3_z,";
@@ -432,7 +440,7 @@ int main(){
         csv_file << "tube_end1_x,tube_end1_y,tube_end1_z,tube_end2_x,tube_end2_y,tube_end2_z,tube_end3_x,tube_end3_y,tube_end3_z,";
         csv_file << "tube_mid1_x,tube_mid1_y,tube_mid1_z,tube_mid2_x,tube_mid2_y,tube_mid2_z,tube_mid3_x,tube_mid3_y,tube_mid3_z,";
         // Head and target headers
-        csv_file << "head_x,head_y,head_z,target_x,target_y,target_z,state_idx" << std::endl;
+        csv_file << "target_x,target_y,target_z,state_idx" << std::endl;
 
         while (true) {
             
@@ -455,6 +463,8 @@ int main(){
             TubeInfo tube_info_snapshot;
             HumanInfo human_info_snapshot;
             Eigen::Vector3d head_info_snapshot;
+            Eigen::Vector3d lfin_info_snapshot;
+            Eigen::Vector3d rfin_info_snapshot;
             gtsam::Point3 target_info_snapshot;
             std::vector<double> q_cur_left_snapshot;
             std::vector<double> q_cur_right_snapshot;
@@ -480,6 +490,8 @@ int main(){
                 human_info_snapshot = human_info;
                 target_info_snapshot = target_info;
                 head_info_snapshot = head_info;
+                lfin_info_snapshot = lfin_info;
+                rfin_info_snapshot = rfin_info;
                 
                 // Helper function to safely get marker data
                 auto safeGetMarker = [&vicon](const std::string& name) -> MarkerData {
@@ -609,10 +621,13 @@ int main(){
                      << tube_info_snapshot.direction.x() << "," << tube_info_snapshot.direction.y() << "," << tube_info_snapshot.direction.z() << ",";
             
             // Human info - specific markers
-            csv_file << human_info_snapshot.RFIN.x() << "," << human_info_snapshot.RFIN.y() << "," << human_info_snapshot.RFIN.z() << ","
-                     << human_info_snapshot.LFIN.x() << "," << human_info_snapshot.LFIN.y() << "," << human_info_snapshot.LFIN.z() << ","
-                     << human_info_snapshot.RFHD.x() << "," << human_info_snapshot.RFHD.y() << "," << human_info_snapshot.RFHD.z() << ","
-                     << human_info_snapshot.LFHD.x() << "," << human_info_snapshot.LFHD.y() << "," << human_info_snapshot.LFHD.z() << ",";
+            csv_file << rfin_info_snapshot.x() << "," << rfin_info_snapshot.y() << "," << rfin_info_snapshot.z() << ","
+                     << lfin_info_snapshot.x() << "," << lfin_info_snapshot.y() << "," << lfin_info_snapshot.z() << ","
+                     << human_info_snapshot.RHIP.x() << "," << human_info_snapshot.RHIP.y() << "," << human_info_snapshot.RHIP.z() << ","
+                     << human_info_snapshot.LHIP.x() << "," << human_info_snapshot.LHIP.y() << "," << human_info_snapshot.LHIP.z() << ","
+                     << human_info_snapshot.CLAV.x() << "," << human_info_snapshot.CLAV.y() << "," << human_info_snapshot.CLAV.z() << ","
+                     << human_info_snapshot.STRN.x() << "," << human_info_snapshot.STRN.y() << "," << human_info_snapshot.STRN.z() << ","
+                     << head_info_snapshot.x() << "," << head_info_snapshot.y() << "," << head_info_snapshot.z() << ",";
             
             // Individual marker data - right base
             for(const auto& marker : right_base_data_snapshot) {
@@ -643,10 +658,9 @@ int main(){
                 csv_file << marker.x << "," << marker.y << "," << marker.z << ",";
             }
             
-            // Head and target data
-            csv_file << head_info_snapshot.x() << "," << head_info_snapshot.y() << "," << head_info_snapshot.z() << ","
-                     << target_info_snapshot.x() << "," << target_info_snapshot.y() << "," << target_info_snapshot.z() << ","
-                     << state_idx << std::endl;
+            // target data
+            csv_file << target_info_snapshot.x() << "," << target_info_snapshot.y() << "," << target_info_snapshot.z() << ","
+                     << state_idx.load() << std::endl;
             
             csv_file.flush();
 
@@ -684,10 +698,11 @@ int main(){
             right_base_command, right_robot, right_joint_trajectory, 
             right_base_frame, JOINT_CONTROL_FREQUENCY,
             std::ref(motion_flag), std::ref(right_execution_ongoing_flag),
-            std::ref(right_chicken_flag), std::ref(vicon_data_mutex), dh_params_path,
-            std::ref(replan_counter), 
-            std::ref(replan_triggered), std::ref(new_trajectory_ready), 
-            std::ref(new_joint_trajectory), std::ref(trajectory_mutex), std::ref(right_record));
+            std::ref(right_chicken_flag), std::ref(vicon_data_mutex), 
+            dh_params_path,
+            std::ref(replan_counter), std::ref(replan_triggered), 
+            std::ref(new_trajectory_ready), std::ref(new_joint_trajectory), 
+            std::ref(trajectory_mutex), std::ref(right_admittance));
     });
 
     std::thread left_robot_execution_thread;
@@ -697,15 +712,94 @@ int main(){
             left_base_frame, JOINT_CONTROL_FREQUENCY, 
             std::ref(motion_flag), std::ref(left_execution_ongoing_flag),
             std::ref(left_chicken_flag), std::ref(vicon_data_mutex), dh_params_path,
-            std::ref(replan_counter), 
-            std::ref(replan_triggered), std::ref(new_trajectory_ready), 
-            std::ref(new_joint_trajectory), std::ref(trajectory_mutex), std::ref(left_record));
+            std::ref(replan_counter), std::ref(replan_triggered), 
+            std::ref(new_trajectory_ready), std::ref(new_joint_trajectory), 
+            std::ref(trajectory_mutex), std::ref(left_admittance));
     });
 
       
     right_robot_execution_thread.detach();
     left_robot_execution_thread.detach();
 
+    // std::cin.get();
+
+    // std::cout << "In admittance mode\n";
+
+    // left_admittance.store(true);
+    // right_admittance.store(true);
+
+    // std::cin.get();
+
+    // left_chicken_flag.store(true);
+
+    // std::cin.get();
+
+    // left_chicken_flag.store(false);
+
+    // std::thread manual_toggle1;
+    // manual_toggle1 = std::thread([&]() {
+
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(2000)); 
+    //     state_idx.store(1);
+        
+    // });
+
+    // std::thread manual_toggle2;
+    // manual_toggle2 = std::thread([&]() {
+
+    //     while(prev_state_idx.load() != 1);
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(3000)); 
+    //     state_idx.store(2);
+        
+    // });
+
+
+    while(prev_state_idx.load() != 2){
+        state_transition(
+            std::ref(state_idx), 
+            std::ref(prev_state_idx),
+            std::ref(vicon_data_mutex),
+            std::ref(joint_data_mutex),
+            std::ref(replan_triggered),
+            std::ref(new_trajectory_ready),
+            left_base_frame,
+            right_base_frame,
+            tube_info,
+            human_info,
+            target_info,
+            head_info,
+            init_tube_pos,
+            q_cur_left,
+            q_cur_right,
+            q_init_left,
+            q_init_right,
+            right_arm,
+            left_arm,
+            left_base_cyclic,
+            right_base_cyclic,
+            left_joint_trajectory,
+            right_joint_trajectory,
+            new_joint_trajectory,
+            std::ref(left_execution_ongoing_flag),
+            std::ref(right_execution_ongoing_flag),
+            std::ref(left_chicken_flag),
+            std::ref(right_chicken_flag),
+            std::ref(left_admittance),
+            std::ref(right_admittance),
+            std::ref(trajectory_mutex),
+            false
+        );
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
+    }
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+    // left_chicken_flag.store(true);
+
+    while(state_idx.load() != 3);
+
+    left_chicken_flag.store(false);
 
     while(true){
         state_transition(
@@ -737,13 +831,20 @@ int main(){
             std::ref(right_execution_ongoing_flag),
             std::ref(left_chicken_flag),
             std::ref(right_chicken_flag),
-            std::ref(trajectory_mutex)
+            std::ref(left_admittance),
+            std::ref(right_admittance),
+            std::ref(trajectory_mutex),
+            false
         );
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
     }
 
-    while(true);
+
+
+
+
+
 
     std::cout << "SOmehow bypassed?";
 

@@ -63,7 +63,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
         
         // Joint limits
         auto pos_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.1);
+        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.01);
         graph.add(gpmp2::JointLimitFactorVector(
             key_pos, pos_limit_model, pos_limits.lower, pos_limits.upper, limit_thresh));
         factor_keys.push_back("JointPosLimits");
@@ -79,6 +79,21 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
         graph.add(gpmp2::ObstacleSDFFactorArm(
             key_pos, arm_model, sdf, collision_sigma, epsilon_dist));
         factor_keys.push_back("ObstacleFactor");
+
+        if (i > 0) {
+            gtsam::Symbol key_pos_prev('x', i - 1);
+            gtsam::Symbol key_vel_prev('v', i - 1);
+            
+            double delta_t_segment = delta_t / 5.0;  // divide segment into 5 parts
+            for (int interp = 1; interp < 5; ++interp) {  // skip endpoints (checked at waypoints)
+                double tau_check = interp * delta_t_segment;
+                graph.add(gpmp2::ObstacleSDFFactorGPArm(
+                    key_pos_prev, key_vel_prev, key_pos, key_vel,
+                    arm_model, sdf, collision_sigma, epsilon_dist,
+                    Qc_model, delta_t, tau_check));
+                factor_keys.push_back("ObstacleFactorGP");
+            }
+        }
 
         graph.add(gpmp2::SelfCollisionArm(
             key_pos, arm_model, self_collision_data));
@@ -234,6 +249,22 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
             key_pos, arm_model, sdf, collision_sigma, epsilon_dist));
         factor_keys.push_back("ObstacleFactor");
 
+        if (i > 0) {
+            gtsam::Symbol key_pos_prev('x', i - 1);
+            gtsam::Symbol key_vel_prev('v', i - 1);
+            
+            double delta_t_segment = delta_t / 5.0;  // divide segment into 5 parts
+            for (int interp = 1; interp < 5; ++interp) {  // skip endpoints (checked at waypoints)
+                double tau_check = interp * delta_t_segment;
+                graph.add(gpmp2::ObstacleSDFFactorGPArm(
+                    key_pos_prev, key_vel_prev, key_pos, key_vel,
+                    arm_model, sdf, collision_sigma, epsilon_dist,
+                    Qc_model, delta_t, tau_check));
+                factor_keys.push_back("ObstacleFactorGP");
+            }
+        }
+
+
         graph.add(gpmp2::SelfCollisionArm(
             key_pos, arm_model, self_collision_data));
         factor_keys.push_back("SelfCollisionFactor");
@@ -332,12 +363,6 @@ std::pair<std::vector<gtsam::Vector>, std::vector<gtsam::Vector>> OptimizeTrajec
     
     // Calculate number of interpolation points between each pair of waypoints
     size_t inter_step = static_cast<size_t>(delta_t / target_dt) - 1;
-    
-    // std::cout << "Densifying trajectory to" << target_dt <<"s interval:" << std::endl;
-    // std::cout << "Original delta_t: " << delta_t << " seconds" << std::endl;
-    // std::cout << "Target delta_t: " << target_dt << " seconds" << std::endl;
-    // std::cout << "Interpolation points between waypoints: " << inter_step << std::endl;
-    // std::cout << "Total dense points: " << total_dense_points << std::endl;
     
     // Find the maximum waypoint index in the optimized values
     size_t max_waypoint_idx = 0;
