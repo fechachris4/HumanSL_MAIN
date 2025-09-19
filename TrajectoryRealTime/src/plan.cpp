@@ -769,7 +769,8 @@ void Gen3Arm::plan_task(JointTrajectory& trajectory,
                     const int control_frequency,
                     bool target_pose_only,
                     double y_pos_tolerance,
-                    double y_rot_tolerance) {
+                    double y_rot_tolerance,
+                    double z_rot_tolerance) {
     
     std::unique_ptr<gpmp2::ArmModel> arm_model = createArmModel(base_pose, dh_params_);
     arm_model_logs  = *arm_model;
@@ -840,13 +841,13 @@ void Gen3Arm::plan_task(JointTrajectory& trajectory,
                                 *arm_model, *sdf, init_values, pose_trajectory, 
                                 start_conf, pos_limits_, vel_limits_, 
                                 total_time_step, total_time_sec, dt, target_pose_only, 
-                                y_pos_tolerance, y_rot_tolerance);
+                                y_pos_tolerance, y_rot_tolerance, z_rot_tolerance);
         
         auto optimization_end_time = std::chrono::high_resolution_clock::now();
         auto optimization_duration = std::chrono::duration_cast<std::chrono::milliseconds>(optimization_end_time - optimization_start_time);
         total_optimization_duration += optimization_duration;
 
-        if(result.final_error < 200.0) break;
+        if(result.final_error < 100.0) break;
 
         counter++;
         best_final_error = (best_final_error > result.final_error) ? result.final_error : best_final_error;

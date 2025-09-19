@@ -3,6 +3,7 @@
 
 #define GPMP2_TIMESTEPS 10
 #define JOINT_CONTROL_FREQUENCY 500
+#define TIME_SCALE 1
 
 bool plan_action(
     int trigger_id,
@@ -77,9 +78,9 @@ bool plan_action(
         switch(trigger_id){
             case 1: // Right arm engages pipe
             {
-                double approach_offset_y = 0.34;
+                double approach_offset_y = 0.37;
                 double approach_offset_z = 0.1;
-                double approach_time_sec = 3.0;
+                double approach_time_sec = 3.0 * TIME_SCALE;
 
                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, true, left_base_frame_snapshot, q_cur_left_snapshot);
                 right_arm.plan_joint(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, 
@@ -122,14 +123,14 @@ bool plan_action(
 
             case 3: // Right arm moves pipe task space controlled
             {
-                double move_time_sec = 4;
-                double move_time_step = 10;
+                double move_time_sec = 5.0 * TIME_SCALE;
+                double move_time_step = 5;
                 double intermediate_point_percentage = 0.35;
                 double intermediate_point_height = 0.25;
 
                 double move_offset_from_base_y = 0.45; // position the gripper furter behind human
-                double move_offset_from_head_x = 0.32; // positive means moving the end pose towards human left
-                double move_offset_from_head_z = 0.25;
+                double move_offset_from_head_x = 0.22; // positive means moving the end pose towards human left
+                double move_offset_from_head_z = 0.32;
 
                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
                 q_cur_right_snapshot = std_vec1;
@@ -165,7 +166,7 @@ bool plan_action(
             {
                 double approach_offset_y = 0.27;
                 double approach_offset_z = 0.15;
-                double approach_time_sec = 4.0;
+                double approach_time_sec = 4.0 * TIME_SCALE;
 
                 gtsam::Pose3 right_ee_pose = right_arm.forward_kinematics(right_base_frame_snapshot, q_cur_right_snapshot); 
 
@@ -240,7 +241,7 @@ bool plan_action(
 
                 gtsam::Pose3 start_pose = left_arm.forward_kinematics(left_base_frame_snapshot,q_cur_left_snapshot);
                 gtsam::Pose3 target_pose = left_arm.installtion_pose(target_info, start_pose);
-                double move_time_sec = 4.0; 
+                double move_time_sec = 4.0 * TIME_SCALE; 
                 int move_time_step = 3;
                 double intermediate_point_height = 0.01;
                 double intermediate_point_percentage = 0.5;
@@ -267,8 +268,8 @@ bool plan_action(
                      intermediate_point_percentage,
                      intermediate_point_height,
                      JOINT_CONTROL_FREQUENCY,
-                     true,
-                     0.1, 0.5);
+                     false,
+                     0.1, 0.08, 0.05);
 
 
                 // void plan_task(JointTrajectory& trajectory, 
@@ -603,7 +604,7 @@ bool plan_action_mirror(
             {
                 double approach_offset_y = 0.34;
                 double approach_offset_z = 0.1;
-                double approach_time_sec = 4.0;
+                double approach_time_sec = 4.0 * TIME_SCALE;
 
                 right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, true, left_base_frame_snapshot, q_cur_left_snapshot);
                 right_arm.plan_joint(right_new_joint_trajectory, q_init_right, right_base_frame_snapshot, 
@@ -613,8 +614,16 @@ bool plan_action_mirror(
 
                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_1");
+                {
+                    left_new_joint_trajectory.pos.clear();
+                    left_new_joint_trajectory.vel.clear();
+                    left_new_joint_trajectory.acc.clear();
 
-                left_new_joint_trajectory = left_joint_trajectory;
+                    std::lock_guard<std::mutex> lock(trajectory_mutex);
+                    left_new_joint_trajectory.pos.push_back(left_joint_trajectory.pos.back());
+                    left_new_joint_trajectory.vel.push_back(left_joint_trajectory.vel.back());
+                    left_new_joint_trajectory.acc.push_back(left_joint_trajectory.acc.back());
+                }
                 mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
 
                 std::cout << "tube pose: ";
@@ -645,7 +654,17 @@ bool plan_action_mirror(
                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);
                 saveTrajectoryResultToYAML(right_arm.result_logs,"plan_2");
 
-                left_new_joint_trajectory = left_joint_trajectory;
+                {
+                    left_new_joint_trajectory.pos.clear();
+                    left_new_joint_trajectory.vel.clear();
+                    left_new_joint_trajectory.acc.clear();
+                    
+                    std::lock_guard<std::mutex> lock(trajectory_mutex);
+                    left_new_joint_trajectory.pos.push_back(left_joint_trajectory.pos.back());
+                    left_new_joint_trajectory.vel.push_back(left_joint_trajectory.vel.back());
+                    left_new_joint_trajectory.acc.push_back(left_joint_trajectory.acc.back());
+                }
+
                 mirror_trajectory(right_new_joint_trajectory, left_new_joint_trajectory);
 
                 right_arm_in_motion = true;
@@ -656,14 +675,14 @@ bool plan_action_mirror(
 
             case 3: // Right arm moves pipe task space controlled
             {
-                double move_time_sec = 4;
-                double move_time_step = 10;
+                double move_time_sec = 4.0 * TIME_SCALE;
+                double move_time_step = 5;
                 double intermediate_point_percentage = 0.35;
                 double intermediate_point_height = 0.25;
 
                 double move_offset_from_base_y = 0.45; // position the gripper furter behind human
-                double move_offset_from_head_x = 0.32; // positive means moving the end pose towards human left
-                double move_offset_from_head_z = 0.22;
+                double move_offset_from_head_x = 0.22; // positive means moving the end pose towards human left
+                double move_offset_from_head_z = 0.32;
 
                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
                 q_cur_right_snapshot = std_vec1;
@@ -685,7 +704,7 @@ bool plan_action_mirror(
                 right_arm.plan_task(right_new_joint_trajectory, start_pose, target_pose, 
                                     right_base_frame_snapshot, q_cur_right_snapshot, 
                                     move_time_sec, move_time_step, intermediate_point_percentage, 
-                                    intermediate_point_height, JOINT_CONTROL_FREQUENCY, false, 0.1, 0.01);
+                                    intermediate_point_height, JOINT_CONTROL_FREQUENCY, false, 0.1, 0.1);
 
                 std::vector<double> final_right(right_new_joint_trajectory.pos.back().data(), 
                                                 right_new_joint_trajectory.pos.back().data() + 
@@ -700,7 +719,19 @@ bool plan_action_mirror(
                 gtsam::Pose3 right_ee_pose = right_arm.forward_kinematics(right_base_frame_snapshot, final_right); 
 
                 tube_info_snapshot.centroid = right_ee_pose.translation();
-                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, right_base_frame_snapshot, final_right);
+                // tube_info_snapshot.centroid[0] += 0.02;
+
+                // Set tube direction to point along the y-axis of the right end-effector frame
+                gtsam::Matrix3 right_ee_rotation = right_ee_pose.rotation().matrix();
+                tube_info_snapshot.direction = Eigen::Vector3d(right_ee_rotation(0, 1), 
+                                                               right_ee_rotation(1, 1), 
+                                                               right_ee_rotation(2, 1));
+
+                if(tube_info_snapshot.direction.y() < 0){
+                    tube_info_snapshot.direction = -tube_info_snapshot.direction;
+                }
+
+                left_arm.make_sdf(tube_info_snapshot, human_info_snapshot, true, right_base_frame_snapshot, final_right);
 
                 std::vector<double> std_vec4(left_joint_trajectory.pos.back().data(), left_joint_trajectory.pos.back().data() + left_joint_trajectory.pos.back().size());
                 q_cur_left_snapshot = std_vec4;
@@ -759,7 +790,7 @@ bool plan_action_mirror(
 
                 gtsam::Pose3 start_pose = left_arm.forward_kinematics(left_base_frame_snapshot,q_cur_left_snapshot);
                 gtsam::Pose3 target_pose = left_arm.installtion_pose(target_info_snapshot, start_pose);
-                double move_time_sec = 4.0; 
+                double move_time_sec = 4.0 * TIME_SCALE; 
                 int move_time_step = 3;
                 double intermediate_point_height = 0.05;
                 double intermediate_point_percentage = 0.5;
@@ -792,7 +823,7 @@ bool plan_action_mirror(
                      intermediate_point_height,
                      JOINT_CONTROL_FREQUENCY,
                      false,
-                     0.1, 0.5);
+                     0.1, 0.1);
 
                 visualizeTrajectory(left_new_joint_trajectory.pos, left_arm.arm_model_logs, left_arm.dataset_logs, left_base_frame_snapshot);
                 saveTrajectoryResultToYAML(left_arm.result_logs,"plan_8");
@@ -1096,6 +1127,7 @@ bool plan_action_mirror(
 void state_transition(
     std::atomic<int>& state_idx, 
     std::atomic<int>& prev_state_idx,
+    std::atomic<int>& sub_action_idx, 
     std::shared_mutex& vicon_data_mutex,
     std::shared_mutex& joint_data_mutex,
     std::atomic<bool>& replan_triggered,
@@ -1146,6 +1178,8 @@ void state_transition(
                         left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
             }
 
+            sub_action_idx.store(phase_idx);
+
             if( i == 1 && !mirror){
                 replan_thread =std::thread([&]() {
                 right_arm.replan(
@@ -1161,8 +1195,10 @@ void state_transition(
 
             while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
 
+            sub_action_idx.store(0);
+
             if(i == 2){
-                move_gripper(right_base_cyclic, 55);
+                move_gripper(right_base_cyclic, 50);
             }
 
             if( i == 3){
@@ -1189,6 +1225,9 @@ void state_transition(
                         left_joint_trajectory, right_joint_trajectory, left_execution_ongoing_flag, right_execution_ongoing_flag, left_chicken_flag, right_chicken_flag, trajectory_mutex);
             }
 
+            if(phase_idx <7) {sub_action_idx.store(phase_idx);}
+            else if (phase_idx == 8){sub_action_idx.store(7);}
+
             if( i == 4 && !mirror){
 
                 replan_thread =std::thread([&]() {
@@ -1204,6 +1243,8 @@ void state_transition(
             }
 
             while(left_execution_ongoing_flag.load() || right_execution_ongoing_flag.load()){std::this_thread::sleep_for(std::chrono::milliseconds(10));}
+            
+            sub_action_idx.store(0);
 
             if(i ==5){
                 move_gripper(right_base_cyclic, 0);
@@ -1320,8 +1361,100 @@ void state_transition(
 }
 
 
+void gaussianifyTrajectory(JointTrajectory& trajectory, int control_frequency, double duration) {
+    if (trajectory.pos.empty() || trajectory.pos.size() < 2) {
+        std::cout << "Warning: Trajectory too short to smooth\n";
+        return;
+    }
+    
+    // Calculate number of points to add
+    int num_points_to_add = static_cast<int>((duration / 2.0) * control_frequency);
+    
+    if (num_points_to_add <= 0) {
+        std::cout << "Warning: Invalid duration for smoothing\n";
+        return;
+    }
+    
+    int num_joints = trajectory.pos.front().size();
+    double dt = 1.0 / control_frequency;
+    double ramp_duration = duration / 2.0;
+    
+    // Get current start position
+    Eigen::VectorXd start_pos = trajectory.pos.front();
+    
+    // Add smooth ramp at the beginning
+    for (int i = num_points_to_add - 1; i >= 0; --i) {
+        double t = i * dt;
+        double normalized_t = t / ramp_duration; // [0, 1], where 0 is the very start
+        
+        // Use smooth cubic curve (3t^2 - 2t^3) for position scaling
+        double scale = 3.0 * normalized_t * normalized_t - 2.0 * normalized_t * normalized_t * normalized_t;
+        
+        // Position: smoothly approach the original start position
+        Eigen::VectorXd pos = start_pos - scale * (trajectory.pos[1] - start_pos) * 0.5;
+        
+        // Velocity: use smooth quintic curve for velocity ramp
+        double vel_scale = 10.0 * std::pow(normalized_t, 3) - 15.0 * std::pow(normalized_t, 4) + 6.0 * std::pow(normalized_t, 5);
+        Eigen::VectorXd vel = Eigen::VectorXd::Zero(num_joints);
+        if (!trajectory.vel.empty() && trajectory.vel.size() > 0) {
+            vel = trajectory.vel.front() * vel_scale;
+        }
+        
+        // Acceleration: derivative of velocity scaling
+        double acc_scale = (30.0 * normalized_t * normalized_t - 60.0 * std::pow(normalized_t, 3) + 30.0 * std::pow(normalized_t, 4)) / ramp_duration;
+        Eigen::VectorXd acc = Eigen::VectorXd::Zero(num_joints);
+        if (!trajectory.vel.empty() && trajectory.vel.size() > 0) {
+            acc = trajectory.vel.front() * acc_scale;
+        }
+        
+        // Add to front of trajectory
+        trajectory.pos.push_front(pos);
+        trajectory.vel.push_front(vel);
+        trajectory.acc.push_front(acc);
+    }
+    
+    // Get current end position
+    Eigen::VectorXd end_pos = trajectory.pos.back();
+    Eigen::VectorXd last_vel = trajectory.vel.empty() ? Eigen::VectorXd::Zero(num_joints) : trajectory.vel.back();
+    
+    // Add smooth ramp at the end
+    for (int i = 1; i <= num_points_to_add; ++i) {
+        double t = i * dt;
+        double normalized_t = t / ramp_duration; // [0, 1], where 1 is the very end
+        
+        // Use smooth cubic curve for position scaling
+        double scale = 3.0 * normalized_t * normalized_t - 2.0 * normalized_t * normalized_t * normalized_t;
+        
+        // Position: smoothly extend beyond the original end position
+        Eigen::VectorXd pos = end_pos + scale * (end_pos - trajectory.pos[trajectory.pos.size() - 2]) * 0.5;
+        
+        // Velocity: use inverted smooth quintic curve for velocity ramp down
+        double vel_scale = 1.0 - (10.0 * std::pow(normalized_t, 3) - 15.0 * std::pow(normalized_t, 4) + 6.0 * std::pow(normalized_t, 5));
+        Eigen::VectorXd vel = last_vel * vel_scale;
+        
+        // Acceleration: derivative of velocity scaling (negative for deceleration)
+        double acc_scale = -(30.0 * normalized_t * normalized_t - 60.0 * std::pow(normalized_t, 3) + 30.0 * std::pow(normalized_t, 4)) / ramp_duration;
+        Eigen::VectorXd acc = last_vel * acc_scale;
+        
+        // Add to back of trajectory
+        trajectory.pos.push_back(pos);
+        trajectory.vel.push_back(vel);
+        trajectory.acc.push_back(acc);
+    }
+    
+    std::cout << "Smoothed trajectory: added " << num_points_to_add 
+              << " points to start and " << num_points_to_add 
+              << " points to end (new size: " << trajectory.pos.size() << ")\n";
+}
+
 void mirror_trajectory(JointTrajectory& original_trajectory, JointTrajectory& mirrored_trajectory, bool target_only){
     if(original_trajectory.pos.empty() || mirrored_trajectory.pos.empty()) {
+        if(original_trajectory.pos.empty()){
+            std::cout << "\n\n\nORIGINAL TRAJECTORY EMPTY!!\n\n\n";
+        }
+        if(mirrored_trajectory.pos.empty()){
+            std::cout << "\n\n\nMIRRORED TRAJECTORY EMPTY!!\n\n\n";
+        }
         return;
     }
 

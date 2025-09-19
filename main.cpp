@@ -218,7 +218,7 @@ int main(){
     // Thread-safe state idx
     std::atomic<int> state_idx{0};
     std::atomic<int> prev_state_idx{0};
-
+    std::atomic<int> sub_action_idx{0};
 
     std::atomic<bool> left_admittance{false};
     std::atomic<bool> right_admittance{false};
@@ -248,9 +248,13 @@ int main(){
 
     std::vector<double> q_cur_right(7);
     std::vector<double> q_cur_left(7);
+    std::vector<double> dq_cur_right(7);
+    std::vector<double> dq_cur_left(7);
     std::vector<double> u_cur_left(7);
     std::vector<double> u_cur_right(7);
-    
+
+    std::vector<double> fplate_left(3);
+    std::vector<double> fplate_right(3);
 
     gtsam::Pose3 left_base_frame_snapshot; 
     gtsam::Pose3 right_base_frame_snapshot;
@@ -343,11 +347,9 @@ int main(){
                 continue;
             }
             
-            updateViconInfo(vicon, left_base_frame, right_base_frame, tube_info, human_info, target_info, q_cur_left, q_cur_right, lfin_info, rfin_info, head_info, dh_params, vicon_data_mutex, joint_data_mutex);
-            updateJointInfo(right_base_cyclic_monitor, q_cur_right, u_cur_right, joint_data_mutex);
-            updateJointInfo(left_base_cyclic_monitor, q_cur_left, u_cur_left, joint_data_mutex);
-
-
+            updateJointInfo(right_base_cyclic_monitor, q_cur_right, dq_cur_right, u_cur_right, joint_data_mutex);
+            updateJointInfo(left_base_cyclic_monitor, q_cur_left, dq_cur_left, u_cur_left, joint_data_mutex);
+            updateViconInfo(vicon, left_base_frame, right_base_frame, tube_info, human_info, target_info, q_cur_left, q_cur_right, lfin_info, rfin_info, head_info, fplate_left, fplate_right, dh_params, vicon_data_mutex, joint_data_mutex);
         }
     });
 
@@ -419,6 +421,8 @@ int main(){
         for(int i = 0; i < 7; i++) csv_file << "q_cur_right_" << i << ",";
         for(int i = 0; i < 7; i++) csv_file << "q_target_left_" << i << ",";
         for(int i = 0; i < 7; i++) csv_file << "q_target_right_" << i << ",";
+        for(int i = 0; i < 7; i++) csv_file << "dq_cur_left_" << i << ",";
+        for(int i = 0; i < 7; i++) csv_file << "dq_cur_right_" << i << ",";
         for(int i = 0; i < 7; i++) csv_file << "u_cur_left_" << i << ",";
         for(int i = 0; i < 7; i++) csv_file << "u_cur_right_" << i << ",";
         // Pose3 headers
@@ -431,6 +435,10 @@ int main(){
         csv_file << "human_RHIP_x,human_RHIP_y,human_RHIP_z,human_LHIP_x,human_LHIP_y,human_LHIP_z,";
         csv_file << "human_CLAV_x,human_CLAV_y,human_CLAV_z,human_STRN_x,human_STRN_y,human_STRN_z,";
         csv_file << "human_HEAD_x,human_HEAD_y,human_HEAD_z,";
+
+        csv_file << "left_fplate_x,left_fplate_y,left_fplate_z,";
+        csv_file << "right_fplate_x,right_fplate_y,right_fplate_z,";
+
         // Individual marker headers
         csv_file << "right_base1_x,right_base1_y,right_base1_z,right_base2_x,right_base2_y,right_base2_z,right_base3_x,right_base3_y,right_base3_z,";
         csv_file << "left_base1_x,left_base1_y,left_base1_z,left_base2_x,left_base2_y,left_base2_z,left_base3_x,left_base3_y,left_base3_z,";
@@ -440,7 +448,7 @@ int main(){
         csv_file << "tube_end1_x,tube_end1_y,tube_end1_z,tube_end2_x,tube_end2_y,tube_end2_z,tube_end3_x,tube_end3_y,tube_end3_z,";
         csv_file << "tube_mid1_x,tube_mid1_y,tube_mid1_z,tube_mid2_x,tube_mid2_y,tube_mid2_z,tube_mid3_x,tube_mid3_y,tube_mid3_z,";
         // Head and target headers
-        csv_file << "target_x,target_y,target_z,state_idx" << std::endl;
+        csv_file << "target_x,target_y,target_z,state_idx,sub_action_idx" << std::endl;
 
         while (true) {
             
@@ -468,6 +476,8 @@ int main(){
             gtsam::Point3 target_info_snapshot;
             std::vector<double> q_cur_left_snapshot;
             std::vector<double> q_cur_right_snapshot;
+            std::vector<double> dq_cur_left_snapshot;
+            std::vector<double> dq_cur_right_snapshot;
             std::vector<double> u_cur_left_snapshot;
             std::vector<double> u_cur_right_snapshot;
             
@@ -481,6 +491,10 @@ int main(){
             std::vector<MarkerData> tube_mid_snapshot;
             std::vector<MarkerData> human_markers_snapshot;
             std::vector<MarkerData> target_markers_snapshot;
+
+            std::vector<double> fplate_left_snapshot;
+            std::vector<double> fplate_right_snapshot;
+
         
             {
                 std::shared_lock<std::shared_mutex> vicon_lock(vicon_data_mutex);
@@ -492,6 +506,8 @@ int main(){
                 head_info_snapshot = head_info;
                 lfin_info_snapshot = lfin_info;
                 rfin_info_snapshot = rfin_info;
+                fplate_left_snapshot = fplate_left;
+                fplate_right_snapshot = fplate_right;
                 
                 // Helper function to safely get marker data
                 auto safeGetMarker = [&vicon](const std::string& name) -> MarkerData {
@@ -567,6 +583,8 @@ int main(){
                 std::shared_lock<std::shared_mutex> joint_lock(joint_data_mutex);
                 q_cur_left_snapshot = shiftAngle(q_cur_left);
                 q_cur_right_snapshot = shiftAngle(q_cur_right);
+                dq_cur_left_snapshot = dq_cur_left;
+                dq_cur_right_snapshot = dq_cur_right;
                 u_cur_left_snapshot = u_cur_left;
                 u_cur_right_snapshot = u_cur_right;
             }
@@ -599,6 +617,9 @@ int main(){
                     csv_file << "0.0,";
                 }
             }
+
+            for(int i = 0; i < 7; i++) csv_file << dq_cur_left_snapshot[i] << ",";
+            for(int i = 0; i < 7; i++) csv_file << dq_cur_right_snapshot[i] << ",";
             
             // Joint control input data
             for(int i = 0; i < 7; i++) csv_file << u_cur_left_snapshot[i] << ",";
@@ -628,6 +649,9 @@ int main(){
                      << human_info_snapshot.CLAV.x() << "," << human_info_snapshot.CLAV.y() << "," << human_info_snapshot.CLAV.z() << ","
                      << human_info_snapshot.STRN.x() << "," << human_info_snapshot.STRN.y() << "," << human_info_snapshot.STRN.z() << ","
                      << head_info_snapshot.x() << "," << head_info_snapshot.y() << "," << head_info_snapshot.z() << ",";
+
+            csv_file << fplate_left_snapshot[0] << "," << fplate_left_snapshot[1] << "," << fplate_left_snapshot[2] << ","
+                     << fplate_right_snapshot[0] << "," << fplate_right_snapshot[1]  << "," << fplate_right_snapshot[2]  << ",";
             
             // Individual marker data - right base
             for(const auto& marker : right_base_data_snapshot) {
@@ -660,7 +684,7 @@ int main(){
             
             // target data
             csv_file << target_info_snapshot.x() << "," << target_info_snapshot.y() << "," << target_info_snapshot.z() << ","
-                     << state_idx.load() << std::endl;
+                     << state_idx.load() << "," << sub_action_idx.load() << std::endl;
             
             csv_file.flush();
 
@@ -744,20 +768,21 @@ int main(){
         
     // });
 
-    // std::thread manual_toggle2;
-    // manual_toggle2 = std::thread([&]() {
+    std::thread manual_toggle2;
+    manual_toggle2 = std::thread([&]() {
 
-    //     while(prev_state_idx.load() != 1);
-    //     std::this_thread::sleep_for(std::chrono::milliseconds(3000)); 
-    //     state_idx.store(2);
+        while(prev_state_idx.load() != 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000)); 
+        state_idx.store(2);
         
-    // });
+    });
 
 
     while(prev_state_idx.load() != 2){
         state_transition(
             std::ref(state_idx), 
             std::ref(prev_state_idx),
+            std::ref(sub_action_idx),
             std::ref(vicon_data_mutex),
             std::ref(joint_data_mutex),
             std::ref(replan_triggered),
@@ -787,7 +812,7 @@ int main(){
             std::ref(left_admittance),
             std::ref(right_admittance),
             std::ref(trajectory_mutex),
-            false
+            true
         );
 
         std::this_thread::sleep_for(std::chrono::milliseconds(10)); 
@@ -805,6 +830,7 @@ int main(){
         state_transition(
             std::ref(state_idx), 
             std::ref(prev_state_idx),
+            std::ref(sub_action_idx),
             std::ref(vicon_data_mutex),
             std::ref(joint_data_mutex),
             std::ref(replan_triggered),

@@ -65,6 +65,8 @@ public:
     
     // Performance monitoring
     double getFrameRate() const;
+
+    void getForcePlateVector(std::vector<double>& fplate_left, std::vector<double>& fplate_right);
     
 };
 

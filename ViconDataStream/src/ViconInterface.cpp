@@ -32,6 +32,7 @@ bool ViconInterface::connect(const std::string& hostname) {
     if (connected_) {
         client_->EnableMarkerData();
         client_->EnableUnlabeledMarkerData();
+        client_->EnableDeviceData();
     }
     
     // Wait for first frame
@@ -181,3 +182,22 @@ std::vector<UnlabeledMarkerData> ViconInterface::getUnlabeledMarkers() {
 }
 
 
+void ViconInterface::getForcePlateVector(std::vector<double>& fplate_left, std::vector<double>& fplate_right) {
+    // auto fp_count = client_->GetForcePlateCount().ForcePlateCount;
+    // std::cout << "force plate coutns: " << fp_count <<"\n";
+
+    auto force1 = client_->GetGlobalForceVector(0);
+    auto force2 = client_->GetGlobalForceVector(1);
+
+    fplate_left[0] = force2.ForceVector[0];
+    fplate_left[1] = force2.ForceVector[1];
+    fplate_left[2] = force2.ForceVector[2];
+
+    fplate_right[0] = force1.ForceVector[0];
+    fplate_right[1] = force1.ForceVector[1];
+    fplate_right[2] = force1.ForceVector[2];
+
+    // std::cout << "force vector 1: " << force1.ForceVector[0] << ", " << force1.ForceVector[1] << ", " << force1.ForceVector[2] <<"\n";
+    //     std::cout << "force vector 2: " << force2.ForceVector[0] << ", " << force2.ForceVector[1] << ", " << force2.ForceVector[2] <<"\n";
+
+}

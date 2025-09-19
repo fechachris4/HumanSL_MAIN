@@ -100,7 +100,7 @@ tuple<VectorXd, MatrixXd> Fwd_kinematics::forward(const VectorXd& q) {
 
     T_7end << 1, 0, 0, 0,
             0, -1, 0, 0,
-            0, 0, -1, -0.1815, //-0.067, <- original but we added 14mm offset to get to where grasp site is
+            0, 0, -1, -0.1515, //-0.067, <- original but we added 14cm offset to get to where grasp site is
             0, 0, 0, 1;
 
     // Compute the forward kinematics

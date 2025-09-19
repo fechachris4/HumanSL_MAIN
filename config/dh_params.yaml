@@ -49,5 +49,5 @@ dh_parameters:
     joint_type: "continuous"
     a: 0.0
     alpha: 3.141592653589793
-    d: -0.2474   # -0.1674 - 0.14 (original d for kinova + offset to gripper grasp site) 
+    d: -0.2574   # -0.1674 - 0.14 (original d for kinova + offset to gripper grasp site) 
     theta_offset: 3.141592653589793

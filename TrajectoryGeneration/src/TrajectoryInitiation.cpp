@@ -52,13 +52,13 @@ bool InitializeTrajectory::solveQuik(const gtsam::Pose3& target_pose,
     // Define manipulator (same as in quik_solveIK.h)
     auto Kinova_Gen3 = std::make_shared<quik::Robot<7>>(
         (Eigen::Matrix<double, 7, 4>() << 
-            0.0,      -M_PI/2,   0.2848,      0,
+            0.0,       M_PI/2,  -0.2848,      0,
             0.0,       M_PI/2,  -0.0118,      M_PI,
             0.0,       M_PI/2,  -0.4208,      M_PI,
             0.0,       M_PI/2,  -0.0128,      M_PI,
             0.0,       M_PI/2,  -0.3143,      M_PI,
             0.0,       M_PI/2,   0.0,         M_PI,
-            0.0,       M_PI,    -0.3074,      M_PI).finished(),
+            0.0,       M_PI,    -0.2574,      M_PI).finished(),
                         
         (Eigen::Vector<quik::JOINTTYPE_t,7>() << 
             quik::JOINT_REVOLUTE, quik::JOINT_REVOLUTE, quik::JOINT_REVOLUTE, 
@@ -80,9 +80,9 @@ bool InitializeTrajectory::solveQuik(const gtsam::Pose3& target_pose,
         0.05, // improvement tolerance
         10, // max consecutive grad fails
         80, // max grad fails
-        1e-10, // lambda2
+        0, // lambda2
         0.34, // max linear error step
-        1 // max angular error step
+        0.1 // max angular error step
     );
 
     Eigen::Matrix4d target_transform = target_pose.matrix();
@@ -95,10 +95,13 @@ bool InitializeTrajectory::solveQuik(const gtsam::Pose3& target_pose,
     for(int i = 0; i < 7; i++) {
                 Q0_init(i) = seed_config(i);
             }
+
+    Eigen::Vector<double,7> Q_star;
+    Eigen::Vector<double,6> e_star;
     
     for(int attempt = 0; attempt < max_attempts; attempt++) {
         Eigen::Vector<double,7> Q0;
-        try {
+    
             if(attempt == 0) {
                 // First attempt: use provided seed
                 for(int i = 0; i < 7; i++) {
@@ -109,34 +112,36 @@ bool InitializeTrajectory::solveQuik(const gtsam::Pose3& target_pose,
                 Q0 = generateRandomInitialGuess();
             }
             
-            Eigen::Vector<double,7> Q_star;
-            Eigen::Vector<double,6> e_star;
             int iter;
             quik::BREAKREASON_t breakReason;
             
             IKS.IK(target_transform, Q0, Q_star, e_star, iter, breakReason);
             
             wrapAngles(Q_star,Q0_init);
-            double quality = computeSolutionQuality(e_star, Q_star, Q0_init);
+            // double quality = computeSolutionQuality(e_star, Q_star, Q0_init);
             
-            if(quality < best_quality) {
-                best_quality = quality;
+            // if(quality < best_quality) {
+            //     best_quality = quality;
                 best_solution = Q_star;
                 
                 if(isWithinJointLimits(Q_star) && breakReason == quik::BREAKREASON_TOLERANCE) {
                     found_valid_solution = true;
                     break;
                 }
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "IK error: " << e.what() << std::endl;
-        }
-
+            // }
+  
     }
+
+    Eigen::Matrix4d T_star;
+
+    Kinova_Gen3->FKn(Q_star, T_star);
+
+    std::cout << "Optimal FK: \n" << T_star <<"\n";
+    std::cout << "Target FK:  \n" << target_transform << "\n";
     
     std::cout << "found_valid: " << found_valid_solution << "  best quality: " << best_quality << "\n";
     // Convert result to gtsam::Vector
-    if(found_valid_solution || best_quality < 1e-1) { // Accept "good enough" solutions
+    if(found_valid_solution) { // Accept "good enough" solutions
         result_config = gtsam::Vector(7);
         for(int i = 0; i < 7; i++) {
             result_config(i) = best_solution(i);
@@ -312,7 +317,7 @@ gtsam::Values InitializeTrajectory::initJointTrajectoryFromVicon(
         double y_compensation = 0.0;
         if(tune_pose){
             if(j == 0) y_compensation = 0.0;
-            else y_compensation = (rand() % 9) / 100.0;
+            else y_compensation = (rand() % 5) / 100.0;
         }
 
         // Calculate modified tube point
@@ -616,112 +621,121 @@ InitializeTrajectory::initTaskSpaceTrajectory(const gtsam::Pose3& start_pose,
     gtsam::Vector3 end_rpy = end_pose.rotation().rpy();
     
     // Add random variability to rotation around y-axis (pitch)
-    end_rpy(1) += ((rand() %10) - 5) * M_PI / 180.0;  // Add random rotation ±15 degrees
-    
-    // Calculate the middle point for position spline
-    gtsam::Vector3 line_point = start_pos + percentage * (end_pos - start_pos);
-    gtsam::Vector3 middle_point = line_point;
 
-    middle_point.z() += (rand() % 5)/100 + height;  // Add height offset in z-direction
+    for(int h = 0; h < 12; h++){
 
-    double end_pos_y_offset = (rand() % 15)/100 - 0.07;
-    
-    // Create cubic spline coefficients for each dimension (x, y, z)
-    // Using natural cubic spline through 3 points: t = [0, 0.5, 1]
-    // Control points: [start_pos, middle_point, end_pos]
-    
-    auto computeCubicSplineCoeffs = [](double p0, double p1, double p2) -> std::array<double, 4> {
-        // For natural cubic spline through 3 points at t = [0, 0.5, 1]
-        // Solving the system with natural boundary conditions (second derivative = 0 at ends)
-        double a = p0;
-        double b = -3.0 * p0 + 4.0 * p1 - p2;
-        double c = 2.0 * p0 - 4.0 * p1 + 2.0 * p2;
-        double d = 0.0;  // Natural boundary condition
-        return {a, b, c, d};
-    };
-    
-    // Get coefficients for each dimension
-    auto coeffs_x = computeCubicSplineCoeffs(start_pos.x(), middle_point.x(), end_pos.x());
-    auto coeffs_y = computeCubicSplineCoeffs(start_pos.y(), middle_point.y(), end_pos.y() + end_pos_y_offset);
-    auto coeffs_z = computeCubicSplineCoeffs(start_pos.z(), middle_point.z(), end_pos.z());
-    
-    // Helper functions for angular interpolation
-    auto normalizeAngle = [](double angle) {
-        while (angle > M_PI) angle -= 2.0 * M_PI;
-        while (angle < -M_PI) angle += 2.0 * M_PI;
-        return angle;
-    };
-    
-    auto angularDifference = [&normalizeAngle](double end_angle, double start_angle) {
-        return normalizeAngle(end_angle - start_angle);
-    };
-    
-    // Pre-compute angular differences for RPY (handles wrapping)
-    double roll_diff = angularDifference(end_rpy.x(), start_rpy.x());
-    double pitch_diff = angularDifference(end_rpy.y(), start_rpy.y());
-    double yaw_diff = angularDifference(end_rpy.z(), start_rpy.z());
-    
-    // Generate interpolated trajectory
-    for (int i = 0; i <= num_points; ++i) {
-        double t = static_cast<double>(i) / (num_points);  // Parameter from 0 to 1
-        
-        // Calculate position using cubic spline
-        gtsam::Vector3 position;
-        if (i == 0) {
-            position.x() = coeffs_x[0]; // t=0, so only the constant term
-            position.y() = coeffs_y[0];
-            position.z() = coeffs_z[0];
-        } else {
-            // Cubic spline interpolation for position (x, y, z)
-            position.x() = coeffs_x[0] + coeffs_x[1] * t + coeffs_x[2] * t * t + coeffs_x[3] * t * t * t;
-            position.y() = coeffs_y[0] + coeffs_y[1] * t + coeffs_y[2] * t * t + coeffs_y[3] * t * t * t;
-            position.z() = coeffs_z[0] + coeffs_z[1] * t + coeffs_z[2] * t * t + coeffs_z[3] * t * t * t;
-        }
-        
-        // Calculate orientation using linear interpolation with wrapping
-        double roll = normalizeAngle(start_rpy.x() + t * roll_diff);
-        double pitch = normalizeAngle(start_rpy.y() + t * pitch_diff);
-        double yaw = normalizeAngle(start_rpy.z() + t * yaw_diff);
-        
-        // Create rotation from RPY
-        gtsam::Rot3 rotation = gtsam::Rot3::RzRyRx(roll, pitch, yaw);
-        
-        // Create pose and add to trajectory
-        gtsam::Pose3 pose(rotation, position);
-        pose_trajectory.push_back(pose);
-    }
+        bool found = false;
 
-    std::vector<gtsam::Vector> end_confs;
-    end_confs.push_back(start_conf);
-    gtsam::Vector end_conf;
+        end_rpy(1) += ((rand() %10) - 5) * M_PI / 180.0;  // Add random rotation ±15 degrees
+        
+        // Calculate the middle point for position spline
+        gtsam::Vector3 line_point = start_pos + percentage * (end_pos - start_pos);
+        gtsam::Vector3 middle_point = line_point;
 
-    for(int i = 1; i <= num_points; i++){
-        for(int j = 0; j < 4; j++){
-            if(solveIK(pose_trajectory[i], base_pose, end_confs[i-1], end_conf, 50, 0.25)) {
-                wrapAngles(end_conf, end_confs[i-1]);
-                end_confs.push_back(end_conf);
-                break;
+        middle_point.z() += (rand() % 5)/100 + height;  // Add height offset in z-direction
+
+        double end_pos_y_offset = (rand() % 20)/100;
+        
+        // Create cubic spline coefficients for each dimension (x, y, z)
+        // Using natural cubic spline through 3 points: t = [0, 0.5, 1]
+        // Control points: [start_pos, middle_point, end_pos]
+        
+        auto computeCubicSplineCoeffs = [](double p0, double p1, double p2) -> std::array<double, 4> {
+            // For natural cubic spline through 3 points at t = [0, 0.5, 1]
+            // Solving the system with natural boundary conditions (second derivative = 0 at ends)
+            double a = p0;
+            double b = -3.0 * p0 + 4.0 * p1 - p2;
+            double c = 2.0 * p0 - 4.0 * p1 + 2.0 * p2;
+            double d = 0.0;  // Natural boundary condition
+            return {a, b, c, d};
+        };
+        
+        // Get coefficients for each dimension
+        auto coeffs_x = computeCubicSplineCoeffs(start_pos.x(), middle_point.x(), end_pos.x());
+        auto coeffs_y = computeCubicSplineCoeffs(start_pos.y(), middle_point.y(), end_pos.y() + end_pos_y_offset);
+        auto coeffs_z = computeCubicSplineCoeffs(start_pos.z(), middle_point.z(), end_pos.z());
+        
+        // Helper functions for angular interpolation
+        auto normalizeAngle = [](double angle) {
+            while (angle > M_PI) angle -= 2.0 * M_PI;
+            while (angle < -M_PI) angle += 2.0 * M_PI;
+            return angle;
+        };
+        
+        auto angularDifference = [&normalizeAngle](double end_angle, double start_angle) {
+            return normalizeAngle(end_angle - start_angle);
+        };
+        
+        // Pre-compute angular differences for RPY (handles wrapping)
+        double roll_diff = angularDifference(end_rpy.x(), start_rpy.x());
+        double pitch_diff = angularDifference(end_rpy.y(), start_rpy.y());
+        double yaw_diff = angularDifference(end_rpy.z(), start_rpy.z());
+        
+        // Generate interpolated trajectory
+        for (int i = 0; i <= num_points; ++i) {
+            double t = static_cast<double>(i) / (num_points);  // Parameter from 0 to 1
+            
+            // Calculate position using cubic spline
+            gtsam::Vector3 position;
+            if (i == 0) {
+                position.x() = coeffs_x[0]; // t=0, so only the constant term
+                position.y() = coeffs_y[0];
+                position.z() = coeffs_z[0];
+            } else {
+                // Cubic spline interpolation for position (x, y, z)
+                position.x() = coeffs_x[0] + coeffs_x[1] * t + coeffs_x[2] * t * t + coeffs_x[3] * t * t * t;
+                position.y() = coeffs_y[0] + coeffs_y[1] * t + coeffs_y[2] * t * t + coeffs_y[3] * t * t * t;
+                position.z() = coeffs_z[0] + coeffs_z[1] * t + coeffs_z[2] * t * t + coeffs_z[3] * t * t * t;
             }
-
-            if(j == 3){throw std::runtime_error("IK failed during task space initiation");}
+            
+            // Calculate orientation using linear interpolation with wrapping
+            double roll = start_rpy.x() + t * roll_diff;
+            double pitch = start_rpy.y() + t * pitch_diff;
+            double yaw = start_rpy.z() + t * yaw_diff;
+            
+            // Create rotation from RPY
+            gtsam::Rot3 rotation = gtsam::Rot3::RzRyRx(roll, pitch, yaw);
+            
+            // Create pose and add to trajectory
+            gtsam::Pose3 pose(rotation, position);
+            pose_trajectory.push_back(pose);
         }
-    }
 
+        std::vector<gtsam::Vector> end_confs;
+        end_confs.push_back(start_conf);
+        gtsam::Vector end_conf;
+
+        for(int i = 1; i <= num_points; i++){
+            for(int k = 0; k < 4; k++){
+                if(solveQuik(pose_trajectory[i], base_pose, end_confs[i-1], end_conf, 50, 0.25)) {
+                    // wrapAngles(end_conf, end_confs[i-1]);
+                    end_confs.push_back(end_conf);
+                    break;
+                }
+            }
+        }
+        
+        if(end_confs.size() >= num_points) found = true;
+        
+        if(found){
+            gtsam::Values init_values;
+
+            for (size_t i = 0; i <= num_points; i++) {
+                gtsam::Vector conf;
+            
+                conf = end_confs[i];
+
+                init_values.insert(gtsam::Symbol('x', i), conf);
+            }
+            // init vel as avg vel
+            gtsam::Vector avg_vel = gtsam::Vector::Zero(7);
+            for (size_t i = 0; i <= num_points; i++)
+                init_values.insert(gtsam::Symbol('v', i), avg_vel);
+
+            return init_values;
+
+        }
     
-    gtsam::Values init_values;
-
-    for (size_t i = 0; i <= num_points; i++) {
-        gtsam::Vector conf;
-       
-        conf = end_confs[i];
-
-        init_values.insert(gtsam::Symbol('x', i), conf);
     }
-    // init vel as avg vel
-    gtsam::Vector avg_vel = gtsam::Vector::Zero(7);
-    for (size_t i = 0; i <= num_points; i++)
-        init_values.insert(gtsam::Symbol('v', i), avg_vel);
-
-    return init_values;
 }
 

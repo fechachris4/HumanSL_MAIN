@@ -167,6 +167,9 @@ void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human, std:
     double head_z_total = 0.0;
     
     for(auto marker : human_head){
+
+        if(marker.occluded) continue;
+
         double x = marker.x/1000;
         double y = marker.y/1000;
         double z = marker.z/1000;
@@ -189,6 +192,9 @@ void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human, std:
     double lfin_z_total = 0.0;
     
     for(auto marker : human_lfin){
+
+        if(marker.occluded) continue;
+
         double x = marker.x/1000;
         double y = marker.y/1000;
         double z = marker.z/1000;
@@ -211,6 +217,9 @@ void updateHumanInfo(HumanInfo& human_info, std::vector<MarkerData>& human, std:
     double rfin_z_total = 0.0;
     
     for(auto marker : human_rfin){
+
+        if(marker.occluded) continue;
+
         double x = marker.x/1000;
         double y = marker.y/1000;
         double z = marker.z/1000;
@@ -248,7 +257,11 @@ void updateTargetInfo(gtsam::Point3& target_info, std::vector<MarkerData>& targe
 }
 
 
-void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose3& right_base, TubeInfo& tube_info, HumanInfo& human_info, gtsam::Point3& target_info, std::vector<double>& left_conf, std::vector<double>& right_conf, Eigen::Vector3d& lfin, Eigen::Vector3d& rfin, Eigen::Vector3d& head, DHParameters& dh_params, std::shared_mutex& vicon_data_mutex, std::shared_mutex& joint_data_mutex){
+void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose3& right_base, TubeInfo& tube_info, 
+                     HumanInfo& human_info, gtsam::Point3& target_info, std::vector<double>& left_conf, std::vector<double>& right_conf, 
+                     Eigen::Vector3d& lfin, Eigen::Vector3d& rfin, Eigen::Vector3d& head, 
+                     std::vector<double>& fplate_left, std::vector<double>& fplate_right, 
+                     DHParameters& dh_params, std::shared_mutex& vicon_data_mutex, std::shared_mutex& joint_data_mutex){
     
     static int counter = 0;
     static std::deque<TubeInfo> tube_info_array;
@@ -268,8 +281,15 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
     std::vector<MarkerData> right_base_data;
     std::vector<MarkerData> left_base_data;
 
+    std::vector<MarkerData> ref_base_data;
+
     std::vector<MarkerData> right_tip_data;
     std::vector<MarkerData> left_tip_data;
+
+    ref_base_data.push_back(vicon.getMarkerPosition("ref_base1"));
+    ref_base_data.push_back(vicon.getMarkerPosition("ref_base2"));
+    ref_base_data.push_back(vicon.getMarkerPosition("ref_base3"));
+    ref_base_data.push_back(vicon.getMarkerPosition("ref_base4"));
 
     right_base_data.push_back(vicon.getMarkerPosition("right_base1"));
     right_base_data.push_back(vicon.getMarkerPosition("right_base2"));
@@ -307,6 +327,8 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
     tube_mid.push_back(vicon.getMarkerPosition("tube_mid1"));
     tube_mid.push_back(vicon.getMarkerPosition("tube_mid2"));
     tube_mid.push_back(vicon.getMarkerPosition("tube_mid3"));
+    
+    vicon.getForcePlateVector(fplate_left, fplate_right);
     
     std::vector<MarkerData> human = vicon.getMarkerPositions("human");
     std::vector<MarkerData> target= vicon.getMarkerPositions("target");
@@ -846,11 +868,11 @@ void state_monitor(Eigen::Vector3d& lfin_info, Eigen::Vector3d& rfin_info, Eigen
     }
 
 
-    if(rfin_tube_distance < 0.12){  // 5cm threshold
+    if(rfin_tube_distance < 0.17){  // 5cm threshold
         rfin_on_tube = true;
     }
 
-    if(lfin_tube_distance < 0.12){
+    if(lfin_tube_distance < 0.17){
         lfin_on_tube = true;
     }
 
@@ -874,11 +896,11 @@ void state_monitor(Eigen::Vector3d& lfin_info, Eigen::Vector3d& rfin_info, Eigen
     if(rfin_on_tube && !lfin_on_tube){
         state_idx.store(1);
     }
-    if(rfin_on_tube && lfin_on_tube && tube_on_head){
-        state_idx.store(2);
-    }
-    if(!rfin_on_tube && lfin_on_tube && r_thumbs_up){
-        state_idx.store(3);
-    }
+    // if(rfin_on_tube && lfin_on_tube && tube_on_head){
+    //     state_idx.store(2);
+    // }
+    // if(!rfin_on_tube && lfin_on_tube && r_thumbs_up){
+    //     state_idx.store(3);
+    // }
 
 }

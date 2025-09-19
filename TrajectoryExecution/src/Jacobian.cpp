@@ -31,45 +31,63 @@ MatrixXd Jacobian::jaco_m(const VectorXd& q) {
 
     Eigen::MatrixXd jaco(6,7);
 
-    // Transformation matrices
-    T_B1 << cos(q(0)), -sin(q(0)), 0, 0,
-            -sin(q(0)), -cos(q(0)), 0, 0,
-            0, 0, -1, 0.1564,
+    // DH parameters from YAML file
+    // All a = 0, most alpha = pi/2, last alpha = pi
+    // theta_offset applied to theta values
+
+    // Joint 1: alpha=pi/2, d=-0.2848, theta_offset=0
+    double theta1 = q(0) + 0.0;
+    T_B1 << cos(theta1), 0, sin(theta1), 0,
+            sin(theta1), 0, -cos(theta1), 0,
+            0, 1, 0, -0.2848,
             0, 0, 0, 1;
 
-    T_12 << cos(q(1)), -sin(q(1)), 0, 0,
-            0, 0, -1, 0.0054,
-            sin(q(1)), cos(q(1)), 0, -0.1284,
+    // Joint 2: alpha=pi/2, d=-0.0118, theta_offset=pi
+    double theta2 = q(1) + M_PI;
+    T_12 << cos(theta2), 0, sin(theta2), 0,
+            sin(theta2), 0, -cos(theta2), 0,
+            0, 1, 0, -0.0118,
             0, 0, 0, 1;
 
-    T_23 << cos(q(2)), -sin(q(2)), 0, 0,
-            0, 0, 1, -0.2104,
-            -sin(q(2)), -cos(q(2)), 0, -0.0064,
+    // Joint 3: alpha=pi/2, d=-0.4208, theta_offset=pi
+    double theta3 = q(2) + M_PI;
+    T_23 << cos(theta3), 0, sin(theta3), 0,
+            sin(theta3), 0, -cos(theta3), 0,
+            0, 1, 0, -0.4208,
             0, 0, 0, 1;
 
-    T_34 << cos(q(3)), -sin(q(3)), 0, 0,
-            0, 0, -1, 0.0064,
-            sin(q(3)), cos(q(3)), 0, -0.2104,
+    // Joint 4: alpha=pi/2, d=-0.0128, theta_offset=pi
+    double theta4 = q(3) + M_PI;
+    T_34 << cos(theta4), 0, sin(theta4), 0,
+            sin(theta4), 0, -cos(theta4), 0,
+            0, 1, 0, -0.0128,
             0, 0, 0, 1;
 
-    T_45 << cos(q(4)), -sin(q(4)), 0, 0,
-            0, 0, 1, -0.2084,
-            -sin(q(4)), -cos(q(4)), 0, -0.0064,
+    // Joint 5: alpha=pi/2, d=-0.3143, theta_offset=pi
+    double theta5 = q(4) + M_PI;
+    T_45 << cos(theta5), 0, sin(theta5), 0,
+            sin(theta5), 0, -cos(theta5), 0,
+            0, 1, 0, -0.3143,
             0, 0, 0, 1;
 
-    T_56 << cos(q(5)), -sin(q(5)), 0, 0,
-            0, 0, -1, 0,
-            sin(q(5)), cos(q(5)), 0, -0.1059,
+    // Joint 6: alpha=pi/2, d=0, theta_offset=pi
+    double theta6 = q(5) + M_PI;
+    T_56 << cos(theta6), 0, sin(theta6), 0,
+            sin(theta6), 0, -cos(theta6), 0,
+            0, 1, 0, 0,
             0, 0, 0, 1;
 
-    T_67 << cos(q(6)), -sin(q(6)), 0, 0,
-            0, 0, 1, -0.1059,
-            -sin(q(6)), -cos(q(6)), 0, 0,
+    // Joint 7: alpha=pi, d=-0.2474, theta_offset=pi
+    double theta7 = q(6) + M_PI;
+    T_67 << cos(theta7), -sin(theta7), 0, 0,
+            sin(theta7), cos(theta7), 0, 0,
+            0, 0, 1, -0.1674,
             0, 0, 0, 1;
 
+    // Tool frame (if needed, otherwise identity)
     T_7Tool << 1, 0, 0, 0,
-            0, -1, 0, 0,
-            0, 0, -1, -0.1415,
+            0, 1, 0, 0,
+            0, 0, 1, 0.08,
             0, 0, 0, 1;
 
     z0 << 0, 0, 1;
@@ -99,8 +117,11 @@ MatrixXd Jacobian::jaco_m(const VectorXd& q) {
     z6_p6 = z6.cross(pE.head<3>()-p6.head<3>());
     z7_p7 = z7.cross(pE.head<3>()-p7.head<3>());
 
-    jaco << z1_p1, z2_p2, z3_p3, z4_p4, z5_p5, z6_p6, z7_p7,
-            z1,    z2,    z3,    z4,    z5,    z6,    z7;
+    // Correct Jacobian assembly:
+    // Top 3 rows are linear velocity components
+    // Bottom 3 rows are angular velocity components
+    jaco.topRows(3) << z1_p1, z2_p2, z3_p3, z4_p4, z5_p5, z6_p6, z7_p7;
+    jaco.bottomRows(3) << z1, z2, z3, z4, z5, z6, z7;
 
     return jaco;
 }

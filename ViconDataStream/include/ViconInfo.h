@@ -38,6 +38,7 @@ void updateViconInfo(ViconInterface& vicon,
                     TubeInfo& tube_info, HumanInfo& human_info, gtsam::Point3& target_info, 
                     std::vector<double>& left_conf, std::vector<double>& right_conf, 
                     Eigen::Vector3d& lfin, Eigen::Vector3d& rfin, Eigen::Vector3d& head, 
+                    std::vector<double>& fplate_left, std::vector<double>& fplate_right,
                     DHParameters& dh_params, 
                     std::shared_mutex& vicon_data_mutex, 
                     std::shared_mutex& joint_data_mutex);

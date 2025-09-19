@@ -251,6 +251,8 @@ int main(){
     std::vector<double> u_cur_left(7);
     std::vector<double> u_cur_right(7);
     
+    std::vector<double> fplate_left(3);
+    std::vector<double> fplate_right(3);
 
     gtsam::Pose3 left_base_frame_snapshot; 
     gtsam::Pose3 right_base_frame_snapshot;
@@ -343,7 +345,7 @@ int main(){
                 continue;
             }
             
-            updateViconInfo(vicon, left_base_frame, right_base_frame, tube_info, human_info, target_info, q_cur_left, q_cur_right, lfin_info, rfin_info, head_info, dh_params, vicon_data_mutex, joint_data_mutex);
+            updateViconInfo(vicon, left_base_frame, right_base_frame, tube_info, human_info, target_info, q_cur_left, q_cur_right, lfin_info, rfin_info, head_info, fplate_left, fplate_right, dh_params, vicon_data_mutex, joint_data_mutex);
             updateJointInfo(right_base_cyclic_monitor, q_cur_right, u_cur_right, joint_data_mutex);
             updateJointInfo(left_base_cyclic_monitor, q_cur_left, u_cur_left, joint_data_mutex);
 

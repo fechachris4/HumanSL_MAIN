@@ -33,6 +33,7 @@ bool plan_action(
 void state_transition(
     std::atomic<int>& state_idx, 
     std::atomic<int>& prev_state_idx,
+    std::atomic<int>& sub_action_idx, 
     std::shared_mutex& vicon_data_mutex,
     std::shared_mutex& joint_data_mutex,
     std::atomic<bool>& replan_triggered,
@@ -63,6 +64,8 @@ void state_transition(
     std::atomic<bool>& right_admittance_flag,
     std::mutex& trajectory_mutex, bool mirror);
 
+
+void gaussianifyTrajectory(JointTrajectory& trajectory, int control_frequency, double duration);
 
 void mirror_trajectory(JointTrajectory& original_trajectory, JointTrajectory& mirrored_trajectory, bool target_only = false);
 

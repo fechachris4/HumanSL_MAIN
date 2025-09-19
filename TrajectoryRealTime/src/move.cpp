@@ -1225,10 +1225,12 @@ bool chicken_head_impedance_control_single(k_api::Base::BaseClient* base, k_api:
 
 void updateJointInfo(  k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
                        std::vector<double>& q_cur, 
+                       std::vector<double>& dq_cur, 
                        std::vector<double>& u_cur,
                        std::shared_mutex& joint_mutex) {
     
     std::vector<double> joints(7);
+    std::vector<double> vel(7);
     std::vector<double> torques(7);
     
     try {
@@ -1236,6 +1238,7 @@ void updateJointInfo(  k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
         k_api::BaseCyclic::Feedback base_feedback = base_cyclic->RefreshFeedback();
         for (int i = 0; i < 7; i++) {
             joints[i] = base_feedback.actuators(i).position();
+            vel[i] = base_feedback.actuators(i).velocity();
             torques[i] = base_feedback.actuators(i).torque();
         }
 
@@ -1243,6 +1246,7 @@ void updateJointInfo(  k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
         {
             std::unique_lock<std::shared_mutex> lock(joint_mutex);
             q_cur = joints;
+            dq_cur = vel;
             u_cur = torques;
         }
         

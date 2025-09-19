@@ -63,14 +63,14 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
         
         // Joint limits
         auto pos_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.01);
+        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.2);
         graph.add(gpmp2::JointLimitFactorVector(
             key_pos, pos_limit_model, pos_limits.lower, pos_limits.upper, limit_thresh));
         factor_keys.push_back("JointPosLimits");
 
         // Velocity limits
         auto vel_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector vel_limit_thresh = gtsam::Vector::Constant(7, 0.005);
+        gtsam::Vector vel_limit_thresh = gtsam::Vector::Constant(7, 0.1);
         graph.add(gpmp2::VelocityLimitFactorVector(
             key_vel, vel_limit_model, vel_limits.upper, vel_limit_thresh));
         factor_keys.push_back("JointVelLimits");
@@ -182,7 +182,8 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     const double target_dt,
     bool target_pose_only,
     double y_pos_tolerance,
-    double y_rot_tolerance) {
+    double y_rot_tolerance,
+    double z_rot_tolerance) {
     
     std::cout << "Creating arm trajectory..." << std::endl;
     
@@ -232,14 +233,14 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
         
         // Joint limits
         auto pos_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.1);
+        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.2);
         graph.add(gpmp2::JointLimitFactorVector(
             key_pos, pos_limit_model, pos_limits.lower, pos_limits.upper, limit_thresh));
         factor_keys.push_back("JointPosLimits");
 
         // Velocity limits
         auto vel_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector vel_limit_thresh = gtsam::Vector::Constant(7, 0.005);
+        gtsam::Vector vel_limit_thresh = gtsam::Vector::Constant(7, 0.1);
         graph.add(gpmp2::VelocityLimitFactorVector(
             key_vel, vel_limit_model, vel_limits.upper, vel_limit_thresh));
         factor_keys.push_back("JointVelLimits");
@@ -283,9 +284,15 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     }
     
     gtsam::Vector6 pose_sigmas;
-    pose_sigmas << 0.01, y_rot_tolerance, 0.01,  // x, y, z position weights (y is less punished)
+    pose_sigmas << 0.01, y_rot_tolerance, z_rot_tolerance,  // x, y, z position weights (y is less punished)
                    0.01, y_pos_tolerance, 0.01;  // roll, pitch, yaw rotation weights
     auto workspace_model = gtsam::noiseModel::Diagonal::Sigmas(pose_sigmas);
+
+    gtsam::Vector6 pose_sigmas_intp;
+    pose_sigmas_intp << 0.01, y_rot_tolerance, z_rot_tolerance,  // x, y, z position weights (y is less punished)
+                   0.5, 0.5, 0.5;  // roll, pitch, yaw rotation weights
+    auto workspace_model_intp = gtsam::noiseModel::Diagonal::Sigmas(pose_sigmas_intp);
+    
     
     if(target_pose_only){
         gtsam::Symbol final_key('x', total_time_step);
@@ -296,8 +303,14 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     else{
         for(size_t i = 0; i <= total_time_step; i++){
             gtsam::Symbol key_pos('x', i);
-            graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
-                key_pos, arm_model, 6, pose_trajectory[i], workspace_model));
+            if(i < total_time_step){
+                graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
+                    key_pos, arm_model, 6, pose_trajectory[i], workspace_model_intp));
+            }
+            else{
+                graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
+                    key_pos, arm_model, 6, pose_trajectory[i], workspace_model));
+            }
             factor_keys.push_back("PoseFactor");
         }
     }

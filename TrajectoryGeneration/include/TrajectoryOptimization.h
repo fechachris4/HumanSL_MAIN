@@ -63,7 +63,8 @@ public:
         const double target_dt = 0.001,
         bool target_pose_only = false,
         double y_pos_tolerance = 0.1,
-        double y_rot_tolerance = 0.01
+        double y_rot_tolerance = 0.01,
+        double z_rot_tolerance = 0.01
     );
 
     TrajectoryResult reOptimizeJointTrajectory(
