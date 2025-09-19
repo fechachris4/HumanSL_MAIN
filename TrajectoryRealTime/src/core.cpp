@@ -649,6 +649,9 @@ bool plan_action_mirror(
                 std::vector<double> std_vec1(right_joint_trajectory.pos.back().data(), right_joint_trajectory.pos.back().data() + right_joint_trajectory.pos.back().size());
                 q_cur_right_snapshot = std_vec1;
 
+                right_arm.make_sdf(tube_info_snapshot, human_info_snapshot, false, left_base_frame_snapshot, q_cur_left_snapshot);
+
+
                 right_arm.plan_cartesian_z(right_new_joint_trajectory, q_cur_right_snapshot, right_base_frame_snapshot, tube_info_snapshot, grasp_time_sec, JOINT_CONTROL_FREQUENCY, true);
             
                 visualizeTrajectory(right_new_joint_trajectory.pos, right_arm.arm_model_logs, right_arm.dataset_logs, right_base_frame_snapshot);

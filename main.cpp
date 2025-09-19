@@ -760,22 +760,22 @@ int main(){
 
     // left_chicken_flag.store(false);
 
-    // std::thread manual_toggle1;
-    // manual_toggle1 = std::thread([&]() {
+    std::thread manual_toggle1;
+    manual_toggle1 = std::thread([&]() {
 
-    //     std::this_thread::sleep_for(std::chrono::milliseconds(2000)); 
-    //     state_idx.store(1);
-        
-    // });
-
-    std::thread manual_toggle2;
-    manual_toggle2 = std::thread([&]() {
-
-        while(prev_state_idx.load() != 1);
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000)); 
-        state_idx.store(2);
+        std::this_thread::sleep_for(std::chrono::milliseconds(3000)); 
+        state_idx.store(1);
         
     });
+
+    // std::thread manual_toggle2;
+    // manual_toggle2 = std::thread([&]() {
+
+    //     while(prev_state_idx.load() != 1);
+    //     std::this_thread::sleep_for(std::chrono::milliseconds(2000)); 
+    //     state_idx.store(2);
+        
+    // });
 
 
     while(prev_state_idx.load() != 2){

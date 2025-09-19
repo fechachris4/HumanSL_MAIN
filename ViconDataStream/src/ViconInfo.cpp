@@ -267,12 +267,19 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
     static std::deque<TubeInfo> tube_info_array;
     static std::deque<gtsam::Pose3> left_base_array;
     static std::deque<gtsam::Pose3> right_base_array;
+    static std::deque<gtsam::Pose3> ref_base_array;
 
     static std::deque<Eigen::Vector3d> left_finger_pos_array;
     static std::deque<Eigen::Vector3d> right_finger_pos_array;
 
     static std::deque<Eigen::Vector3d> forehead_pos_array;
     static std::deque<Eigen::Vector3d> rfin_head_delta_array;
+    
+    static gtsam::Pose3 ref_base;
+    static gtsam::Pose3 ref_to_left;
+    static gtsam::Pose3 ref_to_right;
+
+    static bool set_ref_to_base = false;
 
     std::unique_lock<std::shared_mutex> vicon_lock(vicon_data_mutex);
 
@@ -300,17 +307,6 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
     left_base_data.push_back(vicon.getMarkerPosition("left_base2"));
     left_base_data.push_back(vicon.getMarkerPosition("left_base3"));
     // left_base_data.push_back(vicon.getMarkerPosition("left_base4"));
-
-    right_tip_data.push_back(vicon.getMarkerPosition("right_tip1"));
-    right_tip_data.push_back(vicon.getMarkerPosition("right_tip2"));
-    right_tip_data.push_back(vicon.getMarkerPosition("right_tip3"));
-    right_tip_data.push_back(vicon.getMarkerPosition("right_tip4"));
-
-    left_tip_data.push_back(vicon.getMarkerPosition("left_tip1"));
-    left_tip_data.push_back(vicon.getMarkerPosition("left_tip2"));
-    left_tip_data.push_back(vicon.getMarkerPosition("left_tip3"));
-    left_tip_data.push_back(vicon.getMarkerPosition("left_tip4"));
-
 
     std::vector<MarkerData> tube_tip;
     tube_tip.push_back(vicon.getMarkerPosition("tube_tip1"));
@@ -391,9 +387,9 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
 
     bool right_base_occluded = false;
     bool left_base_occluded = false;
+    bool ref_base_occluded = false;
 
-    bool right_tip_occluded = false;
-    bool left_tip_occluded = false;
+
 
     for (const auto& marker : right_base_data) {
         if (marker.occluded) {
@@ -409,17 +405,65 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
         }
     }
 
-    for (const auto& marker : right_tip_data) {
+    for (const auto& marker : ref_base_data) {
         if (marker.occluded) {
-            right_tip_occluded = true;
+            ref_base_occluded = true;
             break;
         }
     }
 
-    for (const auto& marker : left_tip_data) {
-        if (marker.occluded) {
-            left_tip_occluded = true;
-            break;
+
+    if (ref_base_array.size() >= 20 && counter % 5 == 0) {
+
+        // Calculate average left_base pose
+        gtsam::Point3 avg_ref_translation = gtsam::Point3(0, 0, 0);
+        gtsam::Vector3 avg_ref_rotation_vector = gtsam::Vector3::Zero();
+        
+        for (const auto& pose : ref_base_array) {
+            avg_ref_translation = avg_ref_translation + pose.translation();
+            gtsam::Vector3 rotation_vector = gtsam::Rot3::Logmap(pose.rotation());
+            avg_ref_rotation_vector += rotation_vector;
+        }
+        
+        avg_ref_translation = avg_ref_translation / ref_base_array.size();
+        avg_ref_rotation_vector /= ref_base_array.size();
+        gtsam::Rot3 avg_ref_rotation = gtsam::Rot3::Expmap(avg_ref_rotation_vector);
+
+        ref_base = gtsam::Pose3(avg_ref_rotation, avg_ref_translation);
+
+        if(set_ref_to_base){
+            // insert setting right/left_base given ref_base and ref_to_left and ref_to_right.
+            // left_base = ref_base * ref_to_left;
+            // right_base = ref_base * ref_to_right;
+        }
+    }
+
+    if (!ref_base_occluded){
+        gtsam::Pose3 ref_base_current = updatePoseInfo2(ref_base_data, ref_base_data.back());
+
+        bool add_ref = true;
+        
+        // Filter based on rotation difference from current average
+        if (ref_base_array.size() >= 20) {
+            // Calculate current average rotation for left base
+
+            gtsam::Rot3 avg_ref_rotation = ref_base.rotation();
+            
+            // Check rotation difference
+            gtsam::Rot3 rotation_diff = avg_ref_rotation.inverse() * ref_base_current.rotation();
+            double rotation_angle = gtsam::Rot3::Logmap(rotation_diff).norm();
+            
+            // Don't add if rotation differs by more than 0.3 radians (~17 degrees)
+            if (rotation_angle > 0.3) {
+                add_ref = false;
+            }
+        }
+        if (add_ref) {
+            ref_base_array.push_back(ref_base_current);
+            
+            if (ref_base_array.size() > 20){
+                ref_base_array.pop_front();
+            }
         }
     }
 
@@ -428,94 +472,15 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
     gtsam::Pose3 left_base_current, right_base_current;
     bool pose_updated = false;
 
-    if (!left_base_occluded && !right_base_occluded){
+    if (!left_base_occluded && !right_base_occluded && !set_ref_to_base){
         gtsam::Pose3 left_base_guess2 = updatePoseInfo2(left_base_data, right_base_data.front());
         gtsam::Pose3 right_base_guess2 = updatePoseInfo2(right_base_data, left_base_data.front());
 
         left_base_current = left_base_guess2;
         right_base_current = right_base_guess2;
         pose_updated = true;
-
     }
     
-    else if (!left_base_occluded || !right_base_occluded) {
-
-        gtsam::Pose3 right_base_guess2;
-        gtsam::Pose3 left_base_guess2;
-
-
-        if(right_base_occluded && !left_base_occluded){
-            std::cout << "Right base occluded!\n";
-
-            if(!right_tip_occluded){
-
-                right_base_guess2 = updatePoseInfo1(right_tip_data, dh_params, right_conf);
-            
-            }
-            // Find any non-occluded marker in right_base_data
-            else{
-                MarkerData non_occluded_right_marker = right_base_data.front(); // fallback
-                for (const auto& marker : right_base_data) {
-                    if (!marker.occluded) {
-                        non_occluded_right_marker = marker;
-                        break;
-                    }
-                }
-                
-                left_base_guess2 = updatePoseInfo2(left_base_data, non_occluded_right_marker);
-
-                // Calculate right_base_guess2 using fixed transformation between left and right base
-                // The transformation is fixed, so we can derive right from left
-                gtsam::Pose3 left_to_right_transform = right_base.compose(left_base.inverse());
-                right_base_guess2 = left_to_right_transform.compose(left_base_guess2);
-            }
-        }
-
-        if(left_base_occluded && !right_base_occluded){
-            std::cout << "Left base occluded!\n";
-
-            if(!left_tip_occluded){
-
-                left_base_guess2 = updatePoseInfo1(left_tip_data, dh_params, left_conf);
-                // std::cout << "left guess from tip: " << left_base_guess2 <<"\n";
-            }
-
-            else{
-                // Find any non-occluded marker in left_base_data
-                MarkerData non_occluded_left_marker = left_base_data.front(); // fallback
-                for (const auto& marker : left_base_data) {
-                    if (!marker.occluded) {
-                        non_occluded_left_marker = marker;
-                        break;
-                    }
-                }
-                
-                right_base_guess2 = updatePoseInfo2(right_base_data, non_occluded_left_marker);
-
-                // Calculate left_base_guess2 using fixed transformation between left and right base
-                // The transformation is fixed, so we can derive left from right
-
-                // std::cout << "Cur avg left base: " << left_base << "\n";
-                // std::cout << "Cur avg right base: " << right_base << "\n";
-                gtsam::Pose3 right_to_left_transform = left_base.compose(right_base.inverse());
-                left_base_guess2 = right_base_guess2.compose(right_to_left_transform);
-            }
-        }
-
-        if(left_base_occluded && right_base_occluded && (!left_tip_occluded || !right_tip_occluded)){
-            if(!left_tip_occluded){
-                left_base_guess2 = updatePoseInfo1(left_tip_data, dh_params, left_conf);
-            }
-            if(!right_tip_occluded){
-                right_base_guess2 = updatePoseInfo1(right_tip_data, dh_params, right_conf);
-            }
-        }
-    
-        left_base_current = left_base_guess2;
-        right_base_current = right_base_guess2;
-        pose_updated = true;
-    }
-
     // Add poses to moving average arrays if pose was updated and passes filter
     if (pose_updated) {
         bool add_left = true;
@@ -570,16 +535,13 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
         }
     }
 
-    // Maintain array size for moving average (similar to tube_info_array)
-    if (left_base_array.size() >= 20) {
-        left_base_array.pop_front();
-    }
-    if (right_base_array.size() >= 20) {
-        right_base_array.pop_front();
-    }
-
     // Calculate moving average poses every 10 counter cycles (similar to tube_info)
-    if (left_base_array.size() >= 20 && counter % 5 == 0) {
+    if (left_base_array.size() >= 100 && !set_ref_to_base) {
+
+        gtsam::Pose3 left_base_dummy;
+        gtsam::Pose3 right_base_dummy;
+
+
         // Calculate average left_base pose
         gtsam::Point3 avg_left_translation = gtsam::Point3(0, 0, 0);
         gtsam::Vector3 avg_left_rotation_vector = gtsam::Vector3::Zero();
@@ -590,11 +552,11 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
             avg_left_rotation_vector += rotation_vector;
         }
         
-        avg_left_translation = avg_left_translation / 100.0;
-        avg_left_rotation_vector /= 100.0;
+        avg_left_translation = avg_left_translation / left_base_array.size();
+        avg_left_rotation_vector /= left_base_array.size();
         gtsam::Rot3 avg_left_rotation = gtsam::Rot3::Expmap(avg_left_rotation_vector);
         
-        left_base = gtsam::Pose3(avg_left_rotation, avg_left_translation);
+        left_base_dummy = gtsam::Pose3(avg_left_rotation, avg_left_translation);
 
         // Calculate average right_base pose
         gtsam::Point3 avg_right_translation = gtsam::Point3(0, 0, 0);
@@ -606,11 +568,16 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
             avg_right_rotation_vector += rotation_vector;
         }
         
-        avg_right_translation = avg_right_translation / 100.0;
-        avg_right_rotation_vector /= 100.0;
+        avg_right_translation = avg_right_translation / right_base_array.size();
+        avg_right_rotation_vector /= right_base_array.size();
         gtsam::Rot3 avg_right_rotation = gtsam::Rot3::Expmap(avg_right_rotation_vector);
         
-        right_base = gtsam::Pose3(avg_right_rotation, avg_right_translation);
+        right_base_dummy = gtsam::Pose3(avg_right_rotation, avg_right_translation);
+
+        ref_to_right = ref_base.inverse() * right_base_dummy; 
+        ref_to_left = ref_base.inverse() * left_base_dummy; 
+
+        set_ref_to_base = true;
     }
     else if (pose_updated) {
         // Use current poses if we don't have enough samples yet
@@ -618,17 +585,15 @@ void updateViconInfo(ViconInterface& vicon, gtsam::Pose3& left_base, gtsam::Pose
         right_base = right_base_current;
     }
     
-    int max_size = 150;
 
-    
+
+    int max_size = 100;
 
     left_finger_pos_array.push_back(lfin_snapshot);
     if(left_finger_pos_array.size() > max_size) left_finger_pos_array.pop_front();
     
 
-
     right_finger_pos_array.push_back(rfin_snapshot);
-
     if(right_finger_pos_array.size() > max_size) right_finger_pos_array.pop_front();
     
 
