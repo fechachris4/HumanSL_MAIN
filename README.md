@@ -23,6 +23,11 @@ States 0→1 and 1→2 are triggered by a `state_monitor` thread that watches th
 ```
 HumanSL_MAIN-master/
 ├── main.cpp                      # Entry point — robot connection, threading, state machine loop
+├── third_party/
+|   ├── include                           # Third party libraries (gtsam, gpmp2, c3d etc)
+|   ├── kortex_api                        # Bundled kinova-kortex api
+|   ├── lib                               # Bundled third party dependencies
+|   └── vicon_api                         # Bundled vicon api  
 ├── config/
 │   ├── GEN3_With_GRIPPER_DYNAMICS.urdf   # Kinova Gen3 + gripper URDF for Pinocchio dynamics
 │   ├── dh_params.yaml                    # DH parameters for FK/IK
