@@ -27,7 +27,8 @@ HumanSL_MAIN-master/
 │   ├── GEN3_With_GRIPPER_DYNAMICS.urdf   # Kinova Gen3 + gripper URDF for Pinocchio dynamics
 │   ├── dh_params.yaml                    # DH parameters for FK/IK
 │   ├── joint_limits.yaml                 # Position & velocity limits per joint
-│   └── parameters.yaml                   # High-level trajectory planning parameters
+│   ├── parameters.yaml                   # High-level trajectory planning parameters
+|   └── task_parameters.conf  # All tunable task parameters
 │
 ├── TrajectoryRealTime/           # Real-time orchestration layer (the "glue")
 │   ├── include/
@@ -41,8 +42,8 @@ HumanSL_MAIN-master/
 │       ├── move.cpp              # joint_position_control_execution(), gripper control, admittance
 │       ├── plan.cpp              # Gen3Arm methods: plan_joint(), plan_task(), replan_joint(), etc.
 │       ├── sdf.cpp               # Occupancy grid + EDT → SDF from human/tube/arm obstacles
-│       ├── task_parameters.cpp   # Key=Value config parser
-│       └── task_parameters.conf  # All tunable task parameters
+│       └── task_parameters.cpp   # Key=Value config parser
+│       
 │
 ├── TrajectoryGeneration/         # Offline / per-query trajectory planning
 │   ├── include/
