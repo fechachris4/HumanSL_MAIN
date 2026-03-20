@@ -95,6 +95,47 @@ HumanSL_MAIN-master/
 - **`left/right_robot_execution_thread`** — Each runs `joint_position_control_execution()` in a 500 Hz control loop, consuming waypoints from `JointTrajectory` deques. Supports mid-execution trajectory replacement via atomic flags + mutex.
 - **Main thread** — Runs the `state_transition()` loop, calling `plan_action()` for each phase, blocking until execution completes, then advancing to the next phase.
 
+## Obstacle Map Pipeline
+
+At the start of planning, `Gen3Arm::make_sdf()` snapshots the current Vicon/joint state and builds a 3D signed distance field (SDF) that GPMP2 uses to penalize trajectories that come too close to obstacles.
+
+### Workspace Grid
+A 2.0 × 3.5 × 2.5 m voxel grid at **6 cm resolution** (~34 × 58 × 42 cells), origin at (−1.0, −1.5, 0.0) in the world frame. Each cell is binary: free or occupied.
+
+### Obstacle Layers
+
+The grid is built by compositing four layers in sequence, each adding obstacles to the previous grid:
+
+**1. Human** (`HumanObstacleFromVicon`) — Vicon body markers (RFIN, LFIN, RHIP, LHIP, CLAV, STRN, head, etc.) are each inflated into **10 cm radius** spheres. Only cells within the human's bounding box are checked. This is coarse but fast and conservative.
+
+**2. Other arm** (`ArmObstacleFromVicon`) — The partner arm (the one *not* being planned for) is represented as ~30 GPMP2 body spheres (2.5–6.5 cm radius) distributed along the Kinova Gen3 links. Given its current joint angles, FK places each sphere in world coords and marks overlapping cells as occupied.
+
+**3. Bisecting plane** (`PlaneObstacleFromVicon`) — A half-space wall behind both robot bases, preventing the arm from swinging behind the platform (into the human area). The plane normal is the cross product of the base-to-base vector and the planning arm's Z-axis.
+
+**4. Tube** (`TubeObstacleFromVicon`) — The tube is modeled as a finite cylinder (2 cm radius + 3 cm safety margin). Vicon tracks three marker triplets (tip, mid, end); each triplet's circumcenter gives the tube axis center at that cross-section. Direction, centroid, and length are derived from whichever pair of circumcenters is visible. Cells within the cylinder's bounding box are checked for perpendicular distance to the axis.
+
+The **`include_tube` flag** controls whether layer 4 is included in the final SDF. It's `true` when the arm is approaching the tube (avoid it) and `false` when the arm is carrying or delivering it (don't avoid it).
+
+### Occupancy Grid → SDF
+
+The binary grid is converted to a continuous signed distance field via dual 3D Euclidean Distance Transforms (Dijkstra, 26-connected):
+
+1. `map_dist` — distance from each free cell to the nearest obstacle.
+2. `inv_map_dist` — distance from each occupied cell to the nearest free cell.
+3. `SDF = (map_dist − inv_map_dist) × cell_size` — positive in free space, negative inside obstacles.
+
+The result is packed into a `gpmp2::SignedDistanceField` (supports trilinear interpolation) and fed to the GPMP2 factor graph as `ObstacleSDFFactorArm` cost terms.
+
+### File Map
+
+| File | Role |
+|------|------|
+| `TrajectoryRealTime/src/plan.cpp` | `Gen3Arm::make_sdf()` — orchestrates the four layers |
+| `TrajectoryRealTime/src/sdf.cpp` | `ViconSDF` class — grid construction, EDT, SDF conversion |
+| `TrajectoryGeneration/src/GenerateArmModel.cpp` | Body sphere definitions for the Kinova Gen3 |
+| `ViconDataStream/src/ViconInfo.cpp` | `updateTubeInfo()`, `updateHumanInfo()` — Vicon marker → geometry |
+
+
 ## Key Dependencies
 
 All third-party libraries are expected under a `third_party/` directory:
@@ -146,6 +187,7 @@ The system will connect to both arms and the Vicon system, move the arms to thei
 - If real-time predictive control is required rather than segments of pre-determined trajectory, one could append to the active trajectory vector instead.
 - Obstacle avoidance is baked into the planning framework (GPMP2), for obstacle avoidance wthout GPMP2 involved, either try isolating relevant obstacle creation functions from GPMP2, or start from scratch implementing your own framework as the current obstacle avoidance isnt written with real-time predictive control in mind.
 - You may notices alot of functions that goes along the line of 'impedance control','impedance execution' etc., those are actually torque control in the joint space and not in the task space. Proper impedance control was never implemented due to a bug I can't for the life of mine figure out, although you will find traces of attempts at it.
+- Regarding human as an obstacle, using markers proved to be unreliable most of the times, so the planarObstacle function was introduced, such that eveyrthing infront of the backpack is considered an obstacle
 
 
 
