@@ -27,7 +27,8 @@ HumanSL_MAIN-master/
 |   ├── include                           # Third party libraries (gtsam, gpmp2, c3d etc)
 |   ├── kortex_api                        # Bundled kinova-kortex api
 |   ├── lib                               # Bundled third party dependencies
-|   └── vicon_api                         # Bundled vicon api  
+|   └── vicon_api                         # Bundled vicon api
+|
 ├── config/
 │   ├── GEN3_With_GRIPPER_DYNAMICS.urdf   # Kinova Gen3 + gripper URDF for Pinocchio dynamics
 │   ├── dh_params.yaml                    # DH parameters for FK/IK
