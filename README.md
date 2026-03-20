@@ -108,6 +108,9 @@ All third-party libraries are expected under a `third_party/` directory:
 - **Open3D** — 3D visualization (used in logging/visualization)
 - **yaml-cpp** — YAML config parsing
 
+## System Requirement & Setup
+This repo is tested on Ubuntu 22.04, and requires CMake installed & configured to build. No additional dedpendencies required as the repo contains bundled kortex and vicon API, along with any other 3rd party dependencies. 
+
 ## Building
 
 ```bash
@@ -116,11 +119,11 @@ cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(nproc)
 ```
 
-Requires the `third_party/` directory to be populated with all bundled libraries and headers. The build produces several executables; the primary one is `main`.
+The build produces several executables as detailed in 'CMake.txt'; the primary one is `main`.
 
 ## Configuration
 
-Runtime task parameters live in `TrajectoryRealTime/src/task_parameters.conf`. This controls per-phase timing, spatial offsets, gripper positions, and optimizer tolerances. Robot config (DH params, joint limits, URDF) is in `config/`.
+Runtime task parameters live in `config/task_parameters.conf`. This controls per-phase timing, spatial offsets, gripper positions, and optimizer tolerances. Robot config (DH params, joint limits, URDF) is in `config/`.
 
 The two arms are addressed by IP: left at `192.168.1.9`, right at `192.168.1.10`. The Vicon system is at `192.168.128.206`. These are hardcoded in `main.cpp`.
 
