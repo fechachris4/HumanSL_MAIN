@@ -35,6 +35,9 @@ public:
         return JointSetpoint{ ref_, (ref_ - prev_ref) / dt_ };
     }
 
+    // Bumpless: continue the ramp from the current measured configuration.
+    void reset(const JointState& s) override { ref_ = s.q; initialized_ = true; }
+
 private:
     double v_max_;
     double dt_;

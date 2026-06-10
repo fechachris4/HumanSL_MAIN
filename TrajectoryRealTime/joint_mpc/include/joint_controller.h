@@ -16,6 +16,11 @@ public:
     // Number of setpoints a single compute() conceptually plans ahead.
     // 1 for the trivial controllers; N for a receding-horizon MPC.
     virtual int horizon_steps() const { return 1; }
+
+    // Re-seed any internal reference/warm-start to the given state. Called on a
+    // bumpless mode switch so the newly-activated controller continues smoothly
+    // from where the arm actually is. Stateless controllers can ignore it.
+    virtual void reset(const JointState& /*s*/) {}
 };
 
 }  // namespace jmpc

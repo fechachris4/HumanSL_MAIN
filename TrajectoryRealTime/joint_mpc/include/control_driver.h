@@ -22,13 +22,15 @@ public:
     }
 
     // One control tick: compute -> replace horizon -> apply next setpoint.
-    void step(const Eigen::VectorXd& goal) {
+    // Returns the setpoint actually applied (after the NaN-hold guard).
+    JointSetpoint step(const Eigen::VectorXd& goal) {
         const JointState s = backend_.state();
         JointSetpoint sp = ctrl_->compute(s, goal);
         if (!sp.q_des.allFinite()) sp = last_good_;   // hold last on NaN
         else last_good_ = sp;
         queue_.replace(std::deque<JointSetpoint>{ sp });
         if (auto next = queue_.next()) backend_.apply(*next, dt_);
+        return sp;
     }
 
     // Run for `seconds`, logging each tick to csv_path.
@@ -43,13 +45,7 @@ public:
 
         const int ticks = static_cast<int>(seconds / dt_);
         for (int k = 0; k < ticks; ++k) {
-            const JointState s = backend_.state();
-            JointSetpoint sp = ctrl_->compute(s, goal);
-            if (!sp.q_des.allFinite()) sp = last_good_;
-            else last_good_ = sp;
-            queue_.replace(std::deque<JointSetpoint>{ sp });
-            if (auto next = queue_.next()) backend_.apply(*next, dt_);
-
+            const JointSetpoint sp = step(goal);   // single source of control logic
             const JointState a = backend_.state();
             log << a.t;
             for (int i = 0; i < n; ++i) log << "," << a.q(i);
