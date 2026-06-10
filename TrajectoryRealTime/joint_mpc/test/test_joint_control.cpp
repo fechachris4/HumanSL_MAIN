@@ -6,6 +6,7 @@
 #include <deque>
 #include <memory>
 #include <algorithm>
+#include <cmath>
 
 #include "gen3_limits.h"
 #include "controllers.h"
@@ -113,13 +114,14 @@ static void test_hold_controller() {
 
 // Drive the MPC controller open-loop as a reference generator (feed its own output
 // back as the measured state) and report ticks-to-goal + velocity profile stats.
-static int mpc_ticks_to_goal(double w_u, double* peak_v = nullptr, double* first_v = nullptr) {
+static int mpc_ticks_to_goal(double w_u, double* peak_v = nullptr, double* first_v = nullptr,
+                             double goal_val = 0.3) {
     auto L = jmpc::gen3_limits();
     jmpc::MpcParams p; p.dt = 0.002; p.w_u = w_u;
     jmpc::MpcJointController mpc(p, L);
     jmpc::JointState s; s.q = Eigen::VectorXd::Zero(7); s.dq = Eigen::VectorXd::Zero(7);
     mpc.reset(s);
-    Eigen::VectorXd goal = Eigen::VectorXd::Constant(7, 0.3);
+    Eigen::VectorXd goal = Eigen::VectorXd::Constant(7, goal_val);
     double peak = 0.0;
     for (int k = 0; k < 8000; ++k) {
         auto sp = mpc.compute(s, goal);
@@ -147,9 +149,12 @@ static void test_mpc_converges() {
 }
 
 static void test_mpc_respects_velocity_limit() {
+    // Large goal + aggressive effort weight so the unclamped MPC WANTS to exceed the
+    // 0.8727 rad/s limit — this actually exercises the clamp (a 0.3 rad goal never does).
     double peak = 0.0;
-    mpc_ticks_to_goal(/*w_u=*/0.005, &peak);  // aggressive
-    check(peak <= 0.8727 + 1e-9, "MPC reference respects the joint velocity limit");
+    mpc_ticks_to_goal(/*w_u=*/0.001, &peak, nullptr, /*goal_val=*/2.5);
+    check(peak > 0.85, "velocity clamp is actually exercised (MPC saturates the limit)");
+    check(peak <= 0.8727 + 1e-9, "MPC reference never exceeds the joint velocity limit");
 }
 
 static void test_mpc_effort_weight_changes_behavior() {
@@ -167,21 +172,45 @@ static void test_mpc_smooth_start() {
 static void test_toggle_switches_output() {
     auto L = jmpc::gen3_limits();
     const double dt = 0.002;
-    auto simple = std::make_shared<jmpc::RateLimitedController>(0.5, dt);
     jmpc::MpcParams p; p.dt = dt;
-    auto mpc = std::make_shared<jmpc::MpcJointController>(p, L);
+    auto simple = std::make_shared<jmpc::RateLimitedController>(0.5, dt);
+    auto mpc    = std::make_shared<jmpc::MpcJointController>(p, L);
     jmpc::SwitchableController sw(simple, mpc, /*use_mpc=*/false);
-
-    jmpc::JointState s; s.q = Eigen::VectorXd::Zero(7); s.dq = Eigen::VectorXd::Zero(7);
     Eigen::VectorXd goal = Eigen::VectorXd::Constant(7, 0.3);
-    sw.reset(s);
-    auto sp_simple = sw.compute(s, goal);
     check(!sw.use_mpc(), "toggle starts on the simple controller");
 
-    sw.set_use_mpc(true, s);
-    auto sp_mpc = sw.compute(s, goal);
+    // OFF: the switchable must delegate EXACTLY to a standalone simple controller
+    // (over many steps), not merely "differ from MPC".
+    jmpc::RateLimitedController simple_ref(0.5, dt);
+    jmpc::JointState s; s.q = Eigen::VectorXd::Zero(7); s.dq = Eigen::VectorXd::Zero(7);
+    sw.reset(s); simple_ref.reset(s);
+    double off_diff = 0.0;
+    for (int k = 0; k < 50; ++k) {
+        auto a = sw.compute(s, goal);
+        auto b = simple_ref.compute(s, goal);
+        off_diff = std::max(off_diff, (a.q_des - b.q_des).cwiseAbs().maxCoeff());
+        s.q = a.q_des; s.dq = a.dq_des;
+    }
+    check(off_diff < 1e-12, "toggle OFF delegates exactly to the simple controller");
+
+    // ON: the switchable must delegate EXACTLY to a standalone MPC, and the MPC and
+    // simple branches must genuinely differ on the same state trajectory.
+    jmpc::JointState s2; s2.q = Eigen::VectorXd::Zero(7); s2.dq = Eigen::VectorXd::Zero(7);
+    sw.set_use_mpc(true, s2);
+    jmpc::MpcJointController mpc_ref(p, L);            mpc_ref.reset(s2);
+    jmpc::RateLimitedController simple_only(0.5, dt);  simple_only.reset(s2);
     check(sw.use_mpc(), "toggle reports MPC active after switch-on");
-    check((sp_simple.q_des - sp_mpc.q_des).norm() > 1e-6, "toggle changes the produced setpoint");
+    double on_diff = 0.0, branch_diff = 0.0;
+    for (int k = 0; k < 50; ++k) {
+        auto a = sw.compute(s2, goal);
+        auto b = mpc_ref.compute(s2, goal);
+        auto c = simple_only.compute(s2, goal);
+        on_diff     = std::max(on_diff,     (a.q_des - b.q_des).cwiseAbs().maxCoeff());
+        branch_diff = std::max(branch_diff, (b.q_des - c.q_des).cwiseAbs().maxCoeff());
+        s2.q = a.q_des; s2.dq = a.dq_des;
+    }
+    check(on_diff < 1e-12, "toggle ON delegates exactly to the MPC");
+    check(branch_diff > 1e-4, "MPC and simple controllers genuinely differ");
 }
 
 static void test_toggle_bumpless() {
@@ -197,11 +226,64 @@ static void test_toggle_bumpless() {
 
     for (int k = 0; k < 200; ++k) drv.step(goal);   // move under the simple controller
     const jmpc::JointState before = drv.backend().state();
+    check(before.dq.cwiseAbs().maxCoeff() > 0.3, "arm is genuinely moving at switch time");
+
     sw->set_use_mpc(true, before);                   // bumpless switch to MPC
     const jmpc::JointSetpoint sp = drv.step(goal);   // first MPC tick
 
-    const double jump = (sp.q_des - before.q).cwiseAbs().maxCoeff();
-    check(jump <= 0.8727 * dt + 1e-6, "toggle is bumpless (no setpoint jump on switch)");
+    const double pos_jump = (sp.q_des - before.q).cwiseAbs().maxCoeff();
+    const double vel_jump = (sp.dq_des - before.dq).cwiseAbs().maxCoeff();
+    check(pos_jump <= 0.8727 * dt + 1e-6, "switch is position-bumpless (no position jump)");
+    // The real test: seeding v_ref=measured dq means the commanded velocity does NOT
+    // snap to zero. (With the old reset-to-rest, vel_jump would be ~the full 0.5 rad/s.)
+    check(vel_jump < 0.05, "switch is velocity-bumpless (no velocity discontinuity)");
+}
+
+// A controller that emits NaN, to exercise the driver's hold-last safety path.
+struct NaNController : public jmpc::JointController {
+    jmpc::JointSetpoint compute(const jmpc::JointState& s, const Eigen::VectorXd&) override {
+        return { Eigen::VectorXd::Constant(s.q.size(), std::nan("")),
+                 Eigen::VectorXd::Zero(s.q.size()) };
+    }
+};
+
+static void test_driver_nan_hold() {
+    auto L = jmpc::gen3_limits();
+    const double dt = 0.002;
+    auto nanc = std::make_shared<NaNController>();
+    jmpc::SimBackend sim(Eigen::VectorXd::Zero(7), L, /*tau=*/0.05);
+    jmpc::ControlDriver drv(nanc, sim, dt);
+    Eigen::VectorXd goal = Eigen::VectorXd::Constant(7, 0.3);
+    for (int k = 0; k < 100; ++k) drv.step(goal);
+    const Eigen::VectorXd q = drv.backend().state().q;
+    check(q.allFinite() && q.norm() < 1e-9,
+          "driver holds last setpoint on NaN (no NaN propagation, no motion)");
+}
+
+static void test_mpc_distinct_goals() {
+    auto L = jmpc::gen3_limits();
+    jmpc::MpcParams p; p.dt = 0.002;
+    jmpc::MpcJointController mpc(p, L);
+    jmpc::JointState s; s.q = Eigen::VectorXd::Zero(7); s.dq = Eigen::VectorXd::Zero(7);
+    mpc.reset(s);
+    Eigen::VectorXd goal(7); goal << 0.1, -0.2, 0.3, -0.1, 0.2, -0.3, 0.15;
+    for (int k = 0; k < 6000; ++k) { auto sp = mpc.compute(s, goal); s.q = sp.q_des; s.dq = sp.dq_des; }
+    check((s.q - goal).norm() < 1e-2, "MPC reaches distinct per-joint goals");
+}
+
+static void test_mpc_determinism() {
+    auto run_once = []() {
+        auto L = jmpc::gen3_limits();
+        jmpc::MpcParams p; p.dt = 0.002;
+        jmpc::MpcJointController mpc(p, L);
+        jmpc::JointState s; s.q = Eigen::VectorXd::Zero(7); s.dq = Eigen::VectorXd::Zero(7);
+        mpc.reset(s);
+        Eigen::VectorXd goal = Eigen::VectorXd::Constant(7, 0.25);
+        for (int k = 0; k < 1000; ++k) { auto sp = mpc.compute(s, goal); s.q = sp.q_des; s.dq = sp.dq_des; }
+        return s.q;
+    };
+    check((run_once() - run_once()).norm() == 0.0,
+          "MPC is deterministic (identical runs match exactly)");
 }
 
 int main() {
@@ -220,6 +302,9 @@ int main() {
     test_mpc_smooth_start();
     test_toggle_switches_output();
     test_toggle_bumpless();
+    test_driver_nan_hold();
+    test_mpc_distinct_goals();
+    test_mpc_determinism();
     std::cout << (g_fail ? "RESULT: FAILURES\n" : "RESULT: ALL PASS\n");
     return g_fail ? 1 : 0;
 }

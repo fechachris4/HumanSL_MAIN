@@ -13,8 +13,11 @@ public:
     virtual JointSetpoint compute(const JointState& s,
                                   const Eigen::VectorXd& q_goal) = 0;
 
-    // Number of setpoints a single compute() conceptually plans ahead.
-    // 1 for the trivial controllers; N for a receding-horizon MPC.
+    // How many steps a single compute() plans AHEAD (the lookahead horizon) — 1 for
+    // the trivial controllers, N for the MPC. Note this is NOT the number of setpoints
+    // emitted: every controller emits exactly ONE setpoint per compute() and is
+    // re-solved each tick (standard receding-horizon); the driver applies that one
+    // setpoint. The horizon is the planning depth, not the output length.
     virtual int horizon_steps() const { return 1; }
 
     // Re-seed any internal reference/warm-start to the given state. Called on a

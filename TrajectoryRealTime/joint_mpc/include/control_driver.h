@@ -34,6 +34,7 @@ public:
     }
 
     // Run for `seconds`, logging each tick to csv_path.
+    // Precondition: goal.size() must equal the backend's DOF.
     void run(double seconds, const Eigen::VectorXd& goal, const std::string& csv_path) {
         std::ofstream log(csv_path);
         const int n = static_cast<int>(goal.size());

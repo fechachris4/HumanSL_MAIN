@@ -6,6 +6,9 @@
 // is instead of jumping. The driver is unchanged — this is just a JointController.
 //
 // In the app, set_use_mpc() is what a "MPC on/off" voice command or CLI flag drives.
+//
+// Single-threaded: set_use_mpc()/compute() are not internally synchronized. Only
+// SetpointQueue is thread-safe; the controllers and driver assume one control thread.
 #include <memory>
 #include "joint_controller.h"
 

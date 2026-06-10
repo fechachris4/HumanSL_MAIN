@@ -3,14 +3,23 @@
 //
 // It is an *optimal reference generator*: per joint it models a double integrator
 // on its OWN reference state [q_ref, v_ref] with acceleration input, and minimizes
-//   J = sum_{k=1..N-1} w_q (q_k - goal)^2 + w_qf (q_N - goal)^2 + sum_{k=0..N-1} w_u u_k^2
+//   J = sum_k w_q (q_k-goal)^2 + w_qf (q_N-goal)^2 + w_v v_k^2 + w_vf v_N^2 + w_u u_k^2
 // over the input sequence. With no inequality constraints the condensed problem is
-//   (Tq^T Wq Tq + Wu) U = Tq^T Wq (goal*1 - Sq x0),
+//   (Tq^T Wq Tq + Tv^T Wv Tv + w_u I) U = goal*(Aq*1) - (Aq Sq + Av Sv) x0,
 // an SPD linear system solved once-factorized (LLT) and reused for all joints each
 // tick (the joints are decoupled and share the same model + weights). The first
 // optimal input is applied; the reference is integrated one control step and clamped
 // to velocity/position limits (preventing wind-up). The clamped reference is the
 // emitted setpoint. Hard in-QP limits are the OSQP upgrade noted in DESIGN.md.
+//
+// LIMITATION (feedforward only): after reset() seeds the reference from the measured
+// state, compute() integrates ONLY its internal [q_ref, v_ref] and ignores the
+// measured state thereafter. So the convergence guarantee is on the internal
+// REFERENCE, not the measured arm: there is NO disturbance rejection and no
+// steady-state-error correction. Against a clean plant the arm tracks the reference
+// to the goal; against a persistent disturbance the measured arm settles offset.
+// Closed-loop feedback MPC (re-anchor to measured q,dq each tick, or add integral
+// action) is the M3+ upgrade. See DESIGN_M2.md.
 //
 // Same JointController seam as the trivial controllers; the SimBackend, queue, and
 // driver are unchanged.
@@ -38,9 +47,13 @@ public:
 
     int horizon_steps() const override { return p_.N; }
 
+    // Bumpless transfer in BOTH position and velocity: seed the internal reference
+    // from the measured state so a mid-motion switch-on continues at the current
+    // velocity instead of snapping to rest (which would be a velocity discontinuity
+    // on hardware).
     void reset(const JointState& s) override {
         q_ref_ = s.q;
-        v_ref_ = Eigen::VectorXd::Zero(s.q.size());
+        v_ref_ = s.dq;
         initialized_ = true;
     }
 

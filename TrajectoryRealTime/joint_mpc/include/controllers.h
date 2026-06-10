@@ -35,7 +35,9 @@ public:
         return JointSetpoint{ ref_, (ref_ - prev_ref) / dt_ };
     }
 
-    // Bumpless: continue the ramp from the current measured configuration.
+    // Position-bumpless: continue the ramp from the current measured configuration.
+    // (This controller has no velocity state; it always ramps at +/-v_max, so a switch
+    // into it is not velocity-continuous — acceptable for a bang-bang reference.)
     void reset(const JointState& s) override { ref_ = s.q; initialized_ = true; }
 
 private:
