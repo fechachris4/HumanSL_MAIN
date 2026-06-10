@@ -1,7 +1,7 @@
 # Joint-Control MPC Seam — Design Spec
 
 **Date:** 2026-06-10
-**Status:** Approved design (Milestone 1)
+**Status:** Approved design (Milestone 1), revised after codebase inspection
 **Author:** Christian Akabueze (with Claude)
 
 ## Problem & Motivation
@@ -20,7 +20,7 @@ The repo already contains the low-level half: `TrajectoryRealTime` runs a ~500 H
 loop (`joint_position_control_execution()`) that consumes a `JointTrajectory` deque and
 streams it to the arm, with built-in mid-execution replanning
 (`new_trajectory_ready` / `trajectory_mutex`). That deque + replan seam is the natural
-MPC injection point.
+MPC injection point **at the robot**.
 
 ## Scope Decomposition
 
@@ -37,128 +37,134 @@ delivered as a laptop-testable foundation.** Voice and the QP MPC plug into it l
 |---|---|---|
 | First milestone | Control abstraction | Keystone both voice and MPC depend on; testable without robot |
 | Command level | Joint **position setpoints** (`q_des`, optional `dq_des`) | Matches existing 500 Hz loop, which consumes position waypoints; safest first rung |
-| No-robot backend | **First-order-lag kinematic sim** | ~100 lines, no deps, enough to watch MPC converge and exercise limits |
-| Structural approach | Build **inside `TrajectoryRealTime`**, reusing the `JointTrajectory` deque/replan seam | Compatible with existing codebase; the real deployment target |
+| No-robot backend | **First-order-lag kinematic sim** | ~50 lines, no deps, enough to watch a controller converge and exercise limits |
+| Integration target | The existing `TrajectoryRealTime` `JointTrajectory` deque/replan seam (via an adapter) | Compatible with the real control stack; the actual deployment path |
 | M1 controller | **Trivial `RateLimitedController`** (QP MPC = Milestone 2) | De-risks plumbing independently of solver tuning |
+| M1 concurrency | **Single-threaded, steppable** units | Deterministic, unit-testable; the threaded real-time wrapper is a robot-time concern |
 
-## The Tension and Its Resolution
+## Critical Constraint Discovered During Inspection
 
-Building inside `TrajectoryRealTime` (the chosen approach) normally means "needs robot
-+ Vicon to run anything," which conflicts with the no-robot constraint. Resolved by a
-**two-compile-path** design: the core code (controller, sim backend, loop) depends on
-**only Eigen + the `JointTrajectory` struct** — never on `move.h`/Kortex/GTSAM.
+`JointTrajectory` is declared in `TrajectoryGeneration/include/utils.h`, which
+`#include`s GTSAM, GPMP2, yaml-cpp, and ezc3d. **Including it is not "Eigen-only."**
 
-- **Sim harness build** (new, Eigen-only): compiles and runs on the laptop today.
-- **Full build** (existing CMake): a thin adapter wires the same controller into
-  `main.cpp`'s real 500 Hz execution thread via the replan seam, for use at the robot.
+Therefore the laptop-testable core must **not** depend on `utils.h`. The core defines
+its own minimal `Eigen::VectorXd`-based types and a self-contained setpoint queue.
+A single thin **adapter** (the only file that includes `utils.h`/GTSAM) bridges the
+core's setpoint stream to the real `JointTrajectory` deque — and is compiled **only**
+in the full/robot build, never in the laptop build.
 
-The controller and the deque seam are identical in both paths; only the execution
-backend swaps.
+This yields two compile paths from one codebase:
 
-## Architecture — Four Units
+- **Laptop build** (`TrajectoryRealTime/joint_mpc/`, own standalone `CMakeLists`,
+  Eigen + pthread only): compiles and runs the harness + tests today.
+- **Robot build** (future, M2): the adapter wires the same core into `main.cpp`'s real
+  500 Hz execution thread via the replan seam.
 
-### 1. `JointController` interface — the MPC seam
-`TrajectoryRealTime/include/joint_controller.h` (Eigen-only)
+The core and its setpoint contract are identical on both paths; only the backend swaps.
 
+## Architecture — Units (all Eigen-only, header-only, single-threaded)
+
+Location: `TrajectoryRealTime/joint_mpc/` (honours "inside TrajectoryRealTime").
+
+### Shared types — `include/joint_types.h`
 ```cpp
-struct JointControlState { Eigen::VectorXd q, dq; double t; };
-struct JointSetpoint     { Eigen::VectorXd q_des, dq_des; };   // position setpoints
+struct JointState    { Eigen::VectorXd q, dq; double t = 0.0; };
+struct JointSetpoint { Eigen::VectorXd q_des, dq_des; };
+struct JointLimits   { Eigen::VectorXd q_lower, q_upper, dq_max; };
+```
 
+### Gen3 limits — `include/gen3_limits.h`
+Hardcoded constants mirroring `config/joint_limits.yaml` (radians; joints 1/3/5/7 are
+continuous → ±1e20; velocity ±0.8727 rad/s). Avoids a yaml-cpp dependency in the core.
+
+### `JointController` interface — the MPC seam — `include/joint_controller.h`
+```cpp
 class JointController {
 public:
     virtual ~JointController() = default;
-    // Compute the next setpoint(s) given current state and the goal.
-    virtual JointSetpoint compute(const JointControlState& s,
+    virtual JointSetpoint compute(const JointState& s,
                                   const Eigen::VectorXd& q_goal) = 0;
-    virtual int horizon_steps() const = 0;   // 1 for trivial; N for MPC
+    virtual int horizon_steps() const { return 1; }
 };
 ```
-
-M1 implementations:
-- `HoldController` — returns current `q` (safety / baseline).
+M1 implementations (`include/controllers.h`):
+- `HoldController` — returns current `q` (safety baseline).
 - `RateLimitedController` — steps `q` toward `q_goal` at a capped per-tick speed.
-  Deterministic, trivially testable.
 
-M2 implements `MpcJointController` against the **same interface**.
+M2's `MpcJointController` implements the **same interface**.
 
-### 2. Receding-horizon loop
-`TrajectoryRealTime/src/joint_mpc_loop.cpp`
+### Simulated backend — `include/sim_backend.h`
+`SimBackend::apply(const JointSetpoint& cmd, double dt)` integrates one tick of a
+first-order lag `q += (clamp(q_des) - q) * (dt/tau)`, then enforces velocity and
+position clamps from `JointLimits`, updating `q`/`dq`. `state()` returns `JointState`.
+**All clamping lives here**, so the seam is protected regardless of controller bugs.
 
-Runs at the MPC rate (e.g. 50–100 Hz). Each iteration: read shared `q_cur`/`dq_cur`,
-call `controller.compute()`, write the resulting horizon into the `JointTrajectory`
-deque using the **existing** `new_trajectory_ready` / `trajectory_mutex` machinery
-(no new synchronization). On `compute()` failure or NaN, log and hold the last setpoint.
+### Setpoint queue — `include/setpoint_queue.h`
+Thread-safe `std::deque<JointSetpoint>`. `replace(horizon)` swaps the active horizon
+atomically (receding-horizon replan); `next()` pops the front, or returns the last
+element without removing it when only one remains (hold). The robot adapter mirrors
+this contract onto the real `JointTrajectory`.
 
-### 3. Simulated execution backend
-`TrajectoryRealTime/src/sim_execution.cpp`
+### Driver — `include/control_driver.h`
+`ControlDriver` ties controller + queue + backend. `step()` runs one tick
+(compute → replace queue → backend.apply). `run(seconds, q_goal, csv_path)` loops and
+logs `t, q, q_des, q_goal` to CSV. Single-threaded and deterministic.
 
-Drop-in stand-in for `joint_position_control_execution()` that consumes the same
-`JointTrajectory` deque but, instead of Kortex I/O, integrates a first-order lag:
-
-```
-q   += (q_cmd - q) * (dt / tau)
-```
-
-clamped to position/velocity limits from `config/joint_limits.yaml`, writing back the
-shared `q_cur`/`dq_cur`. Depends only on Eigen + `JointTrajectory`. This is the
-laptop-runnable "robot."
-
-### 4. Standalone harness
-`test_mpc_joint.cpp` (top-level, matching the `test_kinova.cpp` precedent)
-
-Wires sim backend + loop + a controller + a goal. Runs N seconds, logs
-`q`, `q_des`, `q_goal` to CSV, and **asserts** convergence and limit-respect. This is
-the Milestone-1 acceptance test, green on the laptop with no robot.
+### Harness — `test/test_joint_control.cpp`
+Standalone executable (matching the `test_kinova.cpp` precedent), minimal `check()`
+assert helper (no gtest). Returns non-zero on any failure.
 
 ## Data Flow
 
 ```
-q_goal  ->  control loop (compute)  ->  JointTrajectory deque
-                                          |
-                          execution backend (sim OR real) pops at control_frequency
-                                          |
-                              applies setpoint -> updates q_cur/dq_cur
-                                          |
-                                   fed back to the loop
+q_goal -> controller.compute(state) -> JointSetpoint(s) -> SetpointQueue.replace()
+                                                              |
+                                              backend pops via next() each tick
+                                                              |
+                                       SimBackend.apply(cmd, dt): lag + clamps
+                                                              |
+                                              state() -> fed back to controller
 ```
 
-Identical in sim and on hardware; only unit #3 swaps.
+At the robot (M2) the adapter replaces `SetpointQueue`/`SimBackend` with the real
+`JointTrajectory` deque + `joint_position_control_execution()`; the controller is
+unchanged.
 
 ## Safety & Error Handling
 
-- **Velocity + position clamping lives in the execution backend**, so it protects both
-  sim and the seam regardless of controller bugs. The real path additionally keeps
-  Kinova's own low-level limits.
-- Loop logs and **holds the last setpoint** on any `compute()` failure or NaN.
-- Limits sourced from `config/joint_limits.yaml`.
+- Velocity + position clamping lives in the **backend** (protects sim and the seam).
+- Driver holds the last valid setpoint and logs on any `compute()` failure or NaN.
+- The robot path additionally keeps Kinova's own low-level limits.
 
 ## Testing (TDD)
 
-Standalone assertions (no framework, matching repo style), all in the Eigen-only harness:
+Standalone assertions in the Eigen-only harness:
 
-1. Lag sim converges to a constant goal within tolerance.
-2. Velocity clamp caps per-tick motion.
-3. `RateLimitedController` reaches goal within expected time.
-4. Loop holds safely when the deque is exhausted.
+1. `SimBackend` converges to a constant goal within tolerance.
+2. `SimBackend` velocity clamp caps per-tick motion to `dq_max * dt`.
+3. `SimBackend` position clamp keeps `q` within `[q_lower, q_upper]`.
+4. `RateLimitedController` reaches goal within the expected number of ticks.
+5. `SetpointQueue` `next()` holds the last element when one remains; `replace()` swaps.
+6. `ControlDriver.run()` converges end-to-end and writes a non-empty CSV.
 
 ## Out of Scope for Milestone 1 (YAGNI)
 
 QP/optimizer, dynamics/torque control, Cartesian/task-space, voice, dual-arm, obstacle
-avoidance. Each is a later milestone that plugs into this seam.
+avoidance, the threaded real-time loop, and the `JointTrajectory` robot adapter (M2).
 
 ## Acceptance Criteria (Milestone 1 "done")
 
 1. This spec committed.
-2. Implementation plan written.
-3. `JointController` + `RateLimitedController` + `SimExecutionBackend` +
-   receding-horizon loop implemented, Eigen-only.
-4. Standalone harness builds and runs on the dev Mac with no robot.
-5. All four tests above pass.
+2. Implementation plan committed.
+3. Core units + `RateLimitedController` + `SimBackend` + queue + driver implemented,
+   Eigen-only, header-only.
+4. Standalone harness **builds and runs on the dev Mac with no robot**.
+5. All six tests above pass (harness exits 0).
 
 ## Roadmap (after M1)
 
 - **M2:** `MpcJointController` — double-integrator joint model, tracking+effort+terminal
-  cost, position/velocity/accel constraints, QP solver (OSQP recommended). Plugs into
-  the same `JointController` interface. Optionally upgrade the model to the existing
-  Pinocchio dynamics, and the sim backend to a dynamic sim.
+  cost, position/velocity/accel constraints, QP solver (OSQP recommended). Plus the
+  `JointTrajectory` adapter + threaded real-time loop to drive the real arm. Both plug
+  into the same `JointController` interface and setpoint contract.
 - **M3:** Voice → `q_goal` (and named targets), wired to the same seam.
