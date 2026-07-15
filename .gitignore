@@ -19,6 +19,8 @@
 # Include this .gitignore file
 !.gitignore
 
-# Include Christian_control source (but not its build output)
+# Include Christian_control source (but not its build/IDE output)
 !Christian_control/
 Christian_control/**/build/
+Christian_control/**/cmake-build-*/
+Christian_control/**/.idea/
