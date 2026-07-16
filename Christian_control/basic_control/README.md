@@ -15,15 +15,14 @@ It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
 - `tools/` — standalone diagnostic executables (read-only)
 - `scripts/` — offline analysis (Python, not part of the build)
 - `config/` — our copy of the arm's URDF (`GEN3_custom.urdf`)
-- `motion.txt` — optional runtime motion config, kept at this root so the
-  executable's search (cwd → build/ → basic_control/) finds it
 
 ## Files
 
 - `src/main.cpp` — thin coordinator: connects, calls the helpers, runs the
   recording loop, shuts down cleanly (see `../AGENTS.md` contract)
 - `src/Config.h` — all runtime settings as named constants: robot IP,
-  recording rate, output filenames; edit and rebuild (no CLI flags)
+  **startup mode** (`kStartupMode` — `kReactive` default, `kJoints`,
+  `kRecord`), recording rate, output filenames; edit and rebuild (no CLI flags)
 - `src/Connect.h` / `Connect.cpp` — RAII: opens both Kortex sessions (TCP 10000 +
   real-time UDP 10001) on construction, closes them on destruction
 - `src/Measure.h` / `Measure.cpp` — sensor reading via the real-time feedback
@@ -47,7 +46,7 @@ It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
   control cycle, dynamics compute), writing stats to a log stream
 - `tools/query_limits.cpp` — separate read-only executable (`./query_limits`):
   prints the robot's kinematic hard limits and per-mode soft limits; never
-  moves the arm, ignores motion.txt
+  moves the arm, ignores `config::kStartupMode`
 - `scripts/plot_move.py` — offline analysis of a move log: per-joint final error,
   overshoot, max tracking error, dt statistics, and commanded-vs-measured
   plots (PNG) for every joint that moved
@@ -68,21 +67,22 @@ cmake .. && make
 > Run from `basic_control/build/`.
 
 ```bash
-# No command-line flags. Robot IP (192.168.1.10), recording rate (100 Hz)
-# and output filenames live in src/Config.h — edit there and rebuild.
-./controller
-
-# MOVES THE ARM — workspace clear, e-stop in hand.
-# A move runs when a motion.txt file is found (no CLI flags). Searched in
-# order: current dir, the executable's dir (build/), its parent
-# (basic_control/). The program prints which file it uses. Minimal file:
-#   deltas_deg: 0 10 0 -15 0 5 0      # 7 relative deg; 0 = hold that joint
-#   speeds_deg_s: 0 5 0 5 0 3 0       # optional per-joint deg/s
-#   default_speed_deg_s: 5            # optional; fallback 5 deg/s
+# No command-line flags, no config file. MOVES THE ARM: workspace clear,
+# e-stop in hand — kStartupMode defaults to kReactive (Config.h), so this
+# starts the reactive servo immediately. See "Reactive mode" below.
 ./controller
 ```
 
-What it does right now:
+`config::kStartupMode` (`src/Config.h`) picks what `main()` does; edit it and
+rebuild to switch:
+
+| `kStartupMode` | Behavior |
+| --- | --- |
+| `kReactive` (default) | **Moves the arm**: reactive task-space servo — see "Reactive mode" below |
+| `kJoints` | **Moves the arm**: one-shot relative move of all 7 joints, using `kJointDeltasDeg`/`kJointSpeedsDegS` (`Config.h`) |
+| `kRecord` | Read-only: records joint angles, never moves the arm |
+
+What `kRecord` does:
 
 1. Loads the arm model (`config/GEN3_custom.urdf`) into Pinocchio.
 2. Connects to the arm (both channels) and clears faults.
@@ -94,16 +94,16 @@ What it does right now:
 5. Records all 7 joint angles at the chosen rate into the CSV (with timestamp
    and dt columns), printing a 1 Hz heartbeat, until Ctrl+C.
 
+(`kReactive` and `kJoints` run steps 1–3 the same way, then move the arm
+instead of step 5 — see the relevant section below.)
+
 ## Reactive mode
 
-**Moves the arm, continuously, until you press Ctrl+C.** Armed by a
-`motion.txt` containing just:
+**Moves the arm, continuously, until you press Ctrl+C.** This is the
+default (`config::kStartupMode = kReactive` in `src/Config.h`) — plain
+`./controller` runs it with no other setup.
 
-```
-mode: reactive
-```
-
-The arm then servos its end-effector toward the target pose in `src/Config.h`
+The arm servos its end-effector toward the target pose in `src/Config.h`
 (`kTargetPosition` + `kTargetOrientationRPYDeg`, base frame; roll-pitch-yaw
 about the fixed base axes, degrees) and *keeps* servoing
 — push the target error and it fights back. Each 1 ms cycle: FK + Jacobian
@@ -126,8 +126,10 @@ project's 45 deg/s rule.
 
 First-run procedure (workspace clear, e-stop in hand):
 
-1. Read-only run (no motion.txt): copy the printed EE position and rpy angles
-   into `kTargetPosition` / `kTargetOrientationRPYDeg`, rebuild.
+1. Read-only run (set `kStartupMode` to `kRecord`, rebuild): copy the printed
+   EE position and rpy angles into `kTargetPosition` /
+   `kTargetOrientationRPYDeg`, then set `kStartupMode` back to `kReactive`
+   and rebuild.
 2. Zero-gain run: set all gains in Config.h to 0, rebuild, run reactive — the
    arm must hold perfectly still. This validates the loop, timing (`dt_s` in
    the trace), logging, and Ctrl+C with zero motion risk.
@@ -136,10 +138,12 @@ First-run procedure (workspace clear, e-stop in hand):
 4. Small step: offset `kTargetPosition` by 2–3 cm in z, watch it converge,
    then tune `kKpPos`/`kKpRot` up gradually.
 
-If `motion.txt` is present, it instead moves all 7 joints simultaneously by
-the configured relative deltas via low-level 1 kHz streaming (each joint
-ramping at its own speed cap), then exits. Without the file the program is
-entirely read-only. A bad config exits with an error before connecting.
+With `kStartupMode = kJoints`, the program instead moves all 7 joints
+simultaneously by the deltas in `config::kJointDeltasDeg` via low-level
+1 kHz streaming (each joint ramping at its own speed cap from
+`config::kJointSpeedsDegS`), then exits. An unsafe speed
+(`kJointSpeedsDegS` above `kDefaultSpeedLimits` in `src/Motion.h`) is a
+compile error, not a runtime one.
 
 A move succeeds (exit code 0, "Move finished.") only when every moving
 joint's **measured** angle ends within 0.5° of its target after a 1 s settle
@@ -175,11 +179,13 @@ python3 ../scripts/plot_joint.py 2 --show  # one joint: PNG + interactive window
 
 ## Safety
 
-- Without `motion.txt` (recording mode) the program never moves the arm.
-- A present `motion.txt` **moves the arm on startup**: keep the workspace
-  clear and the e-stop in hand — and delete/rename the file afterwards so a
-  later plain run doesn't repeat the move. Start with small deltas and low
-  speeds (default 5 deg/s). Joint 7 (wrist rotation) is the safest first test.
+- **`./controller` moves the arm by default** (`kStartupMode = kReactive`):
+  keep the workspace clear and the e-stop in hand for every run, not just
+  after editing `Config.h`. Set `kStartupMode` to `kRecord` and rebuild for
+  a read-only run.
+- `kJoints` mode also moves the arm on startup. Start with small deltas and
+  low speeds (default 5 deg/s). Joint 7 (wrist rotation) is the safest first
+  test.
 - Ctrl+C during a move freezes the arm where it is, then hands control back
   to the robot's supervisor (restored by RAII even on errors).
 - **Low-level servoing bypasses the robot's motion supervisor** — no onboard

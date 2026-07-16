@@ -11,10 +11,12 @@ steps at or above that rate are not followed: the joint stands still,
 tracking error grows, and at ~5 deg the arm faults out of low-level
 servoing — the error surfaces as `WRONG_SERVOING_MODE` mid-move.
 
-Consequence: motion.txt speed validation (`kDefaultSpeedLimits` in
-`src/Motion.h`) rejects speeds above 45 deg/s (10% margin). Do not raise it.
-Note these validation limits are deliberately separate from the URDF joint
-limits (see `decisions/custom-urdf.md`).
+Consequence: joints-mode speed validation (`kDefaultSpeedLimits` in
+`src/Motion.h`, checked against `config::kJointSpeedsDegS` via
+`static_assert` in `src/Config.h`) rejects speeds above 45 deg/s (10%
+margin) at compile time. Do not raise it. Note these validation limits are
+deliberately separate from the URDF joint limits (see
+`decisions/custom-urdf.md`).
 
 ## Silent mid-move stall reported as success (2026-07-14)
 

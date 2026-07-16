@@ -10,7 +10,6 @@
 #include <atomic>
 #include <chrono>
 #include <iosfwd>
-#include <string>
 
 #include <BaseClientRpc.h>
 #include <BaseCyclicClientRpc.h>
@@ -101,50 +100,28 @@ constexpr double kReachedToleranceDeg = 0.5;
 constexpr double kTrackingErrorLimitDeg = 3.0;
 constexpr int kTrackingErrorCycleLimit = 50;   // cycles, i.e. ~50 ms at 1 kHz
 
-// Per-joint speed limits used to validate motion configs, in deg/s.
+// Per-joint speed limits, in deg/s — the safety ceiling for any relative
+// joint move (see move_joints_relative and config::kJointSpeedsDegS).
 //
 // OUR arm's base is configured with 50 deg/s joint speed SOFT limits
 // (read with ./query_limits; the hardware could do 80/70). Streaming
 // position steps at >= the soft limit is not followed: the joint stands
 // still, tracking error grows, and at ~5 deg the safety kicks the arm out
 // of low-level servoing (seen as WRONG_SERVOING_MODE mid-move). So we
-// validate against 45 = 10% under the enforced 50.
-// Override per run with a "speed_limits_deg_s:" line in motion.txt —
-// only useful if the robot's own soft limits are raised first.
+// validate against 45 = 10% under the enforced 50. Do not raise this.
 constexpr JointVector kDefaultSpeedLimits =
     {45.0, 45.0, 45.0, 45.0, 45.0, 45.0, 45.0};
 
-// A validated motion request loaded from a config file.
-struct MotionConfig
+// True if every joint's speed sits at or under its limit. Used as a
+// static_assert on config::kJointSpeedsDegS (Config.h), so a speed above
+// kDefaultSpeedLimits is a compile error instead of a runtime surprise.
+constexpr bool speeds_within_limits(const JointVector& speeds,
+                                    const JointVector& limits = kDefaultSpeedLimits)
 {
-    std::string mode = "joints";  // "joints" (delta move) or "reactive"
-    JointVector deltas;   // relative degrees; 0 = hold that joint
-    JointVector speeds;   // deg/s, per joint (validated <= limits)
-    JointVector limits;   // deg/s, per joint (defaults to kDefaultSpeedLimits)
-};
-
-// Loads and validates a motion config from a tiny text file:
-//
-//   # comment lines and blank lines are ignored
-//   mode: joints                        (optional; "joints" default, or
-//                                        "reactive" — task-space servo to the
-//                                        Config.h target pose; no other lines
-//                                        allowed then)
-//   deltas_deg: 0 10 0 -15 0 5 0        (required in joints mode, exactly 7)
-//   speeds_deg_s: 0 5 0 5 0 3 0         (optional, exactly 7; wins over default)
-//   default_speed_deg_s: 5              (optional, one value for all joints)
-//   speed_limits_deg_s: 79 79 79 79 69 69 69   (optional, exactly 7; replaces
-//                                               kDefaultSpeedLimits)
-//
-// If neither speed line is present, 5 deg/s is used for all joints.
-// Any speed above its joint's limit is rejected at load time.
-// Throws std::invalid_argument with a message naming the problem line/field.
-MotionConfig load_motion_config(const std::string& path);
-
-// Looks for motion.txt in, in order: the current directory, the directory
-// containing the executable, and that directory's parent (so a file kept in
-// basic_control/ is found when running from build/). Returns the absolute
-// path of the first hit, or "" if none exists.
-std::string find_motion_config();
+    for (int i = 0; i < 7; ++i)
+        if (speeds[i] > limits[i])
+            return false;
+    return true;
+}
 
 #endif //HUMANSL_MASTERS_PROJECT_2025_MOTION_H

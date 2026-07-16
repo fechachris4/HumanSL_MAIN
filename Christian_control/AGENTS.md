@@ -24,21 +24,29 @@ Full module-ownership table and layout: `docs/architecture.md`.
 
 ## Safety
 
-- Read-only by default: never add code that moves the arm unless explicitly
-  requested. When movement is requested, low-level (BaseCyclic) control is
-  the project's chosen route, and safety notes go in README.md.
-- NEVER run `./controller` as a "test" while a valid motion.txt is
-  discoverable — it is a robot-moving command. Test config changes with
-  deliberately invalid files, or add/use a dry-run mechanism.
+- Never add code that moves the arm unless explicitly requested. When
+  movement is requested, low-level (BaseCyclic) control is the project's
+  chosen route, and safety notes go in README.md.
+- Exception, by Christian's explicit choice (2026-07-16): `./controller`'s
+  default build (`config::kStartupMode = kReactive` in `src/Config.h`) DOES
+  move the arm on every run, with no file or flag needed — see
+  `docs/decisions/motion-txt-removal.md`. Because of this, NEVER run
+  `./controller` as a "test" of an unrelated change — it is a robot-moving
+  command by default now, not just when a file happens to be present. Test
+  other changes by reading the code or, if runtime behavior must be checked,
+  temporarily set `kStartupMode` to `kRecord` first.
 - Read-only changes may be tested on the arm freely; anything that moves the
   arm needs the user present with the e-stop.
-- motion.txt speed validation is capped at 45 deg/s — do not raise it (the
-  arm faults above its 50 deg/s soft limit; see `docs/known-issues.md`).
+- Joint-move speed validation (`kJointSpeedsDegS` in `src/Config.h`) is
+  capped at 45 deg/s via a `static_assert` against `kDefaultSpeedLimits`
+  (`src/Motion.h`) — do not raise the limit (the arm faults above its
+  50 deg/s soft limit; see `docs/known-issues.md`).
 
 ## Coding rules
 
 - No command-line flags or positional arguments for runtime configuration:
-  fixed settings in `src/Config.h`, motion parameters in `motion.txt`.
+  all settings, including the startup mode and motion parameters, live in
+  `src/Config.h`.
 - Loops that run until stopped check the `g_stop` atomic flag (set by
   SIGINT) and exit cleanly (flush files, restore servoing mode, let RAII
   close sessions).

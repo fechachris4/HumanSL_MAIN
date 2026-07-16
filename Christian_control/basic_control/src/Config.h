@@ -2,16 +2,32 @@
  * Config.h — the one place to change runtime settings.
  *
  * Controller programs in this repository take no command-line flags;
- * edit these constants and rebuild instead. Motion parameters are the
- * exception: they stay in motion.txt (see Motion.h) because their
- * presence/absence selects the mode at runtime.
+ * edit these constants and rebuild instead — including which mode
+ * main() starts in (see kStartupMode below).
  */
 #pragma once
+
+#include "Motion.h"   // JointVector, kDefaultSpeedLimits, speeds_within_limits
 
 namespace config
 {
     // Robot connection.
     inline constexpr const char* kRobotIp = "192.168.1.10";
+
+    // What main() does on startup. Reactive is the default: no config file,
+    // no flag — just build and run. Edit this constant and rebuild to switch.
+    enum class StartupMode { kReactive, kJoints, kRecord };
+    inline constexpr StartupMode kStartupMode = StartupMode::kReactive;
+
+    // One-shot relative joint move, used only when kStartupMode == kJoints.
+    // deltas: relative degrees, 0 = hold that joint. speeds: deg/s per joint,
+    // checked against Motion.h's kDefaultSpeedLimits below at compile time.
+    inline constexpr JointVector kJointDeltasDeg =
+        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    inline constexpr JointVector kJointSpeedsDegS =
+        {5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0};
+    static_assert(speeds_within_limits(kJointSpeedsDegS),
+        "kJointSpeedsDegS exceeds kDefaultSpeedLimits (Motion.h) — do not raise the limit, lower the speed");
 
     // Recording mode.
     inline constexpr double kRecordRateHz = 100.0;
@@ -25,8 +41,8 @@ namespace config
     // Position {x, y, z} in meters. Orientation {roll, pitch, yaw} in DEGREES,
     // fixed-axis convention: rotate about the base X axis (roll), then base Y
     // (pitch), then base Z (yaw) — i.e. R = Rz * Ry * Rx. To hold the current
-    // pose: run read-only (no motion.txt), copy the printed EE position and
-    // rpy here, rebuild.
+    // pose: set kStartupMode to kRecord, copy the printed EE position and rpy
+    // here, rebuild.
     inline constexpr double kTargetPosition[3] = {0.9, 0.2, 0.3};
     inline constexpr double kTargetOrientationRPYDeg[3] = {0.0, 0.0, 0.0};
 

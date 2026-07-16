@@ -32,28 +32,16 @@ int main()
     std::signal(SIGINT, on_sigint);
 
     try {
-        // A motion.txt (searched in cwd, the executable's dir, and its
-        // parent) makes this run a move. Load and validate it BEFORE
-        // touching the robot, so a bad config exits here (code 2) without
-        // ever connecting.
-        std::string motion_path = find_motion_config();
-        MotionConfig motion;
-        if (motion_path.empty()) {
-            std::cout << "No motion.txt found -> recording mode.\n";
-        } else {
-            std::cout << "Using motion config: " << motion_path << "\n";
-            try {
-                motion = load_motion_config(motion_path);
-            } catch (std::exception& e) {
-                std::cerr << "motion.txt error: " << e.what() << "\n";
-                return 2;
-            }
-        }
-        bool move_requested = !motion_path.empty();
-        bool reactive = move_requested && motion.mode == "reactive";
-        std::string out_file = !move_requested ? config::kRecordFile
-            : timestamped_csv_name(reactive ? config::kControlLogPrefix
-                                            : config::kMoveLogPrefix);
+        // Startup mode is a compiled-in constant (config::kStartupMode,
+        // Config.h) — set it there and rebuild; no file or flag needed.
+        constexpr bool reactive = config::kStartupMode == config::StartupMode::kReactive;
+        constexpr bool joints_move = config::kStartupMode == config::StartupMode::kJoints;
+        std::cout << "startup mode: "
+                  << (reactive ? "reactive" : joints_move ? "joints" : "record")
+                  << " (config::kStartupMode)\n";
+        std::string out_file = reactive ? timestamped_csv_name(config::kControlLogPrefix)
+            : joints_move ? timestamped_csv_name(config::kMoveLogPrefix)
+            : config::kRecordFile;
 
         // Load the robot model and connect (both channels, once).
         Dynamics dynamics(GEN3_URDF_PATH);
@@ -68,7 +56,7 @@ int main()
         // target in Config.h — prints target, current, and error once.
         report_position_error(dynamics, connection.base_cyclic(), std::cout);
 
-        // If motion.txt was found, do the move instead of recording.
+        // If kStartupMode is kJoints, do the move instead of recording.
         // MOVES THE ARM: keep the workspace clear and the e-stop in hand.
         // Prints one labeled line of all 7 joint angles, e.g.
         // "joints at start (deg):  12.34  ...". Lambda: a tiny local
@@ -97,15 +85,16 @@ int main()
             return ok ? 0 : 1;
         }
 
-        if (move_requested) {
-            std::cout << "motion.txt found — moving joints (relative deg):";
-            for (double d : motion.deltas) std::cout << " " << d;
+        if (joints_move) {
+            std::cout << "joints mode — moving joints (relative deg):";
+            for (double d : config::kJointDeltasDeg) std::cout << " " << d;
             std::cout << "  (Ctrl+C to stop)\n";
             std::cout << "Logging every cycle -> " << out_file << "\n";
             print_joints("joints at start");
             std::ofstream log(out_file);
             bool ok = move_joints_relative(connection.base(), connection.base_cyclic(),
-                                           motion.deltas, motion.speeds, g_stop, &log);
+                                           config::kJointDeltasDeg, config::kJointSpeedsDegS,
+                                           g_stop, &log);
             print_joints("joints at end  ");
             std::cout << (ok ? "Move finished.\n" : "Move incomplete.\n");
             log.close();               // everything on disk before plotting

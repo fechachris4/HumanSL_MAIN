@@ -15,17 +15,13 @@ setpoints (the velocities are integrated client-side and streamed at 1 kHz over
 
 ```mermaid
 flowchart TD
-    start(["./controller (no CLI flags)"]) --> find["find_motion_config()<br/>cwd → build/ → basic_control/"]
-    find --> parse{"motion.txt<br/>found?"}
-    parse -- "yes" --> load["load_motion_config()<br/>validate before connecting<br/>(bad file: exit 2, arm untouched)"]
-    parse -- "no" --> model
-    load --> model["Dynamics: load GEN3_custom.urdf<br/>(Pinocchio model)"]
+    start(["./controller (no CLI flags)"]) --> model["Dynamics: load GEN3_custom.urdf<br/>(Pinocchio model)"]
     model --> conn["Connect: TCP :10000 + UDP :10001<br/>ClearFaults()"]
     conn --> checks["startup checks (read-only)<br/>report_fk_vs_robot<br/>report_position_error"]
-    checks --> mode{"mode"}
-    mode -- "no motion.txt" --> rec["record_joint_angles()<br/>100 Hz CSV until Ctrl+C<br/>never moves the arm"]
-    mode -- "mode: joints" --> mv["move_joints_relative()<br/>relative deltas, per-joint speed caps<br/>MOVES THE ARM, then exits"]
-    mode -- "mode: reactive" --> rx["run_reactive_control()<br/>1 kHz task-space servo to Config.h pose<br/>MOVES THE ARM until Ctrl+C"]
+    checks --> mode{"config::kStartupMode<br/>(Config.h, compile-time)"}
+    mode -- "kRecord" --> rec["record_joint_angles()<br/>100 Hz CSV until Ctrl+C<br/>never moves the arm"]
+    mode -- "kJoints" --> mv["move_joints_relative()<br/>kJointDeltasDeg / kJointSpeedsDegS<br/>MOVES THE ARM, then exits"]
+    mode -- "kReactive (default)" --> rx["run_reactive_control()<br/>1 kHz task-space servo to Config.h pose<br/>MOVES THE ARM until Ctrl+C"]
     mv --> plot["plot_move_log()<br/>stats + PNGs from this run's CSV"]
     rx --> stopped["stop path (Ctrl+C / fault / comms error):<br/>freeze at MEASURED position<br/>ServoingModeGuard restores SINGLE_LEVEL"]
     mv --> stopped
@@ -34,10 +30,11 @@ flowchart TD
     stopped --> exit
 ```
 
-The mode is selected purely by the presence and content of `motion.txt`
-(searched: current dir → executable's dir → its parent). A leftover
-`motion.txt` therefore **moves the arm on the next start** — rename or delete
-it after a session.
+The mode is selected by `config::kStartupMode`, a compile-time constant in
+`src/Config.h` (`kReactive` default, `kJoints`, `kRecord`) — see
+`decisions/motion-txt-removal.md`. Because `kReactive` is the default, a
+plain `./controller` **moves the arm immediately**; set `kStartupMode` to
+`kRecord` and rebuild for a read-only run.
 
 ## One reactive control step (1 ms cycle)
 
@@ -93,16 +90,15 @@ Details worth knowing when debugging:
 | File | Owns | Key symbols |
 |---|---|---|
 | `src/main.cpp` | Entry point: mode selection, wiring, shutdown, exit codes | `main`, `g_stop` (SIGINT flag) |
-| `src/Config.h` | All runtime settings (edit + rebuild; no CLI flags) | `kRobotIp`, `kTargetPosition`, `kTargetOrientationRPYDeg`, gains `kKpPos/kKpRot/kKdPos/kKdRot`, `kDlsDamping`, `kUseNullspaceCentering`/`kNullGain`, clamps `kReactiveSpeedLimitDegS`/`kCtrlLeadRad` |
+| `src/Config.h` | All runtime settings (edit + rebuild; no CLI flags), incl. the startup mode switch (`kStartupMode`) that replaced `motion.txt` | `kRobotIp`, `kStartupMode`, `kJointDeltasDeg`/`kJointSpeedsDegS`, `kTargetPosition`, `kTargetOrientationRPYDeg`, gains `kKpPos/kKpRot/kKdPos/kKdRot`, `kDlsDamping`, `kUseNullspaceCentering`/`kNullGain`, clamps `kReactiveSpeedLimitDegS`/`kCtrlLeadRad` |
 | `src/Connect.{h,cpp}` | Kortex sessions: TCP :10000 (high-level) + UDP :10001 (cyclic), RAII teardown | `Connect`, `base()`, `base_cyclic()` |
 | `src/Measure.{h,cpp}` | Sensor reads; degrees → Pinocchio configuration | `measure_joint_angles`, `measure_configuration` |
 | `src/Kinematics.{h,cpp}` | Forward kinematics; startup FK-vs-robot cross-check (+0.12 m TCP offset) | `forward_kinematics`, `report_fk_vs_robot` |
 | `src/Controller.{h,cpp}` | The reactive servo: PD on pose+twist → DLS → optional null-space → clip → integrate → lead clamp → stream. **Moves the arm** | `run_reactive_control`, `compute_qdot` (file-local), `report_position_error` |
-| `src/Motion.{h,cpp}` | Joint-delta moves; shared low-level primitives; `motion.txt` loader; client-side watchdogs | `ServoingModeGuard` (RAII servoing mode), `send_positions`, `move_joints_relative`, `load_motion_config`, `kDefaultSpeedLimits` (45 deg/s), `kTrackingErrorLimitDeg` (3°/50 cycles), `kReachedToleranceDeg` (0.5°) |
+| `src/Motion.{h,cpp}` | Joint-delta moves; shared low-level primitives; client-side watchdogs | `ServoingModeGuard` (RAII servoing mode), `send_positions`, `move_joints_relative`, `speeds_within_limits`, `kDefaultSpeedLimits` (45 deg/s), `kTrackingErrorLimitDeg` (3°/50 cycles), `kReachedToleranceDeg` (0.5°) |
 | `src/Record.{h,cpp}` | All CSV logging: 100 Hz recording, per-cycle move log, per-cycle control trace; timestamped filenames; post-move plot runner | `record_joint_angles`, `MoveLogSample`, `ControlTraceSample`, `timestamped_csv_name`, `plot_move_log` |
 | `src/Timing.{h,cpp}` | Latency benchmarks (feedback round-trip, full cycle, dynamics solve). Compiled but not called from `main` | `time_feedback_roundtrip`, `time_control_cycle`, `time_dynamics_solve` |
 | `../TrajectoryExecution/{include,src}/Dynamics.*` | External, reused, **do not edit**: URDF model, configuration conversion (continuous joints ↔ cos/sin), mass/gravity/Coriolis (unused by the loop). `coriolis_m_simplified` is a zero-returning placeholder | `Dynamics`, `convertJointAnglesToConfig`, `model_`, `data_` |
 | `tools/query_limits.cpp` | Standalone read-only executable: prints the robot's kinematic hard/soft limits | `query_limits` binary |
 | `scripts/plot_move.py`, `scripts/plot_joint.py` | Offline analysis of move logs (not part of the build) | — |
 | `config/GEN3_custom.urdf` | Our copy of the arm model (see `decisions/custom-urdf.md`) | — |
-| `motion.txt` | Optional runtime motion config; its presence arms a move on startup | `mode:`, `deltas_deg:`, `speeds_deg_s:`, `speed_limits_deg_s:` |

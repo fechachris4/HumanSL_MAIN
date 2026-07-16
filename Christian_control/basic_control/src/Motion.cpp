@@ -10,12 +10,9 @@
 #include "Record.h"   // MoveLogSample / write_move_log_*
 
 #include <iostream>
-#include <fstream>
-#include <sstream>
 #include <cmath>
 #include <thread>
 #include <stdexcept>
-#include <filesystem>
 
 #include <KDetailedException.h>   // Kortex API call failures
 
@@ -187,121 +184,6 @@ JointVector broadcast_speed(double speed_deg_s)
     JointVector speeds;
     speeds.fill(speed_deg_s);
     return speeds;
-}
-
-namespace {
-
-// Parse the rest of a config line into exactly 7 numbers.
-JointVector parse_seven(std::istringstream& line, const std::string& key)
-{
-    JointVector v;
-    for (int i = 0; i < NUM_JOINTS; ++i)
-        if (!(line >> v[i]))
-            throw std::invalid_argument(key + ": expected 7 numbers");
-    double extra;
-    if (line >> extra)
-        throw std::invalid_argument(key + ": more than 7 numbers");
-    return v;
-}
-
-} // namespace
-
-std::string find_motion_config()
-{
-    namespace fs = std::filesystem;
-
-    std::vector<fs::path> candidates = {fs::current_path() / "motion.txt"};
-
-    // Where the running executable lives (Linux). Lets the file sit next to
-    // the binary (build/) or one level up (basic_control/).
-    std::error_code ec;
-    fs::path exe = fs::read_symlink("/proc/self/exe", ec);
-    if (!ec) {
-        candidates.push_back(exe.parent_path() / "motion.txt");
-        candidates.push_back(exe.parent_path().parent_path() / "motion.txt");
-    }
-
-    for (const auto& p : candidates)
-        if (fs::exists(p))
-            return fs::absolute(p).lexically_normal().string();
-    return "";
-}
-
-MotionConfig load_motion_config(const std::string& path)
-{
-    std::ifstream file(path);
-    if (!file)
-        throw std::invalid_argument("cannot open motion config: " + path);
-
-    bool have_deltas = false, have_speeds = false;
-    bool have_default_speed = false, have_limits = false;
-    std::string mode = "joints";
-    JointVector deltas{}, speeds{};
-    JointVector limits = kDefaultSpeedLimits;
-    double default_speed = 5.0;  // used if no speed line is given
-
-    std::string raw;
-    while (std::getline(file, raw)) {
-        // Strip comments; skip blank lines.
-        std::string text = raw.substr(0, raw.find('#'));
-        std::istringstream line(text);
-        std::string key;
-        if (!(line >> key))
-            continue;
-
-        if (key == "mode:") {
-            if (!(line >> mode) || (mode != "joints" && mode != "reactive"))
-                throw std::invalid_argument(
-                    path + ": mode must be 'joints' or 'reactive'");
-        } else if (key == "deltas_deg:") {
-            deltas = parse_seven(line, "deltas_deg");
-            have_deltas = true;
-        } else if (key == "speeds_deg_s:") {
-            speeds = parse_seven(line, "speeds_deg_s");
-            have_speeds = true;
-        } else if (key == "default_speed_deg_s:") {
-            if (!(line >> default_speed))
-                throw std::invalid_argument("default_speed_deg_s: expected a number");
-            have_default_speed = true;
-        } else if (key == "speed_limits_deg_s:") {
-            limits = parse_seven(line, "speed_limits_deg_s");
-            have_limits = true;
-        } else {
-            throw std::invalid_argument("unknown line in " + path + ": " + raw);
-        }
-    }
-
-    MotionConfig config;
-    config.mode = mode;
-    config.deltas = deltas;
-    config.speeds = have_speeds ? speeds : broadcast_speed(default_speed);
-    config.limits = limits;
-
-    // Reactive mode takes its target and limits from Config.h. Reject the
-    // joint move's lines instead of ignoring them, so the file can't look
-    // like one mode and run the other.
-    if (config.mode == "reactive") {
-        if (have_deltas || have_speeds || have_default_speed || have_limits)
-            throw std::invalid_argument(
-                path + ": mode 'reactive' takes no joint-move lines "
-                "(remove deltas_deg/speeds_deg_s/default_speed_deg_s/"
-                "speed_limits_deg_s)");
-        return config;
-    }
-
-    if (!have_deltas)
-        throw std::invalid_argument(path + ": missing required line 'deltas_deg: D1 .. D7'");
-
-    // Fail at load time (before connecting) rather than in the motion loop.
-    validate_move_request(config.deltas, config.speeds, path);
-    for (int i = 0; i < NUM_JOINTS; ++i)
-        if (config.speeds[i] > config.limits[i])
-            throw std::invalid_argument(
-                path + ": joint " + std::to_string(i + 1) + " speed " +
-                std::to_string(config.speeds[i]) + " deg/s exceeds limit " +
-                std::to_string(config.limits[i]) + " deg/s");
-
-    return config;
 }
 
 bool move_joints_relative(k_api::Base::BaseClient* base,
