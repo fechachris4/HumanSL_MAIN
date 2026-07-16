@@ -1,3 +1,0 @@
-/home/bjorn/Code/gpmp2/TrajectoryExecution/build/CMakeFiles/test_impedance_control.dir
-/home/bjorn/Code/gpmp2/TrajectoryExecution/build/CMakeFiles/edit_cache.dir
-/home/bjorn/Code/gpmp2/TrajectoryExecution/build/CMakeFiles/rebuild_cache.dir

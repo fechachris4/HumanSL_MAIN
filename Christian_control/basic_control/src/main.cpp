@@ -16,7 +16,8 @@
 
 #include "Config.h"
 #include "Connect.h"
-#include "Controller.h"
+#include "controllers/legacy_advanced/Controller.h"
+#include "controllers/simple_joint_position_hold/SimpleJointPositionHoldLoop.h"
 #include "Kinematics.h"
 #include "Measure.h"
 #include "Record.h"
@@ -50,15 +51,35 @@ int main()
             }
         }
         bool move_requested = !motion_path.empty();
-        bool reactive = move_requested && motion.mode == "reactive";
+        bool simple_hold = move_requested &&
+            motion.mode == "simple_joint_position_hold";
+        bool legacy_advanced = move_requested &&
+            motion.mode == "legacy_advanced";
         std::string out_file = !move_requested ? config::kRecordFile
-            : timestamped_csv_name(reactive ? config::kControlLogPrefix
-                                            : config::kMoveLogPrefix);
+            : timestamped_csv_name(simple_hold ? config::kSimpleHoldLogPrefix
+                : legacy_advanced ? config::kControlLogPrefix
+                                  : config::kMoveLogPrefix);
 
-        // Load the robot model and connect (both channels, once).
-        Dynamics dynamics(GEN3_URDF_PATH);
+        // Connect once. Simple hold branches before Dynamics/FK: its complete
+        // data path is measured joints -> target -> error -> position command.
         Connect connection(config::kRobotIp);
         connection.base()->ClearFaults();
+
+        if (simple_hold) {
+            std::cout << "mode: simple_joint_position_hold — fixed measured "
+                         "startup pose, Kp=" << config::kSimpleHoldKp
+                      << ", max command lead="
+                      << config::kSimpleHoldMaxCommandLeadDeg
+                      << " deg (Ctrl+C to stop)\nLogging every cycle -> "
+                      << out_file << "\n";
+            std::ofstream log(out_file);
+            bool ok = run_simple_joint_position_hold(
+                connection.base(), connection.base_cyclic(), g_stop, &log);
+            return ok ? 0 : 1;
+        }
+
+        // The remaining modes retain the existing model/FK startup checks.
+        Dynamics dynamics(GEN3_URDF_PATH);
 
         // Startup check: does our model agree with the robot?
         report_fk_vs_robot(dynamics, connection.base(),
@@ -80,11 +101,11 @@ int main()
             std::cout << std::defaultfloat << "\n";
         };
 
-        // Reactive mode: task-space servo to the Config.h target pose.
+        // Explicit legacy mode: preserved advanced task-space controller.
         // MOVES THE ARM continuously until Ctrl+C: workspace clear, e-stop
         // in hand.
-        if (reactive) {
-            std::cout << "mode: reactive — servoing EE to target ("
+        if (legacy_advanced) {
+            std::cout << "mode: legacy_advanced — servoing EE to target ("
                       << config::kTargetPosition[0] << ", "
                       << config::kTargetPosition[1] << ", "
                       << config::kTargetPosition[2]

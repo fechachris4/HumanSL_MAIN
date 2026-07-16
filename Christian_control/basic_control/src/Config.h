@@ -21,31 +21,25 @@ namespace config
     // run — one file per move, so a failed run's evidence is never overwritten.
     inline constexpr const char* kMoveLogPrefix = "move_log";
 
-    // Reactive controller target: desired end-effector pose in the base frame.
-    // Position {x, y, z} in meters. Orientation {roll, pitch, yaw} in DEGREES,
-    // fixed-axis convention: rotate about the base X axis (roll), then base Y
-    // (pitch), then base Z (yaw) — i.e. R = Rz * Ry * Rx. To hold the current
-    // pose: run read-only (no motion.txt), copy the printed EE position and
-    // rpy here, rebuild.
+    // Simple joint-position hold. The target is captured from measured joints
+    // once, after low-level servoing starts, then remains fixed for the run.
+    // Each position setpoint is limited to a tiny lead over that cycle's
+    // measurement; this is a command-safety bound, not a mechanical hard limit.
+    inline constexpr double kSimpleHoldKp = 0.02;
+    inline constexpr double kSimpleHoldMaxCommandLeadDeg = 0.1;
+    inline constexpr const char* kSimpleHoldLogPrefix = "simple_hold";
+
+    // Reactive controller target: desired end-effector position in the base
+    // frame, meters. To hold the current position: run read-only (no
+    // motion.txt), copy the printed EE position here, rebuild.
     inline constexpr double kTargetPosition[3] = {0.9, 0.2, 0.3};
-    inline constexpr double kTargetOrientationRPYDeg[3] = {0.0, 0.0, 0.0};
 
     // Reactive controller gains. KP in 1/s (error -> task velocity), KD unitless
     // (velocity error -> velocity command; keep < 1, it feeds back measured
     // joint rates one cycle delayed and chatters as it approaches 1).
     inline constexpr double kKpPos = 1.5;
-    inline constexpr double kKpRot = 1.0;
     inline constexpr double kKdPos = 0.2;
-    inline constexpr double kKdRot = 0.2;
     inline constexpr double kDlsDamping = 0.05; // DLS lambda
-
-    // Null-space joint centering (joints 2/4/6): optional secondary task that
-    // pulls the limited joints toward mid-range without disturbing the EE.
-    // Off by default so the core task-space law can be evaluated on its own;
-    // flip to true and rebuild to compare (also skips the per-cycle
-    // pseudoinverse the projector needs, so "off" is genuinely the plain law).
-    inline constexpr bool kUseNullspaceCentering = false;
-    inline constexpr double kNullGain = 0.1; // 1/s, joint centering (2/4/6)
 
     // Reactive safety clamps. Speed limit per joint, deg/s: conservative first
     // runs; the project ceiling is 45 (arm kicks out of low-level servoing near

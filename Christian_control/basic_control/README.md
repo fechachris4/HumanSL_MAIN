@@ -30,11 +30,13 @@ It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
   channel, plus conversion to the Pinocchio configuration; never moves the arm
 - `src/Kinematics.h` / `Kinematics.cpp` — forward kinematics (Pinocchio) and the
   startup FK-vs-robot cross-check
-- `src/Controller.h` / `Controller.cpp` — task-space control: a read-only
-  pose-error report at startup, and the **reactive servo** (**moves the arm**,
-  see "Reactive mode" below): PD on pose + velocity error, damped-least-squares
-  inverse kinematics, optional null-space joint centering (off by default),
-  integrated position setpoints streamed at 1 kHz until Ctrl+C
+- `src/controllers/simple_joint_position_hold/` — the active baseline:
+  measured startup joints become a fixed target; each 1 kHz cycle computes
+  `error = target - measured`, then sends the bounded position setpoint
+  `measured + 0.02 * error`
+- `src/controllers/legacy_advanced/` — the preserved Cartesian controller:
+  position/velocity PD, damped-least-squares inverse kinematics, and integrated
+  position setpoints; selected only by explicit `mode: legacy_advanced`
 - `src/Record.h` / `Record.cpp` — fixed-rate recording loop: timestamps, dt, CSV
   rows, 1 Hz heartbeat, clean stop via the Ctrl+C flag
 - `src/Motion.h` / `Motion.cpp` — **moves the arm**: low-level cyclic motion of
@@ -73,9 +75,11 @@ cmake .. && make
 ./controller
 
 # MOVES THE ARM — workspace clear, e-stop in hand.
-# A move runs when a motion.txt file is found (no CLI flags). Searched in
+# A controller or move runs when motion.txt is found (no CLI flags). Searched in
 # order: current dir, the executable's dir (build/), its parent
-# (basic_control/). The program prints which file it uses. Minimal file:
+# (basic_control/). Simplest hold file:
+#   mode: simple_joint_position_hold
+# Joint-delta move file:
 #   deltas_deg: 0 10 0 -15 0 5 0      # 7 relative deg; 0 = hold that joint
 #   speeds_deg_s: 0 5 0 5 0 3 0       # optional per-joint deg/s
 #   default_speed_deg_s: 5            # optional; fallback 5 deg/s
@@ -89,34 +93,64 @@ What it does right now:
 3. Prints an FK cross-check: our Pinocchio forward kinematics vs the pose the
    robot itself reports (they agree to ~2 cm once the gripper TCP offset is added).
 4. Prints the controller's position error: target (from `Config.h`) minus the
-   FK end-effector position, plus its norm and the current EE orientation as
-   fixed-axis roll-pitch-yaw in degrees — computed once, no motion.
+   FK end-effector position, plus its norm — computed once, no motion. Also
+   prints the current EE orientation as fixed-axis roll-pitch-yaw in degrees
+   (diagnostic only; the reactive servo below does not control orientation).
 5. Records all 7 joint angles at the chosen rate into the CSV (with timestamp
    and dt columns), printing a 1 Hz heartbeat, until Ctrl+C.
 
-## Reactive mode
+## Simple joint position hold
+
+**Moves the arm in low-level servoing until Ctrl+C.** This is the baseline
+controller. Arm it with:
+
+```
+mode: simple_joint_position_hold
+```
+
+After entering low-level servoing, the controller reads all seven measured
+joint positions once and fixes that snapshot as the target for the run. Every
+1 ms cycle, in degrees:
+
+```
+error   = target - measured
+command = measured + 0.02 * error
+```
+
+The final position setpoint is limited to `measured ± 0.1°` before
+`BaseCyclic::Refresh`. This is a conservative command-lead bound, not a claim
+about the arm's mechanical hard limits. Since the target is the measured
+startup pose and `0 < Kp < 1`, the raw command remains between measured and
+target. The simple path does not construct `Dynamics` and does not run FK,
+Jacobians, differential IK, velocity commands, torque commands, or the legacy
+controller.
+
+One row per cycle goes to `simple_hold_<timestamp>.csv`: time, seven measured
+positions, seven fixed targets, seven errors, and seven commanded positions.
+Ctrl+C or a reported robot fault freezes at the latest measurement; RAII
+restores single-level servoing on every exit path. A communication exception
+still restores the servoing mode, but no further freeze packet can be guaranteed
+when communication itself has failed.
+
+## Legacy advanced mode
 
 **Moves the arm, continuously, until you press Ctrl+C.** Armed by a
 `motion.txt` containing just:
 
 ```
-mode: reactive
+mode: legacy_advanced
 ```
 
-The arm then servos its end-effector toward the target pose in `src/Config.h`
-(`kTargetPosition` + `kTargetOrientationRPYDeg`, base frame; roll-pitch-yaw
-about the fixed base axes, degrees) and *keeps* servoing
-— push the target error and it fights back. Each 1 ms cycle: FK + Jacobian
-(Pinocchio) → PD on position/orientation/velocity error → damped-least-squares
-joint rates → optional null-space centering on joints 2/4/6
-(`kUseNullspaceCentering`, off by default: flip to `true` and rebuild to
-compare — rerun the same target and diff the two `control_trace_*.csv` files;
-each run prints ON/off at startup) → clip to
-`kReactiveSpeedLimitDegS` → integrate the position setpoints → clamp the lead
-over the measurement to `kCtrlLeadRad` (anti-windup; also bounds tracking
-error well under the ~5 deg low-level-servoing kick-out) → stream. One trace
-row per cycle goes to `control_trace_<timestamp>.csv` (errors, commanded
-twist, joint rates before/after clipping, clamp flags, fault banks).
+The arm then servos its end-effector toward the target position in
+`src/Config.h` (`kTargetPosition`, base frame, meters) and *keeps* servoing
+— push the target error and it fights back. Orientation is not controlled.
+Each 1 ms cycle: FK + Jacobian (Pinocchio) → PD on position/velocity error →
+damped-least-squares joint rates → clip to `kReactiveSpeedLimitDegS` →
+integrate the position setpoints → clamp the lead over the measurement to
+`kCtrlLeadRad` (anti-windup; also bounds tracking error well under the ~5 deg
+low-level-servoing kick-out) → stream. One trace row per cycle goes to
+`control_trace_<timestamp>.csv` (errors, commanded velocity, joint rates
+before/after clipping, clamp flags, fault banks).
 
 Safety behavior: Ctrl+C (and any fault or communication error) freezes the
 command at the *measured* position, and RAII restores single-level servoing on
@@ -126,15 +160,16 @@ project's 45 deg/s rule.
 
 First-run procedure (workspace clear, e-stop in hand):
 
-1. Read-only run (no motion.txt): copy the printed EE position and rpy angles
-   into `kTargetPosition` / `kTargetOrientationRPYDeg`, rebuild.
-2. Zero-gain run: set all gains in Config.h to 0, rebuild, run reactive — the
-   arm must hold perfectly still. This validates the loop, timing (`dt_s` in
+1. Read-only run (no motion.txt): copy the printed EE position into
+   `kTargetPosition`, rebuild.
+2. Zero-gain run: set all gains in Config.h to 0, rebuild, run
+   `legacy_advanced` — the arm must hold perfectly still. This validates the
+   loop, timing (`dt_s` in
    the trace), logging, and Ctrl+C with zero motion risk.
-3. Hold-in-place run: restore the gains (target = current pose from step 1).
-   Expect a millimetre-level hold; check the trace for velocity noise.
+3. Hold-in-place run: restore the gains (target = current position from step
+   1). Expect a millimetre-level hold; check the trace for velocity noise.
 4. Small step: offset `kTargetPosition` by 2–3 cm in z, watch it converge,
-   then tune `kKpPos`/`kKpRot` up gradually.
+   then tune `kKpPos` up gradually.
 
 If `motion.txt` is present, it instead moves all 7 joints simultaneously by
 the configured relative deltas via low-level 1 kHz streaming (each joint

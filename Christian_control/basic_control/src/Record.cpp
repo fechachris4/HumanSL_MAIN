@@ -100,9 +100,9 @@ void write_move_log_row(std::ostream& csv, const MoveLogSample& s)
 void write_control_trace_header(std::ostream& csv)
 {
     csv << "time_s,dt_s";
-    for (const char* n : {"e_pos", "e_rot", "e_v", "e_w"})
+    for (const char* n : {"e_pos", "e_v"})
         for (const char* ax : {"_x", "_y", "_z"}) csv << "," << n << ax;
-    for (int i = 1; i <= 6; ++i) csv << ",vcmd_" << i;
+    for (int i = 1; i <= 3; ++i) csv << ",vcmd_" << i;
     for (int i = 1; i <= 7; ++i) csv << ",qdotraw_j" << i;
     for (int i = 1; i <= 7; ++i) csv << ",qdotcmd_j" << i;
     for (int i = 1; i <= 7; ++i) csv << ",spclip_j" << i;
@@ -118,9 +118,7 @@ void write_control_trace_row(std::ostream& csv, const ControlTraceSample& s)
 {
     csv << s.t_s << "," << s.dt_s;
     for (double v : s.e_pos) csv << "," << v;
-    for (double v : s.e_rot) csv << "," << v;
     for (double v : s.e_v)   csv << "," << v;
-    for (double v : s.e_w)   csv << "," << v;
     for (double v : s.v_cmd) csv << "," << v;
     for (double v : s.qdot_raw) csv << "," << v;
     for (double v : s.qdot_cmd) csv << "," << v;

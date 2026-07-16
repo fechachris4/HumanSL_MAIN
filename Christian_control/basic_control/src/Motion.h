@@ -25,7 +25,7 @@ using JointVector = std::array<double, 7>;
 // RAII guard: LOW_LEVEL_SERVOING on construction, SINGLE_LEVEL_SERVOING on
 // destruction — so the robot's supervisor is restored on every exit path
 // (normal return, Ctrl+C freeze, or exception unwinding). Shared by every
-// low-level loop (joint moves here, reactive control in Controller.cpp).
+// low-level loop (joint moves here and both controller folders).
 class ServoingModeGuard
 {
 public:
@@ -117,7 +117,7 @@ constexpr JointVector kDefaultSpeedLimits =
 // A validated motion request loaded from a config file.
 struct MotionConfig
 {
-    std::string mode = "joints";  // "joints" (delta move) or "reactive"
+    std::string mode = "joints";
     JointVector deltas;   // relative degrees; 0 = hold that joint
     JointVector speeds;   // deg/s, per joint (validated <= limits)
     JointVector limits;   // deg/s, per joint (defaults to kDefaultSpeedLimits)
@@ -126,10 +126,9 @@ struct MotionConfig
 // Loads and validates a motion config from a tiny text file:
 //
 //   # comment lines and blank lines are ignored
-//   mode: joints                        (optional; "joints" default, or
-//                                        "reactive" — task-space servo to the
-//                                        Config.h target pose; no other lines
-//                                        allowed then)
+//   mode: joints                        (optional; "joints" default)
+//   mode: simple_joint_position_hold    (measured startup pose hold)
+//   mode: legacy_advanced               (archived task-space controller)
 //   deltas_deg: 0 10 0 -15 0 5 0        (required in joints mode, exactly 7)
 //   speeds_deg_s: 0 5 0 5 0 3 0         (optional, exactly 7; wins over default)
 //   default_speed_deg_s: 5              (optional, one value for all joints)

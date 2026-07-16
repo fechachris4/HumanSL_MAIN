@@ -62,10 +62,8 @@ struct ControlTraceSample
     double t_s = 0.0;
     double dt_s = 0.0;
     std::array<double, 3> e_pos{};    // target - EE position, m (base frame)
-    std::array<double, 3> e_rot{};    // orientation error axis-angle, rad
     std::array<double, 3> e_v{};      // linear velocity error, m/s
-    std::array<double, 3> e_w{};      // angular velocity error, rad/s
-    std::array<double, 6> v_cmd{};    // commanded task twist, linear first
+    std::array<double, 3> v_cmd{};    // commanded task velocity, m/s
     JointVector qdot_raw{};           // control law output, rad/s
     JointVector qdot_cmd{};           // after the speed clip, rad/s
     std::array<bool, 7> speed_clipped{};
@@ -81,6 +79,20 @@ struct ControlTraceSample
 
 void write_control_trace_header(std::ostream& csv);
 void write_control_trace_row(std::ostream& csv, const ControlTraceSample& sample);
+
+// Minimal trace for simple_joint_position_hold: the complete state -> target
+// -> error -> position-command path, with no advanced-controller fields.
+struct SimpleHoldLogSample
+{
+    double t_s = 0.0;
+    JointVector measured_deg{};
+    JointVector target_deg{};
+    JointVector error_deg{};
+    JointVector commanded_deg{};
+};
+
+void write_simple_hold_header(std::ostream& csv);
+void write_simple_hold_row(std::ostream& csv, const SimpleHoldLogSample& sample);
 
 // "<prefix>_YYYY-MM-DD_HH-MM-SS.csv" in local time — one file per run, so a
 // failed move's log is never overwritten by the next attempt.

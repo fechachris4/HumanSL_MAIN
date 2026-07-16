@@ -12,7 +12,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif ()
-add_definitions(-D_OS_UNIX -w)
+add_definitions(-D_OS_UNIX -w -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION)
+
+# Add Miniconda path to prefix path to find yaml-cpp if needed
+list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/Caskroom/miniconda/base")
+find_package(yaml-cpp REQUIRED)
 
 # Bundled Kortex API lives two levels up, in HumanSL_MAIN/third_party/.
 set(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
@@ -32,24 +36,48 @@ add_executable(controller
         src/main.cpp
         src/Measure.cpp
         src/Kinematics.cpp
-        src/Controller.cpp
+        src/controllers/legacy_advanced/Controller.cpp
+        src/controllers/simple_joint_position_hold/SimpleJointPositionHold.cpp
+        src/controllers/simple_joint_position_hold/SimpleJointPositionHoldLoop.cpp
         src/Record.cpp
+        src/SimpleHoldRecord.cpp
         src/Motion.cpp
         src/Timing.cpp
         src/Connect.cpp
         ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+        ${HUMANSL_ROOT}/TrajectoryExecution/src/Fwd_kinematics.cpp
 )
 
 target_include_directories(controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${HUMANSL_ROOT}/third_party/include
         ${HUMANSL_ROOT}/third_party/include/eigen3
+        ${HUMANSL_ROOT}/third_party/vicon_api/include
         ${HUMANSL_ROOT}/TrajectoryExecution/include
+        ${yaml-cpp_INCLUDE_DIRS}
 )
+
+enable_testing()
+
+add_executable(test_simple_joint_position_hold
+        tests/test_simple_joint_position_hold.cpp
+        src/controllers/simple_joint_position_hold/SimpleJointPositionHold.cpp
+)
+add_test(NAME simple_joint_position_hold COMMAND test_simple_joint_position_hold)
+
+add_executable(test_simple_hold_record
+        tests/test_simple_hold_record.cpp
+        src/SimpleHoldRecord.cpp
+)
+target_include_directories(test_simple_hold_record PRIVATE src)
+add_test(NAME simple_hold_record COMMAND test_simple_hold_record)
 
 target_link_libraries(controller
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
         ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+        ${HUMANSL_ROOT}/third_party/lib/libgtsam.so
+        yaml-cpp
         pthread
 )
 

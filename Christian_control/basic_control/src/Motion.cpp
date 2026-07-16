@@ -250,9 +250,13 @@ MotionConfig load_motion_config(const std::string& path)
             continue;
 
         if (key == "mode:") {
-            if (!(line >> mode) || (mode != "joints" && mode != "reactive"))
+            if (!(line >> mode) ||
+                (mode != "joints" &&
+                 mode != "simple_joint_position_hold" &&
+                 mode != "legacy_advanced"))
                 throw std::invalid_argument(
-                    path + ": mode must be 'joints' or 'reactive'");
+                    path + ": mode must be 'joints', "
+                    "'simple_joint_position_hold', or 'legacy_advanced'");
         } else if (key == "deltas_deg:") {
             deltas = parse_seven(line, "deltas_deg");
             have_deltas = true;
@@ -277,13 +281,13 @@ MotionConfig load_motion_config(const std::string& path)
     config.speeds = have_speeds ? speeds : broadcast_speed(default_speed);
     config.limits = limits;
 
-    // Reactive mode takes its target and limits from Config.h. Reject the
-    // joint move's lines instead of ignoring them, so the file can't look
-    // like one mode and run the other.
-    if (config.mode == "reactive") {
+    // Controller modes take their target and limits internally. Reject joint
+    // move lines instead of silently ignoring them.
+    if (config.mode != "joints") {
         if (have_deltas || have_speeds || have_default_speed || have_limits)
             throw std::invalid_argument(
-                path + ": mode 'reactive' takes no joint-move lines "
+                path + ": mode '" + config.mode +
+                "' takes no joint-move lines "
                 "(remove deltas_deg/speeds_deg_s/default_speed_deg_s/"
                 "speed_limits_deg_s)");
         return config;
