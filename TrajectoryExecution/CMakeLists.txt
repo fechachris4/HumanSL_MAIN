@@ -5,7 +5,9 @@ add_library(TrajectoryExecution
     src/Filter.cpp
     src/Fwd_kinematics.cpp
     src/Jacobian.cpp
-    # src/KinovaTrajectory.cpp
+        ../Christian_control/basic_control/src/Connect.cpp
+        ../Christian_control/basic_control/src/Connect.h
+        # src/KinovaTrajectory.cpp
 )
 
 # Make headers available to other targets
