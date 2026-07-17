@@ -16,10 +16,9 @@
 namespace k_api = Kinova::Api;
 
 // Pose of one frame of the robot, expressed in the base frame.
-struct Pose
-{
-    Eigen::Vector3d position;   // meters
-    Eigen::Matrix3d rotation;   // orientation as a rotation matrix
+struct Pose {
+    Eigen::Vector3d position; // meters
+    Eigen::Matrix3d rotation; // orientation as a rotation matrix
 };
 
 // Forward kinematics: where is `frame_name` when the joints are at q_pin?
@@ -31,9 +30,7 @@ Pose forward_kinematics(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
 
 // Sanity check at startup: our FK (URDF + Pinocchio) vs the robot's own
 // reported tool pose. Prints both to `out`. Read-only.
-void report_fk_vs_robot(Dynamics& dynamics,
-                        k_api::Base::BaseClient* base,
-                        k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                        std::ostream& out);
+void report_fk_vs_robot(Dynamics& dynamics, k_api::Base::BaseClient* base,
+                        k_api::BaseCyclic::BaseCyclicClient* base_cyclic, std::ostream& out);
 
-#endif //HUMANSL_MASTERS_PROJECT_2025_KINEMATICS_H
+#endif // HUMANSL_MASTERS_PROJECT_2025_KINEMATICS_H

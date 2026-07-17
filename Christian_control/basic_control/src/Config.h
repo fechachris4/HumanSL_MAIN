@@ -7,27 +7,34 @@
  */
 #pragma once
 
-#include "Motion.h"   // JointVector, kDefaultSpeedLimits, speeds_within_limits
+#include "Motion.h" // JointVector, kDefaultSpeedLimits, speeds_within_limits
 
 namespace config
 {
-    // Robot connection.
+    // Robot connection. Both Kortex sessions (TCP + UDP, see Connect.h) log
+    // in with the same credentials; timeouts are what the base waits before
+    // dropping an idle session/connection.
     inline constexpr const char* kRobotIp = "192.168.1.10";
+    inline constexpr const char* kSessionUsername = "admin";
+    inline constexpr const char* kSessionPassword = "admin";
+    inline constexpr int kSessionInactivityTimeoutMs = 60000;
+    inline constexpr int kConnectionInactivityTimeoutMs = 2000;
 
-    // What main() does on startup. Reactive is the default: no config file,
-    // no flag — just build and run. Edit this constant and rebuild to switch.
-    enum class StartupMode { kReactive, kJoints, kRecord };
-    inline constexpr StartupMode kStartupMode = StartupMode::kReactive;
+    // What main() does on startup. Edit this constant and rebuild to switch.
+    // There is no reactive/Cartesian-servo mode (see AGENTS.md/known-issues.md
+    // for why): only relative joint moves or read-only recording.
+    enum class StartupMode { kJoints, kRecord };
+
+    inline constexpr StartupMode kStartupMode = StartupMode::kJoints;
 
     // One-shot relative joint move, used only when kStartupMode == kJoints.
     // deltas: relative degrees, 0 = hold that joint. speeds: deg/s per joint,
     // checked against Motion.h's kDefaultSpeedLimits below at compile time.
-    inline constexpr JointVector kJointDeltasDeg =
-        {0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0};
-    inline constexpr JointVector kJointSpeedsDegS =
-        {5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0};
+    inline constexpr JointVector kJointDeltasDeg = {0.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0};
+    inline constexpr JointVector kJointSpeedsDegS = {5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0};
     static_assert(speeds_within_limits(kJointSpeedsDegS),
-        "kJointSpeedsDegS exceeds kDefaultSpeedLimits (Motion.h) — do not raise the limit, lower the speed");
+                  "kJointSpeedsDegS exceeds kDefaultSpeedLimits (Motion.h) — do not raise the "
+                  "limit, lower the speed");
 
     // Recording mode.
     inline constexpr double kRecordRateHz = 100.0;
@@ -36,41 +43,4 @@ namespace config
     // Motion mode (per-cycle move log). A timestamp and ".csv" are appended per
     // run — one file per move, so a failed run's evidence is never overwritten.
     inline constexpr const char* kMoveLogPrefix = "move_log";
-
-    // Reactive controller target: desired end-effector pose in the base frame.
-    // Position {x, y, z} in meters. Orientation {roll, pitch, yaw} in DEGREES,
-    // fixed-axis convention: rotate about the base X axis (roll), then base Y
-    // (pitch), then base Z (yaw) — i.e. R = Rz * Ry * Rx. To hold the current
-    // pose: set kStartupMode to kRecord, copy the printed EE position and rpy
-    // here, rebuild.
-    inline constexpr double kTargetPosition[3] = {0.9, 0.2, 0.3};
-    inline constexpr double kTargetOrientationRPYDeg[3] = {0.0, 0.0, 0.0};
-
-    // Reactive controller gains. KP in 1/s (error -> task velocity), KD unitless
-    // (velocity error -> velocity command; keep < 1, it feeds back measured
-    // joint rates one cycle delayed and chatters as it approaches 1).
-    inline constexpr double kKpPos = 1.5;
-    inline constexpr double kKpRot = 1.0;
-    inline constexpr double kKdPos = 0.2;
-    inline constexpr double kKdRot = 0.2;
-    inline constexpr double kDlsDamping = 0.05; // DLS lambda
-
-    // Null-space joint centering (joints 2/4/6): optional secondary task that
-    // pulls the limited joints toward mid-range without disturbing the EE.
-    // Off by default so the core task-space law can be evaluated on its own;
-    // flip to true and rebuild to compare (also skips the per-cycle
-    // pseudoinverse the projector needs, so "off" is genuinely the plain law).
-    inline constexpr bool kUseNullspaceCentering = false;
-    inline constexpr double kNullGain = 0.1; // 1/s, joint centering (2/4/6)
-
-    // Reactive safety clamps. Speed limit per joint, deg/s: conservative first
-    // runs; the project ceiling is 45 (arm kicks out of low-level servoing near
-    // its 50 deg/s soft limit — see Motion.h). Lead: max |command - measured|
-    // per joint, rad; the arm faults out near 5 deg (0.087 rad) of tracking
-    // error, so 0.05 rad (~2.9 deg) bounds it well clear of that.
-    inline constexpr double kReactiveSpeedLimitDegS = 20.0;
-    inline constexpr double kCtrlLeadRad = 0.05;
-
-    // Reactive mode per-cycle trace log (timestamp + ".csv" appended per run).
-    inline constexpr const char* kControlLogPrefix = "control_trace";
 } // namespace config

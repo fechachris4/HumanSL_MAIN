@@ -1,0 +1,23 @@
+# Practical subset: catch real bugs and obvious modernization, without
+# demanding a style rewrite of existing code. Run from a build dir with
+# compile_commands.json (cmake .. -DCMAKE_EXPORT_COMPILE_COMMANDS=ON).
+Checks: >
+  -*,
+  bugprone-*,
+  -bugprone-easily-swappable-parameters,
+  clang-analyzer-*,
+  performance-*,
+  modernize-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-nodiscard,
+  readability-*,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -readability-braces-around-statements,
+  -readability-else-after-return,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-narrowing-conversions
+
+WarningsAsErrors: ''
+HeaderFilterRegex: 'basic_control/src/.*'
+FormatStyle: file

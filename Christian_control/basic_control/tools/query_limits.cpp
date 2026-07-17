@@ -26,8 +26,8 @@ static void print_limits(const ctl::KinematicLimits& limits, const std::string& 
     std::cout << "\n  joint accels (deg/s^2):";
     for (int i = 0; i < limits.joint_acceleration_limits_size(); ++i)
         std::cout << " " << limits.joint_acceleration_limits(i);
-    std::cout << "\n  cartesian: " << limits.twist_linear() << " m/s, "
-              << limits.twist_angular() << " deg/s\n";
+    std::cout << "\n  cartesian: " << limits.twist_linear() << " m/s, " << limits.twist_angular()
+              << " deg/s\n";
 }
 
 int main()
@@ -43,10 +43,9 @@ int main()
         for (int m = 0; m < all.kinematic_limits_list_size(); ++m) {
             const auto& lim = all.kinematic_limits_list(m);
             print_limits(lim, "SOFT limits, control mode " +
-                              ctl::ControlMode_Name(lim.control_mode()) + ":");
+                                  ctl::ControlMode_Name(lim.control_mode()) + ":");
         }
-    }
-    catch (std::exception& e) {
+    } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }

@@ -13,7 +13,7 @@
 
 #include <BaseCyclicClientRpc.h>
 
-#include "Motion.h"   // JointVector
+#include "Motion.h" // JointVector
 
 namespace k_api = Kinova::Api;
 
@@ -21,31 +21,29 @@ namespace k_api = Kinova::Api;
 // `csv` ("time_s,dt_s,j1..j7"). Prints a heartbeat line to stdout once per
 // second. Runs until `stop` becomes true (e.g. set by a Ctrl+C handler).
 // Read-only: never moves the arm. Returns the number of samples recorded.
-long record_joint_angles(k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                         std::ostream& csv, double rate_hz,
-                         const std::atomic<bool>& stop);
+long record_joint_angles(k_api::BaseCyclic::BaseCyclicClient* base_cyclic, std::ostream& csv,
+                         double rate_hz, const std::atomic<bool>& stop);
 
 // One CSV row of the per-cycle move log: everything needed to reconstruct
 // why a move failed after the fact — whether the robot stopped tracking,
 // hit a torque/current wall, faulted, or left low-level servoing.
-struct MoveLogSample
-{
-    double t_s = 0.0;                 // since motion start
-    double dt_s = 0.0;                // since previous cycle
-    JointVector commanded_deg{};      // our setpoints (unwrapped)
-    JointVector measured_deg{};       // feedback, shifted next to the command
-    JointVector error_deg{};          // commanded - measured
-    JointVector velocity_deg_s{};     // feedback
-    JointVector torque_nm{};          // feedback
-    JointVector current_a{};          // motor current, feedback
-    std::array<std::uint32_t, 7> fault_bank{};    // per-actuator fault bits
-    std::array<std::uint32_t, 7> warning_bank{};  // per-actuator warning bits
-    std::uint32_t arm_state = 0;      // Common::ArmState (drops out of
-                                      // SERVOING_LOW_LEVEL if we lose control)
+struct MoveLogSample {
+    double t_s = 0.0;                            // since motion start
+    double dt_s = 0.0;                           // since previous cycle
+    JointVector commanded_deg{};                 // our setpoints (unwrapped)
+    JointVector measured_deg{};                  // feedback, shifted next to the command
+    JointVector error_deg{};                     // commanded - measured
+    JointVector velocity_deg_s{};                // feedback
+    JointVector torque_nm{};                     // feedback
+    JointVector current_a{};                     // motor current, feedback
+    std::array<std::uint32_t, 7> fault_bank{};   // per-actuator fault bits
+    std::array<std::uint32_t, 7> warning_bank{}; // per-actuator warning bits
+    std::uint32_t arm_state = 0;                 // Common::ArmState (drops out of
+                                                 // SERVOING_LOW_LEVEL if we lose control)
     std::uint32_t base_fault_bank = 0;
     std::uint32_t base_warning_bank = 0;
-    bool refresh_ok = false;          // false on the row logged when a
-                                      // Refresh (send+receive) call failed
+    bool refresh_ok = false; // false on the row logged when a
+                             // Refresh (send+receive) call failed
 };
 
 // CSV formatting for the per-cycle move log written by move_joints_relative.
@@ -53,34 +51,6 @@ struct MoveLogSample
 // the loop.
 void write_move_log_header(std::ostream& csv);
 void write_move_log_row(std::ostream& csv, const MoveLogSample& sample);
-
-// One CSV row of the reactive controller's per-cycle trace: every stage of
-// the control law (errors, commanded twist, joint rates before/after the
-// clamps) plus the joint state and fault banks.
-struct ControlTraceSample
-{
-    double t_s = 0.0;
-    double dt_s = 0.0;
-    std::array<double, 3> e_pos{};    // target - EE position, m (base frame)
-    std::array<double, 3> e_rot{};    // orientation error axis-angle, rad
-    std::array<double, 3> e_v{};      // linear velocity error, m/s
-    std::array<double, 3> e_w{};      // angular velocity error, rad/s
-    std::array<double, 6> v_cmd{};    // commanded task twist, linear first
-    JointVector qdot_raw{};           // control law output, rad/s
-    JointVector qdot_cmd{};           // after the speed clip, rad/s
-    std::array<bool, 7> speed_clipped{};
-    std::array<bool, 7> lead_clamped{};
-    JointVector commanded_deg{};      // setpoints sent (unwrapped)
-    JointVector measured_deg{};       // feedback, shifted next to the command
-    JointVector velocity_deg_s{};     // feedback
-    std::array<std::uint32_t, 7> fault_bank{};
-    std::uint32_t arm_state = 0;
-    std::uint32_t base_fault_bank = 0;
-    bool refresh_ok = false;
-};
-
-void write_control_trace_header(std::ostream& csv);
-void write_control_trace_row(std::ostream& csv, const ControlTraceSample& sample);
 
 // "<prefix>_YYYY-MM-DD_HH-MM-SS.csv" in local time — one file per run, so a
 // failed move's log is never overwritten by the next attempt.
@@ -92,4 +62,4 @@ std::string timestamped_csv_name(const std::string& prefix);
 // result is unaffected. Close/flush the log stream before calling this.
 void plot_move_log(const std::string& csv_path);
 
-#endif //HUMANSL_MASTERS_PROJECT_2025_RECORD_H
+#endif // HUMANSL_MASTERS_PROJECT_2025_RECORD_H

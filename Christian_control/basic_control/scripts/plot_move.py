@@ -11,9 +11,8 @@ commanded-vs-measured curves for every joint that moved, plus a dt trace.
 
 import csv
 import glob
-import sys
-
 import numpy as np
+import sys
 
 NUM_JOINTS = 7
 
@@ -47,10 +46,13 @@ def main():
 
     # --- cycle time -------------------------------------------------------
     print("\ndt (cycle period):")
-    print(f"  mean {dt.mean()*1e3:.3f} ms   median {np.median(dt)*1e3:.3f} ms"
-          f"   p99 {np.percentile(dt, 99)*1e3:.3f} ms   max {dt.max()*1e3:.3f} ms")
-    late = (dt > 1.5 * np.median(dt)).sum()
-    print(f"  cycles >1.5x median: {late} ({100.0*late/len(dt):.2f}%)")
+    if len(dt) > 0:
+        print(f"  mean {dt.mean() * 1e3:.3f} ms   median {np.median(dt) * 1e3:.3f} ms"
+              f"   p99 {np.percentile(dt, 99) * 1e3:.3f} ms   max {dt.max() * 1e3:.3f} ms")
+        late = (dt > 1.5 * np.median(dt)).sum()
+        print(f"  cycles >1.5x median: {late} ({100.0 * late / len(dt):.2f}%)")
+    else:
+        print("  (not enough cycles for dt stats)")
 
     # --- per-joint tracking ----------------------------------------------
     print("\nper-joint tracking (deg):")
@@ -59,11 +61,11 @@ def main():
     moved = []
     for j in range(1, NUM_JOINTS + 1):
         cmd, meas = cols[f"cmd_j{j}"], cols[f"meas_j{j}"]
-        target = cmd[-1]                     # command ends ON the target
+        target = cmd[-1]  # command ends ON the target
         delta = target - cmd[0]
         err = meas - cmd
         if abs(delta) < 1e-9:
-            continue                         # joint was holding; skip
+            continue  # joint was holding; skip
         moved.append(j)
         # overshoot: how far the measurement went PAST the target, in the
         # direction of travel (0 if it never crossed it)
@@ -95,10 +97,16 @@ def main():
         ax.set_ylabel(f"j{j} (deg)")
         ax.legend(loc="best")
         ax.grid(True, alpha=0.3)
-    axes[-1].plot(t[1:], dt * 1e3, lw=0.6)
-    axes[-1].set_ylabel("dt (ms)")
-    axes[-1].set_xlabel("time (s)")
-    axes[-1].grid(True, alpha=0.3)
+    if n > 0:
+        axes[-1].plot(t[1:], dt * 1e3, lw=0.6)
+        axes[-1].set_ylabel("dt (ms)")
+        axes[-1].set_xlabel("time (s)")
+        axes[-1].grid(True, alpha=0.3)
+    else:
+        axes[0].plot(t[1:], dt * 1e3, lw=0.6)
+        axes[0].set_ylabel("dt (ms)")
+        axes[0].set_xlabel("time (s)")
+        axes[0].grid(True, alpha=0.3)
     fig.tight_layout()
     out = path.rsplit(".", 1)[0] + ".png"
     fig.savefig(out, dpi=120)

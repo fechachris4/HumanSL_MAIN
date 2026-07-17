@@ -16,7 +16,6 @@
 
 #include "Config.h"
 #include "Connect.h"
-#include "Controller.h"
 #include "Kinematics.h"
 #include "Measure.h"
 #include "Record.h"
@@ -25,7 +24,10 @@
 
 // Ctrl+C sets this flag; loops check it and exit cleanly.
 std::atomic<bool> g_stop{false};
-void on_sigint(int) { g_stop = true; }
+void on_sigint(int)
+{
+    g_stop = true;
+}
 
 int main()
 {
@@ -34,14 +36,11 @@ int main()
     try {
         // Startup mode is a compiled-in constant (config::kStartupMode,
         // Config.h) — set it there and rebuild; no file or flag needed.
-        constexpr bool reactive = config::kStartupMode == config::StartupMode::kReactive;
         constexpr bool joints_move = config::kStartupMode == config::StartupMode::kJoints;
-        std::cout << "startup mode: "
-                  << (reactive ? "reactive" : joints_move ? "joints" : "record")
+        std::cout << "startup mode: " << (joints_move ? "joints" : "record")
                   << " (config::kStartupMode)\n";
-        std::string out_file = reactive ? timestamped_csv_name(config::kControlLogPrefix)
-            : joints_move ? timestamped_csv_name(config::kMoveLogPrefix)
-            : config::kRecordFile;
+        std::string out_file =
+            joints_move ? timestamped_csv_name(config::kMoveLogPrefix) : config::kRecordFile;
 
         // Load the robot model and connect (both channels, once).
         Dynamics dynamics(GEN3_URDF_PATH);
@@ -49,12 +48,7 @@ int main()
         connection.base()->ClearFaults();
 
         // Startup check: does our model agree with the robot?
-        report_fk_vs_robot(dynamics, connection.base(),
-                           connection.base_cyclic(), std::cout);
-
-        // Controller groundwork (read-only): FK position vs the hard-coded
-        // target in Config.h — prints target, current, and error once.
-        report_position_error(dynamics, connection.base_cyclic(), std::cout);
+        report_fk_vs_robot(dynamics, connection.base(), connection.base_cyclic(), std::cout);
 
         // If kStartupMode is kJoints, do the move instead of recording.
         // MOVES THE ARM: keep the workspace clear and the e-stop in hand.
@@ -68,26 +62,10 @@ int main()
             std::cout << std::defaultfloat << "\n";
         };
 
-        // Reactive mode: task-space servo to the Config.h target pose.
-        // MOVES THE ARM continuously until Ctrl+C: workspace clear, e-stop
-        // in hand.
-        if (reactive) {
-            std::cout << "mode: reactive — servoing EE to target ("
-                      << config::kTargetPosition[0] << ", "
-                      << config::kTargetPosition[1] << ", "
-                      << config::kTargetPosition[2]
-                      << ") m until Ctrl+C\nLogging every cycle -> "
-                      << out_file << "\n";
-            std::ofstream log(out_file);
-            bool ok = run_reactive_control(connection.base(),
-                                           connection.base_cyclic(),
-                                           dynamics, g_stop, &log);
-            return ok ? 0 : 1;
-        }
-
         if (joints_move) {
             std::cout << "joints mode — moving joints (relative deg):";
-            for (double d : config::kJointDeltasDeg) std::cout << " " << d;
+            for (double d : config::kJointDeltasDeg)
+                std::cout << " " << d;
             std::cout << "  (Ctrl+C to stop)\n";
             std::cout << "Logging every cycle -> " << out_file << "\n";
             print_joints("joints at start");
@@ -97,23 +75,22 @@ int main()
                                            g_stop, &log);
             print_joints("joints at end  ");
             std::cout << (ok ? "Move finished.\n" : "Move incomplete.\n");
-            log.close();               // everything on disk before plotting
-            plot_move_log(out_file);   // stats + PNGs from this run's log
+            log.close();             // everything on disk before plotting
+            plot_move_log(out_file); // stats + PNGs from this run's log
             return ok ? 0 : 1;
         }
 
         // Record joint angles at a fixed rate until Ctrl+C.
         std::ofstream csv(out_file);
-        std::cout << "Recording joints at " << config::kRecordRateHz << " Hz -> "
-                  << out_file << "  (Ctrl+C to stop)\n";
+        std::cout << "Recording joints at " << config::kRecordRateHz << " Hz -> " << out_file
+                  << "  (Ctrl+C to stop)\n";
 
-        long samples = record_joint_angles(connection.base_cyclic(),
-                                           csv, config::kRecordRateHz, g_stop);
+        long samples =
+            record_joint_angles(connection.base_cyclic(), csv, config::kRecordRateHz, g_stop);
 
         // Orderly shutdown (Connect's destructor closes the sessions).
         std::cout << "Stopped. " << samples << " samples written.\n";
-    }
-    catch (std::exception& e) {
+    } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;
     }

@@ -16,6 +16,14 @@
 # Include root CMakeLists.txt
 !CMakeLists.txt
 
+# Include shared coding-agent instructions and engineering documentation
+!AGENTS.md
+!CLAUDE.md
+!.claude/
+!.claude/**
+!docs/
+!docs/**
+
 # Include this .gitignore file
 !.gitignore
 

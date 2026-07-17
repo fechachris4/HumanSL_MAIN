@@ -1,0 +1,14 @@
+# Matches the existing style in basic_control/: 4-space indent, function
+# bodies get their own brace line, control statements (if/try/for) keep the
+# brace attached.
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100
+BreakBeforeBraces: Linux
+AccessModifierOffset: -4
+NamespaceIndentation: All
+AllowShortIfStatementsOnASingleLine: false
+AllowShortFunctionsOnASingleLine: Empty
+SortIncludes: false
+PointerAlignment: Left
+ReferenceAlignment: Left

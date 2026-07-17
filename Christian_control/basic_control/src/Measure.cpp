@@ -6,11 +6,17 @@
 
 #include <cmath>
 
+k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* base_cyclic)
+{
+    // The ONLY RefreshFeedback call in the program (see Measure.h).
+    return base_cyclic->RefreshFeedback();
+}
+
 std::vector<double> measure_joint_angles(k_api::BaseCyclic::BaseCyclicClient* base_cyclic)
 {
     // One feedback frame from the real-time channel: positions, velocities,
     // torques, currents... — we extract just the joint positions.
-    k_api::BaseCyclic::Feedback feedback = base_cyclic->RefreshFeedback();
+    k_api::BaseCyclic::Feedback feedback = read_feedback(base_cyclic);
 
     std::vector<double> angles_deg(feedback.actuators_size());
     for (int i = 0; i < feedback.actuators_size(); ++i)

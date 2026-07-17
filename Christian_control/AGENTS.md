@@ -1,92 +1,70 @@
-# Agent rules for Christian_control
+# Christian_control subsystem instructions
 
-Durable, repository-wide rules only. Details live in `docs/` — link there
-instead of expanding this file (see "Keeping these files short").
+These rules supplement the repository-root `AGENTS.md`. The shared C++, control
+safety, verification, architecture, and robotics contracts remain mandatory.
 
-## Project purpose
+## Scope and architecture
 
-Controls and monitors a Kinova Gen3 7-DoF robot in C++: Kortex API to talk
-to the arm, Pinocchio (URDF model) for kinematics/dynamics. Active code is
-`basic_control/`.
+`basic_control/` is the actively documented single-arm Kinova Gen3 controller.
+It uses the Kortex API for the arm and the shared `TrajectoryExecution/Dynamics`
+implementation for Pinocchio kinematics/dynamics.
 
-## Architecture
+- Keep `basic_control/src/main.cpp` at the orchestration level: model and client
+  construction, high-level calls, shutdown, and exit status.
+- Kortex connection mechanics belong in `Connect`, state acquisition in
+  `Measure`, kinematics in `Kinematics`, motion and its watchdogs in `Motion`,
+  recording in `Record`, and timing diagnostics in `Timing`.
+- Treat `../TrajectoryExecution/Dynamics` as a shared dependency. Do not change it
+  as incidental local cleanup.
+- The current executable's settings live in `basic_control/src/Config.h`. Until a
+  deliberate configuration migration is requested, keep it as the single source
+  rather than adding a hidden second configuration path.
+- Full module ownership and the `main.cpp` contract are in
+  `docs/architecture.md`; program flow and Kortex calls are in
+  `docs/CONTROLLER_CODE_MAP.md`.
 
-One topic per file pair; `main.cpp` coordinates, modules implement.
-Full module-ownership table and layout: `docs/architecture.md`.
+## Hardware facts and restrictions
 
-- `main.cpp` must read like high-level pseudocode: wiring, main-loop call,
-  shutdown, exit code — no Kortex/FK/CSV implementation detail, no duplicate
-  clients, no reconnecting inside the loop. Full may/must-not contract:
-  `docs/architecture.md`.
-- Code migrates out of main the second time it is needed; mechanics live in
-  modules, policy (rates, filenames, IPs) lives in `src/Config.h`.
-- `Dynamics` is reused from `../TrajectoryExecution` — do not edit it.
+- `basic_control/controller` is hardware-moving by default because
+  `config::kStartupMode` is `kJoints`. Never run it as a build, sanitizer, or
+  smoke test. Every hardware session still requires the explicit authorization
+  and operator conditions in the root instructions.
+- The only current motion path is the relative joint move in `src/Motion.cpp`.
+  The previous Cartesian/reactive controller was removed after hardware faults;
+  do not reintroduce it without an explicit design and safety discussion. See
+  `docs/decisions/reactive-control-removal.md` and `docs/known-issues.md`.
+- `kJointSpeedsDegS` is statically limited against
+  `Motion.h::kDefaultSpeedLimits`, currently 45 deg/s. Do not raise this ceiling;
+  the arm's configured 50 deg/s soft limit has caused mid-move faults.
+- `Measure::read_feedback` is the single standalone feedback read. A cyclic
+  command loop uses the feedback returned by the same `Refresh(command)` exchange
+  and must not add a second state read.
+- Motion exit paths must preserve the first failure, stop cleanly, and restore
+  single-level servoing whenever communication remains valid.
 
-## Safety
+## Loop and shutdown behavior
 
-- Never add code that moves the arm unless explicitly requested. When
-  movement is requested, low-level (BaseCyclic) control is the project's
-  chosen route, and safety notes go in README.md.
-- Exception, by Christian's explicit choice (2026-07-16): `./controller`'s
-  default build (`config::kStartupMode = kReactive` in `src/Config.h`) DOES
-  move the arm on every run, with no file or flag needed — see
-  `docs/decisions/motion-txt-removal.md`. Because of this, NEVER run
-  `./controller` as a "test" of an unrelated change — it is a robot-moving
-  command by default now, not just when a file happens to be present. Test
-  other changes by reading the code or, if runtime behavior must be checked,
-  temporarily set `kStartupMode` to `kRecord` first.
-- Read-only changes may be tested on the arm freely; anything that moves the
-  arm needs the user present with the e-stop.
-- Joint-move speed validation (`kJointSpeedsDegS` in `src/Config.h`) is
-  capped at 45 deg/s via a `static_assert` against `kDefaultSpeedLimits`
-  (`src/Motion.h`) — do not raise the limit (the arm faults above its
-  50 deg/s soft limit; see `docs/known-issues.md`).
+- Long-running loops observe the `g_stop` atomic set by SIGINT and exit through
+  orderly flushing, servo-mode restoration, and RAII session teardown.
+- Fixed-rate loops use `sleep_until` on a fixed grid. Terminal output remains
+  low-rate; bulk telemetry belongs in files through the repository logging
+  contract.
 
-## Coding rules
+## Build and safe validation
 
-- No command-line flags or positional arguments for runtime configuration:
-  all settings, including the startup mode and motion parameters, live in
-  `src/Config.h`.
-- Loops that run until stopped check the `g_stop` atomic flag (set by
-  SIGINT) and exit cleanly (flush files, restore servoing mode, let RAII
-  close sessions).
-- Fixed-rate loops pace with `sleep_until` on a fixed grid, never `sleep_for`.
-- Terminal output stays quiet: heartbeats at ~1 Hz; bulk data goes to files.
-- The user is learning C++: keep code simple, explain idioms in comments
-  where they carry intent (why, not what).
+Build from `Christian_control/basic_control` with:
 
-## Scope discipline
+```bash
+cmake -S . -B build
+cmake --build build
+```
 
-- Don't add features, refactor, or introduce abstractions beyond what the
-  task requires. A bug fix doesn't need surrounding cleanup, and a one-shot
-  operation usually doesn't need a helper.
-- Don't design for hypothetical future requirements: do the simplest thing
-  that works well. Avoid premature abstraction and half-finished
-  implementations.
-- Don't add error handling, fallbacks, or validation for scenarios that
-  cannot happen. Trust internal code and framework guarantees; only
-  validate at system boundaries (user input, external APIs).
-- Don't use feature flags or backwards-compatibility shims when you can
-  just change the code.
+Building does not authorize executing `controller` or another Kortex-linked
+binary. Prefer compilation, offline scripts, and hardware-free tests.
 
-## Build
+## Documentation
 
-`cd basic_control && mkdir -p build && cd build && cmake .. && make` →
-executable `controller`. Links the bundled Kortex API and Pinocchio from
-`../../third_party` (runtime .so notes: `docs/known-issues.md`).
-
-## Keeping these files short
-
-Do not append every change, lesson, or debugging note to AGENTS.md or
-CLAUDE.md. Only add rules here that are durable and affect most future
-tasks. Everything else goes elsewhere:
-
-- technical explanations and module details → `docs/`
-- important architectural decisions → `docs/decisions/`
-- temporary or historical notes → `docs/archive/`, or delete them when no
-  longer useful
-
-## Maintenance duty
-
-After every change: keep `docs/architecture.md`'s table, CLAUDE.md, and
-README.md consistent with the code, and verify the build (`cmake .. && make`).
+Keep stable module ownership in `docs/architecture.md`, empirical faults in
+`docs/known-issues.md`, and durable choices in `docs/decisions/`. Update them only
+when their underlying behavior or decision changes; do not append task history to
+this file or `CLAUDE.md`.

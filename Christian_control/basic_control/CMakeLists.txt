@@ -14,6 +14,30 @@ if (NOT CMAKE_BUILD_TYPE)
 endif ()
 add_definitions(-D_OS_UNIX -w)
 
+# compile_commands.json, so clang-tidy (or an editor) knows the include paths.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# Sanitizer build: cmake .. -DSANITIZER=address  (or: undefined, thread,
+# address+undefined). Off by default — a normal `cmake ..` is unaffected.
+# address and thread cannot be combined with each other.
+set(SANITIZER "" CACHE STRING "Sanitizer(s) to build with, e.g. address, undefined, address+undefined, thread")
+if (SANITIZER)
+    string(REPLACE "+" "," SANITIZER_FLAG "${SANITIZER}")
+    add_compile_options(-fsanitize=${SANITIZER_FLAG} -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=${SANITIZER_FLAG})
+endif ()
+
+# make cppcheck — static analysis, separate from the compiler build.
+find_program(CPPCHECK cppcheck)
+if (CPPCHECK)
+    add_custom_target(cppcheck
+        COMMAND ${CPPCHECK} --enable=warning,performance,portability --std=c++17
+                --suppress=missingInclude --inline-suppr --quiet
+                ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tools
+        COMMENT "Running cppcheck on src/ and tools/"
+    )
+endif ()
+
 # Bundled Kortex API lives two levels up, in HumanSL_MAIN/third_party/.
 set(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(KORTEX_DIR "${HUMANSL_ROOT}/third_party/kortex_api")
@@ -32,7 +56,6 @@ add_executable(controller
         src/main.cpp
         src/Measure.cpp
         src/Kinematics.cpp
-        src/Controller.cpp
         src/Record.cpp
         src/Motion.cpp
         src/Timing.cpp

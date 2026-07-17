@@ -1,15 +1,16 @@
 //
-// Created by christian on 7/10/26.
+// Connect: the two Kortex sessions to the arm, opened on construction and
+// closed on destruction (RAII), on every exit path including exceptions.
 //
 
 #ifndef HUMANSL_MASTERS_PROJECT_2025_CONNECT_H
 #define HUMANSL_MASTERS_PROJECT_2025_CONNECT_H
 
+#include <memory>
 #include <string>
 
 #include <RouterClient.h>
-#include <TransportClientTcp.h>
-#include <TransportClientUdp.h>
+#include <ITransportClient.h>
 #include <SessionManager.h>
 #include <BaseClientRpc.h>
 #include <BaseCyclicClientRpc.h>
@@ -19,31 +20,54 @@ namespace k_api = Kinova::Api;
 // Opens two sessions to the arm on construction, cleans up on destruction:
 //  - TCP (port 10000): configuration + high-level commands  -> base()
 //  - UDP (port 10001): 1 kHz low-level cyclic streaming     -> base_cyclic()
+//
+// Throws std::runtime_error if the arm cannot be reached. If opening the
+// second channel fails, the first is closed properly before the exception
+// leaves the constructor (C++ destroys fully-constructed members on the way
+// out), so no session is ever left open on the robot.
 class Connect
 {
 public:
     explicit Connect(const std::string& ip_address);
-    ~Connect();
 
-    k_api::Base::BaseClient* base() { return base_; }
-    k_api::BaseCyclic::BaseCyclicClient* base_cyclic() { return base_cyclic_; }
+    k_api::Base::BaseClient* base()
+    {
+        return base_.get();
+    }
+    k_api::BaseCyclic::BaseCyclicClient* base_cyclic()
+    {
+        return base_cyclic_.get();
+    }
 
     // The TCP router, for building extra service clients (e.g. ControlConfig)
     // on the same session.
-    k_api::RouterClient* router() { return router_; }
+    k_api::RouterClient* router()
+    {
+        return tcp_.router.get();
+    }
 
 private:
-    // TCP: high-level / configuration
-    k_api::TransportClientTcp* transport_;
-    k_api::RouterClient* router_;
-    k_api::SessionManager* session_;
-    k_api::Base::BaseClient* base_;
+    // One connected transport + router + logged-in session. Members are
+    // declared socket -> router -> session, so destruction (reverse order)
+    // logs out first and closes the socket last.
+    struct Channel {
+        // Takes ownership of an unconnected transport (TCP or UDP — that is
+        // the only difference between the two channels), connects it, and
+        // logs in. `label` names the channel in error messages.
+        Channel(std::unique_ptr<k_api::ITransportClient> transport_in,
+                const std::string& ip_address, unsigned port, const char* label);
+        ~Channel();
 
-    // UDP: real-time cyclic channel
-    k_api::TransportClientUdp* transport_rt_;
-    k_api::RouterClient* router_rt_;
-    k_api::SessionManager* session_rt_;
-    k_api::BaseCyclic::BaseCyclicClient* base_cyclic_;
+        std::unique_ptr<k_api::ITransportClient> transport;
+        std::unique_ptr<k_api::RouterClient> router;
+        std::unique_ptr<k_api::SessionManager> session;
+    };
+
+    Channel tcp_; // port 10000: configuration + high-level commands
+    Channel udp_; // port 10001: real-time cyclic channel
+
+    std::unique_ptr<k_api::Base::BaseClient> base_;
+    std::unique_ptr<k_api::BaseCyclic::BaseCyclicClient> base_cyclic_;
 };
 
-#endif //HUMANSL_MASTERS_PROJECT_2025_CONNECT_H
+#endif // HUMANSL_MASTERS_PROJECT_2025_CONNECT_H
