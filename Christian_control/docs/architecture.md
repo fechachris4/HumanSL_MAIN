@@ -13,9 +13,11 @@ Inside `basic_control/`:
   .cpp — nothing external consumes them. `src/` is the include root, so
   local includes are layer-qualified (`#include "hardware/Connect.h"`):
   - `src/app/` — application orchestration (`main.cpp`, `Config.h`)
-  - `src/control/` — control (`Loop` — the cyclic controller, moves the
-    arm; `Target` — operator input; `Controller.h` — the controller-facing
-    `RobotState`, arm-feedback-only by hard rule)
+  - `src/control/` — control laws (`Controller.h` — the interface +
+    `RobotState`, arm-feedback-only by hard rule; `ResolvedRate` — the
+    Cartesian controller; `Target` — operator input)
+  - `src/loop/` — the Runner: cycle order, timing, clamping, logging —
+    MOVES THE ARM; no control math
   - `src/actuation/` — actuation strategy (`Actuation` interface —
     Prepare/Restore may do hardware I/O, Apply is pure;
     `PositionIntegration` — the q_command integrator)
@@ -49,8 +51,12 @@ Inside `basic_control/`:
 | `src/control/Controller.h` | `RobotState` (q, q̇, t — Eigen only) with the hard rule: a field belongs here only if fillable every cycle from arm feedback alone; external sensors use store injection |
 | `src/actuation/Actuation.h`, `PositionIntegration.{h,cpp}` | actuation strategy: `Prepare` (seed, may do I/O) / `Apply` (pure: clamped q̇ → setpoints) / `TrackingErrorDeg` (the guard signal) / `Restore` (teardown, may do I/O — F5 asymmetry); PositionIntegration owns the q_command integrator |
 | `src/control/Target.{h,cpp}` | operator desired end-effector position: parse (3 finite numbers, meters, base frame — deliberately no reachability check), `TargetStore` (mutex-protected latest + sequence), stdin input thread (polls, so shutdown can interrupt it) |
-| `src/control/Loop.{h,cpp}` | THE controller — MOVES THE ARM: resolved-rate loop (`RunResolvedRateLoop`, 100 Hz, actuators in default POSITION mode): takeover seeds via `PositionIntegration::Prepare` (q_command = q_measured, ONLY at startup) + holding frame; per cycle FK+Jacobian from the same q_measured → Kp error → DLS → per-joint clamp (`kQdotLimitDegS`) → `Actuation::Apply` (integrate) → `CyclicSession::Send` (one exchange, reusing its feedback), stop policy via `safety/Supervisor`, no printing/allocation in the loop, guarded SINGLE_LEVEL restore on every exit path |
-| `tests/test_control_logic.cpp` | hardware-free CTest coverage: `DampedLeastSquares` (incl. singular case), `ClampedCycleDt`, target parsing, `TargetStore` |
+| `src/control/Controller.h` | the controller interface: `RobotState` (arm-feedback-only hard rule; external sensors via store injection), `ControllerStatus` (telemetry/UX data — controllers do no I/O), `Controller` (`Reset` at T5, `DesiredVelocity` per cycle → q̇ rad/s BEFORE clamping; pure computation) |
+| `src/control/ResolvedRate.{h,cpp}` | the Cartesian resolved-rate control law: frame check at construction, `Reset` seeds p_desired = p(q), `DesiredVelocity` = FK+Jacobian from the SAME q → Kp error → DLS; arrival notice as edge-triggered status data |
+| `src/loop/Runner.{h,cpp}` | THE loop — MOVES THE ARM, controller-agnostic: numbered takeover T1-T6 / teardown D1-D3 sequence (spec in Runner.h), per-cycle order (dt → RobotState → controller → clamp → `Actuation::Apply` → `CyclicSession::Send` → sample → fault-edge prints → `ClassifyStop` → log → sleep_until grid), no printing/allocation beyond the documented edge-triggered exceptions |
+| `tests/test_control_logic.cpp` | hardware-free CTest coverage (runs everywhere): `DampedLeastSquares` (incl. singular case), `ClampedCycleDt`, target parsing, `TargetStore`, `PositionIntegration` (seed/integrate/tracking-error wrap) |
+| `tests/test_supervisor.cpp`, `tests/test_resolved_rate.cpp` | hardware-machine CTest battery (bundled libs are Linux ELF): `ClassifyStop` ordering/priorities; `ResolvedRate` vs closed-form DLS on the real URDF, arrival-edge semantics |
+| `tests/replay_controller.cpp` | the decision-14 replay harness (Linux): feeds a baseline CSV through ResolvedRate → clamp → PositionIntegration and reports per-joint agreement vs the recorded commands |
 | `scripts/plot_move.py`, `scripts/plot_joint.py` | offline analysis of loop/move logs |
 | `tools/query_limits.cpp` | separate READ-ONLY executable `query_limits`: prints robot kinematic hard/soft limits via ControlConfig |
 | `Dynamics` (external) | reused from `../TrajectoryExecution` — do not edit |

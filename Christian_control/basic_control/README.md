@@ -27,10 +27,14 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 ## Layout
 
 - `src/` — one subfolder per technical layer: `app/` (orchestration),
-  `control/` (the loop — moves the arm), `math/` (kinematics, DLS),
-  `hardware/` (Kortex I/O and telemetry)
+  `control/` (control laws + operator input), `actuation/` (command-state
+  strategy), `loop/` (the Runner — moves the arm), `safety/` (policy +
+  reporting), `math/` (kinematics, DLS), `hardware/` (Kortex I/O and
+  telemetry)
 - `tools/` — standalone diagnostic executables
-- `tests/` — hardware-free tests (CTest)
+- `tests/` — tests (CTest) + the CSV replay harness; the portable suite
+  runs anywhere, the rest links the bundled Linux libraries (hardware
+  machine only)
 - `scripts/` — offline Python analysis (not part of the build)
 - `config/` — our copy of the arm's URDF (`GEN3_custom.urdf`)
 
@@ -45,21 +49,32 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   `kEndEffectorFrame`, log capacity
 - `src/hardware/Connect.*` — RAII: both Kortex sessions (TCP 10000 +
   real-time UDP 10001)
-- `src/hardware/Measure.*` — standalone sensor reads (`read_feedback` — the
-  only `RefreshFeedback` in the program), Pinocchio configuration conversion
+- `src/hardware/Measure.*` — `read_feedback`, the program's single
+  standalone `RefreshFeedback`
+- `src/hardware/Cyclic.*` — `CyclicSession`: owns the command frame; seed
+  read + the one stamped `Refresh` exchange per cycle
 - `src/hardware/Record.*` — telemetry: preallocated ring buffer (`LoopLog`),
   written to a timestamped CSV after the loop; `push` is loop-safe
-- `src/math/Kinematics.*` — FK, FK-vs-robot cross-check, and
-  `position_and_jacobian` (position + 3×7 translational Jacobian from the
-  same measured q)
+- `src/math/Kinematics.*` — FK and `position_and_jacobian` (position + 3×7
+  translational Jacobian from the same measured q)
 - `src/math/Dls.h` — damped least squares (LDLT, no explicit inverse),
   header-only and hardware-free-tested
-- `src/control/Motion.*` — command primitives: `send_positions`,
-  servoing-mode enter/restore
+- `src/safety/Supervisor.*` — stop classification (following error first,
+  then live faults, then arm state) + the pre-takeover readiness gate
+- `src/safety/FaultReport.*` — fault-bank decoding and the stop /
+  fault-change reports
+- `src/safety/ServoingGuard.*` — RAII servoing-mode ownership: LOW_LEVEL on
+  construction, guaranteed SINGLE_LEVEL restore on destruction
+- `src/control/Controller.h` — the controller interface (`RobotState`,
+  arm-feedback-only by hard rule; pure computation, no I/O)
+- `src/control/ResolvedRate.*` — the Cartesian control law (see above)
 - `src/control/Target.*` — desired end-effector position: stdin thread,
   parsing (3 finite numbers; deliberately no reachability check), latest-
   value store
-- `src/control/Loop.*` — **the controller — moves the arm** (see above)
+- `src/actuation/*` — `Actuation` strategy + `PositionIntegration` (the
+  q_command integrator)
+- `src/loop/Runner.*` — **the loop — moves the arm**: takeover sequence
+  T1-T6, per-cycle order, teardown D1-D3 (spec in `Runner.h`)
 - `tools/query_limits.cpp` — separate read-only executable: prints the
   robot's kinematic hard/soft limits
 

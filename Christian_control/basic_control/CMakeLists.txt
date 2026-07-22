@@ -42,6 +42,13 @@ endif ()
 set(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(KORTEX_DIR "${HUMANSL_ROOT}/third_party/kortex_api")
 
+# The arm's URDF model, used by Pinocchio. Our own copy (duplicated from
+# ../../config/GEN3_With_GRIPPER_DYNAMICS.urdf) so joint limits are ours to
+# edit: velocity limits set to Kinova's general limits (1.3893 rad/s joints
+# 1-4, 1.2200 rad/s joints 5-7 = 79.6 / 69.9 deg/s, see
+# config::kModelVelocityLimitsDegS) instead of the original 0.8727 (admittance).
+set(GEN3_URDF "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_custom.urdf")
+
 include_directories(
         ${KORTEX_DIR}/include
         ${KORTEX_DIR}/include/client
@@ -57,8 +64,9 @@ add_executable(controller
         src/hardware/Measure.cpp
         src/hardware/Cyclic.cpp
         src/math/Kinematics.cpp
-        src/control/Loop.cpp
+        src/control/ResolvedRate.cpp
         src/control/Target.cpp
+        src/loop/Runner.cpp
         src/hardware/Record.cpp
         src/hardware/Connect.cpp
         src/safety/Supervisor.cpp
@@ -118,6 +126,7 @@ enable_testing()
 add_executable(test_control_logic
         tests/test_control_logic.cpp
         src/control/Target.cpp
+        src/actuation/PositionIntegration.cpp
 )
 target_include_directories(test_control_logic PRIVATE
         src
@@ -126,10 +135,80 @@ target_include_directories(test_control_logic PRIVATE
 target_link_libraries(test_control_logic pthread)
 add_test(NAME control_logic COMMAND test_control_logic)
 
-# The arm's URDF model, used by Pinocchio. Our own copy (duplicated from
-# ../../config/GEN3_With_GRIPPER_DYNAMICS.urdf) so joint limits are ours to
-# edit: velocity limits set to Kinova's general limits (1.3893 rad/s joints
-# 1-4, 1.2200 rad/s joints 5-7 = 79.6 / 69.9 deg/s, see
-# config::kModelVelocityLimitsDegS) instead of the original 0.8727 (admittance).
-set(GEN3_URDF "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_custom.urdf")
+# --- hardware-machine test battery + the decision-14 replay harness: the
+#     bundled Kortex/Pinocchio binaries are Linux x86-64 ELF, so these link
+#     only there. ctest elsewhere runs the portable suite above. ---
+if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_executable(test_supervisor
+            tests/test_supervisor.cpp
+            src/safety/Supervisor.cpp
+            src/safety/FaultReport.cpp
+    )
+    target_include_directories(test_supervisor PRIVATE
+            src
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+    )
+    target_link_libraries(test_supervisor
+            ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+            pthread
+    )
+    add_test(NAME supervisor COMMAND test_supervisor)
+
+    add_executable(test_resolved_rate
+            tests/test_resolved_rate.cpp
+            src/control/ResolvedRate.cpp
+            src/control/Target.cpp
+            src/math/Kinematics.cpp
+            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+    )
+    target_include_directories(test_resolved_rate PRIVATE
+            src
+            ${HUMANSL_ROOT}/third_party/include
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+            ${HUMANSL_ROOT}/TrajectoryExecution/include
+    )
+    target_link_libraries(test_resolved_rate
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+            pthread
+    )
+    set_target_properties(test_resolved_rate PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+    )
+    target_link_options(test_resolved_rate PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,-z,lazy
+    )
+    target_compile_definitions(test_resolved_rate PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
+    add_test(NAME resolved_rate COMMAND test_resolved_rate)
+
+    add_executable(replay_controller
+            tests/replay_controller.cpp
+            src/actuation/PositionIntegration.cpp
+            src/control/ResolvedRate.cpp
+            src/control/Target.cpp
+            src/math/Kinematics.cpp
+            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+    )
+    target_include_directories(replay_controller PRIVATE
+            src
+            ${HUMANSL_ROOT}/third_party/include
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+            ${HUMANSL_ROOT}/TrajectoryExecution/include
+    )
+    target_link_libraries(replay_controller
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+            pthread
+    )
+    set_target_properties(replay_controller PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+    )
+    target_link_options(replay_controller PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,-z,lazy
+    )
+    target_compile_definitions(replay_controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
+endif ()
+
 target_compile_definitions(controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
