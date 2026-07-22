@@ -254,9 +254,8 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
                              double arrival_tolerance_m,
                              const std::string& ee_frame_name)
 {
-    if (dynamics.model_.nv != NUM_JOINTS)
-        throw std::runtime_error("model has " + std::to_string(dynamics.model_.nv) +
-            " velocity variables, expected 7");
+    // Precondition: model_.nv == 7 — validated once in main.cpp, before any
+    // hardware session is opened.
     if (!dynamics.model_.existFrame(ee_frame_name))
         throw std::runtime_error("no frame named '" + ee_frame_name + "' in the model");
     const pinocchio::FrameIndex ee_frame = dynamics.model_.getFrameId(ee_frame_name);
