@@ -85,6 +85,6 @@ std::string timestamped_csv_name(const std::string& prefix)
     std::tm local{};
     localtime_r(&now, &local);
     std::ostringstream name;
-    name << prefix << std::put_time(&local, "_%Y-%m-%d_%H-%M-%S") << ".csv";
+    name << prefix << std::put_time(&local, "_%Y%m%d_%H%M%S") << ".csv";
     return name.str();
 }

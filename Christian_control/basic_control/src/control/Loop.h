@@ -48,12 +48,26 @@ namespace k_api = Kinova::Api;
 // every other reason is a failure and exits nonzero. kFollowingError: a
 // joint's command-measurement gap exceeded the configured limit (the arm
 // stopped following the integrated command — fault, stall, or limit).
+// kInternalError: an exception that is neither a Kortex error nor a
+// runtime_error escaped the cycle — caught by the loop's catch-all so the
+// servoing restore still runs.
 enum class LoopStop {
     kUserStop,
     kRobotFault,
     kFollowingError,
     kLeftLowLevel,
-    kCommunication
+    kCommunication,
+    kInternalError
+};
+
+// The loop's outcome. faults_observed is true if any LIVE fault signal (an
+// actuator fault bit, or a base fault other than the latched JOINT_FAULT
+// summary) was seen during the run — even while a fault-ignoring policy
+// kept the loop running. Exit 0 requires a clean operator stop AND no
+// observed faults: ignored faults taint the exit code.
+struct LoopResult {
+    LoopStop reason;
+    bool faults_observed;
 };
 
 // Pre-takeover readiness check on a standalone feedback frame (read BEFORE
@@ -93,8 +107,9 @@ bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ost
 // exception): stop updating q_command — in POSITION mode the arm holds the
 // last commanded setpoint — print the decoded stop report, and restore
 // SINGLE_LEVEL_SERVOING (guarded; a failed restore warns and cannot
-// overwrite the recorded stop reason).
-LoopStop RunResolvedRateLoop(k_api::Base::BaseClient* base,
+// overwrite the recorded stop reason). Exceptions of ANY type are caught
+// (unknown ones as kInternalError) so no exception can skip the restore.
+LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
                              k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
                              Dynamics& dynamics, TargetStore& targets, LoopLog& log,
                              const std::atomic<bool>& stop, std::chrono::microseconds period,

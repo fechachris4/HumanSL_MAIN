@@ -106,5 +106,5 @@ namespace config
     // Loop log: preallocated ring buffer, most recent kLogCapacitySeconds
     // kept on very long runs; written to one timestamped CSV after the loop.
     inline constexpr std::size_t kLogCapacitySeconds = 600;
-    inline constexpr const char* kLoopLogPrefix = "loop_log";
+    inline constexpr const char* kLoopLogPrefix = "run";
 } // namespace config

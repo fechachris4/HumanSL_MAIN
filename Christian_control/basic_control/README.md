@@ -103,7 +103,7 @@ ctest            # hardware-free control-logic tests
    retargeting is normal. Invalid lines are rejected with a reason.
 5. Ctrl+C stops cleanly: the integrator stops updating (the position servo
    holds the last setpoint), single-level servoing is restored, telemetry
-   (most recent 600 s) is written to `loop_log_*.csv`. Exit 0 only on this
+   (most recent 600 s) is written to `run_YYYYMMDD_HHMMSS.csv`. Exit 0 only on this
    clean stop; faults print a decoded report and exit 1.
 
 First hardware runs: start from the printed current position and change

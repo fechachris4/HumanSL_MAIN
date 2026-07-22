@@ -170,6 +170,10 @@ namespace
             std::cout << "loop stopped: communication failure at t=" << s.t_s << " s (cycle "
                 << cycle << ")\n";
             break;
+        case LoopStop::kInternalError:
+            std::cout << "loop stopped: internal error at t=" << s.t_s << " s (cycle "
+                << cycle << ")\n";
+            break;
         }
         std::cout << "  desired p:  " << s.p_desired_m[0] << " " << s.p_desired_m[1] << " "
             << s.p_desired_m[2] << " m,  current p: " << s.p_current_m[0] << " "
@@ -240,7 +244,7 @@ bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ost
     return true;
 }
 
-LoopStop RunResolvedRateLoop(k_api::Base::BaseClient* base,
+LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
                              k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
                              Dynamics& dynamics, TargetStore& targets, LoopLog& log,
                              const std::atomic<bool>& stop, std::chrono::microseconds period,
@@ -261,6 +265,7 @@ LoopStop RunResolvedRateLoop(k_api::Base::BaseClient* base,
     const double nominal_dt_s = std::chrono::duration<double>(period).count();
 
     LoopStop reason = LoopStop::kUserStop;
+    bool faults_observed = false; // live fault seen at any point (taints exit)
     LoopLogSample sample; // reused every cycle
     long cycle = 0;
     bool joint_fault_was_latched = false;
@@ -427,7 +432,8 @@ LoopStop RunResolvedRateLoop(k_api::Base::BaseClient* base,
                     log.push(sample);
                     break;
                 }
-                reason = LoopStop::kUserStop; // do not latch the ignored fault as exit status
+                faults_observed = true;       // ignored here, but taints the exit code
+                reason = LoopStop::kUserStop; // not a stop reason — the loop continues
             }
             log.push(sample);
 
@@ -454,6 +460,24 @@ LoopStop RunResolvedRateLoop(k_api::Base::BaseClient* base,
         log.push(sample);
         std::cout << "communication error: " << ex.what() << "\n";
     }
+    // Catch-alls: an exception of any other type (Pinocchio logic_error,
+    // bad_alloc, ...) must not skip the report and the servoing restore
+    // below — before these existed it also hit std::thread's destructor in
+    // main and aborted the whole program with the arm left in low-level.
+    catch (std::exception& ex)
+    {
+        reason = LoopStop::kInternalError;
+        sample.refresh_ok = false;
+        log.push(sample);
+        std::cout << "internal error: " << ex.what() << "\n";
+    }
+    catch (...)
+    {
+        reason = LoopStop::kInternalError;
+        sample.refresh_ok = false;
+        log.push(sample);
+        std::cout << "internal error: unknown exception type\n";
+    }
 
     // Shutdown: q_command simply stops updating — in POSITION mode the arm
     // holds the last commanded setpoint. Report, then the single guarded
@@ -464,5 +488,5 @@ LoopStop RunResolvedRateLoop(k_api::Base::BaseClient* base,
             "diagnostic unless a joint fault is shown above; not cleared here)\n";
 
     restore_single_level_servoing(base);
-    return reason;
+    return {reason, faults_observed};
 }
