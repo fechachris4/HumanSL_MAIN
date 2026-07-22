@@ -94,8 +94,8 @@ target_link_options(controller PRIVATE
         -Wl,-z,lazy
 )
 
-# --- query_limits: READ-ONLY helper that prints the robot's kinematic
-#     hard/soft limits (no Pinocchio, no motion code) ---
+# --- query_limits: READ-ONLY helper that prints the robot's kinematic hard
+#     limits (no Pinocchio, no motion code) ---
 add_executable(query_limits
         tools/query_limits.cpp
         src/hardware/Connect.cpp

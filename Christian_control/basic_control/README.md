@@ -61,7 +61,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   value store
 - `src/control/Loop.*` — **the controller — moves the arm** (see above)
 - `tools/query_limits.cpp` — separate read-only executable: prints the
-  robot's kinematic hard/soft limits
+  robot's reported kinematic hard limits
 
 ## Build and test
 
@@ -111,12 +111,11 @@ First hardware runs: start from the printed current position and change
 
 ## Safety — read before every session
 
-- **The only limiting is a per-joint velocity clamp** — ≈71.6 deg/s
+- **The controller's explicit motion limit is a per-joint velocity clamp** — ≈71.6 deg/s
   (joints 1–4) / ≈62.9 deg/s (joints 5–7) (`kQdotLimitDegS`, derived at
-  compile time in `Config.h` as 10% under the model limits, which the
-  base's configured speed soft limits must match: verify with
-  `./query_limits` first, see `../docs/decisions/qdot-limit-raise.md`;
-  streams that outrun what the base actually enforces fault mid-move).
+  compile time in `Config.h` as 10% under the model limits). This is a
+  client-side limit; the actuator firmware safeties are separate, and a
+  stream that outruns them can fault mid-move.
   There is NO Cartesian velocity,
   acceleration, or workspace limiting (explicit design choice — see the
   decision record). Speed is `Kp × error` up to the clamp, and a
@@ -128,9 +127,8 @@ First hardware runs: start from the printed current position and change
   7 joints; check the surroundings, not just the end-effector path.
 - This arm has **configured position limits far inside the factory range**
   (joint 4 near −19.6°, joint 6 near +36° — both found by faulting into
-  them; check/adjust via the Kinova web dashboard, and `tools/query_limits`
-  prints the base-enforced limits). The controller does not know them;
-  the arm faults if a solution path crosses one.
+  them; check/adjust via the Kinova web dashboard). The controller does not
+  know them; the arm faults if a solution path crosses one.
 - On any live fault, loss of low-level servoing, or exchange failure the
   loop stops streaming (the position servo holds the last setpoint) and
   restores SINGLE_LEVEL servoing — guarded, with a warning if it fails.

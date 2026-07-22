@@ -1,8 +1,8 @@
 # Raise the resolved-rate speed clip to 10% under the model limits
 
 Date: 2026-07-22
-Status: accepted — conditional on reconfiguring the arm (below); supersedes
-the uniform 45 deg/s clip ("Why the clip is 45 deg/s" in
+Status: accepted; supersedes the uniform 45 deg/s clip
+("Why the clip is 45 deg/s" in
 `resolved-rate-position-integration.md`)
 
 ## Decision
@@ -21,24 +21,40 @@ computation, so clip and model limits cannot disagree by construction, and
 `Config.h` is the single place speed limits are set. Do not reintroduce a
 second limit location.
 
-## Precondition — the arm must be reconfigured to match
+## Which limit binds low-level streaming
 
-The old 45 was 10% under the 50 deg/s speed soft limits this arm's base was
-CONFIGURED to enforce. The base's limit governs regardless of the client:
-position setpoints stepping faster than it are not followed, and once the
-tracking error reaches ~5 deg the arm faults out of low-level servoing
-(WRONG_SERVOING_MODE — mechanism in `Motion.h`'s ceiling comment).
+Investigated 2026-07-22 after the former soft-limit query showed only
+high-level control modes (JOYSTICK/TRAJECTORY/…) and no entry for low-level
+servoing. Findings:
 
-Before the next hardware session:
+- The ControlConfig API has no low-level slot: every soft-limit
+  getter/setter is keyed by `ControlConfig::ControlMode`, and that enum
+  (ControlConfig.pb.h) contains only high-level modes — there is nothing
+  to read for LOW_LEVEL_SERVOING.
+- The Gen3 User Guide (R07, "Configurable limits") states: "Soft limits
+  are not configurable in admittance modes nor in low-level control."
+  Official position: per-mode soft limits do not govern the low-level stream.
+- What provably faults in low-level is the per-actuator firmware
+  safeties, Bank A (`ActuatorConfig.pb.h::SafetyIdentifierBankA`):
+  FOLLOWING_ERROR, MAXIMUM_VELOCITY, JOINT_LIMIT_HIGH/LOW — the exact
+  faults observed in the 2026-07-22 hardware runs. Their configured
+  error/warning thresholds ARE queryable, per actuator device, via the
+  DeviceConfig API (`GetAllSafetyInformation` /
+  `GetSafetyConfiguration`, device ids from DeviceManager).
 
-1. Raise the arm's joint speed soft limits to the model limits
-   (79.6/69.9 deg/s) in the Kinova web dashboard (`http://192.168.1.10`).
-2. Verify with `tools`' `./query_limits` that the base reports the raised
-   soft limits.
+## Startup limit check (planned — plan item W6)
 
-If the base still enforces 50 deg/s, any motion demanding more than
-~50 deg/s on a joint faults mid-move — the exact failure the old ceiling
-existed to prevent.
+Spec:
+
+1. Read `GetKinematicHardLimits` and fail startup if the reported hard
+   limits differ from `config::kModelVelocityLimitsDegS` (the clip
+   derivation assumes them) or if any derived clip value exceeds them.
+2. Read each actuator's MAXIMUM_VELOCITY safety error threshold via
+   DeviceConfig — the limit that provably binds low-level streaming —
+   and fail if any clip value is at or above it.
+3. On failure, print both the reported hard and actuator safety limits and
+   the derived `kQdotLimitDegS` values, and name this file
+   (`docs/decisions/qdot-limit-raise.md`) so the diagnosis is one read.
 
 ## Safety consequences
 
