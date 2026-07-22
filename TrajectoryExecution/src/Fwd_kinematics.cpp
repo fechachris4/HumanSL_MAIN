@@ -13,6 +13,7 @@
 #include <cmath>
 #include <iostream>
 #include <tuple>
+#include <yaml-cpp/yaml.h>
 
 using namespace Eigen;
 using namespace std;

@@ -8,7 +8,6 @@
 #include <Eigen/Dense>
 #include <iostream>
 #include <tuple>
-#include <yaml-cpp/yaml.h>
 #include <gtsam/geometry/Rot3.h>
 
 
