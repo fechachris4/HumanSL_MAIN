@@ -51,8 +51,8 @@ namespace config
     inline constexpr double kDlsLambda = 0.1;
 
     // The controlled frame, from config/GEN3_custom.urdf. The flange frame:
-    // no TCP offset (the gripper TCP sits ~0.12 m further along tool z —
-    // see math/Kinematics.cpp's FK cross-check).
+    // no TCP offset (the Robotiq 2F-85 gripper TCP sits ~0.12 m further
+    // along tool z).
     inline constexpr const char* kEndEffectorFrame = "EndEffector_Link";
 
     // Per-joint clip on the resolved-rate q̇, deg/s — the program's single

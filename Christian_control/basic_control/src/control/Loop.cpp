@@ -16,50 +16,14 @@
 #include <tuple>
 
 #include <KDetailedException.h>
-#include <ActuatorConfig.pb.h> // SafetyIdentifierBankA_Name (fault decoding)
+
+#include "safety/FaultReport.h"
 
 namespace
 {
     constexpr int NUM_JOINTS = std::tuple_size_v<JointVector>;
     constexpr double kDegToRad = M_PI / 180.0;
     constexpr double kRadToDeg = 180.0 / M_PI;
-
-    constexpr std::uint32_t kJointFaultBit = k_api::Base::SafetyIdentifier::JOINT_FAULT;
-
-    // A safety bank is a bitmask; each set bit is one named safety event.
-    std::string DecodeBank(std::uint32_t bank, const std::string& (*name_of)(int))
-    {
-        if (bank == 0)
-            return "0";
-        std::string out = std::to_string(bank) + " (";
-        for (std::uint32_t bit = 1; bit != 0; bit <<= 1)
-            if (bank & bit)
-            {
-                const std::string& name = name_of(static_cast<int>(bit));
-                if (out.back() != '(')
-                    out += " | ";
-                out += name.empty() ? "bit " + std::to_string(bit) : name;
-            }
-        return out + ")";
-    }
-
-    std::string DecodeBaseBank(std::uint32_t bank)
-    {
-        return DecodeBank(bank, [](int bit) -> const std::string&
-        {
-            return k_api::Base::SafetyIdentifier_Name(
-                static_cast<k_api::Base::SafetyIdentifier>(bit));
-        });
-    }
-
-    std::string DecodeActuatorBank(std::uint32_t bank)
-    {
-        return DecodeBank(bank, [](int bit) -> const std::string&
-        {
-            return k_api::ActuatorConfig::SafetyIdentifierBankA_Name(
-                static_cast<k_api::ActuatorConfig::SafetyIdentifierBankA>(bit));
-        });
-    }
 
     // Copy one cycle's data into a log row. Feedback positions are wrapped
     // to [0, 360) but the integrated command is continuous, so each
@@ -92,157 +56,7 @@ namespace
         s.refresh_ok = true;
     }
 
-    // Live-fault policy (no printing — loop-safe). The base's latched
-    // JOINT_FAULT summary bit alone does NOT stop the loop.
-    bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
-                      LoopStop& reason)
-    {
-        // Checked FIRST so the guard cannot be masked by the experiment
-        // policy that ignores fault bits (ClassifyStop returns on the
-        // first match). measured_deg sits within ±180° of the command
-        // (FillSample) and the gap grows by well under a degree per
-        // cycle, so at a small limit the comparison is unambiguous.
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            if (std::abs(s.measured_deg[i] - s.commanded_deg[i]) >
-                following_error_limit_deg)
-            {
-                reason = LoopStop::kFollowingError;
-                return true;
-            }
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            if (s.fault_bank[i] != 0)
-            {
-                reason = LoopStop::kRobotFault;
-                return true;
-            }
-        if ((s.base_fault_bank & ~kJointFaultBit) != 0)
-        {
-            reason = LoopStop::kRobotFault;
-            return true;
-        }
-        if (s.arm_state != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL)
-        {
-            reason = LoopStop::kLeftLowLevel;
-            return true;
-        }
-        return false;
-    }
-
-    void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
-                         double following_error_limit_deg)
-    {
-        switch (reason)
-        {
-        case LoopStop::kUserStop:
-            std::cout << "loop stopped by user (Ctrl+C)\n";
-            break;
-        case LoopStop::kRobotFault:
-            std::cout << "loop stopped: robot fault at t=" << s.t_s << " s (cycle " << cycle
-                << ")\n";
-            break;
-        case LoopStop::kFollowingError:
-            {
-                int worst = 0;
-                double worst_gap = 0.0;
-                for (int i = 0; i < NUM_JOINTS; ++i)
-                {
-                    const double gap = std::abs(s.measured_deg[i] - s.commanded_deg[i]);
-                    if (gap > worst_gap)
-                    {
-                        worst_gap = gap;
-                        worst = i;
-                    }
-                }
-                std::cout << "loop stopped: following error at t=" << s.t_s << " s (cycle "
-                    << cycle << "): joint " << (worst + 1) << " is " << worst_gap
-                    << " deg from its command (limit " << following_error_limit_deg
-                    << ") — the arm stopped following the integrated command\n";
-                break;
-            }
-        case LoopStop::kLeftLowLevel:
-            std::cout << "loop stopped: arm left low-level servoing at t=" << s.t_s
-                << " s (cycle " << cycle << "): state " << s.arm_state << " ("
-                << k_api::Common::ArmState_Name(
-                    static_cast<k_api::Common::ArmState>(s.arm_state))
-                << ")\n";
-            break;
-        case LoopStop::kCommunication:
-            std::cout << "loop stopped: communication failure at t=" << s.t_s << " s (cycle "
-                << cycle << ")\n";
-            break;
-        case LoopStop::kInternalError:
-            std::cout << "loop stopped: internal error at t=" << s.t_s << " s (cycle "
-                << cycle << ")\n";
-            break;
-        }
-        std::cout << "  desired p:  " << s.p_desired_m[0] << " " << s.p_desired_m[1] << " "
-            << s.p_desired_m[2] << " m,  current p: " << s.p_current_m[0] << " "
-            << s.p_current_m[1] << " " << s.p_current_m[2] << " m\n";
-        if (reason == LoopStop::kUserStop)
-            return;
-        std::cout << "  base:    fault " << DecodeBaseBank(s.base_fault_bank) << "\n";
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            std::cout << "  joint " << (i + 1) << ": fault "
-                << DecodeActuatorBank(s.fault_bank[i]) << ", commanded "
-                << s.commanded_deg[i] << " deg (q̇ " << s.commanded_velocity_deg_s[i]
-                << " deg/s), measured " << s.measured_deg[i] << " deg (raw "
-                << s.measured_raw_deg[i] << ")\n";
-    }
-
-    // Faults are deliberately non-stopping during the current experiment;
-    // instead EVERY fault-bank change prints immediately, decoded, once per
-    // change (not per cycle — a persisting fault stays silent after its
-    // edge). Bounded: after kMaxFaultChangePrints events the loop stops
-    // printing (the CSV still has every cycle's banks).
-    constexpr int kMaxFaultChangePrints = 20;
-
-    void PrintFaultChange(const LoopLogSample& s, long cycle,
-                          const std::array<std::uint32_t, 7>& prev_joint_banks,
-                          std::uint32_t prev_base_bank)
-    {
-        std::cout << "fault change at t=" << s.t_s << " s (cycle " << cycle << "):\n";
-        if (s.base_fault_bank != prev_base_bank)
-            std::cout << "  base:    " << DecodeBaseBank(prev_base_bank) << " -> "
-                      << DecodeBaseBank(s.base_fault_bank) << "\n";
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            if (s.fault_bank[i] != prev_joint_banks[i])
-                std::cout << "  joint " << (i + 1) << ": "
-                          << DecodeActuatorBank(prev_joint_banks[i]) << " -> "
-                          << DecodeActuatorBank(s.fault_bank[i]) << "\n";
-    }
 } // namespace
-
-bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ostream& out)
-{
-    const std::uint32_t base_bank = feedback.base().fault_bank_a();
-    bool actuator_fault = false;
-
-    out << "arm state: "
-        << k_api::Common::ArmState_Name(
-            static_cast<k_api::Common::ArmState>(feedback.base().active_state()))
-        << ", base fault bank " << DecodeBaseBank(base_bank) << "\n";
-    for (int i = 0; i < feedback.actuators_size(); ++i)
-    {
-        const std::uint32_t bank = feedback.actuators(i).fault_bank_a();
-        if (bank != 0)
-        {
-            actuator_fault = true;
-            out << "  joint " << (i + 1) << ": fault " << DecodeActuatorBank(bank) << "\n";
-        }
-    }
-
-    const std::uint32_t base_fatal = base_bank & ~kJointFaultBit;
-    if (!actuator_fault && (base_bank & kJointFaultBit) != 0)
-        out << "note: base JOINT_FAULT is latched but every actuator bank is clear — "
-            "stale summary diagnostic, continuing (not cleared by this program)\n";
-    if (actuator_fault || base_fatal != 0)
-    {
-        out << "robot NOT ready: live fault present — not taking over "
-            "(clear deliberately via the Kinova web dashboard)\n";
-        return false;
-    }
-    return true;
-}
 
 LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
                              k_api::BaseCyclic::BaseCyclicClient* base_cyclic,

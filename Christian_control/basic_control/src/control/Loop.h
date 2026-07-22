@@ -19,41 +19,10 @@
 #include "control/Target.h"
 #include "hardware/Record.h"
 #include "math/Kinematics.h"
+#include "safety/Supervisor.h" // LoopStop, LoopResult, RobotReadyForTakeover
 #include "Dynamics.h"
 
 namespace k_api = Kinova::Api;
-
-// Why the loop ended. kUserStop (Ctrl+C) is the only successful outcome —
-// every other reason is a failure and exits nonzero. kFollowingError: a
-// joint's command-measurement gap exceeded the configured limit (the arm
-// stopped following the integrated command — fault, stall, or limit).
-// kInternalError: an exception that is neither a Kortex error nor a
-// runtime_error escaped the cycle — caught by the loop's catch-all so the
-// servoing restore still runs.
-enum class LoopStop {
-    kUserStop,
-    kRobotFault,
-    kFollowingError,
-    kLeftLowLevel,
-    kCommunication,
-    kInternalError
-};
-
-// The loop's outcome. faults_observed is true if any LIVE fault signal (an
-// actuator fault bit, or a base fault other than the latched JOINT_FAULT
-// summary) was seen during the run — even while a fault-ignoring policy
-// kept the loop running. Exit 0 requires a clean operator stop AND no
-// observed faults: ignored faults taint the exit code.
-struct LoopResult {
-    LoopStop reason;
-    bool faults_observed;
-};
-
-// Pre-takeover readiness check on a standalone feedback frame (read BEFORE
-// the servoing-mode switch): prints the arm state and decoded fault banks to
-// `out`; returns false on any LIVE fault (actuator fault bit, or base fault
-// other than the latched JOINT_FAULT summary, which alone is only noted).
-bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ostream& out);
 
 // The controller: takeover, cyclic resolved-rate loop, decoded stop report,
 // and a guarded SINGLE_LEVEL_SERVOING restore on EVERY exit path (exceptions

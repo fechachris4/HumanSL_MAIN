@@ -6,14 +6,8 @@
 #define HUMANSL_MASTERS_PROJECT_2025_KINEMATICS_H
 
 #include <string>
-#include <ostream>
-
-#include <BaseClientRpc.h>
-#include <BaseCyclicClientRpc.h>
 
 #include "Dynamics.h"
-
-namespace k_api = Kinova::Api;
 
 // Pose of one frame of the robot, expressed in the base frame.
 struct Pose {
@@ -27,11 +21,6 @@ struct Pose {
 // "Bracelet_Link".
 Pose forward_kinematics(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
                         const std::string& frame_name = "EndEffector_Link");
-
-// Sanity check at startup: our FK (URDF + Pinocchio) vs the robot's own
-// reported tool pose. Prints both to `out`. Read-only.
-void report_fk_vs_robot(Dynamics& dynamics, k_api::Base::BaseClient* base,
-                        k_api::BaseCyclic::BaseCyclicClient* base_cyclic, std::ostream& out);
 
 // Preallocated workspace for the per-cycle kinematics: the full 6×nv frame
 // Jacobian lives here so the cyclic loop never allocates. Construct once,
