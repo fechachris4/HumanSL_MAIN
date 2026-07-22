@@ -23,12 +23,8 @@ namespace config
     inline constexpr int kConnectionInactivityTimeoutMs = 2000;
 
     // Model joint velocity limits, deg/s, joints 1-7 — the authoritative
-    // values behind config/GEN3_custom.urdf's <limit velocity="..."> fields
-    // (written there as rad/s literals: 1.3893 x4, 1.2200 x3; keep the two
-    // in sync by hand — the URDF cannot read this header). Pinocchio takes
-    // its velocityLimit straight from the URDF; no code overwrites it.
-    // The controller's commanded-speed clip is derived from these below
-    // (kQdotLimitDegS) — the ONE place speed limits are set.
+    // values behind config/GEN3_custom.urdf's rad/s literals (keep the two
+    // in sync by hand): docs/decisions/custom-urdf.md.
     inline constexpr JointVector kModelVelocityLimitsDegS = {
         79.6, 79.6, 79.6, 79.6,
         69.9, 69.9, 69.9
@@ -44,12 +40,9 @@ namespace config
         static_cast<long>(kControlDtS * 1e6)
     };
 
-    // Cartesian velocity controller (Loop.h):
-    //   v_desired = kKpCartesian * (p_desired - p_current)   [m/s]
-    // kKpCartesian is 1/s: with 1.0, a 10 cm error commands 0.1 m/s.
-    // There is deliberately NO velocity/acceleration/workspace limiting in
-    // this version (docs/decisions/cartesian-velocity-controller.md) — the
-    // gain and the size of typed targets ARE the speed control.
+    // Cartesian P gain, 1/s: v_desired = kKpCartesian * (p_desired - p_current).
+    // Deliberately NO velocity/accel/workspace limiting in this version —
+    // docs/decisions/cartesian-velocity-controller.md.
     inline constexpr double kKpCartesian = 1.0;
 
     // Damped-least-squares damping λ (Dls.h). Larger = slower but better
@@ -62,19 +55,10 @@ namespace config
     // see math/Kinematics.cpp's FK cross-check).
     inline constexpr const char* kEndEffectorFrame = "EndEffector_Link";
 
-    // Per-joint clip for the resolved-rate q̇ before integration, deg/s —
-    // the program's single speed limit, derived at compile time as
-    // kQdotLimitSafetyFactor × the model limits above (≈71.6 deg/s joints
-    // 1-4, ≈62.9 joints 5-7). The base enforces whatever joint speed SOFT
-    // limits it is CONFIGURED with, regardless of what we command:
-    // position setpoints stepping faster than an enforced limit are not
-    // followed — the joint stands still, tracking error grows, and at
-    // ~5 deg the safety kicks the arm out of low-level servoing
-    // (WRONG_SERVOING_MODE). The derivation therefore assumes the base is
-    // configured at the model limits — read the active configuration with
-    // ./query_limits BEFORE a hardware session
-    // (docs/decisions/qdot-limit-raise.md; until 2026-07-22 this arm was
-    // configured at 50 deg/s and the clip was a uniform 45).
+    // Per-joint clip on the resolved-rate q̇, deg/s — the program's single
+    // speed limit, 10% under the model limits above. The base must be
+    // CONFIGURED at the model limits (verify with ./query_limits before a
+    // session) — mechanism and history: docs/decisions/qdot-limit-raise.md.
     inline constexpr double kQdotLimitSafetyFactor = 0.9; // 10% under
     inline constexpr JointVector kQdotLimitDegS = []
     {
@@ -84,15 +68,9 @@ namespace config
         return limits;
     }();
 
-    // Following-error guard (Loop.h): the loop stops when any joint's
-    // command-measurement gap exceeds this, deg. The window is bounded on
-    // both sides: normal tracking lag is ~0.3 deg even at the clip speed
-    // (run log 2026-07-21), and at ~5 deg the base itself ejects the
-    // stream from low-level servoing (mechanism in the clip comment
-    // above). 3 deg stops the loop on OUR terms — decoded report, servo
-    // restore — before the base kills the session. Evidence for needing
-    // it at all: run log 2026-07-22, where a base fault froze the arm and
-    // the integrator wound the command ~650 deg away over 9 s.
+    // Following-error guard: stop when any joint's |command - measured|
+    // exceeds this, deg — fires before the base's own ~5 deg ejection.
+    // Evidence and window: resolved-rate-position-integration.md.
     inline constexpr double kFollowingErrorLimitDeg = 3.0;
 
     // Arrival notice (Loop.h): the loop prints one line the first time the

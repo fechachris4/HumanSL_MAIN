@@ -27,11 +27,9 @@ struct JointReading {
     Eigen::VectorXd q_pin;               // Pinocchio configuration vector (from radians)
 };
 
-// THE robot state reader: the single place in the program that fetches a
-// standalone feedback frame (RefreshFeedback). Everything that needs the
-// arm's state outside a command loop calls this. The cyclic loop does not:
-// they use the feedback frame that send_positions' Refresh(command) returns
-// from the same exchange — same data, no extra round trip.
+// THE robot state reader: the program's single standalone RefreshFeedback;
+// the cyclic loop instead reuses Refresh(command)'s reply —
+// docs/decisions/single-loop-controller.md ("single reader").
 k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* base_cyclic);
 
 // Returns position and measured velocity for every joint from one feedback

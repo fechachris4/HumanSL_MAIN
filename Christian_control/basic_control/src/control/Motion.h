@@ -2,9 +2,8 @@
 // Motion: cyclic command primitives for BaseCyclic — all 7 joints at once.
 // SENDS COMMANDS TO THE ARM — see Safety in README.md before use.
 //
-// The previous move executor (ramp, probe, watchdogs, move_joints_relative)
-// was removed 2026-07-20 during the single-loop refactor; it lives at
-// checkpoint commit c47525b3 if needed again.
+// Previous move executor removed 2026-07-20 (checkpoint c47525b3) —
+// docs/decisions/one-shot-reduction.md.
 //
 
 #ifndef HUMANSL_MASTERS_PROJECT_2025_MOTION_H

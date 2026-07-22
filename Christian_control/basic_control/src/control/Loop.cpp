@@ -279,9 +279,8 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
         // finish entering LOW_LEVEL_SERVOING). The only standalone read.
         k_api::BaseCyclic::Feedback feedback = read_feedback(base_cyclic);
 
-        // ONLY place q_command is set from measurement: startup. From here
-        // on it is the persistent integrator state — resetting it from
-        // feedback each cycle would break the continuous integration.
+        // ONLY place q_command is set from measurement (the integrator seed)
+        // — resolved-rate-position-integration.md ("state distinction").
         Eigen::Matrix<double, 7, 1> q_command_rad;
         Eigen::VectorXd q_measured_rad(NUM_JOINTS);
         for (int i = 0; i < NUM_JOINTS; ++i)
