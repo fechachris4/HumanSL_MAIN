@@ -21,6 +21,9 @@
 !CLAUDE.md
 !.claude/
 !.claude/**
+# ...except machine-local Claude Code state
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 !docs/
 !docs/**
 
