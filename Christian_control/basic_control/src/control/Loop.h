@@ -15,10 +15,10 @@
 #include <BaseClientRpc.h>
 #include <BaseCyclicClientRpc.h>
 
-#include "control/Motion.h"
 #include "control/Target.h"
 #include "hardware/Record.h"
 #include "math/Kinematics.h"
+#include "JointVector.h"
 #include "safety/Supervisor.h" // LoopStop, LoopResult, RobotReadyForTakeover
 #include "Dynamics.h"
 

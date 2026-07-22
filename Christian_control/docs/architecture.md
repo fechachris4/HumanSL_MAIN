@@ -13,8 +13,12 @@ Inside `basic_control/`:
   .cpp — nothing external consumes them. `src/` is the include root, so
   local includes are layer-qualified (`#include "hardware/Connect.h"`):
   - `src/app/` — application orchestration (`main.cpp`, `Config.h`)
-  - `src/control/` — control (`Motion` primitives, `Loop` — the cyclic
-    controller, moves the arm; `Target` — operator input)
+  - `src/control/` — control (`Loop` — the cyclic controller, moves the
+    arm; `Target` — operator input; `Controller.h` — the controller-facing
+    `RobotState`, arm-feedback-only by hard rule)
+  - `src/actuation/` — actuation strategy (`Actuation` interface —
+    Prepare/Restore may do hardware I/O, Apply is pure;
+    `PositionIntegration` — the q_command integrator)
   - `src/safety/` — safety policy and reporting (`Supervisor` — stop
     classification + readiness gate; `FaultReport` — bank decoding, stop /
     fault-change reports)
@@ -39,9 +43,13 @@ Inside `basic_control/`:
 | `src/safety/Supervisor.{h,cpp}` | safety policy: `LoopStop`/`LoopResult`, `ClassifyStop` (following error FIRST, then live faults, then arm state), `RobotReadyForTakeover` (pre-takeover gate) |
 | `src/safety/FaultReport.{h,cpp}` | fault-bank decoding (base + actuator, named bits) and the human-readable stop / fault-change reports — printing only, no policy |
 | `src/math/Dls.h` | damped least squares, header-only Eigen: `qdot = Jpᵀ(JpJpᵀ+λ²I)⁻¹v` via LDLT, no explicit inverse, no allocation; plus `ClampedCycleDt` (integration dt ≤ 2×nominal) — hardware-free-tested |
-| `src/control/Motion.{h,cpp}` | command primitives, all 7 joints (`JointVector` = `std::array<double,7>`): `send_positions` (position frame — wrap to [0,360), stamp frame/command ids, `Refresh`), `enter_low_level_servoing` / `restore_single_level_servoing` (guarded restore) |
+| `src/JointVector.h` | `JointVector` = `std::array<double,7>`, Kortex actuator order — the joint-space value type used across layers |
+| `src/hardware/Cyclic.{h,cpp}` | `CyclicSession`: owns the BaseCyclic command frame — `Seed()` (the standalone read + actuator-slot init, AFTER the mode switch) and `Send()` (wrap to [0,360), stamp frame/command ids, one `Refresh` per cycle) |
+| `src/safety/ServoingGuard.{h,cpp}` | RAII servoing-mode ownership — the ONLY caller of `SetServoingMode`: ctor enters LOW_LEVEL, dtor restores SINGLE_LEVEL by unwinding on every exit path (guarded, warn-don't-throw) |
+| `src/control/Controller.h` | `RobotState` (q, q̇, t — Eigen only) with the hard rule: a field belongs here only if fillable every cycle from arm feedback alone; external sensors use store injection |
+| `src/actuation/Actuation.h`, `PositionIntegration.{h,cpp}` | actuation strategy: `Prepare` (seed, may do I/O) / `Apply` (pure: clamped q̇ → setpoints) / `TrackingErrorDeg` (the guard signal) / `Restore` (teardown, may do I/O — F5 asymmetry); PositionIntegration owns the q_command integrator |
 | `src/control/Target.{h,cpp}` | operator desired end-effector position: parse (3 finite numbers, meters, base frame — deliberately no reachability check), `TargetStore` (mutex-protected latest + sequence), stdin input thread (polls, so shutdown can interrupt it) |
-| `src/control/Loop.{h,cpp}` | THE controller — MOVES THE ARM: resolved-rate loop (`RunResolvedRateLoop`, 100 Hz, actuators in default POSITION mode): takeover seeds q_command = q_measured (ONLY at startup) + holding frame; per cycle FK+Jacobian from the same q_measured → Kp error → DLS → per-joint clamp (`kQdotLimitDegS`) → q_command += q̇·dt (measured dt, clamped) → position frame, one `Refresh(command)` exchange reusing its feedback, stop policy via `safety/Supervisor`, no printing/allocation in the loop, guarded SINGLE_LEVEL restore on every exit path |
+| `src/control/Loop.{h,cpp}` | THE controller — MOVES THE ARM: resolved-rate loop (`RunResolvedRateLoop`, 100 Hz, actuators in default POSITION mode): takeover seeds via `PositionIntegration::Prepare` (q_command = q_measured, ONLY at startup) + holding frame; per cycle FK+Jacobian from the same q_measured → Kp error → DLS → per-joint clamp (`kQdotLimitDegS`) → `Actuation::Apply` (integrate) → `CyclicSession::Send` (one exchange, reusing its feedback), stop policy via `safety/Supervisor`, no printing/allocation in the loop, guarded SINGLE_LEVEL restore on every exit path |
 | `tests/test_control_logic.cpp` | hardware-free CTest coverage: `DampedLeastSquares` (incl. singular case), `ClampedCycleDt`, target parsing, `TargetStore` |
 | `scripts/plot_move.py`, `scripts/plot_joint.py` | offline analysis of loop/move logs |
 | `tools/query_limits.cpp` | separate READ-ONLY executable `query_limits`: prints robot kinematic hard/soft limits via ControlConfig |

@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "control/Motion.h" // JointVector
+#include "JointVector.h"
 
 // One cycle of the loop: everything needed to reconstruct afterwards what
 // was asked (p_desired), what the controller computed (commanded joint

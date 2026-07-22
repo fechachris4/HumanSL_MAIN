@@ -4,8 +4,10 @@
 
 #include "control/Loop.h"
 
-#include "hardware/Measure.h" // read_feedback — the single standalone reader
+#include "actuation/PositionIntegration.h"
+#include "hardware/Cyclic.h"
 #include "math/Dls.h"
+#include "safety/ServoingGuard.h"
 
 #include <algorithm>
 #include <cmath>
@@ -83,26 +85,34 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
     long cycle = 0;
     bool joint_fault_was_latched = false;
 
-    // From here until the restore below, WE are the controller.
-    enter_low_level_servoing(base);
+    CyclicSession cyclic(base_cyclic);
+    PositionIntegration actuation;
+
+    // From here until the guard's destructor runs, WE are the controller.
+    ServoingGuard servoing_guard(base);
 
     try
     {
         // Seed AFTER the mode switch (the round trip gives the base time to
         // finish entering LOW_LEVEL_SERVOING). The only standalone read.
-        k_api::BaseCyclic::Feedback feedback = read_feedback(base_cyclic);
+        k_api::BaseCyclic::Feedback feedback = cyclic.Seed();
 
-        // ONLY place q_command is set from measurement (the integrator seed)
-        // — resolved-rate-position-integration.md ("state distinction").
-        Eigen::Matrix<double, 7, 1> q_command_rad;
-        Eigen::VectorXd q_measured_rad(NUM_JOINTS);
+        RobotState seed_state;
         for (int i = 0; i < NUM_JOINTS; ++i)
-            q_command_rad[i] = feedback.actuators(i).position() * kDegToRad;
+        {
+            seed_state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
+            seed_state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
+        }
+        // The integrator seed, q_command = q_measured — the ONLY time
+        // (resolved-rate-position-integration.md, "state distinction").
+        actuation.Prepare(seed_state);
+
+        Eigen::VectorXd q_measured_rad(NUM_JOINTS);
 
         // Seed the desired position with the CURRENT end-effector position,
         // so the controller holds until the operator types a target.
         PositionJacobian ee = position_and_jacobian(
-            dynamics, dynamics.convertJointAnglesToConfig(q_command_rad), ee_frame,
+            dynamics, dynamics.convertJointAnglesToConfig(seed_state.q_rad), ee_frame,
             kinematics_workspace);
         targets.Store(ee.position); // anything typed before takeover is discarded
 
@@ -121,18 +131,14 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
         std::uint32_t prev_base_bank = feedback.base().fault_bank_a();
         int fault_prints = 0;
 
-        k_api::BaseCyclic::Command command;
         JointVector commanded_deg;
         JointVector commanded_velocity_deg_s{};
         for (int i = 0; i < NUM_JOINTS; ++i)
-        {
-            command.add_actuators();
-            commanded_deg[i] = q_command_rad[i] * kRadToDeg;
-        }
+            commanded_deg[i] = seed_state.q_rad[i] * kRadToDeg;
 
         // First unchanged holding frame (command == measured); its reply is
         // the loop's first input.
-        feedback = send_positions(base_cyclic, command, commanded_deg);
+        feedback = cyclic.Send(commanded_deg);
 
         using clock = std::chrono::steady_clock;
         const auto t_start = clock::now();
@@ -186,20 +192,20 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
                         std::chrono::duration<double>(t_now - t_prev).count(),
                         nominal_dt_s);
 
+            // Per-joint clamp — the program's single speed limit — then the
+            // actuation integrates and produces this cycle's setpoints.
+            Eigen::Matrix<double, 7, 1> qdot_clamped_rad_s;
             for (int i = 0; i < NUM_JOINTS; ++i)
-            {
-                const double qdot_clipped_rad_s =
+                qdot_clamped_rad_s[i] =
                     std::clamp(qdot_raw_rad_s[i] * kRadToDeg, -qdot_limit_deg_s[i],
                                qdot_limit_deg_s[i]) *
                     kDegToRad;
-                q_command_rad[i] += qdot_clipped_rad_s * dt_s;
-                commanded_velocity_deg_s[i] = qdot_clipped_rad_s * kRadToDeg;
-                commanded_deg[i] = q_command_rad[i] * kRadToDeg;
-            }
+            actuation.Apply(qdot_clamped_rad_s, dt_s, commanded_deg,
+                            commanded_velocity_deg_s);
 
             // The one exchange: send this cycle's position command, receive
             // the feedback the next iteration will use.
-            feedback = send_positions(base_cyclic, command, commanded_deg);
+            feedback = cyclic.Send(commanded_deg);
             ++cycle;
 
             sample.t_s = std::chrono::duration<double>(t_now - t_start).count();
@@ -291,14 +297,16 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
         std::cout << "internal error: unknown exception type\n";
     }
 
-    // Shutdown: q_command simply stops updating — in POSITION mode the arm
-    // holds the last commanded setpoint. Report, then the single guarded
-    // restore (cannot overwrite the recorded stop reason).
+    // Shutdown, in the approved teardown order: actuation restore first
+    // (no-op for PositionIntegration — the position servo holds the last
+    // setpoint), then the report; finally the ServoingGuard destructor
+    // restores SINGLE_LEVEL by unwinding, so it can neither be skipped nor
+    // overwrite the recorded stop reason.
+    actuation.Restore();
     PrintStopReport(reason, sample, cycle, following_error_limit_deg);
     if (joint_fault_was_latched)
         std::cout << "note: base JOINT_FAULT was latched during the run (stale summary "
             "diagnostic unless a joint fault is shown above; not cleared here)\n";
 
-    restore_single_level_servoing(base);
     return {reason, faults_observed};
 }

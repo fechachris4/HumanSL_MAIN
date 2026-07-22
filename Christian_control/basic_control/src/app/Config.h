@@ -9,7 +9,7 @@
 #include <chrono>
 #include <cstddef>
 
-#include "control/Motion.h" // JointVector
+#include "JointVector.h"
 
 namespace config
 {

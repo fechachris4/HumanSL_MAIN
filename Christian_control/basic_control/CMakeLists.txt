@@ -55,14 +55,16 @@ include_directories(
 add_executable(controller
         src/app/main.cpp
         src/hardware/Measure.cpp
+        src/hardware/Cyclic.cpp
         src/math/Kinematics.cpp
-        src/control/Motion.cpp
         src/control/Loop.cpp
         src/control/Target.cpp
         src/hardware/Record.cpp
         src/hardware/Connect.cpp
         src/safety/Supervisor.cpp
         src/safety/FaultReport.cpp
+        src/safety/ServoingGuard.cpp
+        src/actuation/PositionIntegration.cpp
         ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
 )
 
