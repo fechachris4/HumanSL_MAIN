@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Analyze a move log written by ./controller during a move.
+"""Analyze a run log written by ./controller.
 
-Usage: python3 plot_move.py [move_log_YYYY-MM-DD_HH-MM-SS.csv]
-(no argument: the newest move_log_*.csv in the current directory)
+Usage: python3 plot_move.py [run_YYYYMMDD_HHMMSS.csv]
+(no argument: the newest run_*.csv in the current directory)
 
 Prints per-joint tracking stats (final error, overshoot, lag) and cycle-time
-(dt) stats, and — if matplotlib is installed — saves move_log.png with
+(dt) stats, and — if matplotlib is installed — saves <log>.png with
 commanded-vs-measured curves for every joint that moved, plus a dt trace.
 """
 
@@ -18,10 +18,10 @@ NUM_JOINTS = 7
 
 
 def newest_move_log():
-    """Latest move_log_*.csv here (timestamped names sort chronologically)."""
-    logs = sorted(glob.glob("move_log_*.csv"))
+    """Latest run_*.csv here (timestamped names sort chronologically)."""
+    logs = sorted(glob.glob("run_*.csv"))
     if not logs:
-        sys.exit("no move_log_*.csv in this directory; pass a file explicitly")
+        sys.exit("no run_*.csv in this directory; pass a file explicitly")
     return logs[-1]
 
 

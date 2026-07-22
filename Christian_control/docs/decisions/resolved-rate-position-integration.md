@@ -88,3 +88,40 @@ SINGLE_LEVEL_SERVOING restore on every exit path.
 `SendVelocities`, `ActuatorConfig` usage, `LoopPhase` settling machinery
 (no mode transition to settle). Git history (this commit's parent) has the
 VELOCITY-mode implementation.
+
+## Cycle order (as implemented; relocated from Loop.h, 2026-07-22)
+
+Takeover: enter LOW_LEVEL_SERVOING → one `RefreshFeedback` (AFTER the mode
+switch — the round trip lets the base finish entering; commanding earlier
+fails with WRONG_SERVOING_MODE) → seed q_command = q_measured and
+p_desired = p(q_measured) → one unchanged holding frame (its reply is the
+loop's first input). Then once per period on a fixed `sleep_until` grid:
+
+    previous exchange's feedback → q_measured (deg→rad at this boundary)
+    → FK + translational Jacobian from the SAME q → snapshot p_desired →
+    v_d = Kp e → damped least squares → per-joint clamp to
+    ±kQdotLimitDegS[i] → q_command += q̇_clipped · dt (measured dt,
+    clamped to ≤ 2 × nominal) → rad→deg → send_positions (the one
+    exchange; returns the next cycle's feedback) → classify stop
+    (following error FIRST, so no fault policy can mask the guard) →
+    push one log sample → sleep to the next grid slot.
+
+Loop I/O rules: no per-cycle printing, allocation, or file I/O. Bounded,
+edge-triggered exceptions: the small heap vector
+`convertJointAnglesToConfig` returns; the one-line arrival notice (newly
+typed targets only — TargetStore sequence change, the seeded hold target
+never prints); decoded fault-bank-change prints, capped per run
+(`kMaxFaultChangePrints`; the CSV keeps every cycle's banks).
+
+## Following-error guard (2026-07-22; relocated from Config.h)
+
+The loop stops when any joint's command-measurement gap exceeds
+`kFollowingErrorLimitDeg` (3 deg). The window is bounded on both sides:
+normal tracking lag is ~0.3 deg even at the clip speed (run log
+2026-07-21), and at ~5 deg the base itself ejects the stream from
+low-level servoing (mechanism: `qdot-limit-raise.md`). 3 deg stops the
+loop on OUR terms — decoded report, servoing restore — before the base
+kills the session. Evidence for needing it at all: run log 2026-07-22,
+where a base fault froze the arm and the integrator wound the command
+~650 deg away over 9 s. While the fault-ignoring experiment policy is
+active, this guard is also the backstop bounding integrator windup.

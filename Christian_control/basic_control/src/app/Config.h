@@ -65,10 +65,16 @@ namespace config
     // Per-joint clip for the resolved-rate q̇ before integration, deg/s —
     // the program's single speed limit, derived at compile time as
     // kQdotLimitSafetyFactor × the model limits above (≈71.6 deg/s joints
-    // 1-4, ≈62.9 joints 5-7). This is the BaseCyclic controller's own
-    // limit. ControlConfig's per-mode soft limits do not apply in low-level
-    // control; the separate actuator firmware safeties
-    // (MAXIMUM_VELOCITY, FOLLOWING_ERROR, JOINT_LIMIT_*) still apply.
+    // 1-4, ≈62.9 joints 5-7). The base enforces whatever joint speed SOFT
+    // limits it is CONFIGURED with, regardless of what we command:
+    // position setpoints stepping faster than an enforced limit are not
+    // followed — the joint stands still, tracking error grows, and at
+    // ~5 deg the safety kicks the arm out of low-level servoing
+    // (WRONG_SERVOING_MODE). The derivation therefore assumes the base is
+    // configured at the model limits — read the active configuration with
+    // ./query_limits BEFORE a hardware session
+    // (docs/decisions/qdot-limit-raise.md; until 2026-07-22 this arm was
+    // configured at 50 deg/s and the clip was a uniform 45).
     inline constexpr double kQdotLimitSafetyFactor = 0.9; // 10% under
     inline constexpr JointVector kQdotLimitDegS = []
     {

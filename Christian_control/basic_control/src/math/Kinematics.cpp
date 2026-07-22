@@ -4,20 +4,10 @@
 
 #include "math/Kinematics.h"
 
-#include "hardware/Measure.h"
-
 #include <stdexcept>
 
 #include <pinocchio/algorithm/frames.hpp>
 #include <pinocchio/algorithm/jacobian.hpp>
-
-namespace
-{
-    // The robot reports its pose at the tool center point (TCP), which for
-    // the Robotiq 2F-85 gripper sits this far past the flange along the tool
-    // z-axis. The URDF has no TCP frame, so we add it when comparing.
-    constexpr double kTcp2F85OffsetZM = 0.12;
-} // namespace
 
 Pose forward_kinematics(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
                         const std::string& frame_name)
@@ -57,19 +47,3 @@ PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd
     return result;
 }
 
-void report_fk_vs_robot(Dynamics& dynamics, k_api::Base::BaseClient* base,
-                        k_api::BaseCyclic::BaseCyclicClient* base_cyclic, std::ostream& out)
-{
-    JointReading joints = measure_configuration(base_cyclic, dynamics);
-    Pose ee = forward_kinematics(dynamics, joints.q_pin);
-
-    Eigen::Vector3d tcp = ee.position + ee.rotation * Eigen::Vector3d(0, 0, kTcp2F85OffsetZM);
-
-    auto kinova_pose = base->GetMeasuredCartesianPose();
-    out << "FK flange (Pinocchio):  x=" << ee.position.x() << "  y=" << ee.position.y()
-        << "  z=" << ee.position.z() << "  [m]\n"
-        << "FK + " << kTcp2F85OffsetZM << "m TCP:         x=" << tcp.x() << "  y=" << tcp.y()
-        << "  z=" << tcp.z() << "  [m]\n"
-        << "Kinova reports (TCP):   x=" << kinova_pose.x() << "  y=" << kinova_pose.y()
-        << "  z=" << kinova_pose.z() << "  [m]\n";
-}

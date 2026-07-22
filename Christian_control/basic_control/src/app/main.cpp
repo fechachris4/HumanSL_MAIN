@@ -6,9 +6,10 @@
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
  *     -> start the desired-position input thread (stdin: x y z, meters)
- *     -> run the Cartesian velocity loop (Loop.cpp — MOVES THE ARM; it
- *        enters LOW_LEVEL_SERVOING, switches actuators to VELOCITY mode,
- *        and undoes both itself on every exit path)
+ *     -> run the resolved-rate loop (Loop.cpp — MOVES THE ARM; it enters
+ *        LOW_LEVEL_SERVOING, streams position setpoints with the actuators
+ *        in their default POSITION mode, and restores single-level
+ *        servoing on every exit path)
  *     -> stop the input thread, write the loop log to CSV
  *     -> RAII teardown, exit 0 only on a clean operator stop.
  *
@@ -89,6 +90,21 @@ void on_sigint(int)
     g_stop = true;
 }
 
+// Joins the input thread on scope exit, whatever the exit path: an
+// exception between thread start and the explicit join must not reach
+// std::thread's destructor on a joinable thread — that calls
+// std::terminate, aborting past every cleanup (no stop report, no CSV,
+// and before the loop's catch-all existed, no servoing restore either).
+struct InputThreadJoiner {
+    std::thread& thread;
+    ~InputThreadJoiner()
+    {
+        g_stop = true;
+        if (thread.joinable())
+            thread.join();
+    }
+};
+
 int main()
 {
     std::signal(SIGINT, on_sigint);
@@ -112,7 +128,7 @@ int main()
         PrintRobotState(initial, dynamics);
 
         // All logging memory is allocated here, before the loop starts.
-        // cycles per second = 1e6 / period_us (1000 at the 1 kHz default)
+        // cycles per second = 1e6 / period_us (100 at the 100 Hz default)
         LoopLog log(config::kLogCapacitySeconds *
                     (1'000'000 / static_cast<std::size_t>(config::kCyclePeriod.count())));
         TargetStore targets;
@@ -126,11 +142,21 @@ int main()
                   << " deg/s (joints 1-4/5-7), following-error stop "
                   << config::kFollowingErrorLimitDeg << " deg, arrival notice at "
                   << config::kArrivalToleranceM * 1000.0 << " mm\n";
+        // Open the run's CSV BEFORE the takeover: a hardware run must never
+        // end with zero evidence because the file could not be created.
+        const std::string log_file = timestamped_csv_name(config::kLoopLogPrefix);
+        std::ofstream csv(log_file);
+        if (!csv) {
+            std::cerr << "Error: cannot open " << log_file << " — not starting\n";
+            return 1;
+        }
+
         std::thread input_thread(RunTargetInput, std::ref(targets), std::cref(g_stop));
+        InputThreadJoiner input_thread_joiner{input_thread};
 
         // MOVES THE ARM (toward typed positions): servoing mode is entered
         // and restored inside the loop, on every exit path.
-        const LoopStop result = RunResolvedRateLoop(
+        const LoopResult result = RunResolvedRateLoop(
             connection.base(), connection.base_cyclic(), dynamics, targets, log, g_stop,
             config::kCyclePeriod, config::kKpCartesian, config::kDlsLambda,
             config::kQdotLimitDegS, config::kFollowingErrorLimitDeg,
@@ -139,13 +165,7 @@ int main()
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
         input_thread.join();
 
-        // Flush the log — one file per run, never overwritten.
-        const std::string log_file = timestamped_csv_name(config::kLoopLogPrefix);
-        std::ofstream csv(log_file);
-        if (!csv) {
-            std::cerr << "Error: cannot open " << log_file << "\n";
-            return 1;
-        }
+        // Flush the log — one file per run (opened before the loop above).
         log.WriteCsv(csv);
         std::cout << log.size() << " samples written to " << log_file;
         if (log.total_pushed() > log.size())
@@ -153,8 +173,11 @@ int main()
                       << " oldest samples overwritten by the ring buffer)";
         std::cout << "\n";
 
-        // Only a clean operator stop is success.
-        return result == LoopStop::kUserStop ? 0 : 1;
+        // Only a clean operator stop with no observed faults is success —
+        // faults the loop was told to ignore still taint the exit code.
+        if (result.faults_observed)
+            std::cout << "note: faults occurred during run — exit status is nonzero\n";
+        return result.reason == LoopStop::kUserStop && !result.faults_observed ? 0 : 1;
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;

@@ -55,12 +55,16 @@ include_directories(
 add_executable(controller
         src/app/main.cpp
         src/hardware/Measure.cpp
+        src/hardware/Cyclic.cpp
         src/math/Kinematics.cpp
-        src/control/Motion.cpp
         src/control/Loop.cpp
         src/control/Target.cpp
         src/hardware/Record.cpp
         src/hardware/Connect.cpp
+        src/safety/Supervisor.cpp
+        src/safety/FaultReport.cpp
+        src/safety/ServoingGuard.cpp
+        src/actuation/PositionIntegration.cpp
         ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
 )
 
@@ -103,18 +107,6 @@ add_executable(query_limits
 # query_limits.cpp lives in tools/ but includes headers from src/.
 target_include_directories(query_limits PRIVATE src)
 target_link_libraries(query_limits
-        ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
-        pthread
-)
-
-# --- diagnose_faults: TEMPORARY fault-bank investigation tool (moves joint 2
-#     by 0.05 deg at checkpoint 5). Delete with tools/diagnose_faults.cpp. ---
-add_executable(diagnose_faults
-        tools/diagnose_faults.cpp
-        src/hardware/Connect.cpp
-)
-target_include_directories(diagnose_faults PRIVATE src)
-target_link_libraries(diagnose_faults
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
 )

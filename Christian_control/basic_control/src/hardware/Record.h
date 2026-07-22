@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-#include "control/Motion.h" // JointVector
+#include "JointVector.h"
 
 // One cycle of the loop: everything needed to reconstruct afterwards what
 // was asked (p_desired), what the controller computed (commanded joint
@@ -60,7 +60,7 @@ private:
     std::size_t total_pushed_ = 0;
 };
 
-// "<prefix>_YYYY-MM-DD_HH-MM-SS.csv" in local time — one file per run, so a
+// "<prefix>_YYYYMMDD_HHMMSS.csv" in local time — one file per run, so a
 // failed run's log is never overwritten by the next attempt.
 std::string timestamped_csv_name(const std::string& prefix);
 

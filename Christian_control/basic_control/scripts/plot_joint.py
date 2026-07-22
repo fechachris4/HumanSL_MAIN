@@ -5,8 +5,8 @@ The CSV is written by ./controller during a move (columns in Record.h);
 this script uses time_s, cmd_j<N> and meas_j<N>.
 
 Usage:
-    python3 plot_joint.py 2                  # joint 2, newest move_log_*.csv
-    python3 plot_joint.py 2 --csv path/to/move_log_....csv
+    python3 plot_joint.py 2                  # joint 2, newest run_*.csv
+    python3 plot_joint.py 2 --csv path/to/run_....csv
     python3 plot_joint.py 2 --show                   # also open a window
     python3 plot_joint.py 2 --out j2.png             # choose the PNG name
 
@@ -60,8 +60,8 @@ def main():
     parser.add_argument("joint", type=int, choices=range(1, 8),
                         help="joint number, 1..7")
     parser.add_argument("--csv", default=None,
-                        help="move log to read (default: newest "
-                             "move_log_*.csv in the current directory)")
+                        help="run log to read (default: newest "
+                             "run_*.csv in the current directory)")
     parser.add_argument("--out", default=None,
                         help="output PNG (default: joint<N>.png)")
     parser.add_argument("--show", action="store_true",
@@ -73,9 +73,9 @@ def main():
 
     if args.csv is None:
         # Timestamped names sort chronologically, so the last one is newest.
-        logs = sorted(glob.glob("move_log_*.csv"))
+        logs = sorted(glob.glob("run_*.csv"))
         if not logs:
-            sys.exit("no move_log_*.csv in this directory; use --csv")
+            sys.exit("no run_*.csv in this directory; use --csv")
         args.csv = logs[-1]
 
     t, cmd, meas = load_log(args.csv, args.joint)

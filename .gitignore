@@ -35,3 +35,4 @@
 Christian_control/**/build/
 Christian_control/**/cmake-build-*/
 Christian_control/**/.idea/
+__pycache__/
