@@ -34,7 +34,7 @@ void report_fk_vs_robot(Dynamics& dynamics, k_api::Base::BaseClient* base,
                         k_api::BaseCyclic::BaseCyclicClient* base_cyclic, std::ostream& out);
 
 // Preallocated workspace for the per-cycle kinematics: the full 6×nv frame
-// Jacobian lives here so the 1 kHz loop never allocates. Construct once,
+// Jacobian lives here so the cyclic loop never allocates. Construct once,
 // outside the loop, from the model that will be queried.
 struct KinematicsWorkspace {
     explicit KinematicsWorkspace(const Dynamics& dynamics)

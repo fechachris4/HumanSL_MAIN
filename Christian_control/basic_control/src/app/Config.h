@@ -38,7 +38,7 @@ namespace config
     // kControlDtS; everything else (loop grid, frequency, log sizing) is
     // derived. 100 Hz — position streaming does not need the 1 kHz cycle,
     // and 10 ms leaves ample compute headroom.
-    inline constexpr double kControlDtS = 0.02;
+    inline constexpr double kControlDtS = 0.01;
     inline constexpr double kControlFrequencyHz = 1.0 / kControlDtS;
     inline constexpr std::chrono::microseconds kCyclePeriod{
         static_cast<long>(kControlDtS * 1e6)

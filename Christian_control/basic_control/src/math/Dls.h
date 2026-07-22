@@ -20,7 +20,7 @@
 // accuracy near singularities for bounded joint velocities: at a singular
 // pose the solution stays finite instead of blowing up.
 //
-// Fixed-size types throughout: no heap allocation, safe in the 1 kHz loop.
+// Fixed-size types throughout: no heap allocation, safe in the cyclic loop.
 inline Eigen::Matrix<double, 7, 1>
 DampedLeastSquares(const Eigen::Matrix<double, 3, 7>& jacobian_position,
                    const Eigen::Vector3d& v_desired, double lambda)

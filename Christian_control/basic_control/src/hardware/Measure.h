@@ -29,7 +29,7 @@ struct JointReading {
 
 // THE robot state reader: the single place in the program that fetches a
 // standalone feedback frame (RefreshFeedback). Everything that needs the
-// arm's state outside a command loop calls this. The 1 kHz loops do not:
+// arm's state outside a command loop calls this. The cyclic loop does not:
 // they use the feedback frame that send_positions' Refresh(command) returns
 // from the same exchange — same data, no extra round trip.
 k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* base_cyclic);

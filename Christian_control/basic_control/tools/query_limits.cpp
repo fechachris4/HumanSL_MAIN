@@ -3,7 +3,7 @@
  *
  * Connects to the arm, then prints the hard limits and the per-control-mode
  * soft limits the base enforces (joint speeds in deg/s). Never sends motion
- * commands and ignores config::kStartupMode entirely.
+ * commands.
  *
  * Usage: ./query_limits   (no flags — robot IP comes from Config.h)
  */

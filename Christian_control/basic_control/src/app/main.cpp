@@ -6,9 +6,10 @@
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
  *     -> start the desired-position input thread (stdin: x y z, meters)
- *     -> run the Cartesian velocity loop (Loop.cpp — MOVES THE ARM; it
- *        enters LOW_LEVEL_SERVOING, switches actuators to VELOCITY mode,
- *        and undoes both itself on every exit path)
+ *     -> run the resolved-rate loop (Loop.cpp — MOVES THE ARM; it enters
+ *        LOW_LEVEL_SERVOING, streams position setpoints with the actuators
+ *        in their default POSITION mode, and restores single-level
+ *        servoing on every exit path)
  *     -> stop the input thread, write the loop log to CSV
  *     -> RAII teardown, exit 0 only on a clean operator stop.
  *
@@ -112,7 +113,7 @@ int main()
         PrintRobotState(initial, dynamics);
 
         // All logging memory is allocated here, before the loop starts.
-        // cycles per second = 1e6 / period_us (1000 at the 1 kHz default)
+        // cycles per second = 1e6 / period_us (100 at the 100 Hz default)
         LoopLog log(config::kLogCapacitySeconds *
                     (1'000'000 / static_cast<std::size_t>(config::kCyclePeriod.count())));
         TargetStore targets;
