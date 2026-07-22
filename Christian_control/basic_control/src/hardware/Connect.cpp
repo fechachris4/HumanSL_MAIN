@@ -2,9 +2,9 @@
 // Connect: the two Kortex sessions to the arm (see Connect.h).
 //
 
-#include "Connect.h"
+#include "hardware/Connect.h"
 
-#include "Config.h"
+#include "app/Config.h"
 
 #include <iostream>
 #include <stdexcept>

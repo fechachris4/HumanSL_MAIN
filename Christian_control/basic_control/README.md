@@ -2,176 +2,137 @@
 
 My controller for a **single Kinova Gen3 7-DoF** arm. It combines:
 
-- the bundled Kinova **Kortex high-level Base API** (`../../third_party/kortex_api`)
-  to talk to the arm, and
+- the bundled Kinova **Kortex API** (`../../third_party/kortex_api`) to talk
+  to the arm, and
 - **Pinocchio** (via the `Dynamics` class reused from `TrajectoryExecution`)
-  to compute model-based quantities like gravity torques from the arm's URDF.
+  for kinematics from the arm's URDF.
 
 It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
 
-There is no Cartesian/task-space auto-servo: the only way to move the arm is
-one-shot relative joint moves (`kJoints` mode below). That control law
-existed and was removed by Christian's choice, 2026-07-17 — see
-`../docs/known-issues.md`.
+The program is a resolved-rate Cartesian controller: it takes over the arm
+in low-level servoing (actuators in their default POSITION mode) and drives
+the end-effector toward positions typed on stdin:
+
+    e = p_desired − p(q_measured);   v_d = Kp · e
+    q̇_raw = Jpᵀ (Jp Jpᵀ + λ² I₃)⁻¹ v_d      (damped least squares)
+    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (71.6 deg/s joints 1–4, 62.9 joints 5–7)
+    q_command += q̇_clipped · dt              (persistent integrator)
+
+with q_command streamed as position setpoints at 100 Hz. Low-level VELOCITY
+mode was tried and abandoned — the actuator's inner velocity loop has no
+gravity compensation (hardware evidence + Kinova kortex issues
+#42/#93/#156). Design: `../docs/decisions/resolved-rate-position-integration.md`;
+history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 
 ## Layout
 
-- `src/` — the controller application
-- `tools/` — standalone diagnostic executables (read-only)
-- `scripts/` — offline analysis (Python, not part of the build)
+- `src/` — one subfolder per technical layer: `app/` (orchestration),
+  `control/` (the loop — moves the arm), `math/` (kinematics, DLS),
+  `hardware/` (Kortex I/O and telemetry)
+- `tools/` — standalone diagnostic executables
+- `tests/` — hardware-free tests (CTest)
+- `scripts/` — offline Python analysis (not part of the build)
 - `config/` — our copy of the arm's URDF (`GEN3_custom.urdf`)
 
 ## Files
 
-- `src/main.cpp` — thin coordinator: connects, calls the helpers, runs the
-  recording loop, shuts down cleanly (see `../AGENTS.md` contract)
-- `src/Config.h` — all runtime settings as named constants: robot IP,
-  **startup mode** (`kStartupMode` — `kJoints` default, `kRecord`),
-  recording rate, output filenames; edit and rebuild (no CLI flags)
-- `src/Connect.h` / `Connect.cpp` — RAII: opens both Kortex sessions (TCP 10000 +
-  real-time UDP 10001) on construction, closes them on destruction
-- `src/Measure.h` / `Measure.cpp` — sensor reading via the real-time feedback
-  channel, plus conversion to the Pinocchio configuration; never moves the arm
-- `src/Kinematics.h` / `Kinematics.cpp` — forward kinematics (Pinocchio) and the
-  startup FK-vs-robot cross-check (read-only, informational)
-- `src/Record.h` / `Record.cpp` — fixed-rate recording loop: timestamps, dt, CSV
-  rows, 1 Hz heartbeat, clean stop via the Ctrl+C flag
-- `src/Motion.h` / `Motion.cpp` — **moves the arm**: low-level cyclic motion of
-  all 7 joints simultaneously (relative deltas, per-joint speed caps); a move
-  only succeeds when every moving joint *measures* within 0.5° of its target,
-  and it aborts early — with a per-joint report — on tracking failure, robot
-  fault, or communication error; Ctrl+C freezes the motion; servoing mode
-  restored by RAII on every exit path
-- `src/Timing.h` / `Timing.cpp` — latency benchmarks (feedback round-trip,
-  dynamics compute), writing stats to a log stream
-- `tools/query_limits.cpp` — separate read-only executable (`./query_limits`):
-  prints the robot's kinematic hard limits and per-mode soft limits; never
-  moves the arm, ignores `config::kStartupMode`
-- `scripts/plot_move.py` — offline analysis of a move log: per-joint final error,
-  overshoot, max tracking error, dt statistics, and commanded-vs-measured
-  plots (PNG) for every joint that moved
-- `scripts/plot_joint.py` — offline plot of a single joint (pick 1–7) from a move
-  log: commanded vs measured angle over time, saved as PNG, `--show` for an
-  interactive window
+- `src/app/main.cpp` — thin coordinator: model+config, connect, readiness
+  check, state printout, input thread, loop call, log flush, exit code
+- `src/app/Config.h` — all runtime settings as named constants (edit and
+  rebuild; no CLI flags): robot IP, `kControlDtS` (0.01 s — the single
+  timing source), `kKpCartesian` (1.0 /s), `kDlsLambda` (0.1),
+  `kQdotLimitDegS` (0.9 × model limits ≈ 71.6/62.9 deg/s clip),
+  `kEndEffectorFrame`, log capacity
+- `src/hardware/Connect.*` — RAII: both Kortex sessions (TCP 10000 +
+  real-time UDP 10001)
+- `src/hardware/Measure.*` — standalone sensor reads (`read_feedback` — the
+  only `RefreshFeedback` in the program), Pinocchio configuration conversion
+- `src/hardware/Record.*` — telemetry: preallocated ring buffer (`LoopLog`),
+  written to a timestamped CSV after the loop; `push` is loop-safe
+- `src/math/Kinematics.*` — FK, FK-vs-robot cross-check, and
+  `position_and_jacobian` (position + 3×7 translational Jacobian from the
+  same measured q)
+- `src/math/Dls.h` — damped least squares (LDLT, no explicit inverse),
+  header-only and hardware-free-tested
+- `src/control/Motion.*` — command primitives: `send_positions`,
+  servoing-mode enter/restore
+- `src/control/Target.*` — desired end-effector position: stdin thread,
+  parsing (3 finite numbers; deliberately no reachability check), latest-
+  value store
+- `src/control/Loop.*` — **the controller — moves the arm** (see above)
+- `tools/query_limits.cpp` — separate read-only executable: prints the
+  robot's kinematic hard/soft limits
 
-## Build
+## Build and test
 
 ```bash
 cd Christian_control/basic_control
 mkdir -p build && cd build
 cmake .. && make
-```
-
-## Tooling
-
-Config lives at the repo root (`../.clang-format`, `../.clang-tidy`); requires
-`clang-format`/`clang-tidy`/`cppcheck` (`sudo apt install clang-tidy
-clang-format cppcheck`).
-
-```bash
-clang-format -i src/*.cpp src/*.h tools/*.cpp   # format in place
-clang-tidy -p build src/*.cpp                   # lint (needs compile_commands.json, generated by cmake)
-cmake .. && make cppcheck                       # static analysis (target only appears if cppcheck is installed)
-
-# Sanitizer build (separate build dir; ASan/UBSan/TSan are compile flags, no install needed):
-mkdir -p ../build-asan && cd ../build-asan
-cmake .. -DSANITIZER=address        # or: undefined, address+undefined, thread
-make && ./controller
+ctest            # hardware-free control-logic tests
 ```
 
 ## Use
 
-> Run from `basic_control/build/`.
+> Run from `basic_control/build/`. **MOVES THE ARM**: workspace clear,
+> e-stop in hand, authorization required for every session.
 
 ```bash
-# No command-line flags, no config file. MOVES THE ARM: workspace clear,
-# e-stop in hand — kStartupMode defaults to kJoints (Config.h), so this
-# moves all 7 joints by kJointDeltasDeg (0 by default: a no-op until you
-# set real deltas). See "Joint moves" below.
-./controller
+./controller     # no flags, no config file
 ```
 
-`config::kStartupMode` (`src/Config.h`) picks what `main()` does; edit it and
-rebuild to switch:
+1. Loads the URDF (checks the model has exactly 7 velocity variables) and
+   connects (TCP + UDP).
+2. Readiness check on one feedback frame: a live fault refuses startup
+   (faults are never cleared here — use the Kinova web dashboard). Prints
+   the joint state and the **current end-effector position** — that printed
+   `x y z` is what a "hold here" target looks like.
+3. Enters LOW_LEVEL_SERVOING, seeds the position integrator and the
+   desired position from the measured state (q_command = q_measured,
+   p_desired = p_current), and sends one unchanged holding frame — the arm
+   holds. Actuators stay in their default POSITION mode.
+4. Type a desired position — **x y z in meters, robot base frame**:
 
-| `kStartupMode` | Behavior |
-| --- | --- |
-| `kJoints` (default) | **Moves the arm**: one-shot relative move of all 7 joints, using `kJointDeltasDeg`/`kJointSpeedsDegS` (`Config.h`) |
-| `kRecord` | Read-only: records joint angles, never moves the arm |
+   ```
+   0.45 0.10 0.30
+   ```
 
-What `kRecord` does:
+   The end-effector moves toward it at `Kp × distance` (1.0 /s × error —
+   e.g. a 10 cm error starts at 0.1 m/s and slows exponentially as it
+   converges). A new line replaces the target immediately; mid-motion
+   retargeting is normal. Invalid lines are rejected with a reason.
+5. Ctrl+C stops cleanly: the integrator stops updating (the position servo
+   holds the last setpoint), single-level servoing is restored, telemetry
+   (most recent 600 s) is written to `loop_log_*.csv`. Exit 0 only on this
+   clean stop; faults print a decoded report and exit 1.
 
-1. Loads the arm model (`config/GEN3_custom.urdf`) into Pinocchio.
-2. Connects to the arm (both channels) and clears faults.
-3. Prints an FK cross-check: our Pinocchio forward kinematics vs the pose the
-   robot itself reports (they agree to ~2 cm once the gripper TCP offset is added).
-4. Records all 7 joint angles at the chosen rate into the CSV (with timestamp
-   and dt columns), printing a 1 Hz heartbeat, until Ctrl+C.
+First hardware runs: start from the printed current position and change
+**one coordinate by a few centimeters**.
 
-(`kJoints` runs steps 1–3 the same way, then moves the arm instead of step 4
-— see "Joint moves" below.)
+## Safety — read before every session
 
-## Joint moves
-
-With `kStartupMode = kJoints` (the default), the program moves all 7 joints
-simultaneously by the deltas in `config::kJointDeltasDeg` via low-level
-1 kHz position streaming (each joint ramping at its own speed cap from
-`config::kJointSpeedsDegS`), then exits. An unsafe speed
-(`kJointSpeedsDegS` above `kDefaultSpeedLimits` in `src/Motion.h`) is a
-compile error, not a runtime one.
-
-A move succeeds (exit code 0, "Move finished.") only when every moving
-joint's **measured** angle ends within 0.5° of its target after a 1 s settle
-hold — sending all the commands is not enough, because the arm can stop
-following them without any API error (that happened; see
-`../docs/known-issues.md`). The move stops early and fails, printing each
-moving joint's requested/measured displacement and final error, when:
-
-- tracking error (commanded − measured) exceeds 3° for 50 consecutive
-  cycles (the command is frozen at the measured position first),
-- the robot reports a base or actuator fault,
-- a Kortex send/receive call fails,
-- or the final measured position misses the target.
-
-Every move is logged to its own file, `move_log_YYYY-MM-DD_HH-MM-SS.csv`
-(prefix in `src/Config.h`), so no run overwrites another's evidence. One row
-per 1 kHz cycle: time, dt, then per joint the commanded and measured angles,
-tracking error, velocity, torque, motor current, and fault/warning banks,
-plus the arm state, base fault/warning banks, and whether the cyclic
-exchange succeeded. After the last joint reaches its commanded target the
-loop keeps holding and logging for 1 s so overshoot/settling is captured.
-
-After each move the controller automatically runs `scripts/plot_move.py` on
-that run's log: tracking stats in the terminal, PNG plots (all moving
-joints + dt) next to the CSV. Needs `python3` with numpy/matplotlib; if
-they're missing it says so and the move result stands. Re-run by hand, or
-plot a single joint, with:
-
-```bash
-python3 ../scripts/plot_move.py            # newest move_log_*.csv: stats + PNG
-python3 ../scripts/plot_joint.py 2 --show  # one joint: PNG + interactive window
-```
-
-First moves: start with a small delta (a few degrees) on one joint at a
-time, at the default 5 deg/s. Joint 7 (wrist rotation) is the safest first
-test.
-
-## Safety
-
-- **`./controller` moves the arm by default** (`kStartupMode = kJoints`):
-  keep the workspace clear and the e-stop in hand for every run, not just
-  after editing `Config.h`. Set `kStartupMode` to `kRecord` and rebuild for
-  a read-only run.
-- `kJointDeltasDeg` is all-zero out of the box (a no-op move); it only moves
-  the arm once you set real deltas.
-- Ctrl+C during a move freezes the arm where it is, then hands control back
-  to the robot's supervisor (restored by RAII even on errors).
-- **Low-level servoing bypasses the robot's motion supervisor** — no onboard
-  trajectory planning or self-collision avoidance. Each joint ramps linearly
-  and independently; check the combined path is collision-free before sending.
-- **The base enforces a 50 deg/s joint speed soft limit** (this arm's
-  configuration; read it with `./query_limits`). Streaming position steps at
-  or above it is not followed — the joint stands still, tracking error grows,
-  and at ~5 deg the arm faults out of low-level servoing (the error surfaces
-  as `WRONG_SERVOING_MODE` mid-move). Config validation therefore rejects
-  speeds above 45 deg/s (10% margin).
+- **The only limiting is a per-joint velocity clamp** — ≈71.6 deg/s
+  (joints 1–4) / ≈62.9 deg/s (joints 5–7) (`kQdotLimitDegS`, derived at
+  compile time in `Config.h` as 10% under the model limits, which the
+  base's configured speed soft limits must match: verify with
+  `./query_limits` first, see `../docs/decisions/qdot-limit-raise.md`;
+  streams that outrun what the base actually enforces fault mid-move).
+  There is NO Cartesian velocity,
+  acceleration, or workspace limiting (explicit design choice — see the
+  decision record). Speed is `Kp × error` up to the clamp, and a
+  saturated joint distorts the motion direction. Type nearby targets.
+- **No reachability check**: an unreachable target makes the controller
+  push toward it until you retarget, stop, or the arm faults.
+- **Low-level servoing bypasses the robot's motion supervisor** — no
+  onboard planning or self-collision avoidance. The DLS solution moves all
+  7 joints; check the surroundings, not just the end-effector path.
+- This arm has **configured position limits far inside the factory range**
+  (joint 4 near −19.6°, joint 6 near +36° — both found by faulting into
+  them; check/adjust via the Kinova web dashboard, and `tools/query_limits`
+  prints the base-enforced limits). The controller does not know them;
+  the arm faults if a solution path crosses one.
+- On any live fault, loss of low-level servoing, or exchange failure the
+  loop stops streaming (the position servo holds the last setpoint) and
+  restores SINGLE_LEVEL servoing — guarded, with a warning if it fails.
+  If you see such a warning, check the arm (web dashboard) before running
+  anything else.

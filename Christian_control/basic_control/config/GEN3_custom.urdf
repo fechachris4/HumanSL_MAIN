@@ -48,7 +48,7 @@
     <parent link="base_link" />
     <child link="Shoulder_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="39" velocity="1.39" />
+    <limit effort="39" velocity="1.3893" />
   </joint>
   <link name="HalfArm1_Link">
     <inertial>
@@ -77,7 +77,7 @@
     <parent link="Shoulder_Link" />
     <child link="HalfArm1_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.41" upper="2.41" effort="39" velocity="1.39" />
+    <limit lower="-2.41" upper="2.41" effort="39" velocity="1.3893" />
   </joint>
   <link name="HalfArm2_Link">
     <inertial>
@@ -106,7 +106,7 @@
     <parent link="HalfArm1_Link" />
     <child link="HalfArm2_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="39" velocity="1.39" />
+    <limit effort="39" velocity="1.3893" />
   </joint>
   <link name="ForeArm_Link">
     <inertial>
@@ -135,7 +135,7 @@
     <parent link="HalfArm2_Link" />
     <child link="ForeArm_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.66" upper="2.66" effort="39" velocity="1.39" />
+    <limit lower="-2.66" upper="2.66" effort="39" velocity="1.3893" />
   </joint>
   <link name="SphericalWrist1_Link">
     <inertial>
@@ -164,7 +164,7 @@
     <parent link="ForeArm_Link" />
     <child link="SphericalWrist1_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="9" velocity="1.22" />
+    <limit effort="9" velocity="1.2200" />
   </joint>
   <link name="SphericalWrist2_Link">
     <inertial>
@@ -193,7 +193,7 @@
     <parent link="SphericalWrist1_Link" />
     <child link="SphericalWrist2_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.23" upper="2.23" effort="9" velocity="1.22" />
+    <limit lower="-2.23" upper="2.23" effort="9" velocity="1.2200" />
   </joint>
   <link name="Bracelet_Link">
     <inertial>
@@ -222,7 +222,7 @@
     <parent link="SphericalWrist2_Link" />
     <child link="Bracelet_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="9" velocity="1.22" />
+    <limit effort="9" velocity="1.2200" />
   </joint>
   <link name="EndEffector_Link" />
   <joint name="EndEffector" type="fixed">

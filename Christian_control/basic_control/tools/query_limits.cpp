@@ -13,8 +13,8 @@
 
 #include <ControlConfigClientRpc.h>
 
-#include "Config.h"
-#include "Connect.h"
+#include "app/Config.h"
+#include "hardware/Connect.h"
 
 namespace ctl = Kinova::Api::ControlConfig;
 

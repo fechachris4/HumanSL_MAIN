@@ -2,9 +2,10 @@
 // Measure: read sensor data from the arm (no motion commands).
 //
 
-#include "Measure.h"
+#include "hardware/Measure.h"
 
 #include <cmath>
+#include <utility>
 
 k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* base_cyclic)
 {
@@ -12,23 +13,32 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
     return base_cyclic->RefreshFeedback();
 }
 
-std::vector<double> measure_joint_angles(k_api::BaseCyclic::BaseCyclicClient* base_cyclic)
+JointMeasurements measure_joints(k_api::BaseCyclic::BaseCyclicClient* base_cyclic)
 {
-    // One feedback frame from the real-time channel: positions, velocities,
-    // torques, currents... — we extract just the joint positions.
+    // Position and velocity come from the same feedback frame, so they describe
+    // one robot-state snapshot rather than two time-separated reads.
     k_api::BaseCyclic::Feedback feedback = read_feedback(base_cyclic);
 
-    std::vector<double> angles_deg(feedback.actuators_size());
+    JointMeasurements measurements;
+    measurements.position_deg.resize(feedback.actuators_size());
+    measurements.velocity_deg_s.resize(feedback.actuators_size());
     for (int i = 0; i < feedback.actuators_size(); ++i)
-        angles_deg[i] = feedback.actuators(i).position();
-    return angles_deg;
+    {
+        const auto& actuator = feedback.actuators(i);
+        measurements.position_deg[i] = actuator.position();
+        measurements.velocity_deg_s[i] = actuator.velocity();
+    }
+    return measurements;
 }
 
 JointReading measure_configuration(k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
                                    Dynamics& dynamics)
 {
+    JointMeasurements measurements = measure_joints(base_cyclic);
+
     JointReading reading;
-    reading.deg = measure_joint_angles(base_cyclic);
+    reading.deg = std::move(measurements.position_deg);
+    reading.velocity_deg_s = std::move(measurements.velocity_deg_s);
 
     // Robot reports degrees; Pinocchio works in radians, and the model has
     // its own configuration layout (handled by convertJointAnglesToConfig).

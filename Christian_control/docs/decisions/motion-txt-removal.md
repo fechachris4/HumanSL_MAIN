@@ -24,7 +24,7 @@ default with no file required.
   constant instead of an external file — an unsafe speed is now a build
   error, not a load-time exception.
 
-Safety consequence (see `../../AGENTS.md`): because `kReactive` is the
+Safety consequence: because `kReactive` is the
 default, a fresh checkout, build, and run moves the arm immediately — there
 is no longer a "no file present" safe path. `./controller` can no longer be
 run as an incidental "does it build/start" test.

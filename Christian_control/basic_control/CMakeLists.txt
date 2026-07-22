@@ -53,17 +53,21 @@ include_directories(
 # --- controller: Kortex + bundled Pinocchio (dynamics/kinematics via the
 #     Dynamics class reused from TrajectoryExecution) ---
 add_executable(controller
-        src/main.cpp
-        src/Measure.cpp
-        src/Kinematics.cpp
-        src/Record.cpp
-        src/Motion.cpp
-        src/Timing.cpp
-        src/Connect.cpp
+        src/app/main.cpp
+        src/hardware/Measure.cpp
+        src/math/Kinematics.cpp
+        src/control/Motion.cpp
+        src/control/Loop.cpp
+        src/control/Target.cpp
+        src/hardware/Record.cpp
+        src/hardware/Connect.cpp
         ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
 )
 
+# src/ is the include root: local includes are layer-qualified
+# ("hardware/Connect.h"), so the technical layer is visible at every include.
 target_include_directories(controller PRIVATE
+        src
         ${HUMANSL_ROOT}/third_party/include
         ${HUMANSL_ROOT}/third_party/include/eigen3
         ${HUMANSL_ROOT}/TrajectoryExecution/include
@@ -94,7 +98,7 @@ target_link_options(controller PRIVATE
 #     hard/soft limits (no Pinocchio, no motion code) ---
 add_executable(query_limits
         tools/query_limits.cpp
-        src/Connect.cpp
+        src/hardware/Connect.cpp
 )
 # query_limits.cpp lives in tools/ but includes headers from src/.
 target_include_directories(query_limits PRIVATE src)
@@ -103,9 +107,37 @@ target_link_libraries(query_limits
         pthread
 )
 
+# --- diagnose_faults: TEMPORARY fault-bank investigation tool (moves joint 2
+#     by 0.05 deg at checkpoint 5). Delete with tools/diagnose_faults.cpp. ---
+add_executable(diagnose_faults
+        tools/diagnose_faults.cpp
+        src/hardware/Connect.cpp
+)
+target_include_directories(diagnose_faults PRIVATE src)
+target_link_libraries(diagnose_faults
+        ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+        pthread
+)
+
+# --- test_control_logic: hardware-free tests for the controller's pure
+#     logic (DLS resolution, target parsing, TargetStore). No Kortex, no
+#     Pinocchio — safe to run anywhere. ---
+enable_testing()
+add_executable(test_control_logic
+        tests/test_control_logic.cpp
+        src/control/Target.cpp
+)
+target_include_directories(test_control_logic PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(test_control_logic pthread)
+add_test(NAME control_logic COMMAND test_control_logic)
+
 # The arm's URDF model, used by Pinocchio. Our own copy (duplicated from
 # ../../config/GEN3_With_GRIPPER_DYNAMICS.urdf) so joint limits are ours to
-# edit: velocity limits set to Kinova's general limits (1.39 rad/s joints
-# 1-4, 1.22 rad/s joints 5-7) instead of the original 0.8727 (admittance).
+# edit: velocity limits set to Kinova's general limits (1.3893 rad/s joints
+# 1-4, 1.2200 rad/s joints 5-7 = 79.6 / 69.9 deg/s, see
+# config::kModelVelocityLimitsDegS) instead of the original 0.8727 (admittance).
 set(GEN3_URDF "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_custom.urdf")
 target_compile_definitions(controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")

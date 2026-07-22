@@ -1,6 +1,6 @@
 # Architecture — basic_control
 
-Detail behind the summary in `../AGENTS.md`. Update this table whenever a
+Module ownership for `basic_control`. Update this table whenever a
 file is added, removed, or repurposed.
 
 ## Layout
@@ -8,9 +8,17 @@ file is added, removed, or repurposed.
 One topic per file pair; `main.cpp` coordinates, modules implement.
 Inside `basic_control/`:
 
-- `src/` — application code (headers next to their .cpp — nothing external
-  consumes them)
-- `tools/` — standalone read-only diagnostic executables
+- `src/` — application code, one subfolder per technical layer (the layers
+  defined in the root `docs/architecture.md`); headers stay next to their
+  .cpp — nothing external consumes them. `src/` is the include root, so
+  local includes are layer-qualified (`#include "hardware/Connect.h"`):
+  - `src/app/` — application orchestration (`main.cpp`, `Config.h`)
+  - `src/control/` — control and safety (`Motion` primitives, `Loop` — the
+    cyclic controller, moves the arm; `Target` — operator input)
+  - `src/math/` — mathematics and models (`Kinematics`)
+  - `src/hardware/` — external boundaries (`Connect`, `Measure`, `Record`)
+- `tools/` — standalone diagnostic executables
+- `tests/` — hardware-free tests (CTest)
 - `scripts/` — offline Python analysis (not part of the build)
 - `config/` — our copy of the arm's URDF (`GEN3_custom.urdf`, see
   `decisions/custom-urdf.md`)
@@ -19,17 +27,19 @@ Inside `basic_control/`:
 
 | File | Owns |
 |---|---|
-| `src/main.cpp` | the story: wiring, main loop call, shutdown, exit code |
-| `src/Config.h` | central runtime configuration: robot IP (default 192.168.1.10) and Kortex session login/timeouts, **startup mode** (`kStartupMode`: `kJoints` default/`kRecord` — no reactive/Cartesian mode, removed 2026-07-17, see `known-issues.md`) and joints-mode move parameters (`kJointDeltasDeg`/`kJointSpeedsDegS`, speed-checked against `Motion.h`'s `kDefaultSpeedLimits` via `static_assert`), recording rate, output filenames — named constants, edit and rebuild |
-| `src/Connect.{h,cpp}` | Kortex sessions (TCP 10000 + real-time UDP 10001), exception-safe RAII per channel: fails fast if the arm is unreachable, closes whatever opened on any exit path, never throws from a destructor |
-| `src/Measure.{h,cpp}` | reading sensors: `read_feedback` is the single robot state reader — the only `RefreshFeedback` call in the program; every standalone read (recorder, move start state, timing benchmarks) goes through it (the 1 kHz loops instead use the feedback returned by `Refresh(command)`); deg→Pinocchio-config conversion |
-| `src/Kinematics.{h,cpp}` | forward kinematics (Pinocchio), FK-vs-robot startup check — read-only, informational; no control law consumes it |
-| `src/Record.{h,cpp}` | fixed-rate logging loop, all CSV formatting (recording + move log `MoveLogSample`), timestamped log filenames, post-move plot runner (`plot_move_log` → `scripts/plot_move.py`), heartbeat |
-| `src/Motion.{h,cpp}` | low-level cyclic motion, all 7 joints (`JointVector` = `std::array<double,7>`); exports `send_positions` (one cyclic exchange), `kDefaultSpeedLimits`, and `speeds_within_limits` (compile-time check used by `Config.h`'s `static_assert`); servoing mode is set to LOW_LEVEL at the top of `move_joints_relative`'s try block and restored to SINGLE_LEVEL at one point after the try/catch, on every exit path (pattern follows TrajectoryExecution/src/KinovaTrajectory.cpp); success requires every moving joint to MEASURE within `kReachedToleranceDeg` of target after a 1 s settle hold; aborts (per-joint report) on tracking failure, robot fault, or Kortex error; per-cycle move logging (commanded/measured/error, velocity, torque, current, fault/warning banks → `move_log_<timestamp>.csv`); MOVES THE ARM — this is the only motion path in the program |
-| `src/Timing.{h,cpp}` | latency benchmarks (feedback round-trip, dynamics compute) |
-| `scripts/plot_move.py` | offline analysis of a move log (default: newest `move_log_*.csv`): tracking/overshoot/dt stats, matplotlib plots (matplotlib in user site-packages) |
-| `scripts/plot_joint.py` | offline single-joint plot from a move log (default: newest `move_log_*.csv`; pandas + matplotlib): commanded vs measured over time, joint chosen 1-7, PNG + optional `--show` window |
-| `tools/query_limits.cpp` | separate READ-ONLY executable `query_limits`: prints robot kinematic hard/soft limits via ControlConfig; ignores `config::kStartupMode` |
+| `src/app/main.cpp` | the story: model+config (asserts nv == 7), connect, readiness check, state printout (joints + FK end-effector position), input thread, loop call, log flush, exit code |
+| `src/app/Config.h` | central runtime configuration: robot IP (default 192.168.1.10), Kortex session login/timeouts, `kControlDtS` (0.01 s — the single timing source; period/frequency derived), controller gains (`kKpCartesian`, `kDlsLambda`), `kQdotLimitDegS` (45 deg/s clip, static-asserted ≤ the Motion.h ceiling), controlled frame, log capacity, `kModelVelocityLimitsDegS` (URDF documentation only) — named constants, edit and rebuild |
+| `src/hardware/Connect.{h,cpp}` | Kortex sessions (TCP 10000 + real-time UDP 10001), exception-safe RAII per channel: fails fast if the arm is unreachable, closes whatever opened on any exit path, never throws from a destructor |
+| `src/hardware/Measure.{h,cpp}` | reading sensors: `read_feedback` is the single standalone robot state reader — the only `RefreshFeedback` call in the program (the loop instead reuses `Refresh(command)`'s reply); `measure_joints`; deg→Pinocchio-config conversion (`measure_configuration`) |
+| `src/hardware/Record.{h,cpp}` | telemetry: `LoopLogSample`, `LoopLog` (preallocated ring buffer; `push` is alloc/I-O-free and loop-safe), CSV output after the loop, timestamped filenames |
+| `src/math/Kinematics.{h,cpp}` | forward kinematics (Pinocchio), FK-vs-robot cross-check, and `position_and_jacobian` (frame position + 3×7 translational Jacobian from the SAME q, `LOCAL_WORLD_ALIGNED`; preallocated `KinematicsWorkspace`) |
+| `src/math/Dls.h` | damped least squares, header-only Eigen: `qdot = Jpᵀ(JpJpᵀ+λ²I)⁻¹v` via LDLT, no explicit inverse, no allocation; plus `ClampedCycleDt` (integration dt ≤ 2×nominal) — hardware-free-tested |
+| `src/control/Motion.{h,cpp}` | command primitives, all 7 joints (`JointVector` = `std::array<double,7>`): `send_positions` (position frame — wrap to [0,360), stamp frame/command ids, `Refresh`), `enter_low_level_servoing` / `restore_single_level_servoing` (guarded restore), `kCommandSpeedCeilingDegS` (45 deg/s) |
+| `src/control/Target.{h,cpp}` | operator desired end-effector position: parse (3 finite numbers, meters, base frame — deliberately no reachability check), `TargetStore` (mutex-protected latest + sequence), stdin input thread (polls, so shutdown can interrupt it) |
+| `src/control/Loop.{h,cpp}` | THE controller — MOVES THE ARM: resolved-rate loop (`RunResolvedRateLoop`, 100 Hz, actuators in default POSITION mode): takeover seeds q_command = q_measured (ONLY at startup) + holding frame; per cycle FK+Jacobian from the same q_measured → Kp error → DLS → 45 deg/s clamp → q_command += q̇·dt (measured dt, clamped) → position frame, one `Refresh(command)` exchange reusing its feedback, fault/state stop policy, no printing/allocation in the loop, guarded SINGLE_LEVEL restore on every exit path; also `RobotReadyForTakeover` (pre-takeover gate) |
+| `tests/test_control_logic.cpp` | hardware-free CTest coverage: `DampedLeastSquares` (incl. singular case), `ClampedCycleDt`, target parsing, `TargetStore` |
+| `scripts/plot_move.py`, `scripts/plot_joint.py` | offline analysis of loop/move logs |
+| `tools/query_limits.cpp` | separate READ-ONLY executable `query_limits`: prints robot kinematic hard/soft limits via ControlConfig |
 | `Dynamics` (external) | reused from `../TrajectoryExecution` — do not edit |
 
 ## main.cpp contract
@@ -41,10 +51,9 @@ main.cpp MAY:
 
 - connect to the robot
 - construct required clients
-- configure the sampling rate
-- initialise timing and storage
-- call high-level helper functions
-- run the main loop
+- construct the log buffer and target store, start/join the input thread
+- call high-level helper functions (readiness check, the loop)
+- write the finished log to disk
 - perform orderly shutdown
 - handle top-level exceptions
 - return an appropriate exit code
@@ -52,11 +61,10 @@ main.cpp MAY:
 main.cpp must NOT:
 
 - contain detailed Kortex connection implementation
+- contain the control loop, stepping math, or fault policy
 - contain forward-kinematics mathematics
 - contain CSV formatting logic
-- contain large logging implementations
-- reconnect inside the loop
+- reconnect
 - create duplicate clients
 - duplicate existing helper functions
 - print robot state every iteration
-- send movement commands unless explicitly requested

@@ -61,10 +61,8 @@ must be able to exercise controller mathematics without robot hardware.
 
 ## Documentation ownership
 
-- Repository-wide engineering contracts live in `docs/standards/` and
-  `docs/robotics-contracts.md`.
 - Subsystem module maps and exact hardware behavior live beside the subsystem,
   such as `Christian_control/docs/`.
-- Decisions record why a durable choice was made. Known-issue documents record
-  empirical faults, limitations, and unresolved questions.
+- Decisions record why a durable choice was made, together with the empirical
+  faults, limitations, and unresolved questions that motivated it.
 - Plans and milestone notes are task artifacts, not permanent agent instructions.
