@@ -61,6 +61,7 @@ include_directories(
 #     Dynamics class reused from TrajectoryExecution) ---
 add_executable(controller
         src/app/main.cpp
+        src/app/Options.cpp
         src/hardware/Measure.cpp
         src/hardware/Cyclic.cpp
         src/math/Kinematics.cpp
@@ -80,6 +81,7 @@ add_executable(controller
 # ("hardware/Connect.h"), so the technical layer is visible at every include.
 target_include_directories(controller PRIVATE
         src
+        third_party
         ${HUMANSL_ROOT}/third_party/include
         ${HUMANSL_ROOT}/third_party/include/eigen3
         ${HUMANSL_ROOT}/TrajectoryExecution/include

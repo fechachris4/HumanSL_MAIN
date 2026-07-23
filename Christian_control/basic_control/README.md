@@ -42,11 +42,14 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 
 - `src/app/main.cpp` — thin coordinator: model+config, connect, readiness
   check, state printout, input thread, loop call, log flush, exit code
-- `src/app/Config.h` — all runtime settings as named constants (edit and
-  rebuild; no CLI flags): robot IP, `kControlDtS` (0.01 s — the single
-  timing source), `kKpCartesian` (1.0 /s), `kDlsLambda` (0.1),
-  `kQdotLimitDegS` (0.9 × model limits ≈ 71.6/62.9 deg/s clip),
-  `kEndEffectorFrame`, log capacity
+- `src/app/Config.h` — the compiled defaults: robot IP, `kControlDtS`
+  (0.01 s — the single timing source), `kKpCartesian` (1.0 /s),
+  `kDlsLambda` (0.1), `kQdotLimitDegS` (0.9 × model limits ≈ 71.6/62.9
+  deg/s clip), `kStopOnFault` (compile-time only), `kEndEffectorFrame`,
+  supervisor counter limits, log capacity
+- `src/app/Options.*` — runtime overrides, precedence CLI > TOML >
+  compiled (gains/thresholds only — never safety policy; no config-file
+  auto-discovery): `../docs/decisions/runtime-config.md`
 - `src/hardware/Connect.*` — RAII: both Kortex sessions (TCP 10000 +
   real-time UDP 10001)
 - `src/hardware/Measure.*` — `read_feedback`, the program's single
@@ -93,8 +96,15 @@ ctest            # hardware-free control-logic tests
 > e-stop in hand, authorization required for every session.
 
 ```bash
-./controller     # no flags, no config file
+./controller                       # compiled defaults
+./controller --kp 0.8              # one-off gain override
+./controller --config gains.toml   # gains/thresholds from an explicit file
+./controller --help                # full option + TOML-key list
 ```
+
+Every run echoes its full effective configuration (each value tagged
+compiled/toml/cli) and embeds it as `#` lines in the CSV, so every data
+file is self-describing. Safety policy is not runtime-configurable.
 
 1. Loads the URDF (checks the model has exactly 7 velocity variables) and
    connects (TCP + UDP).

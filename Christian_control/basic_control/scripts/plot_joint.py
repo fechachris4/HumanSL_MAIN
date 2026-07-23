@@ -26,12 +26,19 @@ import runlog
 TIME_COL = "time_s"
 
 
-def load_log(path, joint):
+def load_log(path, joint, allow_old):
     """Read the CSV and return (time, commanded, measured) for one joint."""
     cmd_col, meas_col = f"cmd_j{joint}", f"meas_j{joint}"
 
     try:
-        df = pd.read_csv(path)
+        with open(path) as f:
+            has_preamble = f.readline().startswith("#")
+        if not has_preamble and not allow_old:
+            sys.exit(
+                f"error: {path}: old-format CSV (no '#' config preamble — "
+                "recorded before the self-describing-log change). Pass "
+                "--allow-old to analyze anyway.")
+        df = pd.read_csv(path, comment="#")
     except FileNotFoundError:
         sys.exit(f"error: file not found: {path}")
     except pd.errors.EmptyDataError:
@@ -68,6 +75,8 @@ def main():
                              "next to the CSV)")
     parser.add_argument("--show", action="store_true",
                         help="also display the plot in a window")
+    parser.add_argument("--allow-old", action="store_true",
+                        help="accept old-format CSVs without the '#' config preamble")
     args = parser.parse_args()
 
     if not args.show:
@@ -76,7 +85,7 @@ def main():
     csv_path = Path(args.csv) if args.csv else runlog.find_default_csv()
     print(f"log: {csv_path}")
 
-    t, cmd, meas = load_log(csv_path, args.joint)
+    t, cmd, meas = load_log(csv_path, args.joint, args.allow_old)
 
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(t, cmd, label="commanded", linewidth=1.2)

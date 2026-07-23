@@ -47,7 +47,7 @@ void LoopLog::WriteCsv(std::ostream& csv) const
         csv << ",torque_j" << i;
     for (int i = 1; i <= 7; ++i)
         csv << ",fault_j" << i;
-    csv << ",arm_state,base_fault,refresh_ok\n";
+    csv << ",arm_state,base_fault,refresh_ok,sigma_min\n";
 
     // Oldest-first: when the ring has wrapped, the oldest sample sits at
     // next_ (the slot about to be overwritten).
@@ -75,7 +75,7 @@ void LoopLog::WriteCsv(std::ostream& csv) const
         for (std::uint32_t v : s.fault_bank)
             csv << "," << v;
         csv << "," << s.arm_state << "," << s.base_fault_bank << ","
-            << (s.refresh_ok ? 1 : 0) << "\n";
+            << (s.refresh_ok ? 1 : 0) << "," << s.sigma_min << "\n";
     }
 }
 

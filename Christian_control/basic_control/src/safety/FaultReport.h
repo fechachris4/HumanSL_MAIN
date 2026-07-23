@@ -18,11 +18,11 @@
 std::string DecodeBaseBank(std::uint32_t bank);
 std::string DecodeActuatorBank(std::uint32_t bank);
 
-// Faults are deliberately non-stopping during the current experiment;
-// instead EVERY fault-bank change prints immediately, decoded, once per
-// change (not per cycle — a persisting fault stays silent after its
-// edge). Bounded: after kMaxFaultChangePrints events the loop stops
-// printing (the CSV still has every cycle's banks).
+// EVERY fault-bank change prints immediately, decoded, once per change
+// (not per cycle — a persisting fault stays silent after its edge).
+// Bounded: after kMaxFaultChangePrints events the loop stops printing
+// (the CSV still has every cycle's banks). Visibility only — whether a
+// fault STOPS the loop is StopPolicy's call.
 inline constexpr int kMaxFaultChangePrints = 20;
 
 void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,

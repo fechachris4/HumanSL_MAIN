@@ -1,8 +1,10 @@
 /*
- * Config.h — the one place to change runtime settings.
+ * Config.h — the compiled DEFAULTS for every runtime setting.
  *
- * Controller programs in this repository take no command-line flags;
- * edit these constants and rebuild instead.
+ * Gains and thresholds can be overridden at runtime (CLI > TOML > these
+ * defaults — app/Options.h, docs/decisions/runtime-config.md). Safety
+ * policy cannot: kStopOnFault is compile-time only, and connection
+ * parameters and the speed-clip derivation live only here.
  */
 #pragma once
 
@@ -84,15 +86,24 @@ namespace config
         return limits;
     }();
 
-    // Following-error guard (Loop.h): the loop stops when any joint's
-    // command-measurement gap exceeds this, deg. The window is bounded on
-    // both sides: normal tracking lag is ~0.3 deg even at the clip speed
-    // (run log 2026-07-21), and at ~5 deg the base itself ejects the
-    // stream from low-level servoing (mechanism in the clip comment
-    // above). 3 deg stops the loop on OUR terms — decoded report, servo
-    // restore — before the base kills the session. Evidence for needing
-    // it at all: run log 2026-07-22, where a base fault froze the arm and
-    // the integrator wound the command ~650 deg away over 9 s.
+    // Fault-stop policy (safety/Supervisor.h StopPolicy). COMPILE-TIME
+    // ONLY — deliberately not settable from any runtime configuration.
+    // false = the 2026-07-20 fault-ignoring experiment (attended use only;
+    // docs/decisions/qdot-limit-raise.md, safety consequences).
+    inline constexpr bool kStopOnFault = true;
+
+    // Supervisor consecutive-cycle counters (decision 12); N <= 0 disables
+    // one. Non-finite controller output is never integrated (that cycle
+    // holds); saturation = >= 1 joint pinned at the clamp bound; overrun =
+    // measured dt above kOverrunFactor x nominal.
+    inline constexpr int kNonFiniteStopCycles = 3;
+    inline constexpr int kSaturationStopCycles = 50; // 0.5 s at 100 Hz
+    inline constexpr int kOverrunStopCycles = 10;
+    inline constexpr double kOverrunFactor = 1.5;
+
+    // Following-error guard: stop when any joint's |command - measured|
+    // exceeds this, deg — fires before the base's own ~5 deg ejection.
+    // Evidence and window: resolved-rate-position-integration.md.
     inline constexpr double kFollowingErrorLimitDeg = 3.0;
 
     // Arrival notice (Loop.h): the loop prints one line the first time the

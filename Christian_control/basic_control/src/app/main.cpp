@@ -1,7 +1,8 @@
 /*
  * main.cpp — the story of the program, told at a high level:
  *
- *   load configuration + URDF model (Pinocchio; must have 7 velocity vars)
+ *   parse options (CLI > TOML > compiled defaults, app/Options)
+ *     -> load configuration + URDF model (Pinocchio; must have 7 velocity vars)
  *     -> connect (TCP + UDP, Connect)
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
@@ -27,6 +28,7 @@
 #include <tuple>
 
 #include "app/Config.h"
+#include "app/Options.h"
 #include "actuation/PositionIntegration.h"
 #include "control/ResolvedRate.h"
 #include "control/Target.h"
@@ -109,11 +111,15 @@ struct InputThreadJoiner {
     }
 };
 
-int main()
+int main(int argc, char** argv)
 {
     std::signal(SIGINT, on_sigint);
 
+    const EffectiveConfig cfg = ParseOptions(argc, argv);
+
     try {
+        EchoConfig(cfg, std::cout);
+
         // Model + configuration before any hardware session. The controller
         // maps 3 Cartesian velocities onto 7 joint velocities: the model
         // must agree on that 7.
@@ -141,36 +147,36 @@ int main()
         std::cout << "type a desired end-effector position (x y z, meters, base frame) and "
                      "press Enter; Ctrl+C to stop\n"
                   << "resolved-rate position integration at " << config::kControlFrequencyHz
-                  << " Hz — Kp " << config::kKpCartesian << " 1/s, lambda "
-                  << config::kDlsLambda << ", per-joint q-dot clip "
-                  << config::kQdotLimitDegS[0] << "/" << config::kQdotLimitDegS[4]
-                  << " deg/s (joints 1-4/5-7), following-error stop "
-                  << config::kFollowingErrorLimitDeg << " deg, arrival notice at "
-                  << config::kArrivalToleranceM * 1000.0 << " mm\n";
+                  << " Hz (full settings echoed above and in the CSV preamble)\n";
         // Open the run's CSV BEFORE the takeover: a hardware run must never
-        // end with zero evidence because the file could not be created.
-        // Runs live in <repo>/runs/YYYY-MM-DD/ (RUNS_ROOT_DIR, baked in by
-        // CMake) — the layout the plot scripts search by default.
-        const std::string run_dir = dated_run_dir(RUNS_ROOT_DIR);
-        std::error_code dir_error;
-        std::filesystem::create_directories(run_dir, dir_error);
-        if (dir_error) {
-            std::cerr << "Error: cannot create " << run_dir << " ("
-                      << dir_error.message() << ") — not starting\n";
-            return 1;
+        // end with zero evidence because the file could not be created. The
+        // '#' config preamble makes every data file self-describing (F3).
+        // Default: <repo>/runs/YYYY-MM-DD/ (RUNS_ROOT_DIR, baked in by
+        // CMake) — the layout the plot scripts search; an explicit
+        // cfg.log_file is used verbatim.
+        std::string log_file = cfg.log_file;
+        if (log_file.empty()) {
+            const std::string run_dir = dated_run_dir(RUNS_ROOT_DIR);
+            std::error_code dir_error;
+            std::filesystem::create_directories(run_dir, dir_error);
+            if (dir_error) {
+                std::cerr << "Error: cannot create " << run_dir << " ("
+                          << dir_error.message() << ") — not starting\n";
+                return 1;
+            }
+            log_file = run_dir + "/" + timestamped_csv_name(config::kLoopLogPrefix);
         }
-        const std::string log_file =
-            run_dir + "/" + timestamped_csv_name(config::kLoopLogPrefix);
         std::ofstream csv(log_file);
         if (!csv) {
             std::cerr << "Error: cannot open " << log_file << " — not starting\n";
             return 1;
         }
+        WriteCsvPreamble(cfg, csv);
 
         // Controller + actuation, constructed before the input thread: a bad
         // end-effector frame name must fail here, before any takeover.
-        ResolvedRate controller(dynamics, targets, config::kKpCartesian,
-                                config::kDlsLambda, config::kArrivalToleranceM,
+        ResolvedRate controller(dynamics, targets, cfg.kp, cfg.dls_lambda,
+                                cfg.arrival_tolerance_m,
                                 config::kEndEffectorFrame);
         PositionIntegration actuation;
 
@@ -179,10 +185,14 @@ int main()
 
         // MOVES THE ARM (toward typed positions): servoing mode is entered
         // and restored inside the Runner, on every exit path (T2/D3).
+        const StopPolicy stop_policy{
+            config::kStopOnFault, cfg.nonfinite_stop_cycles,
+            cfg.saturation_stop_cycles, cfg.overrun_stop_cycles,
+            cfg.overrun_factor};
         const LoopResult result = RunControlLoop(
             connection.base(), connection.base_cyclic(), controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
-            config::kFollowingErrorLimitDeg, robot_ready);
+            cfg.following_error_limit_deg, stop_policy, robot_ready);
 
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
         input_thread.join();

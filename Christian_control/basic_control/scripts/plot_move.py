@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Analyze a run log written by ./controller.
 
-Usage: python3 plot_move.py [path/to/log.csv]
-(no argument: the newest CSV in the newest <repo>/runs/YYYY-MM-DD/ folder)
+Usage: python3 plot_move.py [path/to/log.csv] [--allow-old]
+(no argument: the newest CSV in the newest <repo>/runs/YYYY-MM-DD/ folder;
+--allow-old accepts pre-preamble recordings whose config is not embedded)
 
 Prints per-joint tracking stats (final error, overshoot, lag) and cycle-time
 (dt) stats, and — if matplotlib is installed — saves <log stem>_move.png
@@ -20,10 +21,20 @@ import runlog
 NUM_JOINTS = 7
 
 
-def load(path):
+def load(path, allow_old):
     with open(path) as f:
+        first = f.readline()
+        if first.startswith("#"):
+            # Self-describing run log: skip the '#' config preamble.
+            while first.startswith("#"):
+                first = f.readline()
+        elif not allow_old:
+            sys.exit(
+                f"{path}: old-format CSV (no '#' config preamble — recorded "
+                "before the self-describing-log change). The run's gains and "
+                "thresholds are unknown; pass --allow-old to analyze anyway.")
+        header = first.rstrip("\n").split(",")
         reader = csv.reader(f)
-        header = next(reader)
         data = np.array([[float(x) for x in row] for row in reader])
     if data.size == 0:
         sys.exit(f"{path}: no data rows")
@@ -32,9 +43,12 @@ def load(path):
 
 
 def main():
-    path = Path(sys.argv[1]) if len(sys.argv) > 1 else runlog.find_default_csv()
+    args = sys.argv[1:]
+    allow_old = "--allow-old" in args
+    args = [a for a in args if a != "--allow-old"]
+    path = Path(args[0]) if args else runlog.find_default_csv()
     print(f"log: {path}")
-    cols = load(path)
+    cols = load(path, allow_old)
     t = cols["time_s"]
     dt = cols["dt_s"][1:]  # first dt spans setup, not a steady cycle
 

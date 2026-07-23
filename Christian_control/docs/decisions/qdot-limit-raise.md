@@ -61,7 +61,10 @@ Spec:
 - Joint speeds up to ~72 deg/s are substantially faster than the previous
   45. First runs after the reconfiguration: small, nearby targets (the
   README's few-centimeter rule), workspace clear, e-stop in hand.
-- `Loop.cpp` currently runs a TEMPORARY experiment policy in which
+- ~~`Loop.cpp` currently runs a TEMPORARY experiment policy in which
   actuator/base fault bits do NOT stop the loop (marked in
   `RunResolvedRateLoop`). Restore the fault-stop exit before any
-  high-speed or unattended use.
+  high-speed or unattended use.~~ *(Superseded 2026-07-23: fault-stop is
+  the default again — `config::kStopOnFault`, compile-time only, F2. The
+  experiment is reproducible by setting it false; the Runner then warns
+  loudly at startup, and observed faults still force a nonzero exit.)*

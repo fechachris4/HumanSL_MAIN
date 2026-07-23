@@ -73,6 +73,15 @@ int main()
     Check((status2.p_current - ee.position).norm() < 1e-12,
           "status reports the FK position of the same q");
 
+    // sigma_min (decision 13): sqrt of the smallest eigenvalue of Jp Jpᵀ.
+    Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> es(ee.jacobian_p *
+                                                      ee.jacobian_p.transpose());
+    const double sigma_ref = std::sqrt(std::max(0.0, es.eigenvalues()(0)));
+    Check(std::isfinite(status2.sigma_min) && status2.sigma_min > 0.0,
+          "sigma_min is finite and positive away from singularity");
+    Check(std::abs(status2.sigma_min - sigma_ref) < 1e-12,
+          "sigma_min matches the independent eigen-solve");
+
     // Arrival edge: a NEW target already within tolerance fires exactly once.
     targets.Store(status2.p_current);
     ControllerStatus status3;

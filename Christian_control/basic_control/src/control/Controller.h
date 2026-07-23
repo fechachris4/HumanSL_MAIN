@@ -13,6 +13,8 @@
 #ifndef HUMANSL_MASTERS_PROJECT_2025_CONTROLLER_H
 #define HUMANSL_MASTERS_PROJECT_2025_CONTROLLER_H
 
+#include <limits>
+
 #include <Eigen/Dense>
 
 struct RobotState {
@@ -30,6 +32,10 @@ struct ControllerStatus {
     Eigen::Vector3d p_current = Eigen::Vector3d::Zero(); // FK this cycle
     bool arrived_edge = false;    // first crossing under the tolerance
     double arrival_error_m = 0.0; // error norm at that crossing
+    // Smallest singular value of the task Jacobian (decision 13) — the
+    // proximity-to-singularity signal, logged every cycle. NaN when the
+    // law has no task Jacobian.
+    double sigma_min = std::numeric_limits<double>::quiet_NaN();
 };
 
 // The controller: one Reset at takeover, then one DesiredVelocity per
