@@ -6,10 +6,9 @@
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
  *     -> start the desired-position input thread (stdin: x y z, meters)
- *     -> run the resolved-rate loop (Loop.cpp — MOVES THE ARM; it enters
- *        LOW_LEVEL_SERVOING, streams position setpoints with the actuators
- *        in their default POSITION mode, and restores single-level
- *        servoing on every exit path)
+ *     -> run the control loop (loop/Runner.cpp — MOVES THE ARM: takeover
+ *        sequence T1-T6, ResolvedRate controller + PositionIntegration
+ *        actuation, single-level servoing restored on every exit path)
  *     -> stop the input thread, write the loop log to CSV
  *     -> RAII teardown, exit 0 only on a clean operator stop.
  *
@@ -28,12 +27,15 @@
 #include <tuple>
 
 #include "app/Config.h"
-#include "control/Loop.h"
+#include "actuation/PositionIntegration.h"
+#include "control/ResolvedRate.h"
 #include "control/Target.h"
 #include "hardware/Connect.h"
 #include "hardware/Measure.h"
 #include "hardware/Record.h"
+#include "loop/Runner.h"
 #include "math/Kinematics.h"
+#include "safety/Supervisor.h"
 #include "Dynamics.h"
 
 namespace
@@ -125,7 +127,8 @@ int main()
         // Readiness check on a standalone read, BEFORE the takeover: a live
         // fault means we never enter low-level servoing at all.
         const k_api::BaseCyclic::Feedback initial = read_feedback(connection.base_cyclic());
-        if (!RobotReadyForTakeover(initial, std::cout))
+        const bool robot_ready = RobotReadyForTakeover(initial, std::cout); // T1
+        if (!robot_ready)
             return 1;
         PrintRobotState(initial, dynamics);
 
@@ -164,16 +167,22 @@ int main()
             return 1;
         }
 
+        // Controller + actuation, constructed before the input thread: a bad
+        // end-effector frame name must fail here, before any takeover.
+        ResolvedRate controller(dynamics, targets, config::kKpCartesian,
+                                config::kDlsLambda, config::kArrivalToleranceM,
+                                config::kEndEffectorFrame);
+        PositionIntegration actuation;
+
         std::thread input_thread(RunTargetInput, std::ref(targets), std::cref(g_stop));
         InputThreadJoiner input_thread_joiner{input_thread};
 
         // MOVES THE ARM (toward typed positions): servoing mode is entered
-        // and restored inside the loop, on every exit path.
-        const LoopResult result = RunResolvedRateLoop(
-            connection.base(), connection.base_cyclic(), dynamics, targets, log, g_stop,
-            config::kCyclePeriod, config::kKpCartesian, config::kDlsLambda,
-            config::kQdotLimitDegS, config::kFollowingErrorLimitDeg,
-            config::kArrivalToleranceM, config::kEndEffectorFrame);
+        // and restored inside the Runner, on every exit path (T2/D3).
+        const LoopResult result = RunControlLoop(
+            connection.base(), connection.base_cyclic(), controller, actuation,
+            log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
+            config::kFollowingErrorLimitDeg, robot_ready);
 
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
         input_thread.join();

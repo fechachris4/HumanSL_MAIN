@@ -1,13 +1,15 @@
 //
 // Hardware-free tests for the controller's safety-relevant pure logic:
-// damped-least-squares resolution, target parsing, TargetStore snapshots.
-// No robot, no sessions, no Pinocchio. Returns nonzero on the first failure.
+// damped-least-squares resolution, target parsing, TargetStore snapshots,
+// PositionIntegration actuation. No robot, no sessions, no Pinocchio.
+// Returns nonzero on the first failure.
 //
 
 #include <cmath>
 #include <iostream>
 #include <string>
 
+#include "actuation/PositionIntegration.h"
 #include "control/Target.h"
 #include "math/Dls.h"
 
@@ -101,6 +103,56 @@ namespace
         Check(store.Get().sequence == 2, "sequence increments again");
     }
 
+    void TestPositionIntegration()
+    {
+        constexpr double kDegToRad = M_PI / 180.0;
+        constexpr double kRadToDeg = 180.0 / M_PI;
+
+        RobotState seed;
+        seed.qdot_rad_s.setZero();
+        for (int i = 0; i < 7; ++i)
+            seed.q_rad[i] = 0.1 * (i + 1); // rad
+
+        PositionIntegration act;
+        act.Prepare(seed);
+
+        // Zero velocity holds the seeded position exactly, reports zero.
+        JointVector setpoints{};
+        JointVector velocity{};
+        act.Apply(Eigen::Matrix<double, 7, 1>::Zero(), 0.01, setpoints, velocity);
+        Check(std::abs(setpoints[0] - 0.1 * kRadToDeg) < 1e-12,
+              "hold keeps the seeded position");
+        Check(velocity[3] == 0.0, "hold reports zero velocity");
+
+        // Integration arithmetic: q_command += q̇·dt, outputs in degrees.
+        const Eigen::Matrix<double, 7, 1> qdot =
+            Eigen::Matrix<double, 7, 1>::Constant(0.5); // rad/s
+        act.Apply(qdot, 0.02, setpoints, velocity);
+        Check(std::abs(setpoints[0] - (0.1 + 0.5 * 0.02) * kRadToDeg) < 1e-12,
+              "Apply integrates q̇·dt onto the persistent command");
+        Check(std::abs(velocity[0] - 0.5 * kRadToDeg) < 1e-12,
+              "Apply reports the applied velocity in deg/s");
+
+        // Tracking error: measurement still at the seed, command has moved.
+        auto error = act.TrackingErrorDeg(seed);
+        Check(error.has_value(), "PositionIntegration provides a tracking guard");
+        Check(std::abs((*error)[0] - 0.5 * 0.02 * kRadToDeg) < 1e-9,
+              "tracking error = |command - measured|");
+
+        // Wrap: measured 359 deg vs command 1 deg is 2 deg apart, not 358.
+        PositionIntegration act_wrap;
+        RobotState near_zero;
+        near_zero.qdot_rad_s.setZero();
+        near_zero.q_rad.setZero();
+        near_zero.q_rad[0] = 1.0 * kDegToRad;
+        act_wrap.Prepare(near_zero);
+        RobotState wrapped = near_zero;
+        wrapped.q_rad[0] = 359.0 * kDegToRad;
+        auto wrap_error = act_wrap.TrackingErrorDeg(wrapped);
+        Check(std::abs((*wrap_error)[0] - 2.0) < 1e-9,
+              "tracking error shifts the measurement to within ±180 deg");
+    }
+
 } // namespace
 
 int main()
@@ -109,6 +161,7 @@ int main()
     TestClampedCycleDt();
     TestParseCartesianTarget();
     TestTargetStore();
+    TestPositionIntegration();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

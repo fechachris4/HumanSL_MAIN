@@ -1,25 +1,23 @@
 //
-// Loop: the resolved-rate Cartesian controller (position integration).
+// Runner: the cyclic control loop (sequence spec in Runner.h).
 //
 
-#include "control/Loop.h"
+#include "loop/Runner.h"
 
-#include "actuation/PositionIntegration.h"
 #include "hardware/Cyclic.h"
-#include "math/Dls.h"
+#include "math/Dls.h" // ClampedCycleDt
+#include "safety/FaultReport.h"
 #include "safety/ServoingGuard.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
-#include <string>
 #include <thread>
 #include <tuple>
 
 #include <KDetailedException.h>
-
-#include "safety/FaultReport.h"
 
 namespace
 {
@@ -57,25 +55,22 @@ namespace
         s.base_fault_bank = fb.base().fault_bank_a();
         s.refresh_ok = true;
     }
-
 } // namespace
 
-LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
-                             k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                             Dynamics& dynamics, TargetStore& targets, LoopLog& log,
-                             const std::atomic<bool>& stop, std::chrono::microseconds period,
-                             double kp, double dls_lambda,
-                             const JointVector& qdot_limit_deg_s,
-                             double following_error_limit_deg,
-                             double arrival_tolerance_m,
-                             const std::string& ee_frame_name)
+LoopResult RunControlLoop(k_api::Base::BaseClient* base,
+                          k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
+                          Controller& controller, Actuation& actuation,
+                          LoopLog& log, const std::atomic<bool>& stop,
+                          std::chrono::microseconds period,
+                          const JointVector& qdot_limit_deg_s,
+                          double following_error_limit_deg,
+                          bool robot_ready)
 {
-    // Precondition: model_.nv == 7 — validated once in main.cpp, before any
-    // hardware session is opened.
-    if (!dynamics.model_.existFrame(ee_frame_name))
-        throw std::runtime_error("no frame named '" + ee_frame_name + "' in the model");
-    const pinocchio::FrameIndex ee_frame = dynamics.model_.getFrameId(ee_frame_name);
-    KinematicsWorkspace kinematics_workspace(dynamics);
+    // T1: the readiness gate is a hard precondition (unreachable from main,
+    // which returns before calling us when the gate fails).
+    assert(robot_ready);
+    if (!robot_ready)
+        throw std::logic_error("RunControlLoop called without a passed readiness gate");
 
     const double nominal_dt_s = std::chrono::duration<double>(period).count();
 
@@ -86,41 +81,29 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
     bool joint_fault_was_latched = false;
 
     CyclicSession cyclic(base_cyclic);
-    PositionIntegration actuation;
 
-    // From here until the guard's destructor runs, WE are the controller.
+    // T2: from here until the guard's destructor runs, WE are the controller.
     ServoingGuard servoing_guard(base);
 
     try
     {
-        // Seed AFTER the mode switch (the round trip gives the base time to
-        // finish entering LOW_LEVEL_SERVOING). The only standalone read.
+        // T3: seed AFTER the mode switch (the round trip gives the base time
+        // to finish entering LOW_LEVEL_SERVOING). The only standalone read.
         k_api::BaseCyclic::Feedback feedback = cyclic.Seed();
 
-        RobotState seed_state;
+        RobotState state;
         for (int i = 0; i < NUM_JOINTS; ++i)
         {
-            seed_state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
-            seed_state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
+            state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
+            state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
         }
-        // The integrator seed, q_command = q_measured — the ONLY time
+
+        // T4: the integrator seed, q_command = q_measured — the ONLY time
         // (resolved-rate-position-integration.md, "state distinction").
-        actuation.Prepare(seed_state);
+        actuation.Prepare(state);
 
-        Eigen::VectorXd q_measured_rad(NUM_JOINTS);
-
-        // Seed the desired position with the CURRENT end-effector position,
-        // so the controller holds until the operator types a target.
-        PositionJacobian ee = position_and_jacobian(
-            dynamics, dynamics.convertJointAnglesToConfig(seed_state.q_rad), ee_frame,
-            kinematics_workspace);
-        targets.Store(ee.position); // anything typed before takeover is discarded
-
-        // Arrival notice state: armed only when the target sequence changes,
-        // so the seeded hold target above never prints and each typed
-        // target prints at most once.
-        std::uint64_t last_target_sequence = targets.Get().sequence;
-        bool arrival_reported = true;
+        // T5: the controller seeds its own hold-here state.
+        controller.Reset(state);
 
         // Fault-change printing state, seeded from the startup read so a
         // bank already latched at entry (allowed by RobotReadyForTakeover
@@ -134,10 +117,10 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
         JointVector commanded_deg;
         JointVector commanded_velocity_deg_s{};
         for (int i = 0; i < NUM_JOINTS; ++i)
-            commanded_deg[i] = seed_state.q_rad[i] * kRadToDeg;
+            commanded_deg[i] = state.q_rad[i] * kRadToDeg;
 
-        // First unchanged holding frame (command == measured); its reply is
-        // the loop's first input.
+        // T6: first unchanged holding frame (command == measured); its reply
+        // is the loop's first input.
         feedback = cyclic.Send(commanded_deg);
 
         using clock = std::chrono::steady_clock;
@@ -145,45 +128,15 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
         auto t_prev = t_start;
         auto next_cycle = t_start;
 
+        ControllerStatus status;
+
         while (!stop)
         {
             next_cycle += period;
 
-            // Measured state from the previous exchange; degrees -> radians
-            // at this boundary. FK and Jacobian use the SAME q_measured.
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                q_measured_rad[i] = feedback.actuators(i).position() * kDegToRad;
-            ee = position_and_jacobian(dynamics,
-                                       dynamics.convertJointAnglesToConfig(q_measured_rad),
-                                       ee_frame, kinematics_workspace);
-
-            // e = p_desired - p(q_measured);  v_d = Kp e;
-            // q̇_raw = DLS(Jp, v_d);  clip per joint;  integrate.
-            const TargetStore::Snapshot target = targets.Get();
-            const Eigen::Vector3d position_error_m = target.p_desired - ee.position;
-            const Eigen::Vector3d v_desired = kp * position_error_m;
-
-            // Arrival notice (edge-triggered, see Loop.h). FK already gives
-            // p_current every cycle; "reached" is just its distance to the
-            // target crossing under the tolerance.
-            if (target.sequence != last_target_sequence)
-            {
-                last_target_sequence = target.sequence;
-                arrival_reported = false;
-            }
-            if (!arrival_reported && position_error_m.norm() < arrival_tolerance_m)
-            {
-                arrival_reported = true;
-                std::cout << "target reached: " << target.p_desired[0] << " "
-                          << target.p_desired[1] << " " << target.p_desired[2]
-                          << " m, within " << position_error_m.norm() * 1000.0
-                          << " mm — holding\n";
-            }
-            const Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
-                DampedLeastSquares(ee.jacobian_p, v_desired, dls_lambda);
-
             // dt = measured elapsed cycle time (nominal on the first cycle),
-            // clamped so a stall cannot integrate one large jump.
+            // clamped so a stall cannot integrate one large jump. Sampled at
+            // cycle start — dt is an input to the controller.
             const auto t_now = clock::now();
             const double dt_s =
                 cycle == 0
@@ -191,6 +144,28 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
                     : ClampedCycleDt(
                         std::chrono::duration<double>(t_now - t_prev).count(),
                         nominal_dt_s);
+
+            // Measured state from the previous exchange; degrees -> radians
+            // at this boundary.
+            for (int i = 0; i < NUM_JOINTS; ++i)
+            {
+                state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
+                state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
+            }
+            state.t_s = std::chrono::duration<double>(t_now - t_start).count();
+
+            // The controller: pure computation, desired q̇ before clamping.
+            status = ControllerStatus{};
+            const Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
+                controller.DesiredVelocity(state, dt_s, status);
+
+            // Arrival notice (edge-triggered data from the controller; the
+            // print lives out here — controllers do no I/O).
+            if (status.arrived_edge)
+                std::cout << "target reached: " << status.p_desired[0] << " "
+                          << status.p_desired[1] << " " << status.p_desired[2]
+                          << " m, within " << status.arrival_error_m * 1000.0
+                          << " mm — holding\n";
 
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
@@ -208,11 +183,11 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
             feedback = cyclic.Send(commanded_deg);
             ++cycle;
 
-            sample.t_s = std::chrono::duration<double>(t_now - t_start).count();
+            sample.t_s = state.t_s;
             sample.dt_s = std::chrono::duration<double>(t_now - t_prev).count();
             t_prev = t_now;
             FillSample(sample, feedback, commanded_deg, commanded_velocity_deg_s,
-                       target.p_desired, ee.position);
+                       status.p_desired, status.p_current);
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
 
@@ -279,9 +254,8 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
         std::cout << "communication error: " << ex.what() << "\n";
     }
     // Catch-alls: an exception of any other type (Pinocchio logic_error,
-    // bad_alloc, ...) must not skip the report and the servoing restore
-    // below — before these existed it also hit std::thread's destructor in
-    // main and aborted the whole program with the arm left in low-level.
+    // bad_alloc, ...) must not skip the report — and the servoing restore
+    // no longer even depends on being caught (D3 runs by unwinding).
     catch (std::exception& ex)
     {
         reason = LoopStop::kInternalError;
@@ -297,11 +271,7 @@ LoopResult RunResolvedRateLoop(k_api::Base::BaseClient* base,
         std::cout << "internal error: unknown exception type\n";
     }
 
-    // Shutdown, in the approved teardown order: actuation restore first
-    // (no-op for PositionIntegration — the position servo holds the last
-    // setpoint), then the report; finally the ServoingGuard destructor
-    // restores SINGLE_LEVEL by unwinding, so it can neither be skipped nor
-    // overwrite the recorded stop reason.
+    // D1 -> D2; D3 is the guard's destructor, after the return statement.
     actuation.Restore();
     PrintStopReport(reason, sample, cycle, following_error_limit_deg);
     if (joint_fault_was_latched)
