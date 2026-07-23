@@ -42,6 +42,17 @@ struct LoopResult {
     bool faults_observed;
 };
 
+// The Runner's stop policy. stop_on_fault is COMPILE-TIME ONLY (F2,
+// approved 2026-07-22): its value comes from config::kStopOnFault and no
+// CLI flag or TOML key may set it. false reproduces the 2026-07-20
+// fault-ignoring experiment — live fault bits do not stop the loop (bank
+// changes still print, every cycle's banks are logged, observed faults
+// still force a nonzero exit) and the Runner announces the policy loudly
+// before takeover.
+struct StopPolicy {
+    bool stop_on_fault = true;
+};
+
 // The base's latched JOINT_FAULT summary bit — alone it is a stale
 // historical aggregate, not a live interlock (fault-handling-hardening.md).
 inline constexpr std::uint32_t kJointFaultBit =

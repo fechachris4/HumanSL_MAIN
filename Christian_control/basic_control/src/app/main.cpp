@@ -166,10 +166,11 @@ int main()
 
         // MOVES THE ARM (toward typed positions): servoing mode is entered
         // and restored inside the Runner, on every exit path (T2/D3).
+        const StopPolicy stop_policy{config::kStopOnFault};
         const LoopResult result = RunControlLoop(
             connection.base(), connection.base_cyclic(), controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
-            config::kFollowingErrorLimitDeg, robot_ready);
+            config::kFollowingErrorLimitDeg, stop_policy, robot_ready);
 
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
         input_thread.join();

@@ -64,13 +64,18 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           std::chrono::microseconds period,
                           const JointVector& qdot_limit_deg_s,
                           double following_error_limit_deg,
-                          bool robot_ready)
+                          const StopPolicy& policy, bool robot_ready)
 {
     // T1: the readiness gate is a hard precondition (unreachable from main,
     // which returns before calling us when the gate fails).
     assert(robot_ready);
     if (!robot_ready)
         throw std::logic_error("RunControlLoop called without a passed readiness gate");
+
+    if (!policy.stop_on_fault)
+        std::cout << "WARNING: FAULT-STOP DISABLED (config::kStopOnFault = false) — live "
+            "fault bits will NOT stop the loop; the following-error guard and the "
+            "operator are the backstops. Attended use only.\n";
 
     const double nominal_dt_s = std::chrono::duration<double>(period).count();
 
@@ -209,24 +214,22 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 prev_joint_banks = sample.fault_bank;
             }
 
-            // TEMPORARY (Christian, 2026-07-20): fault-triggered exit
-            // disabled for an experiment — actuator/base fault bits no
-            // longer stop the loop; each bank change prints above and every
-            // cycle's banks are logged. The arm-left-low-level exit is kept
-            // (the stream is dead at that point; Refresh throws anyway),
-            // and so is the following-error exit — it is the backstop
-            // that bounds how far the integrator can run from a stopped
-            // arm while faults are ignored (run log 2026-07-22).
-            // RESTORE the ClassifyStop break before any unattended use.
+            // Stop policy: the following-error, arm-state and communication
+            // exits are unconditional; fault stops obey policy.stop_on_fault
+            // (config::kStopOnFault, compile-time only — F2). With
+            // fault-stop disabled (the 2026-07-20 experiment), bank changes
+            // still print above, every cycle's banks stay in the CSV, and
+            // observed faults still taint the exit code (decision 3).
             if (ClassifyStop(sample, following_error_limit_deg, reason))
             {
-                if (reason != LoopStop::kRobotFault)
+                if (reason == LoopStop::kRobotFault)
+                    faults_observed = true;
+                if (reason != LoopStop::kRobotFault || policy.stop_on_fault)
                 {
                     log.push(sample);
                     break;
                 }
-                faults_observed = true;       // ignored here, but taints the exit code
-                reason = LoopStop::kUserStop; // not a stop reason — the loop continues
+                reason = LoopStop::kUserStop; // ignored fault: not a stop reason
             }
             log.push(sample);
 

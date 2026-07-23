@@ -68,6 +68,12 @@ namespace config
         return limits;
     }();
 
+    // Fault-stop policy (safety/Supervisor.h StopPolicy). COMPILE-TIME
+    // ONLY — deliberately not settable from any runtime configuration.
+    // false = the 2026-07-20 fault-ignoring experiment (attended use only;
+    // docs/decisions/qdot-limit-raise.md, safety consequences).
+    inline constexpr bool kStopOnFault = true;
+
     // Following-error guard: stop when any joint's |command - measured|
     // exceeds this, deg — fires before the base's own ~5 deg ejection.
     // Evidence and window: resolved-rate-position-integration.md.

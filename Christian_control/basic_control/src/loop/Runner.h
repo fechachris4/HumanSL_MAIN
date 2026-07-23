@@ -55,6 +55,6 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           std::chrono::microseconds period,
                           const JointVector& qdot_limit_deg_s,
                           double following_error_limit_deg,
-                          bool robot_ready);
+                          const StopPolicy& policy, bool robot_ready);
 
 #endif // HUMANSL_MASTERS_PROJECT_2025_RUNNER_H
