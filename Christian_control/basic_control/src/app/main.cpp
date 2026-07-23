@@ -166,7 +166,10 @@ int main()
 
         // MOVES THE ARM (toward typed positions): servoing mode is entered
         // and restored inside the Runner, on every exit path (T2/D3).
-        const StopPolicy stop_policy{config::kStopOnFault};
+        const StopPolicy stop_policy{
+            config::kStopOnFault, config::kNonFiniteStopCycles,
+            config::kSaturationStopCycles, config::kOverrunStopCycles,
+            config::kOverrunFactor};
         const LoopResult result = RunControlLoop(
             connection.base(), connection.base_cyclic(), controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,

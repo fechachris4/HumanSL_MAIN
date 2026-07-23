@@ -48,6 +48,21 @@ bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
     return false;
 }
 
+std::optional<LoopStop> ClassifyCounters(const CycleCounters& counters,
+                                         const StopPolicy& policy)
+{
+    if (policy.nonfinite_stop_cycles > 0 &&
+        counters.nonfinite >= policy.nonfinite_stop_cycles)
+        return LoopStop::kNonFiniteCommand;
+    if (policy.saturation_stop_cycles > 0 &&
+        counters.saturated >= policy.saturation_stop_cycles)
+        return LoopStop::kSaturation;
+    if (policy.overrun_stop_cycles > 0 &&
+        counters.overrun >= policy.overrun_stop_cycles)
+        return LoopStop::kOverrun;
+    return std::nullopt;
+}
+
 bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ostream& out)
 {
     const std::uint32_t base_bank = feedback.base().fault_bank_a();

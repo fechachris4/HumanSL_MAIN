@@ -6,6 +6,8 @@
 
 #include "math/Dls.h"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 
 ResolvedRate::ResolvedRate(Dynamics& dynamics, TargetStore& targets, double kp,
@@ -61,6 +63,12 @@ Eigen::Matrix<double, 7, 1> ResolvedRate::DesiredVelocity(const RobotState& stat
     }
     status.p_desired = target.p_desired;
     status.p_current = ee.position;
+
+    // σ_min(Jp) = sqrt of the smallest eigenvalue of Jp Jpᵀ — fixed-size
+    // 3×3 self-adjoint solve, no allocation (decision 13).
+    const Eigen::Matrix3d jjt = ee.jacobian_p * ee.jacobian_p.transpose();
+    const Eigen::SelfAdjointEigenSolver<Eigen::Matrix3d> eigensolver(jjt);
+    status.sigma_min = std::sqrt(std::max(0.0, eigensolver.eigenvalues()(0)));
 
     return DampedLeastSquares(ee.jacobian_p, v_desired, dls_lambda_);
 }

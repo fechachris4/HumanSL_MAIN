@@ -74,6 +74,15 @@ namespace config
     // docs/decisions/qdot-limit-raise.md, safety consequences).
     inline constexpr bool kStopOnFault = true;
 
+    // Supervisor consecutive-cycle counters (decision 12); N <= 0 disables
+    // one. Non-finite controller output is never integrated (that cycle
+    // holds); saturation = >= 1 joint pinned at the clamp bound; overrun =
+    // measured dt above kOverrunFactor x nominal.
+    inline constexpr int kNonFiniteStopCycles = 3;
+    inline constexpr int kSaturationStopCycles = 50; // 0.5 s at 100 Hz
+    inline constexpr int kOverrunStopCycles = 10;
+    inline constexpr double kOverrunFactor = 1.5;
+
     // Following-error guard: stop when any joint's |command - measured|
     // exceeds this, deg — fires before the base's own ~5 deg ejection.
     // Evidence and window: resolved-rate-position-integration.md.

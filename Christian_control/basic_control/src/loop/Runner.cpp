@@ -84,6 +84,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     LoopLogSample sample; // reused every cycle
     long cycle = 0;
     bool joint_fault_was_latched = false;
+    CycleCounters counters;
 
     CyclicSession cyclic(base_cyclic);
 
@@ -149,6 +150,15 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     : ClampedCycleDt(
                         std::chrono::duration<double>(t_now - t_prev).count(),
                         nominal_dt_s);
+            if (cycle > 0 &&
+                std::chrono::duration<double>(t_now - t_prev).count() >
+                    policy.overrun_factor * nominal_dt_s)
+            {
+                ++counters.overrun;
+                ++counters.overrun_total;
+            }
+            else
+                counters.overrun = 0;
 
             // Measured state from the previous exchange; degrees -> radians
             // at this boundary.
@@ -161,8 +171,18 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
 
             // The controller: pure computation, desired q̇ before clamping.
             status = ControllerStatus{};
-            const Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
+            Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
                 controller.DesiredVelocity(state, dt_s, status);
+
+            // Non-finite output never reaches the integrator: hold this
+            // cycle and count it (decision 12).
+            if (!qdot_raw_rad_s.allFinite())
+            {
+                qdot_raw_rad_s.setZero();
+                ++counters.nonfinite;
+            }
+            else
+                counters.nonfinite = 0;
 
             // Arrival notice (edge-triggered data from the controller; the
             // print lives out here — controllers do no I/O).
@@ -175,11 +195,19 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
             Eigen::Matrix<double, 7, 1> qdot_clamped_rad_s;
+            bool any_joint_saturated = false;
             for (int i = 0; i < NUM_JOINTS; ++i)
+            {
+                const double desired_deg_s = qdot_raw_rad_s[i] * kRadToDeg;
+                if (desired_deg_s < -qdot_limit_deg_s[i] ||
+                    desired_deg_s > qdot_limit_deg_s[i])
+                    any_joint_saturated = true;
                 qdot_clamped_rad_s[i] =
-                    std::clamp(qdot_raw_rad_s[i] * kRadToDeg, -qdot_limit_deg_s[i],
+                    std::clamp(desired_deg_s, -qdot_limit_deg_s[i],
                                qdot_limit_deg_s[i]) *
                     kDegToRad;
+            }
+            counters.saturated = any_joint_saturated ? counters.saturated + 1 : 0;
             actuation.Apply(qdot_clamped_rad_s, dt_s, commanded_deg,
                             commanded_velocity_deg_s);
 
@@ -193,6 +221,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             t_prev = t_now;
             FillSample(sample, feedback, commanded_deg, commanded_velocity_deg_s,
                        status.p_desired, status.p_current);
+            sample.sigma_min = status.sigma_min;
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
 
@@ -230,6 +259,14 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     break;
                 }
                 reason = LoopStop::kUserStop; // ignored fault: not a stop reason
+            }
+            // Decision-12 counters, checked AFTER ClassifyStop so the guard
+            // and live faults keep priority.
+            if (const auto counter_stop = ClassifyCounters(counters, policy))
+            {
+                reason = *counter_stop;
+                log.push(sample);
+                break;
             }
             log.push(sample);
 
@@ -277,6 +314,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     // D1 -> D2; D3 is the guard's destructor, after the return statement.
     actuation.Restore();
     PrintStopReport(reason, sample, cycle, following_error_limit_deg);
+    std::cout << "cycle overruns: " << counters.overrun_total << " of " << cycle
+              << " cycles (dt > " << policy.overrun_factor << " x nominal)\n";
     if (joint_fault_was_latched)
         std::cout << "note: base JOINT_FAULT was latched during the run (stale summary "
             "diagnostic unless a joint fault is shown above; not cleared here)\n";
