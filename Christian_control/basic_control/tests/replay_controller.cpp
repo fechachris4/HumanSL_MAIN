@@ -59,8 +59,10 @@ namespace
             std::exit(2);
         }
         std::string line;
-        // Skip any '#' config-preamble lines (added by a later migration
-        // step); the first non-'#' line is the column header.
+        // Skip the '#' config preamble; the first non-'#' line is the column
+        // header. Old-format files (no preamble) are accepted — the baseline
+        // for the step-4 replay gate predates the preamble — with a note.
+        bool preamble_seen = false;
         do
         {
             if (!std::getline(in, line))
@@ -68,7 +70,13 @@ namespace
                 std::cerr << "error: " << path << " has no header row\n";
                 std::exit(2);
             }
+            if (!line.empty() && line[0] == '#')
+                preamble_seen = true;
         } while (!line.empty() && line[0] == '#');
+        if (!preamble_seen)
+            std::cout << "note: old-format CSV (no config preamble) — the recording's "
+                         "gains cannot be cross-checked from the file; verify they "
+                         "match the values printed below\n";
 
         std::map<std::string, int> col;
         {

@@ -1,8 +1,10 @@
 /*
- * Config.h — the one place to change runtime settings.
+ * Config.h — the compiled DEFAULTS for every runtime setting.
  *
- * Controller programs in this repository take no command-line flags;
- * edit these constants and rebuild instead.
+ * Gains and thresholds can be overridden at runtime (CLI > TOML > these
+ * defaults — app/Options.h, docs/decisions/runtime-config.md). Safety
+ * policy cannot: kStopOnFault is compile-time only, and connection
+ * parameters and the speed-clip derivation live only here.
  */
 #pragma once
 
