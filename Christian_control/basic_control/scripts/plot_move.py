@@ -1,28 +1,23 @@
 #!/usr/bin/env python3
 """Analyze a run log written by ./controller.
 
-Usage: python3 plot_move.py [run_YYYYMMDD_HHMMSS.csv]
-(no argument: the newest run_*.csv in the current directory)
+Usage: python3 plot_move.py [path/to/log.csv]
+(no argument: the newest CSV in the newest <repo>/runs/YYYY-MM-DD/ folder)
 
 Prints per-joint tracking stats (final error, overshoot, lag) and cycle-time
-(dt) stats, and — if matplotlib is installed — saves <log>.png with
-commanded-vs-measured curves for every joint that moved, plus a dt trace.
+(dt) stats, and — if matplotlib is installed — saves <log stem>_move.png
+next to the CSV, with commanded-vs-measured curves for every joint that
+moved, plus a dt trace.
 """
 
 import csv
-import glob
 import numpy as np
 import sys
+from pathlib import Path
+
+import runlog
 
 NUM_JOINTS = 7
-
-
-def newest_move_log():
-    """Latest run_*.csv here (timestamped names sort chronologically)."""
-    logs = sorted(glob.glob("run_*.csv"))
-    if not logs:
-        sys.exit("no run_*.csv in this directory; pass a file explicitly")
-    return logs[-1]
 
 
 def load(path):
@@ -37,12 +32,13 @@ def load(path):
 
 
 def main():
-    path = sys.argv[1] if len(sys.argv) > 1 else newest_move_log()
+    path = Path(sys.argv[1]) if len(sys.argv) > 1 else runlog.find_default_csv()
+    print(f"log: {path}")
     cols = load(path)
     t = cols["time_s"]
     dt = cols["dt_s"][1:]  # first dt spans setup, not a steady cycle
 
-    print(f"{path}: {len(t)} cycles over {t[-1]:.2f} s")
+    print(f"{len(t)} cycles over {t[-1]:.2f} s")
 
     # --- cycle time -------------------------------------------------------
     print("\ndt (cycle period):")
@@ -84,7 +80,7 @@ def main():
         import matplotlib.pyplot as plt
     except ImportError:
         print("\nmatplotlib not installed -> stats only, no plot. "
-              "Install it (e.g. in a venv) to get move_log.png")
+              "Install it (e.g. in a venv) to get the _move.png")
         return
 
     n = len(moved)
@@ -108,7 +104,7 @@ def main():
         axes[0].set_xlabel("time (s)")
         axes[0].grid(True, alpha=0.3)
     fig.tight_layout()
-    out = path.rsplit(".", 1)[0] + ".png"
+    out = path.with_name(path.stem + "_move.png")  # next to the CSV
     fig.savefig(out, dpi=120)
     print(f"\nplot saved -> {out}")
 

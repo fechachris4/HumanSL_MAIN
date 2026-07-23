@@ -64,4 +64,8 @@ private:
 // failed run's log is never overwritten by the next attempt.
 std::string timestamped_csv_name(const std::string& prefix);
 
+// "<runs_root>/YYYY-MM-DD" in local time — today's session folder. The
+// caller creates it (main.cpp, before takeover) and puts the run CSV inside.
+std::string dated_run_dir(const std::string& runs_root);
+
 #endif // HUMANSL_MASTERS_PROJECT_2025_RECORD_H

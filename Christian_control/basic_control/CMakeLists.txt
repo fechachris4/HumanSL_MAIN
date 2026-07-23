@@ -133,3 +133,9 @@ add_test(NAME control_logic COMMAND test_control_logic)
 # config::kModelVelocityLimitsDegS) instead of the original 0.8727 (admittance).
 set(GEN3_URDF "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_custom.urdf")
 target_compile_definitions(controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
+
+# Where run CSVs go: runs/YYYY-MM-DD/ under the repository root (the layout
+# the plot scripts' no-argument mode searches). Baked in absolute, like
+# GEN3_URDF_PATH, so the controller writes there from any working directory.
+get_filename_component(HUMANSL_ROOT_ABS "${HUMANSL_ROOT}" ABSOLUTE)
+target_compile_definitions(controller PRIVATE RUNS_ROOT_DIR="${HUMANSL_ROOT_ABS}/runs")

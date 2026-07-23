@@ -88,3 +88,13 @@ std::string timestamped_csv_name(const std::string& prefix)
     name << prefix << std::put_time(&local, "_%Y%m%d_%H%M%S") << ".csv";
     return name.str();
 }
+
+std::string dated_run_dir(const std::string& runs_root)
+{
+    std::time_t now = std::time(nullptr);
+    std::tm local{};
+    localtime_r(&now, &local);
+    std::ostringstream dir;
+    dir << runs_root << std::put_time(&local, "/%Y-%m-%d");
+    return dir.str();
+}

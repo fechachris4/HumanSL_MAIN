@@ -19,9 +19,11 @@
 #include <atomic>
 #include <cmath>
 #include <csignal>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <system_error>
 #include <thread>
 #include <tuple>
 
@@ -144,7 +146,18 @@ int main()
                   << config::kArrivalToleranceM * 1000.0 << " mm\n";
         // Open the run's CSV BEFORE the takeover: a hardware run must never
         // end with zero evidence because the file could not be created.
-        const std::string log_file = timestamped_csv_name(config::kLoopLogPrefix);
+        // Runs live in <repo>/runs/YYYY-MM-DD/ (RUNS_ROOT_DIR, baked in by
+        // CMake) — the layout the plot scripts search by default.
+        const std::string run_dir = dated_run_dir(RUNS_ROOT_DIR);
+        std::error_code dir_error;
+        std::filesystem::create_directories(run_dir, dir_error);
+        if (dir_error) {
+            std::cerr << "Error: cannot create " << run_dir << " ("
+                      << dir_error.message() << ") — not starting\n";
+            return 1;
+        }
+        const std::string log_file =
+            run_dir + "/" + timestamped_csv_name(config::kLoopLogPrefix);
         std::ofstream csv(log_file);
         if (!csv) {
             std::cerr << "Error: cannot open " << log_file << " — not starting\n";
@@ -167,11 +180,12 @@ int main()
 
         // Flush the log — one file per run (opened before the loop above).
         log.WriteCsv(csv);
-        std::cout << log.size() << " samples written to " << log_file;
+        std::cout << log.size() << " samples written";
         if (log.total_pushed() > log.size())
             std::cout << " (" << (log.total_pushed() - log.size())
                       << " oldest samples overwritten by the ring buffer)";
-        std::cout << "\n";
+        // Full path on its own line, ready to paste into an analysis request.
+        std::cout << "\nlog: " << log_file << "\n";
 
         // Only a clean operator stop with no observed faults is success —
         // faults the loop was told to ignore still taint the exit code.
