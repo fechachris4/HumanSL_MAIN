@@ -211,6 +211,18 @@ int main(int argc, char** argv)
                 : std::thread(RunTargetInput, std::ref(targets), std::cref(g_stop));
         InputThreadJoiner input_thread_joiner{input_thread};
 
+        // Optional second target source (reactive-pose only, target_file in
+        // the config): edit+save the watched file to retarget. Its content
+        // at startup is ignored — only in-session edits become targets.
+        std::thread target_file_thread;
+        if (reactive && !cfg.target_file.empty()) {
+            std::cout << "watching target file: " << cfg.target_file
+                      << " (current content ignored; edit and save to retarget)\n";
+            target_file_thread = std::thread(RunPoseTargetFileInput, std::ref(pose_targets),
+                                             cfg.target_file, std::cref(g_stop));
+        }
+        InputThreadJoiner target_file_thread_joiner{target_file_thread};
+
         // MOVES THE ARM (toward typed positions): servoing mode is entered
         // and restored inside the Runner, on every exit path (T2/D3).
         const StopPolicy stop_policy{
@@ -224,6 +236,8 @@ int main(int argc, char** argv)
 
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
         input_thread.join();
+        if (target_file_thread.joinable())
+            target_file_thread.join();
 
         // Flush the log — one file per run (opened before the loop above).
         log.WriteCsv(csv);

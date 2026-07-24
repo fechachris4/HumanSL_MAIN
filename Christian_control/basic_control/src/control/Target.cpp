@@ -6,11 +6,16 @@
 #include "control/Target.h"
 
 #include <array>
+#include <chrono>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <sstream>
+#include <thread>
+#include <tuple>
 
 #include <poll.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 std::optional<Eigen::Vector3d> ParseCartesianTarget(const std::string& line,
@@ -168,6 +173,79 @@ void RunPoseTargetInput(PoseTargetStore& store, const std::atomic<bool>& stop)
             store.StorePosition(target->p_desired);
             std::cout << "desired position accepted: " << target->p_desired.x() << " "
                       << target->p_desired.y() << " " << target->p_desired.z()
+                      << " (m, base frame; orientation target unchanged)\n";
+        }
+    }
+}
+
+std::optional<std::string> FirstTargetLine(const std::string& path)
+{
+    std::ifstream file(path);
+    if (!file)
+        return std::nullopt;
+    std::string line;
+    while (std::getline(file, line)) {
+        const std::size_t first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == '#')
+            continue;
+        return line;
+    }
+    return std::nullopt;
+}
+
+namespace
+{
+    // What "the file changed" means: a different inode (editors that save
+    // by atomic rename), size, or mtime. Nullopt while the file is absent.
+    using FileSignature = std::tuple<ino_t, off_t, time_t>;
+
+    std::optional<FileSignature> SignatureOf(const std::string& path)
+    {
+        struct stat status {};
+        if (::stat(path.c_str(), &status) != 0)
+            return std::nullopt;
+        return FileSignature{status.st_ino, status.st_size, status.st_mtime};
+    }
+} // namespace
+
+void RunPoseTargetFileInput(PoseTargetStore& store, const std::string& path,
+                            const std::atomic<bool>& stop)
+{
+    // Whatever the file says NOW is ignored — only a change made during
+    // the session becomes a target (see the header comment).
+    std::optional<FileSignature> last_seen = SignatureOf(path);
+
+    while (!stop) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const std::optional<FileSignature> current = SignatureOf(path);
+        if (current == last_seen)
+            continue;
+        last_seen = current;
+        if (!current)
+            continue; // file removed; nothing to apply
+
+        const std::optional<std::string> line = FirstTargetLine(path);
+        if (!line) {
+            std::cout << "target file " << path
+                      << ": no target line (empty or comments only)\n";
+            continue;
+        }
+        std::string error;
+        const std::optional<PoseTarget> target = ParsePoseTarget(*line, error);
+        if (!target) {
+            std::cout << "target file " << path << " rejected: " << error << "\n";
+            continue;
+        }
+        if (target->rotation) {
+            store.Store(target->p_desired, *target->rotation);
+            std::cout << "target file " << path << ": pose accepted "
+                      << target->p_desired.x() << " " << target->p_desired.y() << " "
+                      << target->p_desired.z() << " (m) + orientation (base frame)\n";
+        } else {
+            store.StorePosition(target->p_desired);
+            std::cout << "target file " << path << ": position accepted "
+                      << target->p_desired.x() << " " << target->p_desired.y() << " "
+                      << target->p_desired.z()
                       << " (m, base frame; orientation target unchanged)\n";
         }
     }

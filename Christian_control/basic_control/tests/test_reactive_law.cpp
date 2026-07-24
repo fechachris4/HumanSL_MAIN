@@ -9,6 +9,8 @@
 //
 
 #include <cmath>
+#include <cstdio>
+#include <fstream>
 #include <iostream>
 #include <string>
 
@@ -60,7 +62,7 @@ namespace
             Eigen::Matrix3d fixture_rotation;
             for (int r = 0; r < 3; ++r)
                 for (int col = 0; col < 3; ++col)
-                    fixture_rotation(r, col) = c.rotation[3 * r + col];
+                    fixture_rotation(r, col) = c.rotation[(3 * r) + col];
             const Eigen::Vector3d expected(c.expected[0], c.expected[1], c.expected[2]);
             Check((RotationLog(fixture_rotation) - expected).norm() < 1e-9,
                   "RotationLog matches pin.log3 (angle " +
@@ -193,7 +195,7 @@ namespace
             Eigen::Matrix<double, 6, 7> jacobian;
             for (int r = 0; r < 6; ++r)
                 for (int col = 0; col < 7; ++col)
-                    jacobian(r, col) = c.jacobian[7 * r + col];
+                    jacobian(r, col) = c.jacobian[(7 * r) + col];
             const Eigen::Vector3d e_pos(c.e_pos[0], c.e_pos[1], c.e_pos[2]);
             const Eigen::Vector3d e_rot(c.e_rot[0], c.e_rot[1], c.e_rot[2]);
             const Eigen::Vector3d e_v(c.e_v[0], c.e_v[1], c.e_v[2]);
@@ -263,6 +265,31 @@ namespace
         Check(!ParsePoseTarget("0 0 0 inf 0 0", error).has_value(), "inf rejected");
     }
 
+    void TestFirstTargetLine()
+    {
+        const std::string path = "test_target_line_tmp.txt";
+
+        Check(!FirstTargetLine("no_such_file_anywhere.txt").has_value(),
+              "missing file -> nullopt");
+
+        {
+            std::ofstream file(path);
+            file << "\n# a comment\n   \t\n  0.4 0.1 0.3\nsecond line\n";
+        }
+        auto line = FirstTargetLine(path);
+        Check(line.has_value(), "target line found");
+        Check(line && line->find("0.4 0.1 0.3") != std::string::npos,
+              "comments and blank lines are skipped");
+
+        {
+            std::ofstream file(path);
+            file << "# only comments\n\n";
+        }
+        Check(!FirstTargetLine(path).has_value(), "comments-only file -> nullopt");
+
+        std::remove(path.c_str());
+    }
+
     void TestPoseTargetStore()
     {
         PoseTargetStore store;
@@ -293,6 +320,7 @@ int main()
     TestNullSpace();
     TestAgainstSimulationFixtures();
     TestParsePoseTarget();
+    TestFirstTargetLine();
     TestPoseTargetStore();
 
     if (failures == 0) {

@@ -107,15 +107,29 @@ ctest            # hardware-free control-logic tests
 > e-stop in hand, authorization required for every session.
 
 ```bash
-./controller                       # compiled defaults
+./controller                       # loads ../config/control.toml if present,
+                                   # else compiled defaults
 ./controller --kp 0.8              # one-off gain override
-./controller --config gains.toml   # gains/thresholds from an explicit file
+./controller --config gains.toml   # explicit file instead of the default one
 ./controller --help                # full option + TOML-key list
 ```
 
+The everyday workflow is **edit `config/control.toml`, run the bare
+binary**: that checked-in file is loaded automatically (compiled absolute
+path — never a working-directory lookup) and selects the control law
+(`controller = "reactive-pose"`), gains, term switches, and optionally a
+`target_file`. Precedence stays CLI > TOML > compiled defaults.
+
+With `target_file` set (reactive-pose only), the controller also watches
+that file: during a run, edit and save it with one line — `x y z` or
+`x y z roll pitch yaw` — and the arm retargets, same as typing on stdin
+(latest source wins). The file's content at startup is deliberately
+ignored: a stale target file never starts a motion.
+
 Every run echoes its full effective configuration (each value tagged
-compiled/toml/cli) and embeds it as `#` lines in the CSV, so every data
-file is self-describing. Safety policy is not runtime-configurable.
+compiled/default/toml/cli, plus which config file was loaded) and embeds
+it as `#` lines in the CSV, so every data file is self-describing. Safety
+policy is not runtime-configurable.
 
 1. Loads the URDF (checks the model has exactly 7 velocity variables) and
    connects (TCP + UDP).

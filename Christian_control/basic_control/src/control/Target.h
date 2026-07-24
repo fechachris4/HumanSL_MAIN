@@ -92,4 +92,18 @@ private:
 // RunTargetInput.
 void RunPoseTargetInput(PoseTargetStore& store, const std::atomic<bool>& stop);
 
+// First non-empty, non-'#'-comment line of `path`, or nullopt when the
+// file is unreadable or has no such line. Split out of the watcher so the
+// file-reading rule is hardware-free-testable.
+std::optional<std::string> FirstTargetLine(const std::string& path);
+
+// Thread body: watch `path` and store its first target line whenever the
+// file CHANGES (mtime/size/inode, polled at the same 100 ms cadence as the
+// stdin thread) — edit and save the file to retarget, from any editor.
+// The content present at startup is deliberately ignored: a stale target
+// file must never start a motion; only an edit made during the session
+// counts. Runs alongside RunPoseTargetInput; latest store wins.
+void RunPoseTargetFileInput(PoseTargetStore& store, const std::string& path,
+                            const std::atomic<bool>& stop);
+
 #endif // HUMANSL_MASTERS_PROJECT_2025_TARGET_H

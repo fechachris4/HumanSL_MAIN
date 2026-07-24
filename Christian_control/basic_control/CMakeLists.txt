@@ -231,3 +231,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif ()
 
 target_compile_definitions(controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
+
+# Default runtime-config file: a COMPILED absolute path (like GEN3_URDF_PATH),
+# loaded when it exists and no --config is given. Never cwd-relative — the
+# no-auto-discovery rule's hazard was files lying in the working directory
+# (docs/decisions/runtime-config.md, "Default config file" amendment).
+target_compile_definitions(controller PRIVATE
+        DEFAULT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/control.toml")
