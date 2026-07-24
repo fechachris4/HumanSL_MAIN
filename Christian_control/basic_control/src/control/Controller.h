@@ -36,6 +36,10 @@ struct ControllerStatus {
     // proximity-to-singularity signal, logged every cycle. NaN when the
     // law has no task Jacobian.
     double sigma_min = std::numeric_limits<double>::quiet_NaN();
+    // Norm of the rotation-log error, rad — orientation convergence
+    // evidence, logged every cycle. NaN when the law does not control
+    // orientation (e.g. ResolvedRate).
+    double rot_error_rad = std::numeric_limits<double>::quiet_NaN();
 };
 
 // The controller: one Reset at takeover, then one DesiredVelocity per

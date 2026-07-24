@@ -66,6 +66,7 @@ add_executable(controller
         src/hardware/Cyclic.cpp
         src/math/Kinematics.cpp
         src/control/ResolvedRate.cpp
+        src/control/ReactivePose.cpp
         src/control/Target.cpp
         src/loop/Runner.cpp
         src/hardware/Record.cpp
@@ -136,6 +137,22 @@ target_include_directories(test_control_logic PRIVATE
 )
 target_link_libraries(test_control_logic pthread)
 add_test(NAME control_logic COMMAND test_control_logic)
+
+# --- test_reactive_law: hardware-free tests for the reactive pose law
+#     (control/ReactiveLaw.h — pure Eigen) + pose-target parsing, including
+#     cross-validation fixtures generated from the Python simulation law
+#     (scripts/gen_reactive_fixtures.py). No Kortex, no Pinocchio — safe to
+#     run anywhere. ---
+add_executable(test_reactive_law
+        tests/test_reactive_law.cpp
+        src/control/Target.cpp
+)
+target_include_directories(test_reactive_law PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(test_reactive_law pthread)
+add_test(NAME reactive_law COMMAND test_reactive_law)
 
 # --- hardware-machine test battery + the decision-14 replay harness: the
 #     bundled Kortex/Pinocchio binaries are Linux x86-64 ELF, so these link
@@ -220,3 +237,10 @@ target_compile_definitions(controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
 # GEN3_URDF_PATH, so the controller writes there from any working directory.
 get_filename_component(HUMANSL_ROOT_ABS "${HUMANSL_ROOT}" ABSOLUTE)
 target_compile_definitions(controller PRIVATE RUNS_ROOT_DIR="${HUMANSL_ROOT_ABS}/runs")
+
+# Default runtime-config file: a COMPILED absolute path (like GEN3_URDF_PATH),
+# loaded when it exists and no --config is given. Never cwd-relative — the
+# no-auto-discovery rule's hazard was files lying in the working directory
+# (docs/decisions/runtime-config.md, "Default config file" amendment).
+target_compile_definitions(controller PRIVATE
+        DEFAULT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/control.toml")

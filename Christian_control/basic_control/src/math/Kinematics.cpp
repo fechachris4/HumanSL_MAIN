@@ -47,3 +47,21 @@ PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd
     return result;
 }
 
+PoseJacobian pose_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
+                               pinocchio::FrameIndex frame_id,
+                               KinematicsWorkspace& workspace)
+{
+    // Same one-tree-walk pattern as position_and_jacobian: pose and Jacobian
+    // describe the same configuration q_pin.
+    pinocchio::computeJointJacobians(dynamics.model_, dynamics.data_, q_pin);
+    pinocchio::updateFramePlacements(dynamics.model_, dynamics.data_);
+    pinocchio::getFrameJacobian(dynamics.model_, dynamics.data_, frame_id,
+                                pinocchio::LOCAL_WORLD_ALIGNED, workspace.jacobian_full);
+
+    PoseJacobian result;
+    result.position = dynamics.data_.oMf[frame_id].translation();
+    result.rotation = dynamics.data_.oMf[frame_id].rotation();
+    result.jacobian = workspace.jacobian_full;
+    return result;
+}
+

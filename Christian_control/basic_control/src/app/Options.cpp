@@ -10,6 +10,8 @@
 #include <iostream>
 #include <sstream>
 
+#include <unistd.h>
+
 #include "tomlplusplus/toml.hpp"
 
 namespace
@@ -20,16 +22,23 @@ namespace
             std::cerr << "error: " << error << "\n";
         std::cerr <<
             "usage: controller [options]\n"
-            "  --controller <name>   control law (valid: resolved-rate)\n"
-            "  --kp <value>          Cartesian P gain, 1/s\n"
+            "  --controller <name>   control law (valid: resolved-rate, reactive-pose)\n"
+            "  --kp <value>          Cartesian position P gain, 1/s (both laws)\n"
             "  --log <file>          CSV filename (default: run_<timestamp>.csv)\n"
-            "  --config <path>       TOML file with gains/thresholds (explicit\n"
-            "                        path only — never auto-discovered)\n"
+            "  --config <path>       TOML file with gains/thresholds; without this\n"
+            "                        flag the compiled default file\n"
+#ifdef DEFAULT_CONFIG_PATH
+            "                        " DEFAULT_CONFIG_PATH "\n"
+#endif
+            "                        is loaded when it exists\n"
             "  --help\n"
             "precedence: CLI > TOML > compiled defaults (src/app/Config.h)\n"
-            "TOML keys: kp, dls_lambda, following_error_limit_deg,\n"
+            "TOML keys: controller, kp, dls_lambda, following_error_limit_deg,\n"
             "  arrival_tolerance_m, nonfinite_stop_cycles,\n"
-            "  saturation_stop_cycles, overrun_stop_cycles, overrun_factor\n"
+            "  saturation_stop_cycles, overrun_stop_cycles, overrun_factor;\n"
+            "  reactive-pose only: kp_rot, kd_pos, kd_rot, null_gain,\n"
+            "  orientation_enabled, velocity_term_enabled, null_space_enabled,\n"
+            "  target_file (watched pose-target file; edit+save to retarget)\n"
             "safety policy is NOT configurable at runtime (config::kStopOnFault\n"
             "is compile-time only)\n";
         std::exit(2);
@@ -78,8 +87,33 @@ namespace
                     UsageAndExit(path + ": key '" + name + "' must be an integer");
                 cfg.source[name] = "toml";
             };
-            if (name == "kp") number(cfg.kp);
+            const auto boolean = [&](bool& field)
+            {
+                if (const auto v = node.value<bool>())
+                    field = *v;
+                else
+                    UsageAndExit(path + ": key '" + name + "' must be true or false");
+                cfg.source[name] = "toml";
+            };
+            const auto text = [&](std::string& field)
+            {
+                if (const auto v = node.value<std::string>())
+                    field = *v;
+                else
+                    UsageAndExit(path + ": key '" + name + "' must be a string");
+                cfg.source[name] = "toml";
+            };
+            if (name == "controller") text(cfg.controller);
+            else if (name == "target_file") text(cfg.target_file);
+            else if (name == "kp") number(cfg.kp);
             else if (name == "dls_lambda") number(cfg.dls_lambda);
+            else if (name == "kp_rot") number(cfg.kp_rot);
+            else if (name == "kd_pos") number(cfg.kd_pos);
+            else if (name == "kd_rot") number(cfg.kd_rot);
+            else if (name == "null_gain") number(cfg.null_gain);
+            else if (name == "orientation_enabled") boolean(cfg.orientation_enabled);
+            else if (name == "velocity_term_enabled") boolean(cfg.velocity_term_enabled);
+            else if (name == "null_space_enabled") boolean(cfg.null_space_enabled);
             else if (name == "following_error_limit_deg")
                 number(cfg.following_error_limit_deg);
             else if (name == "arrival_tolerance_m") number(cfg.arrival_tolerance_m);
@@ -102,6 +136,13 @@ EffectiveConfig ParseOptions(int argc, char** argv)
     EffectiveConfig cfg;
     cfg.kp = config::kKpCartesian;
     cfg.dls_lambda = config::kDlsLambda;
+    cfg.kp_rot = config::kKpRotation;
+    cfg.kd_pos = config::kKdPosition;
+    cfg.kd_rot = config::kKdRotation;
+    cfg.null_gain = config::kNullGain;
+    cfg.orientation_enabled = config::kOrientationEnabled;
+    cfg.velocity_term_enabled = config::kVelocityTermEnabled;
+    cfg.null_space_enabled = config::kNullSpaceEnabled;
     cfg.following_error_limit_deg = config::kFollowingErrorLimitDeg;
     cfg.arrival_tolerance_m = config::kArrivalToleranceM;
     cfg.nonfinite_stop_cycles = config::kNonFiniteStopCycles;
@@ -109,9 +150,12 @@ EffectiveConfig ParseOptions(int argc, char** argv)
     cfg.overrun_stop_cycles = config::kOverrunStopCycles;
     cfg.overrun_factor = config::kOverrunFactor;
     for (const char* key :
-         {"controller", "kp", "dls_lambda", "following_error_limit_deg",
+         {"controller", "kp", "dls_lambda", "kp_rot", "kd_pos", "kd_rot",
+          "null_gain", "orientation_enabled", "velocity_term_enabled",
+          "null_space_enabled", "following_error_limit_deg",
           "arrival_tolerance_m", "nonfinite_stop_cycles", "saturation_stop_cycles",
-          "overrun_stop_cycles", "overrun_factor", "log_file"})
+          "overrun_stop_cycles", "overrun_factor", "log_file", "target_file",
+          "config_file"})
         cfg.source[key] = "compiled";
 
     // First pass: locate --config so TOML applies before CLI overrides.
@@ -126,8 +170,20 @@ EffectiveConfig ParseOptions(int argc, char** argv)
             if (i + 1 >= argc)
                 UsageAndExit("--config needs a path");
             config_path = argv[++i];
+            cfg.source["config_file"] = "cli";
         }
     }
+#ifdef DEFAULT_CONFIG_PATH
+    // No --config: load the compiled default file when it exists. A fixed
+    // absolute path baked in at build time — behavior never depends on the
+    // working directory (runtime-config.md, "Default config file").
+    if (config_path.empty() && ::access(DEFAULT_CONFIG_PATH, R_OK) == 0)
+    {
+        config_path = DEFAULT_CONFIG_PATH;
+        cfg.source["config_file"] = "default";
+    }
+#endif
+    cfg.config_path = config_path;
     if (!config_path.empty())
         ApplyToml(cfg, config_path);
 
@@ -170,9 +226,12 @@ EffectiveConfig ParseOptions(int argc, char** argv)
             UsageAndExit("unknown option '" + arg + "'");
     }
 
-    if (cfg.controller != "resolved-rate")
+    if (cfg.controller != "resolved-rate" && cfg.controller != "reactive-pose")
         UsageAndExit("unknown controller '" + cfg.controller +
-                     "' (valid: resolved-rate)");
+                     "' (valid: resolved-rate, reactive-pose)");
+    if (!cfg.target_file.empty() && cfg.controller != "reactive-pose")
+        UsageAndExit("target_file requires controller = \"reactive-pose\" "
+                     "(the watched file carries pose targets)");
     return cfg;
 }
 
@@ -187,9 +246,18 @@ namespace
             out << prefix << key << " = " << value << " ("
                 << (source != cfg.source.end() ? source->second : "compiled") << ")\n";
         };
+        line("config_file", cfg.config_path.empty() ? "<none>" : cfg.config_path);
         line("controller", cfg.controller);
+        line("target_file", cfg.target_file.empty() ? "<none>" : cfg.target_file);
         line("kp", FormatDouble(cfg.kp));
         line("dls_lambda", FormatDouble(cfg.dls_lambda));
+        line("kp_rot", FormatDouble(cfg.kp_rot));
+        line("kd_pos", FormatDouble(cfg.kd_pos));
+        line("kd_rot", FormatDouble(cfg.kd_rot));
+        line("null_gain", FormatDouble(cfg.null_gain));
+        line("orientation_enabled", cfg.orientation_enabled ? "true" : "false");
+        line("velocity_term_enabled", cfg.velocity_term_enabled ? "true" : "false");
+        line("null_space_enabled", cfg.null_space_enabled ? "true" : "false");
         line("following_error_limit_deg", FormatDouble(cfg.following_error_limit_deg));
         line("arrival_tolerance_m", FormatDouble(cfg.arrival_tolerance_m));
         line("nonfinite_stop_cycles", std::to_string(cfg.nonfinite_stop_cycles));

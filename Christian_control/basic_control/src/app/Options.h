@@ -1,10 +1,13 @@
 //
-// Options: the runtime configuration front-end. Precedence: CLI > TOML
-// (--config <path>, explicit only — no auto-discovery) > compiled defaults
-// (app/Config.h). Runtime keys are gains, thresholds, controller selection
-// and the log filename — NEVER safety policy: config::kStopOnFault is
-// compile-time only (F2, approved 2026-07-22).
-// Decision record: docs/decisions/runtime-config.md
+// Options: the runtime configuration front-end. Precedence: CLI > TOML >
+// compiled defaults (app/Config.h). The TOML file is an explicit
+// --config <path>, or — when that flag is absent — the compiled default
+// file DEFAULT_CONFIG_PATH (basic_control/config/control.toml) if it
+// exists. The default is a fixed absolute path baked in at build time,
+// never a working-directory lookup. Runtime keys are gains, thresholds,
+// controller selection, the target file and the log filename — NEVER
+// safety policy: config::kStopOnFault is compile-time only (F2, approved
+// 2026-07-22). Decision record: docs/decisions/runtime-config.md
 //
 
 #ifndef HUMANSL_MASTERS_PROJECT_2025_OPTIONS_H
@@ -17,16 +20,29 @@
 // The merged, effective configuration, with per-key source tracking
 // ("compiled" / "toml" / "cli") for the startup echo and the CSV preamble.
 struct EffectiveConfig {
-    std::string controller = "resolved-rate"; // the only valid value today
+    std::string controller = "resolved-rate"; // or "reactive-pose"
     double kp = 0.0;                       // filled from config:: in ParseOptions
     double dls_lambda = 0.0;
+    // Reactive-pose law only (ignored by resolved-rate); kp above doubles as
+    // its position P gain.
+    double kp_rot = 0.0;
+    double kd_pos = 0.0;
+    double kd_rot = 0.0;
+    double null_gain = 0.0;
+    bool orientation_enabled = true;
+    bool velocity_term_enabled = false;
+    bool null_space_enabled = false;
     double following_error_limit_deg = 0.0;
     double arrival_tolerance_m = 0.0;
     int nonfinite_stop_cycles = 0;
     int saturation_stop_cycles = 0;
     int overrun_stop_cycles = 0;
     double overrun_factor = 0.0;
-    std::string log_file; // empty -> timestamped default (Record)
+    std::string log_file;    // empty -> timestamped default (Record)
+    std::string target_file; // reactive-pose only: watched pose-target file
+                             // (control/Target RunPoseTargetFileInput);
+                             // empty -> stdin targets only
+    std::string config_path; // the TOML file actually loaded ("" = none)
 
     std::map<std::string, std::string> source; // key -> where its value came from
 };

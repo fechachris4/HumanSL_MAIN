@@ -56,8 +56,37 @@ namespace config
 
     // Damped-least-squares damping λ (Dls.h). Larger = slower but better
     // conditioned near singular poses; 0.1 follows Pinocchio's IK example
-    // scale for arm-sized Jacobians.
+    // scale for arm-sized Jacobians. Shared by both control laws (and by
+    // the reactive law's null-space projector).
     inline constexpr double kDlsLambda = 0.1;
+
+    // Reactive-pose law (control/ReactiveLaw.h, --controller reactive-pose).
+    // Gains start at the hardware-proven resolved-rate scale, NOT the
+    // simulation's Kp=32/s — that would saturate the velocity clamp and trip
+    // the following-error guard on any few-cm error (the documented
+    // 2026-07-17 failure mode: docs/decisions/reactive-control-removal.md).
+    // The position P gain is the shared kKpCartesian above. Term switches
+    // implement the staged bring-up: P-only first; the velocity (Kd) term
+    // and null-space centering exist in the law but default OFF
+    // (docs/decisions/reactive-pose-port.md).
+    inline constexpr double kKpRotation = 1.0; // 1/s on the rotation-log error
+    inline constexpr double kKdPosition = 0.3; // on the linear-velocity error
+    inline constexpr double kKdRotation = 0.3; // on the angular-velocity error
+    inline constexpr double kNullGain = 1.0;   // 1/s on the centering error
+    inline constexpr bool kOrientationEnabled = true;
+    inline constexpr bool kVelocityTermEnabled = false; // Kd term
+    inline constexpr bool kNullSpaceEnabled = false;
+
+    // Null-space centering targets, deg, Kortex joint order. The Gen3's
+    // bounded joints (2, 4, 6) have URDF ranges symmetric about 0, so their
+    // midpoints are 0; the continuous joints (1, 3, 5, 7) have no meaningful
+    // midpoint and are masked out. CAUTION: this arm has CONFIGURED position
+    // soft limits far inside the URDF range (joint 4 near −19.6°, joint 6
+    // near +36° — README "Safety"); centering toward 0 can push joint 4
+    // toward its configured limit. Verify with ./query_limits before
+    // enabling kNullSpaceEnabled.
+    inline constexpr JointVector kNullMidpointDeg = {0, 0, 0, 0, 0, 0, 0};
+    inline constexpr JointVector kNullCenteringMask = {0, 1, 0, 1, 0, 1, 0};
 
     // The controlled frame, from config/GEN3_custom.urdf. The flange frame:
     // no TCP offset (the gripper TCP sits ~0.12 m further along tool z —

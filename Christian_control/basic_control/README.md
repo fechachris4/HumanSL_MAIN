@@ -9,16 +9,27 @@ My controller for a **single Kinova Gen3 7-DoF** arm. It combines:
 
 It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
 
-The program is a resolved-rate Cartesian controller: it takes over the arm
-in low-level servoing (actuators in their default POSITION mode) and drives
-the end-effector toward positions typed on stdin:
+The program offers two control laws over the same loop: it takes over the
+arm in low-level servoing (actuators in their default POSITION mode) and
+drives the end-effector toward targets typed on stdin.
+
+`resolved-rate` (default) — position-only:
 
     e = p_desired − p(q_measured);   v_d = Kp · e
     q̇_raw = Jpᵀ (Jp Jpᵀ + λ² I₃)⁻¹ v_d      (damped least squares)
     q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (71.6 deg/s joints 1–4, 62.9 joints 5–7)
     q_command += q̇_clipped · dt              (persistent integrator)
 
-with q_command streamed as position setpoints at 100 Hz. Low-level VELOCITY
+`reactive-pose` (`--controller reactive-pose`) — full 6-DoF pose, ported
+from the simulation (msc_project) and cross-validated against it
+(`../docs/decisions/reactive-pose-port.md`):
+
+    e_pos = p_desired − p(q);   e_rot = log3(R_desired · R(q)ᵀ)
+    ẋ = Kp·e_pose [+ Kd·e_twist, default off]
+    q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, default off]
+
+then the same clamp and integrator. In both cases q_command is streamed as
+position setpoints at 100 Hz. Low-level VELOCITY
 mode was tried and abandoned — the actuator's inner velocity loop has no
 gravity compensation (hardware evidence + Kinova kortex issues
 #42/#93/#156). Design: `../docs/decisions/resolved-rate-position-integration.md`;
@@ -96,15 +107,29 @@ ctest            # hardware-free control-logic tests
 > e-stop in hand, authorization required for every session.
 
 ```bash
-./controller                       # compiled defaults
+./controller                       # loads ../config/control.toml if present,
+                                   # else compiled defaults
 ./controller --kp 0.8              # one-off gain override
-./controller --config gains.toml   # gains/thresholds from an explicit file
+./controller --config gains.toml   # explicit file instead of the default one
 ./controller --help                # full option + TOML-key list
 ```
 
+The everyday workflow is **edit `config/control.toml`, run the bare
+binary**: that checked-in file is loaded automatically (compiled absolute
+path — never a working-directory lookup) and selects the control law
+(`controller = "reactive-pose"`), gains, term switches, and optionally a
+`target_file`. Precedence stays CLI > TOML > compiled defaults.
+
+With `target_file` set (reactive-pose only), the controller also watches
+that file: during a run, edit and save it with one line — `x y z` or
+`x y z roll pitch yaw` — and the arm retargets, same as typing on stdin
+(latest source wins). The file's content at startup is deliberately
+ignored: a stale target file never starts a motion.
+
 Every run echoes its full effective configuration (each value tagged
-compiled/toml/cli) and embeds it as `#` lines in the CSV, so every data
-file is self-describing. Safety policy is not runtime-configurable.
+compiled/default/toml/cli, plus which config file was loaded) and embeds
+it as `#` lines in the CSV, so every data file is self-describing. Safety
+policy is not runtime-configurable.
 
 1. Loads the URDF (checks the model has exactly 7 velocity variables) and
    connects (TCP + UDP).
@@ -121,6 +146,12 @@ file is self-describing. Safety policy is not runtime-configurable.
    ```
    0.45 0.10 0.30
    ```
+
+   With `--controller reactive-pose` a 3-number line moves the position
+   target and keeps the current orientation target; a 6-number line
+   `x y z roll pitch yaw` (radians, R = Rz(yaw)·Ry(pitch)·Rx(roll)) sets
+   both. The arrival notice is position-based in both laws; judge
+   orientation convergence from the CSV's `rot_error_rad` column.
 
    The end-effector moves toward it at `Kp × distance` (1.0 /s × error —
    e.g. a 10 cm error starts at 0.1 m/s and slows exponentially as it
