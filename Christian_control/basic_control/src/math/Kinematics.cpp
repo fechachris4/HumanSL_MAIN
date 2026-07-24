@@ -41,6 +41,7 @@ PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd
 
     PositionJacobian result;
     result.position = dynamics.data_.oMf[frame_id].translation();
+    result.rotation = dynamics.data_.oMf[frame_id].rotation();
     // Rows 0-2 of the 6D frame Jacobian are the translational part; in
     // LOCAL_WORLD_ALIGNED they are expressed in base-frame axes.
     result.jacobian_p = workspace.jacobian_full.topRows<3>();

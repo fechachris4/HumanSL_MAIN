@@ -85,8 +85,10 @@ int main()
     s.measured_deg[0] = s.commanded_deg[0] + 2.9;
     Check(!ClassifyStop(s, limit, reason), "tracking lag inside the limit continues");
 
-    // Decision-12 consecutive-cycle counters.
-    StopPolicy policy; // defaults: 3 / 50 / 10
+    // Decision-12 consecutive-cycle counters (no saturation counter — the
+    // saturation stop was removed 2026-07-23; a pinned clamp is normal
+    // transit toward a far target).
+    StopPolicy policy; // defaults: 3 / 10
     CycleCounters c;
     Check(!ClassifyCounters(c, policy).has_value(), "zeroed counters do not stop");
     c.nonfinite = policy.nonfinite_stop_cycles - 1;
@@ -94,10 +96,6 @@ int main()
     c.nonfinite = policy.nonfinite_stop_cycles;
     Check(ClassifyCounters(c, policy) == LoopStop::kNonFiniteCommand,
           "non-finite output at the limit stops");
-    c = CycleCounters{};
-    c.saturated = policy.saturation_stop_cycles;
-    Check(ClassifyCounters(c, policy) == LoopStop::kSaturation,
-          "sustained clamp saturation stops");
     c = CycleCounters{};
     c.overrun = policy.overrun_stop_cycles;
     Check(ClassifyCounters(c, policy) == LoopStop::kOverrun,

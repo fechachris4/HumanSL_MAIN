@@ -16,10 +16,18 @@ configuration files.
   `basic_control/third_party/tomlplusplus/`): gains, thresholds, controller
   selection and input sources —
   `controller`, `kp`, `dls_lambda`, `following_error_limit_deg`,
-  `arrival_tolerance_m`, `nonfinite_stop_cycles`, `saturation_stop_cycles`,
-  `overrun_stop_cycles`, `overrun_factor`; reactive-pose only: `kp_rot`,
+  `arrival_tolerance_m`, `nonfinite_stop_cycles`, `overrun_stop_cycles`,
+  `overrun_factor`; reactive-pose only: `kp_rot`,
   `kd_pos`, `kd_rot`, `null_gain`, `orientation_enabled`,
-  `velocity_term_enabled`, `null_space_enabled`, `target_file`.
+  `velocity_term_enabled`, `null_space_enabled`, `target_file`; cylinder
+  end-effector routing: `cylinder_keepout_enabled`,
+  `cylinder_keepout_center_x_m`, `cylinder_keepout_center_y_m`,
+  `cylinder_keepout_radius_m`, `cylinder_keepout_z_min_m`,
+  `cylinder_keepout_z_max_m`, `cylinder_keepout_clearance_m`,
+  `cylinder_waypoint_tolerance_m`.
+  (`saturation_stop_cycles` existed until 2026-07-23, when the saturation
+  stop was removed entirely — a pinned clamp is normal transit toward a
+  far target.)
 
 ## Default config file (amendment, 2026-07-24)
 

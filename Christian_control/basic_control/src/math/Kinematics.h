@@ -40,6 +40,7 @@ struct KinematicsWorkspace {
 // computed at. Requires model_.nv == 7 (checked by the caller at startup).
 struct PositionJacobian {
     Eigen::Vector3d position;                 // meters, base frame
+    Eigen::Matrix3d rotation;                 // frame orientation in the base frame
     Eigen::Matrix<double, 3, 7> jacobian_p;   // rows: x,y,z; cols: joints 1-7
 };
 

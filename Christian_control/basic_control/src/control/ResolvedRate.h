@@ -22,7 +22,8 @@ public:
     // takeover can happen) and preallocates the kinematics workspace.
     ResolvedRate(Dynamics& dynamics, TargetStore& targets, double kp,
                  double dls_lambda, double arrival_tolerance_m,
-                 const std::string& ee_frame_name);
+                 const std::string& ee_frame_name,
+                 const CylinderKeepout& cylinder_keepout = {});
 
     // Seeds the desired position with the CURRENT end-effector position, so
     // the controller holds until the operator types a target (anything
@@ -43,6 +44,7 @@ private:
     pinocchio::FrameIndex ee_frame_;
     KinematicsWorkspace workspace_;
     Eigen::VectorXd q_measured_rad_; // preallocated deg->model boundary buffer
+    CylinderRouteFollower route_follower_;
 
     // Arrival notice state: armed only when the target sequence changes, so
     // the seeded hold target never fires and each typed target fires once.

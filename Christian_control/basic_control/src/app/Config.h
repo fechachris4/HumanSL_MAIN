@@ -11,7 +11,7 @@
 #include <chrono>
 #include <cstddef>
 
-#include "control/Motion.h" // JointVector
+#include "JointVector.h"
 
 namespace config
 {
@@ -38,9 +38,9 @@ namespace config
 
     // Control timing, single source of truth: the nominal period is
     // kControlDtS; everything else (loop grid, frequency, log sizing) is
-    // derived. 100 Hz — position streaming does not need the 1 kHz cycle,
-    // and 10 ms leaves ample compute headroom.
-    inline constexpr double kControlDtS = 0.02;
+    // derived. 1 kHz — the BaseCyclic low-level rate; one Send/Feedback
+    // exchange per millisecond.
+    inline constexpr double kControlDtS = 0.001;
     inline constexpr double kControlFrequencyHz = 1.0 / kControlDtS;
     inline constexpr std::chrono::microseconds kCyclePeriod{
         static_cast<long>(kControlDtS * 1e6)
@@ -93,11 +93,20 @@ namespace config
     // see math/Kinematics.cpp's FK cross-check).
     inline constexpr const char* kEndEffectorFrame = "EndEffector_Link";
 
+    // Reachable-workspace telemetry: the log's pd_beyond_reach flag is set
+    // when |p_desired| > kReachRadiusM - kReachMarginM. FLAG ONLY — targets
+    // are deliberately never rejected or projected (Target.h keeps its "no
+    // reachability check" contract). The sphere is centred at the base
+    // origin, an approximation: the shoulder sits above the base, so this
+    // slightly overestimates reach for low targets — fine for a flag.
+    inline constexpr double kReachRadiusM = 0.902; // Gen3 7-DOF max reach (Kinova spec)
+    inline constexpr double kReachMarginM = 0.05; // near full extension is singular anyway
+
     // Per-joint clip for the resolved-rate q̇ before integration, deg/s —
-    // the program's single speed limit, derived at compile time as
-    // kQdotLimitSafetyFactor × the model limits above (≈71.6 deg/s joints
-    // 1-4, ≈62.9 joints 5-7). The base enforces whatever joint speed SOFT
-    // limits it is CONFIGURED with, regardless of what we command:
+    // the program's single speed limit, equal to the model limits above
+    // (79.6 deg/s joints 1-4, 69.9 joints 5-7). The base enforces whatever
+    // joint speed limits apply to low-level streaming, regardless of what
+    // we command:
     // position setpoints stepping faster than an enforced limit are not
     // followed — the joint stands still, tracking error grows, and at
     // ~5 deg the safety kicks the arm out of low-level servoing
@@ -106,14 +115,7 @@ namespace config
     // ./query_limits BEFORE a hardware session
     // (docs/decisions/qdot-limit-raise.md; until 2026-07-22 this arm was
     // configured at 50 deg/s and the clip was a uniform 45).
-    inline constexpr double kQdotLimitSafetyFactor = 0.9; // 10% under
-    inline constexpr JointVector kQdotLimitDegS = []
-    {
-        JointVector limits{};
-        for (std::size_t i = 0; i < limits.size(); ++i)
-            limits[i] = kQdotLimitSafetyFactor * kModelVelocityLimitsDegS[i];
-        return limits;
-    }();
+    inline constexpr JointVector kQdotLimitDegS = kModelVelocityLimitsDegS;
 
     // Fault-stop policy (safety/Supervisor.h StopPolicy). COMPILE-TIME
     // ONLY — deliberately not settable from any runtime configuration.
@@ -123,10 +125,10 @@ namespace config
 
     // Supervisor consecutive-cycle counters (decision 12); N <= 0 disables
     // one. Non-finite controller output is never integrated (that cycle
-    // holds); saturation = >= 1 joint pinned at the clamp bound; overrun =
-    // measured dt above kOverrunFactor x nominal.
+    // holds); overrun = measured dt above kOverrunFactor x nominal. The
+    // saturation stop was removed 2026-07-23: a pinned clamp is normal
+    // transit toward a far target (the clamp itself still limits speed).
     inline constexpr int kNonFiniteStopCycles = 3;
-    inline constexpr int kSaturationStopCycles = 50; // 0.5 s at 100 Hz
     inline constexpr int kOverrunStopCycles = 10;
     inline constexpr double kOverrunFactor = 1.5;
 
@@ -142,6 +144,21 @@ namespace config
     // this scale, the notice may come late or not at all (raise it back
     // toward 5 mm in that case).
     inline constexpr double kArrivalToleranceM = 0.001;
+
+    // Optional Cartesian end-effector keep-out cylinder. When enabled, a
+    // direct target segment that crosses this vertical cylinder is replaced
+    // by the shortest of clockwise, counter-clockwise and over-the-top
+    // waypoint routes. A requested target inside it is moved to the nearest
+    // point just outside rather than rejected. This is end-effector path
+    // routing, not whole-arm collision checking (CylinderRouter.h).
+    inline constexpr bool kCylinderKeepoutEnabled = false;
+    inline constexpr double kCylinderKeepoutCenterXM = 0.0;
+    inline constexpr double kCylinderKeepoutCenterYM = 0.0;
+    inline constexpr double kCylinderKeepoutRadiusM = 0.25;
+    inline constexpr double kCylinderKeepoutZMinM = 0.0;
+    inline constexpr double kCylinderKeepoutZMaxM = 1.8;
+    inline constexpr double kCylinderKeepoutClearanceM = 0.10;
+    inline constexpr double kCylinderWaypointToleranceM = 0.01;
 
     // Loop log: preallocated ring buffer, most recent kLogCapacitySeconds
     // kept on very long runs; written to one timestamped CSV after the loop.

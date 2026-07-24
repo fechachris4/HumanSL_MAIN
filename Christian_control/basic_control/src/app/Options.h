@@ -35,9 +35,16 @@ struct EffectiveConfig {
     double following_error_limit_deg = 0.0;
     double arrival_tolerance_m = 0.0;
     int nonfinite_stop_cycles = 0;
-    int saturation_stop_cycles = 0;
     int overrun_stop_cycles = 0;
     double overrun_factor = 0.0;
+    bool cylinder_keepout_enabled = false;
+    double cylinder_keepout_center_x_m = 0.0;
+    double cylinder_keepout_center_y_m = 0.0;
+    double cylinder_keepout_radius_m = 0.0;
+    double cylinder_keepout_z_min_m = 0.0;
+    double cylinder_keepout_z_max_m = 0.0;
+    double cylinder_keepout_clearance_m = 0.0;
+    double cylinder_waypoint_tolerance_m = 0.0;
     std::string log_file;    // empty -> timestamped default (Record)
     std::string target_file; // reactive-pose only: watched pose-target file
                              // (control/Target RunPoseTargetFileInput);

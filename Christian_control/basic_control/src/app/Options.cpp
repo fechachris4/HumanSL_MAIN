@@ -6,6 +6,7 @@
 
 #include "app/Config.h"
 
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <sstream>
@@ -35,10 +36,15 @@ namespace
             "precedence: CLI > TOML > compiled defaults (src/app/Config.h)\n"
             "TOML keys: controller, kp, dls_lambda, following_error_limit_deg,\n"
             "  arrival_tolerance_m, nonfinite_stop_cycles,\n"
-            "  saturation_stop_cycles, overrun_stop_cycles, overrun_factor;\n"
+            "  overrun_stop_cycles, overrun_factor;\n"
             "  reactive-pose only: kp_rot, kd_pos, kd_rot, null_gain,\n"
             "  orientation_enabled, velocity_term_enabled, null_space_enabled,\n"
-            "  target_file (watched pose-target file; edit+save to retarget)\n"
+            "  target_file (watched pose-target file; edit+save to retarget);\n"
+            "  cylinder keep-out: cylinder_keepout_enabled,\n"
+            "  cylinder_keepout_center_x_m, cylinder_keepout_center_y_m,\n"
+            "  cylinder_keepout_radius_m, cylinder_keepout_z_min_m,\n"
+            "  cylinder_keepout_z_max_m, cylinder_keepout_clearance_m,\n"
+            "  cylinder_waypoint_tolerance_m\n"
             "safety policy is NOT configurable at runtime (config::kStopOnFault\n"
             "is compile-time only)\n";
         std::exit(2);
@@ -118,9 +124,24 @@ namespace
                 number(cfg.following_error_limit_deg);
             else if (name == "arrival_tolerance_m") number(cfg.arrival_tolerance_m);
             else if (name == "nonfinite_stop_cycles") integer(cfg.nonfinite_stop_cycles);
-            else if (name == "saturation_stop_cycles") integer(cfg.saturation_stop_cycles);
             else if (name == "overrun_stop_cycles") integer(cfg.overrun_stop_cycles);
             else if (name == "overrun_factor") number(cfg.overrun_factor);
+            else if (name == "cylinder_keepout_enabled")
+                boolean(cfg.cylinder_keepout_enabled);
+            else if (name == "cylinder_keepout_center_x_m")
+                number(cfg.cylinder_keepout_center_x_m);
+            else if (name == "cylinder_keepout_center_y_m")
+                number(cfg.cylinder_keepout_center_y_m);
+            else if (name == "cylinder_keepout_radius_m")
+                number(cfg.cylinder_keepout_radius_m);
+            else if (name == "cylinder_keepout_z_min_m")
+                number(cfg.cylinder_keepout_z_min_m);
+            else if (name == "cylinder_keepout_z_max_m")
+                number(cfg.cylinder_keepout_z_max_m);
+            else if (name == "cylinder_keepout_clearance_m")
+                number(cfg.cylinder_keepout_clearance_m);
+            else if (name == "cylinder_waypoint_tolerance_m")
+                number(cfg.cylinder_waypoint_tolerance_m);
             else if (name == "stop_on_fault")
                 UsageAndExit(path + ": 'stop_on_fault' is compile-time only "
                              "(config::kStopOnFault) and cannot be set here");
@@ -146,15 +167,26 @@ EffectiveConfig ParseOptions(int argc, char** argv)
     cfg.following_error_limit_deg = config::kFollowingErrorLimitDeg;
     cfg.arrival_tolerance_m = config::kArrivalToleranceM;
     cfg.nonfinite_stop_cycles = config::kNonFiniteStopCycles;
-    cfg.saturation_stop_cycles = config::kSaturationStopCycles;
     cfg.overrun_stop_cycles = config::kOverrunStopCycles;
     cfg.overrun_factor = config::kOverrunFactor;
+    cfg.cylinder_keepout_enabled = config::kCylinderKeepoutEnabled;
+    cfg.cylinder_keepout_center_x_m = config::kCylinderKeepoutCenterXM;
+    cfg.cylinder_keepout_center_y_m = config::kCylinderKeepoutCenterYM;
+    cfg.cylinder_keepout_radius_m = config::kCylinderKeepoutRadiusM;
+    cfg.cylinder_keepout_z_min_m = config::kCylinderKeepoutZMinM;
+    cfg.cylinder_keepout_z_max_m = config::kCylinderKeepoutZMaxM;
+    cfg.cylinder_keepout_clearance_m = config::kCylinderKeepoutClearanceM;
+    cfg.cylinder_waypoint_tolerance_m = config::kCylinderWaypointToleranceM;
     for (const char* key :
          {"controller", "kp", "dls_lambda", "kp_rot", "kd_pos", "kd_rot",
           "null_gain", "orientation_enabled", "velocity_term_enabled",
           "null_space_enabled", "following_error_limit_deg",
-          "arrival_tolerance_m", "nonfinite_stop_cycles", "saturation_stop_cycles",
-          "overrun_stop_cycles", "overrun_factor", "log_file", "target_file",
+          "arrival_tolerance_m", "nonfinite_stop_cycles", "overrun_stop_cycles",
+          "overrun_factor", "cylinder_keepout_enabled",
+          "cylinder_keepout_center_x_m", "cylinder_keepout_center_y_m",
+          "cylinder_keepout_radius_m", "cylinder_keepout_z_min_m",
+          "cylinder_keepout_z_max_m", "cylinder_keepout_clearance_m",
+          "cylinder_waypoint_tolerance_m", "log_file", "target_file",
           "config_file"})
         cfg.source[key] = "compiled";
 
@@ -232,6 +264,24 @@ EffectiveConfig ParseOptions(int argc, char** argv)
     if (!cfg.target_file.empty() && cfg.controller != "reactive-pose")
         UsageAndExit("target_file requires controller = \"reactive-pose\" "
                      "(the watched file carries pose targets)");
+    const auto finite = [](double value) { return std::isfinite(value); };
+    if (!finite(cfg.cylinder_keepout_center_x_m) ||
+        !finite(cfg.cylinder_keepout_center_y_m) ||
+        !finite(cfg.cylinder_keepout_radius_m) ||
+        !finite(cfg.cylinder_keepout_z_min_m) ||
+        !finite(cfg.cylinder_keepout_z_max_m) ||
+        !finite(cfg.cylinder_keepout_clearance_m) ||
+        !finite(cfg.cylinder_waypoint_tolerance_m))
+        UsageAndExit("cylinder keep-out values must be finite");
+    if (cfg.cylinder_keepout_radius_m <= 0.0)
+        UsageAndExit("cylinder_keepout_radius_m must be > 0");
+    if (cfg.cylinder_keepout_z_max_m <= cfg.cylinder_keepout_z_min_m)
+        UsageAndExit("cylinder_keepout_z_max_m must be greater than "
+                     "cylinder_keepout_z_min_m");
+    if (cfg.cylinder_keepout_clearance_m < 0.0)
+        UsageAndExit("cylinder_keepout_clearance_m must be >= 0");
+    if (cfg.cylinder_waypoint_tolerance_m <= 0.0)
+        UsageAndExit("cylinder_waypoint_tolerance_m must be > 0");
     return cfg;
 }
 
@@ -261,9 +311,24 @@ namespace
         line("following_error_limit_deg", FormatDouble(cfg.following_error_limit_deg));
         line("arrival_tolerance_m", FormatDouble(cfg.arrival_tolerance_m));
         line("nonfinite_stop_cycles", std::to_string(cfg.nonfinite_stop_cycles));
-        line("saturation_stop_cycles", std::to_string(cfg.saturation_stop_cycles));
         line("overrun_stop_cycles", std::to_string(cfg.overrun_stop_cycles));
         line("overrun_factor", FormatDouble(cfg.overrun_factor));
+        line("cylinder_keepout_enabled",
+             cfg.cylinder_keepout_enabled ? "true" : "false");
+        line("cylinder_keepout_center_x_m",
+             FormatDouble(cfg.cylinder_keepout_center_x_m));
+        line("cylinder_keepout_center_y_m",
+             FormatDouble(cfg.cylinder_keepout_center_y_m));
+        line("cylinder_keepout_radius_m",
+             FormatDouble(cfg.cylinder_keepout_radius_m));
+        line("cylinder_keepout_z_min_m",
+             FormatDouble(cfg.cylinder_keepout_z_min_m));
+        line("cylinder_keepout_z_max_m",
+             FormatDouble(cfg.cylinder_keepout_z_max_m));
+        line("cylinder_keepout_clearance_m",
+             FormatDouble(cfg.cylinder_keepout_clearance_m));
+        line("cylinder_waypoint_tolerance_m",
+             FormatDouble(cfg.cylinder_waypoint_tolerance_m));
         line("log_file", cfg.log_file.empty() ? "<timestamped>" : cfg.log_file);
         out << prefix << "stop_on_fault = " << (config::kStopOnFault ? "true" : "false")
             << " (compile-time only)\n";
@@ -271,7 +336,7 @@ namespace
             << " (compiled)\n";
         out << prefix << "qdot_clip_deg_s = " << FormatDouble(config::kQdotLimitDegS[0])
             << "/" << FormatDouble(config::kQdotLimitDegS[4])
-            << " (compiled, derived joints 1-4/5-7)\n";
+            << " (compiled model limits, joints 1-4/5-7)\n";
     }
 } // namespace
 
@@ -284,5 +349,9 @@ void EchoConfig(const EffectiveConfig& cfg, std::ostream& out)
 void WriteCsvPreamble(const EffectiveConfig& cfg, std::ostream& csv)
 {
     csv << "# controller run config — parsers skip '#' lines\n";
+    // Bump when columns change so scripts detect the format without
+    // sniffing headers. 2 = t_send/t_recv + quaternion + pd_beyond_reach
+    // + reactive-pose rotation error (hardware/Record.h).
+    csv << "# log_format = 2 (compiled)\n";
     WriteConfigLines(cfg, csv, "# ");
 }

@@ -23,9 +23,9 @@ namespace k_api = Kinova::Api;
 // stopped following the integrated command — fault, stall, or limit).
 // kInternalError: an exception that is neither a Kortex error nor a
 // runtime_error escaped the cycle — caught by the loop's catch-all so the
-// servoing restore still runs. The last three are the decision-12
+// servoing restore still runs. The last two are the decision-12
 // consecutive-cycle counters: non-finite controller output (held, never
-// integrated), a joint pinned at the velocity clamp, and cycle overruns.
+// integrated) and cycle overruns.
 enum class LoopStop {
     kUserStop,
     kRobotFault,
@@ -34,7 +34,6 @@ enum class LoopStop {
     kCommunication,
     kInternalError,
     kNonFiniteCommand,
-    kSaturation,
     kOverrun
 };
 
@@ -59,8 +58,10 @@ struct StopPolicy {
     bool stop_on_fault = true;
 
     // Consecutive-cycle stop counters (decision 12); N <= 0 disables one.
+    // There is deliberately NO saturation stop: a pinned velocity clamp is
+    // normal transit behavior for far targets (removed 2026-07-23; the
+    // clamp itself still bounds every joint's speed).
     int nonfinite_stop_cycles = 3;   // non-finite controller output (held)
-    int saturation_stop_cycles = 50; // >= 1 joint at the clamp bound
     int overrun_stop_cycles = 10;    // dt above overrun_factor x nominal
     double overrun_factor = 1.5;
 };
@@ -70,7 +71,6 @@ struct StopPolicy {
 // after the loop.
 struct CycleCounters {
     int nonfinite = 0;
-    int saturated = 0;
     int overrun = 0;
     long overrun_total = 0;
 };

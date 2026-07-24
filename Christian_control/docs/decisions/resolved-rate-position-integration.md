@@ -60,9 +60,10 @@ tracking safety faults on those (`src/app/Config.h`'s clip comment).
 
 ## Why the clip is 45 deg/s, not the model limits
 
-*(Superseded 2026-07-22: the clip is now 10% under the model limits,
-conditional on reconfiguring the arm's soft limits — `qdot-limit-raise.md`.
-The mechanism below still holds for whatever limit the base enforces.)*
+*(Superseded 2026-07-22 and amended 2026-07-24: the clip now equals the
+model limits, conditional on the arm accepting those limits —
+`qdot-limit-raise.md`. The mechanism below still holds for whatever limit
+the base enforces.)*
 
 In position streaming the base's enforced 50 deg/s soft limit empirically
 causes WRONG_SERVOING_MODE faults when outrun (the joint stands still,

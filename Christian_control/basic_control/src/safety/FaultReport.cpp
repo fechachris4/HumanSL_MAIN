@@ -101,10 +101,6 @@ void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
             "limit, output held at zero meanwhile) at t=" << s.t_s << " s (cycle "
             << cycle << ")\n";
         break;
-    case LoopStop::kSaturation:
-        std::cout << "loop stopped: velocity clamp saturated for the consecutive-cycle "
-            "limit at t=" << s.t_s << " s (cycle " << cycle << ")\n";
-        break;
     case LoopStop::kOverrun:
         std::cout << "loop stopped: cycle overruns hit the consecutive-cycle limit at t="
             << s.t_s << " s (cycle " << cycle << ")\n";

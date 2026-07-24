@@ -20,6 +20,21 @@ kp_rot = 1.0  # rotation P gain, 1/s (reactive-pose)
 # directory you run in (build/).
 # target_file = "target.txt"
 
+# Optional vertical cylinder around the human/occupied area. When enabled,
+# direct end-effector paths that cross the inflated cylinder automatically
+# take the shortest clockwise, counter-clockwise or over-the-top waypoint
+# route. Targets inside are moved just outside; they are not refused.
+# Coordinates are meters in the robot base frame. Set the centre/radius from
+# your measured setup before changing enabled to true.
+cylinder_keepout_enabled = false
+cylinder_keepout_center_x_m = 0.0
+cylinder_keepout_center_y_m = 0.0
+cylinder_keepout_radius_m = 0.25
+cylinder_keepout_z_min_m = 0.0
+cylinder_keepout_z_max_m = 1.8
+cylinder_keepout_clearance_m = 0.10
+cylinder_waypoint_tolerance_m = 0.01
+
 # Staged bring-up terms — enable one at a time, each gated on the previous
 # stage's CSV (docs/decisions/reactive-pose-port.md):
 # velocity_term_enabled = true   # Kd term (stage 6)

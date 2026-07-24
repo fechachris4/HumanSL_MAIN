@@ -54,9 +54,6 @@ std::optional<LoopStop> ClassifyCounters(const CycleCounters& counters,
     if (policy.nonfinite_stop_cycles > 0 &&
         counters.nonfinite >= policy.nonfinite_stop_cycles)
         return LoopStop::kNonFiniteCommand;
-    if (policy.saturation_stop_cycles > 0 &&
-        counters.saturated >= policy.saturation_stop_cycles)
-        return LoopStop::kSaturation;
     if (policy.overrun_stop_cycles > 0 &&
         counters.overrun >= policy.overrun_stop_cycles)
         return LoopStop::kOverrun;

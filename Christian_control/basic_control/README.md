@@ -17,7 +17,7 @@ drives the end-effector toward targets typed on stdin.
 
     e = p_desired − p(q_measured);   v_d = Kp · e
     q̇_raw = Jpᵀ (Jp Jpᵀ + λ² I₃)⁻¹ v_d      (damped least squares)
-    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (71.6 deg/s joints 1–4, 62.9 joints 5–7)
+    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (79.6 deg/s joints 1–4, 69.9 joints 5–7)
     q_command += q̇_clipped · dt              (persistent integrator)
 
 `reactive-pose` (`--controller reactive-pose`) — full 6-DoF pose, ported
@@ -28,8 +28,9 @@ from the simulation (msc_project) and cross-validated against it
     ẋ = Kp·e_pose [+ Kd·e_twist, default off]
     q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, default off]
 
-then the same clamp and integrator. In both cases q_command is streamed as
-position setpoints at 100 Hz. Low-level VELOCITY
+Both laws use the same clamp and integrator, with q_command streamed as
+position setpoints at 1 kHz (`kControlDtS`, the single timing source).
+Low-level VELOCITY
 mode was tried and abandoned — the actuator's inner velocity loop has no
 gravity compensation (hardware evidence + Kinova kortex issues
 #42/#93/#156). Design: `../docs/decisions/resolved-rate-position-integration.md`;
@@ -54,13 +55,13 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 - `src/app/main.cpp` — thin coordinator: model+config, connect, readiness
   check, state printout, input thread, loop call, log flush, exit code
 - `src/app/Config.h` — the compiled defaults: robot IP, `kControlDtS`
-  (0.01 s — the single timing source), `kKpCartesian` (1.0 /s),
-  `kDlsLambda` (0.1), `kQdotLimitDegS` (0.9 × model limits ≈ 71.6/62.9
-  deg/s clip), `kStopOnFault` (compile-time only), `kEndEffectorFrame`,
+  (0.001 s — the single timing source), `kKpCartesian` (1.0 /s),
+  `kDlsLambda` (0.1), `kQdotLimitDegS` (equal to the 79.6/69.9 deg/s
+  model limits), `kStopOnFault` (compile-time only), `kEndEffectorFrame`,
   supervisor counter limits, log capacity
 - `src/app/Options.*` — runtime overrides, precedence CLI > TOML >
-  compiled (gains/thresholds only — never safety policy; no config-file
-  auto-discovery): `../docs/decisions/runtime-config.md`
+  compiled (gains, thresholds, controller/input and cylinder route;
+  never fault-stop policy): `../docs/decisions/runtime-config.md`
 - `src/hardware/Connect.*` — RAII: both Kortex sessions (TCP 10000 +
   real-time UDP 10001)
 - `src/hardware/Measure.*` — `read_feedback`, the program's single
@@ -69,8 +70,8 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   read + the one stamped `Refresh` exchange per cycle
 - `src/hardware/Record.*` — telemetry: preallocated ring buffer (`LoopLog`),
   written to a timestamped CSV after the loop; `push` is loop-safe
-- `src/math/Kinematics.*` — FK and `position_and_jacobian` (position + 3×7
-  translational Jacobian from the same measured q)
+- `src/math/Kinematics.*` — FK and `position_and_jacobian` (position,
+  rotation + 3×7 translational Jacobian from the same measured q)
 - `src/math/Dls.h` — damped least squares (LDLT, no explicit inverse),
   header-only and hardware-free-tested
 - `src/safety/Supervisor.*` — stop classification (following error first,
@@ -82,6 +83,8 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 - `src/control/Controller.h` — the controller interface (`RobotState`,
   arm-feedback-only by hard rule; pure computation, no I/O)
 - `src/control/ResolvedRate.*` — the Cartesian control law (see above)
+- `src/control/CylinderRouter.*` — fixed-size Cartesian end-effector
+  waypoint routing around one configured vertical cylinder
 - `src/control/Target.*` — desired end-effector position: stdin thread,
   parsing (3 finite numbers; deliberately no reachability check), latest-
   value store
@@ -126,6 +129,27 @@ that file: during a run, edit and save it with one line — `x y z` or
 (latest source wins). The file's content at startup is deliberately
 ignored: a stale target file never starts a motion.
 
+### Cylinder keep-out routing
+
+Set the measured cylinder in `config/control.toml` and change
+`cylinder_keepout_enabled` to `true`. The centre, radius and height are in
+meters in the robot base frame. `cylinder_keepout_clearance_m` inflates
+the cylinder in radius and height.
+
+For each new target, the controller uses the direct segment when it is
+clear. If it crosses the cylinder, it evaluates clockwise,
+counter-clockwise and over-the-top waypoint routes and follows the shortest
+one. It does not refuse the move. A requested target inside the inflated
+cylinder is moved radially to the nearest outside route point, and the
+operator message reports the effective target. The same routing is used by
+`resolved-rate` and `reactive-pose`.
+
+This is deliberately the practical lightweight version: it routes the
+controlled end-effector point. It does not model the links, elbow, gripper
+shape, self-collision, moving people, reachability or joint limits. Measure
+the cylinder conservatively and first test with low gain and an empty
+workspace.
+
 Every run echoes its full effective configuration (each value tagged
 compiled/default/toml/cli, plus which config file was loaded) and embeds
 it as `#` lines in the CSV, so every data file is self-describing. Safety
@@ -159,28 +183,69 @@ policy is not runtime-configurable.
    retargeting is normal. Invalid lines are rejected with a reason.
 5. Ctrl+C stops cleanly: the integrator stops updating (the position servo
    holds the last setpoint), single-level servoing is restored, telemetry
-   (most recent 600 s) is written to `run_YYYYMMDD_HHMMSS.csv`. Exit 0 only on this
+   (most recent 600 s) is written to
+   `runs/YYYY-MM-DD/loop_log_YYYYMMDD_HHMMSS.csv`. Exit 0 only on this
    clean stop; faults print a decoded report and exit 1.
 
 First hardware runs: start from the printed current position and change
 **one coordinate by a few centimeters**.
 
+## Offline analysis
+
+After a run (never during — all scripts are offline-only and never touch
+the robot):
+
+```bash
+python3 scripts/analyze_run.py            # newest run: integrity + tracking report
+python3 scripts/analyze_run.py <run.csv>  # a specific run
+python3 scripts/measure_delay.py <run.csv> # pipeline delay from a step run
+```
+
+`analyze_run.py` prints a log-integrity report first (timestamp gaps,
+overruns, dropped-cycle estimate — it refuses to compute statistics from a
+log with >1% holes unless `--force`), then matches commanded and actual
+position **by timestamp interpolation, never by row index**, estimates the
+command-to-feedback lag by cross-correlation, and writes
+`<run>_tracking.pdf` / `<run>_error.pdf` next to the CSV with an RMS/max
+error summary (raw and lag-compensated).
+
+### Measuring command-to-motion delay (one-time calibration)
+
+The pipeline's built-in reaction delay (command sent → arm starts moving)
+should be measured once per setup and reported separately, so it doesn't
+pollute tracking-error numbers. Procedure (hardware session — all safety
+rules above apply):
+
+1. Move the arm to a pose well inside the workspace, start `./controller`,
+   and let it hold for at least 2 seconds without typing anything.
+2. Type exactly one target: the printed hold position with **one axis
+   changed by +0.02 m** (2 cm keeps speeds trivial).
+3. Wait for "target reached" plus ~2 seconds, then Ctrl+C.
+4. `python3 scripts/measure_delay.py` — prints the time from the command
+   step to first motion above the noise floor, and the time to settle
+   within 1 mm. The script refuses runs that don't contain exactly one
+   clean step.
+
 ## Safety — read before every session
 
-- **The controller's explicit motion limit is a per-joint velocity clamp** — ≈71.6 deg/s
-  (joints 1–4) / ≈62.9 deg/s (joints 5–7) (`kQdotLimitDegS`, derived at
-  compile time in `Config.h` as 10% under the model limits). This is a
+- **The controller's explicit motion limit is a per-joint velocity clamp** — 79.6 deg/s
+  (joints 1–4) / 69.9 deg/s (joints 5–7) (`kQdotLimitDegS`, equal to
+  `kModelVelocityLimitsDegS` in `Config.h`). This is a
   client-side limit; the actuator firmware safeties are separate, and a
   stream that outruns them can fault mid-move.
   There is NO Cartesian velocity,
   acceleration, or workspace limiting (explicit design choice — see the
-  decision record). Speed is `Kp × error` up to the clamp, and a
-  saturated joint distorts the motion direction. Type nearby targets.
-- **No reachability check**: an unreachable target makes the controller
+  decision record). Speed is `Kp × error` up to the clamp. A far target
+  pins the clamp for the whole transit (allowed — the saturation stop was
+  removed 2026-07-23), and a saturated joint distorts the motion
+  direction: the arm drifts toward the target but NOT in a straight line.
+- **No reachability check**: an unreachable target (or an unreachable
+  cylinder waypoint) makes the controller
   push toward it until you retarget, stop, or the arm faults.
 - **Low-level servoing bypasses the robot's motion supervisor** — no
-  onboard planning or self-collision avoidance. The DLS solution moves all
-  7 joints; check the surroundings, not just the end-effector path.
+  onboard planning or self-collision avoidance. The optional cylinder
+  router constrains only the end-effector path; the DLS solution moves all
+  7 joints, so check the links and surroundings too.
 - This arm has **configured position limits far inside the factory range**
   (joint 4 near −19.6°, joint 6 near +36° — both found by faulting into
   them; check/adjust via the Kinova web dashboard). The controller does not

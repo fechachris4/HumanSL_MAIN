@@ -11,11 +11,12 @@ ReactivePose::ReactivePose(Dynamics& dynamics, PoseTargetStore& targets,
                            const ReactivePoseGains& gains, double arrival_tolerance_m,
                            const std::string& ee_frame_name,
                            const Eigen::Matrix<double, 7, 1>& null_midpoint_rad,
-                           const Eigen::Matrix<double, 7, 1>& null_centering_mask)
+                           const Eigen::Matrix<double, 7, 1>& null_centering_mask,
+                           const CylinderKeepout& cylinder_keepout)
     : dynamics_(dynamics), targets_(targets), gains_(gains),
       arrival_tolerance_m_(arrival_tolerance_m), ee_frame_(0), workspace_(dynamics),
       q_measured_rad_(7), null_midpoint_rad_(null_midpoint_rad),
-      null_centering_mask_(null_centering_mask)
+      null_centering_mask_(null_centering_mask), route_follower_(cylinder_keepout)
 {
     // Precondition: model_.nv == 7 — validated once in main.cpp.
     if (!dynamics.model_.existFrame(ee_frame_name))
@@ -33,6 +34,7 @@ void ReactivePose::Reset(const RobotState& state)
     targets_.Store(ee.position, ee.rotation);
     last_target_sequence_ = targets_.Get().sequence;
     arrival_reported_ = true;
+    route_follower_.Reset(ee.position);
 }
 
 Eigen::Matrix<double, 7, 1> ReactivePose::DesiredVelocity(const RobotState& state,
@@ -48,7 +50,20 @@ Eigen::Matrix<double, 7, 1> ReactivePose::DesiredVelocity(const RobotState& stat
 
     // Equation 1: pose error, reference minus actual (ReactiveLaw.h).
     const PoseTargetStore::Snapshot target = targets_.Get();
-    const Eigen::Vector3d e_pos = target.p_desired - ee.position;
+    if (target.sequence != last_target_sequence_) {
+        last_target_sequence_ = target.sequence;
+        arrival_reported_ = false;
+        route_follower_.SetTarget(ee.position, target.p_desired);
+        const CylinderRoute& route = route_follower_.route();
+        status.route_changed = route_follower_.enabled();
+        status.route_kind = route.kind;
+        status.route_target_adjusted = route.target_adjusted;
+        status.route_waypoint_count = route.size;
+        status.route_requested_target = route.requested_target;
+        status.route_effective_target = route.effective_target;
+    }
+    const Eigen::Vector3d routed_target = route_follower_.Update(ee.position);
+    const Eigen::Vector3d e_pos = routed_target - ee.position;
     const Eigen::Vector3d e_rot = RotationLog(target.rotation * ee.rotation.transpose());
 
     // Equation 2: twist error against a zero reference twist (static
@@ -59,18 +74,18 @@ Eigen::Matrix<double, 7, 1> ReactivePose::DesiredVelocity(const RobotState& stat
 
     // Arrival notice (position-based, like ResolvedRate): edge-triggered
     // data — the Runner prints.
-    if (target.sequence != last_target_sequence_) {
-        last_target_sequence_ = target.sequence;
-        arrival_reported_ = false;
-    }
-    if (!arrival_reported_ && e_pos.norm() < arrival_tolerance_m_) {
+    if (!arrival_reported_ && route_follower_.at_final_waypoint() &&
+        e_pos.norm() < arrival_tolerance_m_) {
         arrival_reported_ = true;
         status.arrived_edge = true;
         status.arrival_error_m = e_pos.norm();
     }
-    status.p_desired = target.p_desired;
+    status.p_desired = routed_target;
     status.p_current = ee.position;
     status.rot_error_rad = e_rot.norm();
+    status.tool_quat = Eigen::Quaterniond(ee.rotation);
+    if (status.tool_quat.w() < 0.0)
+        status.tool_quat.coeffs() = -status.tool_quat.coeffs();
 
     // σ_min of the FULL 6×7 task Jacobian — 6×6 self-adjoint solve, no
     // allocation (same construction as ResolvedRate's 3×3, decision 13).

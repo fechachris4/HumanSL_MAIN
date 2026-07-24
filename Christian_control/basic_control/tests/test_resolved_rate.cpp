@@ -82,6 +82,48 @@ int main()
     Check(std::abs(status2.sigma_min - sigma_ref) < 1e-12,
           "sigma_min matches the independent eigen-solve");
 
+    // Measured tool orientation: unit Hamilton quaternion, hemisphere-fixed
+    // to w >= 0, equal (up to the q/-q sign ambiguity) to the quaternion of
+    // the FK rotation at the same configuration.
+    Check((ee.rotation * ee.rotation.transpose() - Eigen::Matrix3d::Identity())
+                  .norm() < 1e-9,
+          "PositionJacobian.rotation is orthonormal");
+    Check(std::abs(status2.tool_quat.norm() - 1.0) < 1e-9,
+          "tool_quat has unit norm");
+    Check(status2.tool_quat.w() >= 0.0, "tool_quat is hemisphere-fixed (w >= 0)");
+    {
+        Eigen::Quaterniond fk_quat(ee.rotation);
+        if (fk_quat.w() < 0.0)
+            fk_quat.coeffs() = -fk_quat.coeffs();
+        Check((status2.tool_quat.coeffs() - fk_quat.coeffs()).norm() < 1e-9,
+              "tool_quat matches the FK rotation");
+    }
+
+    // Same checks at a second, distinct configuration (guards against the
+    // quaternion being stale or computed from the wrong q).
+    {
+        RobotState state_b = state;
+        for (int i = 0; i < 7; ++i)
+            state_b.q_rad[i] = -0.4 + 0.15 * i;
+        ControllerStatus status_b;
+        controller.DesiredVelocity(state_b, 0.01, status_b);
+
+        Eigen::VectorXd q_b(7);
+        for (int i = 0; i < 7; ++i)
+            q_b[i] = state_b.q_rad[i];
+        const Pose pose_b = forward_kinematics(
+            dynamics, dynamics.convertJointAnglesToConfig(q_b), "EndEffector_Link");
+        Eigen::Quaterniond fk_quat_b(pose_b.rotation);
+        if (fk_quat_b.w() < 0.0)
+            fk_quat_b.coeffs() = -fk_quat_b.coeffs();
+        Check(std::abs(status_b.tool_quat.norm() - 1.0) < 1e-9,
+              "tool_quat has unit norm at a second configuration");
+        Check(status_b.tool_quat.w() >= 0.0,
+              "tool_quat stays hemisphere-fixed at a second configuration");
+        Check((status_b.tool_quat.coeffs() - fk_quat_b.coeffs()).norm() < 1e-9,
+              "tool_quat matches forward_kinematics at a second configuration");
+    }
+
     // Arrival edge: a NEW target already within tolerance fires exactly once.
     targets.Store(status2.p_current);
     ControllerStatus status3;

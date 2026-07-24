@@ -17,6 +17,8 @@
 
 #include <Eigen/Dense>
 
+#include "control/CylinderRouter.h"
+
 struct RobotState {
     Eigen::Matrix<double, 7, 1> q_rad;      // measured joint positions
     Eigen::Matrix<double, 7, 1> qdot_rad_s; // measured joint velocities
@@ -32,6 +34,14 @@ struct ControllerStatus {
     Eigen::Vector3d p_current = Eigen::Vector3d::Zero(); // FK this cycle
     bool arrived_edge = false;    // first crossing under the tolerance
     double arrival_error_m = 0.0; // error norm at that crossing
+    // Edge-triggered route information when a new operator target is
+    // accepted. The Runner owns the corresponding operator print.
+    bool route_changed = false;
+    CylinderRouteKind route_kind = CylinderRouteKind::kDirect;
+    bool route_target_adjusted = false;
+    std::size_t route_waypoint_count = 0;
+    Eigen::Vector3d route_requested_target = Eigen::Vector3d::Zero();
+    Eigen::Vector3d route_effective_target = Eigen::Vector3d::Zero();
     // Smallest singular value of the task Jacobian (decision 13) — the
     // proximity-to-singularity signal, logged every cycle. NaN when the
     // law has no task Jacobian.
@@ -40,6 +50,16 @@ struct ControllerStatus {
     // evidence, logged every cycle. NaN when the law does not control
     // orientation (e.g. ResolvedRate).
     double rot_error_rad = std::numeric_limits<double>::quiet_NaN();
+    // MEASURED tool orientation from this cycle's FK: kEndEffectorFrame
+    // (the flange — no TCP offset) in the base frame. Hamilton convention,
+    // unit norm, hemisphere-fixed to w >= 0 so logged trajectories never
+    // jump sign. Telemetry only; NaN coefficients when the law exposes no
+    // tool frame.
+    Eigen::Quaterniond tool_quat{
+        std::numeric_limits<double>::quiet_NaN(),  // w
+        std::numeric_limits<double>::quiet_NaN(),  // x
+        std::numeric_limits<double>::quiet_NaN(),  // y
+        std::numeric_limits<double>::quiet_NaN()}; // z
 };
 
 // The controller: one Reset at takeover, then one DesiredVelocity per

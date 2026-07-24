@@ -143,7 +143,7 @@ int main(int argc, char** argv)
         PrintRobotState(initial, dynamics);
 
         // All logging memory is allocated here, before the loop starts.
-        // cycles per second = 1e6 / period_us (100 at the 100 Hz default)
+        // cycles per second = 1e6 / period_us (1000 at the 1 kHz default)
         LoopLog log(config::kLogCapacitySeconds *
                     (1'000'000 / static_cast<std::size_t>(config::kCyclePeriod.count())));
         TargetStore targets;          // resolved-rate (position only)
@@ -191,6 +191,17 @@ int main(int argc, char** argv)
 
         // Controller + actuation, constructed before the input thread: a bad
         // end-effector frame name must fail here, before any takeover.
+        CylinderKeepout cylinder_keepout;
+        cylinder_keepout.enabled = cfg.cylinder_keepout_enabled;
+        cylinder_keepout.center_xy_m =
+            Eigen::Vector2d(cfg.cylinder_keepout_center_x_m,
+                            cfg.cylinder_keepout_center_y_m);
+        cylinder_keepout.radius_m = cfg.cylinder_keepout_radius_m;
+        cylinder_keepout.z_min_m = cfg.cylinder_keepout_z_min_m;
+        cylinder_keepout.z_max_m = cfg.cylinder_keepout_z_max_m;
+        cylinder_keepout.clearance_m = cfg.cylinder_keepout_clearance_m;
+        cylinder_keepout.waypoint_tolerance_m =
+            cfg.cylinder_waypoint_tolerance_m;
         std::unique_ptr<Controller> controller;
         if (reactive) {
             ReactivePoseGains gains;
@@ -211,11 +222,12 @@ int main(int argc, char** argv)
             }
             controller = std::make_unique<ReactivePose>(
                 dynamics, pose_targets, gains, cfg.arrival_tolerance_m,
-                config::kEndEffectorFrame, midpoint_rad, centering_mask);
+                config::kEndEffectorFrame, midpoint_rad, centering_mask,
+                cylinder_keepout);
         } else {
             controller = std::make_unique<ResolvedRate>(
                 dynamics, targets, cfg.kp, cfg.dls_lambda, cfg.arrival_tolerance_m,
-                config::kEndEffectorFrame);
+                config::kEndEffectorFrame, cylinder_keepout);
         }
         PositionIntegration actuation;
 
@@ -241,8 +253,7 @@ int main(int argc, char** argv)
         // and restored inside the Runner, on every exit path (T2/D3).
         const StopPolicy stop_policy{
             config::kStopOnFault, cfg.nonfinite_stop_cycles,
-            cfg.saturation_stop_cycles, cfg.overrun_stop_cycles,
-            cfg.overrun_factor};
+            cfg.overrun_stop_cycles, cfg.overrun_factor};
         const LoopResult result = RunControlLoop(
             connection.base(), connection.base_cyclic(), *controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,

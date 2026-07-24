@@ -4,6 +4,7 @@
 
 #include "loop/Runner.h"
 
+#include "app/Config.h" // kReachRadiusM/kReachMarginM (telemetry flag only)
 #include "hardware/Cyclic.h"
 #include "math/Dls.h" // ClampedCycleDt
 #include "safety/FaultReport.h"
@@ -32,13 +33,19 @@ namespace
     void FillSample(LoopLogSample& s, const k_api::BaseCyclic::Feedback& fb,
                     const JointVector& commanded_deg,
                     const JointVector& commanded_velocity_deg_s,
-                    const Eigen::Vector3d& p_desired, const Eigen::Vector3d& p_current)
+                    const ControllerStatus& status)
     {
         for (int i = 0; i < 3; ++i)
         {
-            s.p_desired_m[i] = p_desired[i];
-            s.p_current_m[i] = p_current[i];
+            s.p_desired_m[i] = status.p_desired[i];
+            s.p_current_m[i] = status.p_current[i];
         }
+        s.sigma_min = status.sigma_min;
+        s.rot_error_rad = status.rot_error_rad;
+        for (int i = 0; i < 4; ++i)
+            s.tool_quat_xyzw[i] = status.tool_quat.coeffs()[i]; // Eigen order x,y,z,w
+        s.pd_beyond_reach = status.p_desired.norm() >
+                            config::kReachRadiusM - config::kReachMarginM;
         for (int i = 0; i < NUM_JOINTS; ++i)
         {
             const auto& a = fb.actuators(i);
@@ -174,6 +181,19 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
                 controller.DesiredVelocity(state, dt_s, status);
 
+            if (status.route_changed)
+            {
+                std::cout << "cylinder route: "
+                          << CylinderRouteKindName(status.route_kind) << ", "
+                          << status.route_waypoint_count << " waypoint"
+                          << (status.route_waypoint_count == 1 ? "" : "s");
+                if (status.route_target_adjusted)
+                    std::cout << "; requested target was inside the cylinder, "
+                              << "using nearest outside target "
+                              << status.route_effective_target.transpose() << " m";
+                std::cout << "\n";
+            }
+
             // Non-finite output never reaches the integrator: hold this
             // cycle and count it (decision 12).
             if (!qdot_raw_rad_s.allFinite())
@@ -194,35 +214,32 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
 
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
+            // A pinned clamp is allowed indefinitely (no saturation stop):
+            // far targets transit at clip speed by design.
             Eigen::Matrix<double, 7, 1> qdot_clamped_rad_s;
-            bool any_joint_saturated = false;
             for (int i = 0; i < NUM_JOINTS; ++i)
-            {
-                const double desired_deg_s = qdot_raw_rad_s[i] * kRadToDeg;
-                if (desired_deg_s < -qdot_limit_deg_s[i] ||
-                    desired_deg_s > qdot_limit_deg_s[i])
-                    any_joint_saturated = true;
                 qdot_clamped_rad_s[i] =
-                    std::clamp(desired_deg_s, -qdot_limit_deg_s[i],
-                               qdot_limit_deg_s[i]) *
+                    std::clamp(qdot_raw_rad_s[i] * kRadToDeg,
+                               -qdot_limit_deg_s[i], qdot_limit_deg_s[i]) *
                     kDegToRad;
-            }
-            counters.saturated = any_joint_saturated ? counters.saturated + 1 : 0;
             actuation.Apply(qdot_clamped_rad_s, dt_s, commanded_deg,
                             commanded_velocity_deg_s);
 
             // The one exchange: send this cycle's position command, receive
-            // the feedback the next iteration will use.
+            // the feedback the next iteration will use. Stamped on both
+            // sides so analysis can match command and feedback by clock.
+            const auto t_send = clock::now();
             feedback = cyclic.Send(commanded_deg);
+            const auto t_recv = clock::now();
             ++cycle;
 
             sample.t_s = state.t_s;
             sample.dt_s = std::chrono::duration<double>(t_now - t_prev).count();
+            sample.t_send_s = std::chrono::duration<double>(t_send - t_start).count();
+            sample.t_recv_s = std::chrono::duration<double>(t_recv - t_start).count();
             t_prev = t_now;
             FillSample(sample, feedback, commanded_deg, commanded_velocity_deg_s,
-                       status.p_desired, status.p_current);
-            sample.sigma_min = status.sigma_min;
-            sample.rot_error_rad = status.rot_error_rad;
+                       status);
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
 
