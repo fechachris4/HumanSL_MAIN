@@ -17,9 +17,18 @@
 // The merged, effective configuration, with per-key source tracking
 // ("compiled" / "toml" / "cli") for the startup echo and the CSV preamble.
 struct EffectiveConfig {
-    std::string controller = "resolved-rate"; // the only valid value today
+    std::string controller = "resolved-rate"; // or "reactive-pose"
     double kp = 0.0;                       // filled from config:: in ParseOptions
     double dls_lambda = 0.0;
+    // Reactive-pose law only (ignored by resolved-rate); kp above doubles as
+    // its position P gain.
+    double kp_rot = 0.0;
+    double kd_pos = 0.0;
+    double kd_rot = 0.0;
+    double null_gain = 0.0;
+    bool orientation_enabled = true;
+    bool velocity_term_enabled = false;
+    bool null_space_enabled = false;
     double following_error_limit_deg = 0.0;
     double arrival_tolerance_m = 0.0;
     int nonfinite_stop_cycles = 0;

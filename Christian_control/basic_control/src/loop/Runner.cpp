@@ -222,6 +222,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             FillSample(sample, feedback, commanded_deg, commanded_velocity_deg_s,
                        status.p_desired, status.p_current);
             sample.sigma_min = status.sigma_min;
+            sample.rot_error_rad = status.rot_error_rad;
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
 

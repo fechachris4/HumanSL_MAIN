@@ -48,4 +48,48 @@ private:
 // — this thread is not the control loop, terminal output is fine here.
 void RunTargetInput(TargetStore& store, const std::atomic<bool>& stop);
 
+// --- Pose targets (the reactive-pose controller) ---------------------------
+
+// One parsed pose-target line. `rotation` is empty when the operator typed
+// only a position — the stored orientation target is then kept as-is.
+struct PoseTarget {
+    Eigen::Vector3d p_desired;                // meters, base frame
+    std::optional<Eigen::Matrix3d> rotation;  // base frame; nullopt = keep
+};
+
+// Parse one stdin line as a desired end-effector pose: exactly 3 finite
+// numbers (x y z, METERS, base frame — orientation target unchanged) or
+// exactly 6 (x y z roll pitch yaw, RADIANS, R = Rz(yaw)·Ry(pitch)·Rx(roll)
+// — the simulation's convention). As with ParseCartesianTarget, there is
+// deliberately no reachability check.
+std::optional<PoseTarget> ParsePoseTarget(const std::string& line,
+                                          std::string& error);
+
+// The single shared desired pose, same pattern as TargetStore. StorePosition
+// updates the position while keeping the stored orientation — both under one
+// lock, so a concurrent snapshot never sees a torn pose.
+class PoseTargetStore
+{
+public:
+    struct Snapshot {
+        Eigen::Vector3d p_desired;   // meters, base frame
+        Eigen::Matrix3d rotation;    // desired orientation, base frame
+        std::uint64_t sequence;      // increments on every store
+    };
+
+    void Store(const Eigen::Vector3d& p_desired, const Eigen::Matrix3d& rotation);
+    void StorePosition(const Eigen::Vector3d& p_desired);
+    Snapshot Get() const;
+
+private:
+    mutable std::mutex mutex_;
+    Eigen::Vector3d p_desired_{0.0, 0.0, 0.0};
+    Eigen::Matrix3d rotation_ = Eigen::Matrix3d::Identity();
+    std::uint64_t sequence_ = 0;
+};
+
+// Thread body for pose targets — same polling/stop behaviour as
+// RunTargetInput.
+void RunPoseTargetInput(PoseTargetStore& store, const std::atomic<bool>& stop);
+
 #endif // HUMANSL_MASTERS_PROJECT_2025_TARGET_H

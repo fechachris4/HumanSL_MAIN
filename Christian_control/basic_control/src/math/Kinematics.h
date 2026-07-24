@@ -47,4 +47,18 @@ PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd
                                        pinocchio::FrameIndex frame_id,
                                        KinematicsWorkspace& workspace);
 
+// Full pose of `frame_id` and its 6×7 frame Jacobian (rows: linear x,y,z
+// then angular x,y,z; base frame, LOCAL_WORLD_ALIGNED), all from the SAME
+// configuration q_pin — the 6-DoF counterpart of position_and_jacobian for
+// the reactive pose controller. Requires model_.nv == 7 (checked at startup).
+struct PoseJacobian {
+    Eigen::Vector3d position;                // meters, base frame
+    Eigen::Matrix3d rotation;                // base-frame rotation matrix
+    Eigen::Matrix<double, 6, 7> jacobian;    // [linear; angular] × joints 1-7
+};
+
+PoseJacobian pose_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
+                               pinocchio::FrameIndex frame_id,
+                               KinematicsWorkspace& workspace);
+
 #endif // HUMANSL_MASTERS_PROJECT_2025_KINEMATICS_H

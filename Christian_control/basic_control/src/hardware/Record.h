@@ -41,6 +41,9 @@ struct LoopLogSample {
     bool refresh_ok = false; // false on the row logged when Refresh failed
     double sigma_min =       // smallest singular value of the task Jacobian
         std::numeric_limits<double>::quiet_NaN(); // (NaN: no task Jacobian)
+    double rot_error_rad =   // rotation-log error norm (reactive-pose law)
+        std::numeric_limits<double>::quiet_NaN(); // (NaN: law has no
+                                                  // orientation task)
 };
 
 // Fixed-capacity ring buffer, fully allocated in the constructor. push()

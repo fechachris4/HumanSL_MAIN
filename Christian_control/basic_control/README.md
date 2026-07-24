@@ -9,16 +9,27 @@ My controller for a **single Kinova Gen3 7-DoF** arm. It combines:
 
 It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
 
-The program is a resolved-rate Cartesian controller: it takes over the arm
-in low-level servoing (actuators in their default POSITION mode) and drives
-the end-effector toward positions typed on stdin:
+The program offers two control laws over the same loop: it takes over the
+arm in low-level servoing (actuators in their default POSITION mode) and
+drives the end-effector toward targets typed on stdin.
+
+`resolved-rate` (default) — position-only:
 
     e = p_desired − p(q_measured);   v_d = Kp · e
     q̇_raw = Jpᵀ (Jp Jpᵀ + λ² I₃)⁻¹ v_d      (damped least squares)
     q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (71.6 deg/s joints 1–4, 62.9 joints 5–7)
     q_command += q̇_clipped · dt              (persistent integrator)
 
-with q_command streamed as position setpoints at 100 Hz. Low-level VELOCITY
+`reactive-pose` (`--controller reactive-pose`) — full 6-DoF pose, ported
+from the simulation (msc_project) and cross-validated against it
+(`../docs/decisions/reactive-pose-port.md`):
+
+    e_pos = p_desired − p(q);   e_rot = log3(R_desired · R(q)ᵀ)
+    ẋ = Kp·e_pose [+ Kd·e_twist, default off]
+    q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, default off]
+
+then the same clamp and integrator. In both cases q_command is streamed as
+position setpoints at 100 Hz. Low-level VELOCITY
 mode was tried and abandoned — the actuator's inner velocity loop has no
 gravity compensation (hardware evidence + Kinova kortex issues
 #42/#93/#156). Design: `../docs/decisions/resolved-rate-position-integration.md`;
@@ -121,6 +132,12 @@ file is self-describing. Safety policy is not runtime-configurable.
    ```
    0.45 0.10 0.30
    ```
+
+   With `--controller reactive-pose` a 3-number line moves the position
+   target and keeps the current orientation target; a 6-number line
+   `x y z roll pitch yaw` (radians, R = Rz(yaw)·Ry(pitch)·Rx(roll)) sets
+   both. The arrival notice is position-based in both laws; judge
+   orientation convergence from the CSV's `rot_error_rad` column.
 
    The end-effector moves toward it at `Kp × distance` (1.0 /s × error —
    e.g. a 10 cm error starts at 0.1 m/s and slows exponentially as it

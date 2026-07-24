@@ -6,10 +6,12 @@
  *     -> connect (TCP + UDP, Connect)
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
- *     -> start the desired-position input thread (stdin: x y z, meters)
+ *     -> start the desired-target input thread (stdin: x y z meters, plus
+ *        roll pitch yaw radians for the reactive-pose law)
  *     -> run the control loop (loop/Runner.cpp — MOVES THE ARM: takeover
- *        sequence T1-T6, ResolvedRate controller + PositionIntegration
- *        actuation, single-level servoing restored on every exit path)
+ *        sequence T1-T6, the selected controller (ResolvedRate or
+ *        ReactivePose) + PositionIntegration actuation, single-level
+ *        servoing restored on every exit path)
  *     -> stop the input thread, write the loop log to CSV
  *     -> RAII teardown, exit 0 only on a clean operator stop.
  *
@@ -22,12 +24,14 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <thread>
 #include <tuple>
 
 #include "app/Config.h"
 #include "app/Options.h"
 #include "actuation/PositionIntegration.h"
+#include "control/ReactivePose.h"
 #include "control/ResolvedRate.h"
 #include "control/Target.h"
 #include "hardware/Connect.h"
@@ -140,12 +144,24 @@ int main(int argc, char** argv)
         // cycles per second = 1e6 / period_us (100 at the 100 Hz default)
         LoopLog log(config::kLogCapacitySeconds *
                     (1'000'000 / static_cast<std::size_t>(config::kCyclePeriod.count())));
-        TargetStore targets;
+        TargetStore targets;          // resolved-rate (position only)
+        PoseTargetStore pose_targets; // reactive-pose (position + orientation)
+        const bool reactive = cfg.controller == "reactive-pose";
 
-        std::cout << "type a desired end-effector position (x y z, meters, base frame) and "
-                     "press Enter; Ctrl+C to stop\n"
-                  << "resolved-rate position integration at " << config::kControlFrequencyHz
-                  << " Hz (full settings echoed above and in the CSV preamble)\n";
+        if (reactive)
+            std::cout << "type a desired end-effector target and press Enter; Ctrl+C to "
+                         "stop:\n"
+                         "  x y z                  (meters, base frame; orientation target "
+                         "unchanged)\n"
+                         "  x y z roll pitch yaw   (meters + radians, R = Rz·Ry·Rx, base "
+                         "frame)\n"
+                      << "reactive-pose position integration at " << config::kControlFrequencyHz
+                      << " Hz (full settings echoed above and in the CSV preamble)\n";
+        else
+            std::cout << "type a desired end-effector position (x y z, meters, base frame) and "
+                         "press Enter; Ctrl+C to stop\n"
+                      << "resolved-rate position integration at " << config::kControlFrequencyHz
+                      << " Hz (full settings echoed above and in the CSV preamble)\n";
         // Open the run's CSV BEFORE the takeover: a hardware run must never
         // end with zero evidence because the file could not be created. The
         // '#' config preamble makes every data file self-describing (F3).
@@ -161,12 +177,38 @@ int main(int argc, char** argv)
 
         // Controller + actuation, constructed before the input thread: a bad
         // end-effector frame name must fail here, before any takeover.
-        ResolvedRate controller(dynamics, targets, cfg.kp, cfg.dls_lambda,
-                                cfg.arrival_tolerance_m,
-                                config::kEndEffectorFrame);
+        std::unique_ptr<Controller> controller;
+        if (reactive) {
+            ReactivePoseGains gains;
+            gains.kp_position_s_inv = cfg.kp;
+            gains.kp_rotation_s_inv = cfg.kp_rot;
+            gains.kd_position = cfg.kd_pos;
+            gains.kd_rotation = cfg.kd_rot;
+            gains.null_gain_s_inv = cfg.null_gain;
+            gains.dls_lambda = cfg.dls_lambda;
+            gains.orientation_enabled = cfg.orientation_enabled;
+            gains.velocity_enabled = cfg.velocity_term_enabled;
+            gains.null_space_enabled = cfg.null_space_enabled;
+            Eigen::Matrix<double, 7, 1> midpoint_rad;
+            Eigen::Matrix<double, 7, 1> centering_mask;
+            for (int i = 0; i < 7; ++i) {
+                midpoint_rad[i] = config::kNullMidpointDeg[i] * M_PI / 180.0;
+                centering_mask[i] = config::kNullCenteringMask[i];
+            }
+            controller = std::make_unique<ReactivePose>(
+                dynamics, pose_targets, gains, cfg.arrival_tolerance_m,
+                config::kEndEffectorFrame, midpoint_rad, centering_mask);
+        } else {
+            controller = std::make_unique<ResolvedRate>(
+                dynamics, targets, cfg.kp, cfg.dls_lambda, cfg.arrival_tolerance_m,
+                config::kEndEffectorFrame);
+        }
         PositionIntegration actuation;
 
-        std::thread input_thread(RunTargetInput, std::ref(targets), std::cref(g_stop));
+        std::thread input_thread =
+            reactive
+                ? std::thread(RunPoseTargetInput, std::ref(pose_targets), std::cref(g_stop))
+                : std::thread(RunTargetInput, std::ref(targets), std::cref(g_stop));
         InputThreadJoiner input_thread_joiner{input_thread};
 
         // MOVES THE ARM (toward typed positions): servoing mode is entered
@@ -176,7 +218,7 @@ int main(int argc, char** argv)
             cfg.saturation_stop_cycles, cfg.overrun_stop_cycles,
             cfg.overrun_factor};
         const LoopResult result = RunControlLoop(
-            connection.base(), connection.base_cyclic(), controller, actuation,
+            connection.base(), connection.base_cyclic(), *controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
             cfg.following_error_limit_deg, stop_policy, robot_ready);
 

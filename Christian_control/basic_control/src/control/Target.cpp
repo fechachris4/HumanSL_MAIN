@@ -5,6 +5,7 @@
 
 #include "control/Target.h"
 
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <sstream>
@@ -72,5 +73,102 @@ void RunTargetInput(TargetStore& store, const std::atomic<bool>& stop)
         store.Store(*p_desired);
         std::cout << "desired position accepted: " << p_desired->x() << " " << p_desired->y()
                   << " " << p_desired->z() << " (m, base frame)\n";
+    }
+}
+
+// --- Pose targets (the reactive-pose controller) ---------------------------
+
+std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& error)
+{
+    std::istringstream in(line);
+    std::array<double, 6> values{};
+    int count = 0;
+    while (count < 6 && in >> values[count]) {
+        if (!std::isfinite(values[count])) {
+            error = "number " + std::to_string(count + 1) + " is not finite";
+            return std::nullopt;
+        }
+        ++count;
+    }
+    in.clear(); // a failed 4th/7th extraction must not hide trailing text
+    std::string trailing;
+    if (in >> trailing) {
+        error = "expected 3 (x y z) or 6 (x y z roll pitch yaw) numbers";
+        return std::nullopt;
+    }
+    if (count != 3 && count != 6) {
+        error = "expected 3 numbers (x y z, meters, base frame) or 6 "
+                "(x y z meters + roll pitch yaw, radians)";
+        return std::nullopt;
+    }
+
+    PoseTarget target;
+    target.p_desired = Eigen::Vector3d(values[0], values[1], values[2]);
+    if (count == 6) {
+        // R = Rz(yaw) · Ry(pitch) · Rx(roll) — the simulation's convention
+        // (msc_project controller/transforms.py rotation_from_rpy).
+        const double roll = values[3];
+        const double pitch = values[4];
+        const double yaw = values[5];
+        target.rotation = (Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+                           Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+                           Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()))
+                              .toRotationMatrix();
+    }
+    return target;
+}
+
+void PoseTargetStore::Store(const Eigen::Vector3d& p_desired,
+                            const Eigen::Matrix3d& rotation)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    p_desired_ = p_desired;
+    rotation_ = rotation;
+    ++sequence_;
+}
+
+void PoseTargetStore::StorePosition(const Eigen::Vector3d& p_desired)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    p_desired_ = p_desired;
+    ++sequence_;
+}
+
+PoseTargetStore::Snapshot PoseTargetStore::Get() const
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return Snapshot{p_desired_, rotation_, sequence_};
+}
+
+void RunPoseTargetInput(PoseTargetStore& store, const std::atomic<bool>& stop)
+{
+    std::string line;
+    while (!stop) {
+        struct pollfd stdin_fd = {STDIN_FILENO, POLLIN, 0};
+        int ready = poll(&stdin_fd, 1, 100);
+        if (ready <= 0)
+            continue;
+        if (!std::getline(std::cin, line))
+            break; // stdin closed (EOF) — no more targets can arrive
+        if (line.empty())
+            continue;
+
+        std::string error;
+        std::optional<PoseTarget> target = ParsePoseTarget(line, error);
+        if (!target) {
+            std::cout << "target rejected: " << error << "\n";
+            continue;
+        }
+        if (target->rotation) {
+            store.Store(target->p_desired, *target->rotation);
+            std::cout << "desired pose accepted: " << target->p_desired.x() << " "
+                      << target->p_desired.y() << " " << target->p_desired.z()
+                      << " (m) + orientation (base frame)\n";
+        } else {
+            store.StorePosition(target->p_desired);
+            std::cout << "desired position accepted: " << target->p_desired.x() << " "
+                      << target->p_desired.y() << " " << target->p_desired.z()
+                      << " (m, base frame; orientation target unchanged)\n";
+        }
     }
 }
