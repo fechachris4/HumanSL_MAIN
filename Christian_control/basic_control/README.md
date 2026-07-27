@@ -60,7 +60,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   model limits), `kStopOnFault` (compile-time only), `kEndEffectorFrame`,
   supervisor counter limits, log capacity
 - `src/app/Options.*` — runtime overrides, precedence CLI > TOML >
-  compiled (gains, thresholds, controller/input and cylinder route;
+  compiled (gains, thresholds, controller/input selection;
   never fault-stop policy): `../docs/decisions/runtime-config.md`
 - `src/hardware/Connect.*` — RAII: both Kortex sessions (TCP 10000 +
   real-time UDP 10001)
@@ -83,8 +83,6 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 - `src/control/Controller.h` — the controller interface (`RobotState`,
   arm-feedback-only by hard rule; pure computation, no I/O)
 - `src/control/ResolvedRate.*` — the Cartesian control law (see above)
-- `src/control/CylinderRouter.*` — fixed-size Cartesian end-effector
-  waypoint routing around one configured vertical cylinder
 - `src/control/Target.*` — desired end-effector position: stdin thread,
   parsing (3 finite numbers; deliberately no reachability check), latest-
   value store
@@ -128,27 +126,6 @@ that file: during a run, edit and save it with one line — `x y z` or
 `x y z roll pitch yaw` — and the arm retargets, same as typing on stdin
 (latest source wins). The file's content at startup is deliberately
 ignored: a stale target file never starts a motion.
-
-### Cylinder keep-out routing
-
-Set the measured cylinder in `config/control.toml` and change
-`cylinder_keepout_enabled` to `true`. The centre, radius and height are in
-meters in the robot base frame. `cylinder_keepout_clearance_m` inflates
-the cylinder in radius and height.
-
-For each new target, the controller uses the direct segment when it is
-clear. If it crosses the cylinder, it evaluates clockwise,
-counter-clockwise and over-the-top waypoint routes and follows the shortest
-one. It does not refuse the move. A requested target inside the inflated
-cylinder is moved radially to the nearest outside route point, and the
-operator message reports the effective target. The same routing is used by
-`resolved-rate` and `reactive-pose`.
-
-This is deliberately the practical lightweight version: it routes the
-controlled end-effector point. It does not model the links, elbow, gripper
-shape, self-collision, moving people, reachability or joint limits. Measure
-the cylinder conservatively and first test with low gain and an empty
-workspace.
 
 Every run echoes its full effective configuration (each value tagged
 compiled/default/toml/cli, plus which config file was loaded) and embeds
@@ -239,13 +216,12 @@ rules above apply):
   pins the clamp for the whole transit (allowed — the saturation stop was
   removed 2026-07-23), and a saturated joint distorts the motion
   direction: the arm drifts toward the target but NOT in a straight line.
-- **No reachability check**: an unreachable target (or an unreachable
-  cylinder waypoint) makes the controller
+- **No reachability check**: an unreachable target makes the controller
   push toward it until you retarget, stop, or the arm faults.
 - **Low-level servoing bypasses the robot's motion supervisor** — no
-  onboard planning or self-collision avoidance. The optional cylinder
-  router constrains only the end-effector path; the DLS solution moves all
-  7 joints, so check the links and surroundings too.
+  onboard planning, obstacle avoidance or self-collision avoidance. The
+  end effector travels the straight line to the target and the DLS solution
+  moves all 7 joints, so check the links and surroundings too.
 - This arm has **configured position limits far inside the factory range**
   (joint 4 near −19.6°, joint 6 near +36° — both found by faulting into
   them; check/adjust via the Kinova web dashboard). The controller does not

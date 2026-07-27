@@ -67,7 +67,6 @@ add_executable(controller
         src/math/Kinematics.cpp
         src/control/ResolvedRate.cpp
         src/control/ReactivePose.cpp
-        src/control/CylinderRouter.cpp
         src/control/Target.cpp
         src/loop/Runner.cpp
         src/hardware/Record.cpp
@@ -129,7 +128,6 @@ target_link_libraries(query_limits
 enable_testing()
 add_executable(test_control_logic
         tests/test_control_logic.cpp
-        src/control/CylinderRouter.cpp
         src/control/Target.cpp
         src/actuation/PositionIntegration.cpp
 )
@@ -177,7 +175,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
 
     add_executable(test_resolved_rate
             tests/test_resolved_rate.cpp
-            src/control/CylinderRouter.cpp
             src/control/ResolvedRate.cpp
             src/control/Target.cpp
             src/math/Kinematics.cpp
@@ -207,7 +204,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(replay_controller
             tests/replay_controller.cpp
             src/actuation/PositionIntegration.cpp
-            src/control/CylinderRouter.cpp
             src/control/ResolvedRate.cpp
             src/control/Target.cpp
             src/math/Kinematics.cpp

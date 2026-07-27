@@ -191,17 +191,6 @@ int main(int argc, char** argv)
 
         // Controller + actuation, constructed before the input thread: a bad
         // end-effector frame name must fail here, before any takeover.
-        CylinderKeepout cylinder_keepout;
-        cylinder_keepout.enabled = cfg.cylinder_keepout_enabled;
-        cylinder_keepout.center_xy_m =
-            Eigen::Vector2d(cfg.cylinder_keepout_center_x_m,
-                            cfg.cylinder_keepout_center_y_m);
-        cylinder_keepout.radius_m = cfg.cylinder_keepout_radius_m;
-        cylinder_keepout.z_min_m = cfg.cylinder_keepout_z_min_m;
-        cylinder_keepout.z_max_m = cfg.cylinder_keepout_z_max_m;
-        cylinder_keepout.clearance_m = cfg.cylinder_keepout_clearance_m;
-        cylinder_keepout.waypoint_tolerance_m =
-            cfg.cylinder_waypoint_tolerance_m;
         std::unique_ptr<Controller> controller;
         if (reactive) {
             ReactivePoseGains gains;
@@ -222,12 +211,11 @@ int main(int argc, char** argv)
             }
             controller = std::make_unique<ReactivePose>(
                 dynamics, pose_targets, gains, cfg.arrival_tolerance_m,
-                config::kEndEffectorFrame, midpoint_rad, centering_mask,
-                cylinder_keepout);
+                config::kEndEffectorFrame, midpoint_rad, centering_mask);
         } else {
             controller = std::make_unique<ResolvedRate>(
                 dynamics, targets, cfg.kp, cfg.dls_lambda, cfg.arrival_tolerance_m,
-                config::kEndEffectorFrame, cylinder_keepout);
+                config::kEndEffectorFrame);
         }
         PositionIntegration actuation;
 

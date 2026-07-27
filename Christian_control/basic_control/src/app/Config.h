@@ -18,7 +18,7 @@ namespace config
     // Robot connection. Both Kortex sessions (TCP + UDP, see Connect.h) log
     // in with the same credentials; timeouts are what the base waits before
     // dropping an idle session/connection.
-    inline constexpr const char* kRobotIp = "192.168.1.9";
+    inline constexpr const char* kRobotIp = "192.168.1.10";
     inline constexpr const char* kSessionUsername = "admin";
     inline constexpr const char* kSessionPassword = "admin";
     inline constexpr int kSessionInactivityTimeoutMs = 60000;
@@ -144,21 +144,6 @@ namespace config
     // this scale, the notice may come late or not at all (raise it back
     // toward 5 mm in that case).
     inline constexpr double kArrivalToleranceM = 0.001;
-
-    // Optional Cartesian end-effector keep-out cylinder. When enabled, a
-    // direct target segment that crosses this vertical cylinder is replaced
-    // by the shortest of clockwise, counter-clockwise and over-the-top
-    // waypoint routes. A requested target inside it is moved to the nearest
-    // point just outside rather than rejected. This is end-effector path
-    // routing, not whole-arm collision checking (CylinderRouter.h).
-    inline constexpr bool kCylinderKeepoutEnabled = false;
-    inline constexpr double kCylinderKeepoutCenterXM = 0.0;
-    inline constexpr double kCylinderKeepoutCenterYM = 0.0;
-    inline constexpr double kCylinderKeepoutRadiusM = 0.25;
-    inline constexpr double kCylinderKeepoutZMinM = 0.0;
-    inline constexpr double kCylinderKeepoutZMaxM = 1.8;
-    inline constexpr double kCylinderKeepoutClearanceM = 0.10;
-    inline constexpr double kCylinderWaypointToleranceM = 0.01;
 
     // Loop log: preallocated ring buffer, most recent kLogCapacitySeconds
     // kept on very long runs; written to one timestamped CSV after the loop.

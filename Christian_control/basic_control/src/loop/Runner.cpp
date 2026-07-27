@@ -181,19 +181,6 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
                 controller.DesiredVelocity(state, dt_s, status);
 
-            if (status.route_changed)
-            {
-                std::cout << "cylinder route: "
-                          << CylinderRouteKindName(status.route_kind) << ", "
-                          << status.route_waypoint_count << " waypoint"
-                          << (status.route_waypoint_count == 1 ? "" : "s");
-                if (status.route_target_adjusted)
-                    std::cout << "; requested target was inside the cylinder, "
-                              << "using nearest outside target "
-                              << status.route_effective_target.transpose() << " m";
-                std::cout << "\n";
-            }
-
             // Non-finite output never reaches the integrator: hold this
             // cycle and count it (decision 12).
             if (!qdot_raw_rad_s.allFinite())

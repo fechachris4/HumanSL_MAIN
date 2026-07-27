@@ -10,7 +10,6 @@
 #include <string>
 
 #include "actuation/PositionIntegration.h"
-#include "control/CylinderRouter.h"
 #include "control/Target.h"
 #include "math/Dls.h"
 
@@ -154,82 +153,6 @@ namespace
               "tracking error shifts the measurement to within ±180 deg");
     }
 
-    void TestCylinderRouter()
-    {
-        CylinderKeepout keepout;
-        keepout.enabled = true;
-        keepout.center_xy_m = Eigen::Vector2d::Zero();
-        keepout.radius_m = 0.5;
-        keepout.clearance_m = 0.1;
-        keepout.z_min_m = 0.0;
-        keepout.z_max_m = 2.0;
-        keepout.waypoint_tolerance_m = 0.01;
-        CylinderRouter router(keepout);
-
-        const Eigen::Vector3d left(-1.0, 0.0, 1.0);
-        const Eigen::Vector3d right(1.0, 0.0, 1.0);
-        Check(router.SegmentIntersects(left, right),
-              "segment through cylinder is detected");
-        Check(!router.SegmentIntersects(Eigen::Vector3d(-1.0, 0.0, 2.11),
-                                        Eigen::Vector3d(1.0, 0.0, 2.11)),
-              "segment above cylinder is clear");
-
-        const CylinderRoute detour = router.Plan(left, right);
-        Check(detour.kind != CylinderRouteKind::kDirect,
-              "crossing target gets an automatic detour");
-        Check(detour.size > 1, "detour contains intermediate waypoints");
-        Check((detour.effective_target - right).norm() < 1e-12,
-              "outside target is unchanged");
-        Eigen::Vector3d previous = left;
-        for (std::size_t i = 0; i < detour.size; ++i) {
-            Check(!router.SegmentIntersects(previous, detour.waypoints[i]),
-                  "each detour segment stays outside the cylinder");
-            previous = detour.waypoints[i];
-        }
-
-        const Eigen::Vector3d inside(0.1, 0.0, 1.0);
-        const CylinderRoute adjusted = router.Plan(left, inside);
-        Check(adjusted.target_adjusted,
-              "target inside cylinder is adjusted, not refused");
-        Check((adjusted.effective_target.head<2>() - keepout.center_xy_m).norm() >
-                  keepout.radius_m + keepout.clearance_m,
-              "adjusted target is outside radius plus clearance");
-        const CylinderRoute boundary =
-            router.Plan(left, Eigen::Vector3d(0.6, 0.0, 1.0));
-        Check(boundary.target_adjusted,
-              "target exactly on inflated boundary is moved outside");
-
-        CylinderKeepout low = keepout;
-        low.z_max_m = 0.2;
-        const CylinderRouter low_router(low);
-        const Eigen::Vector3d low_left(-1.0, 0.0, 0.1);
-        const Eigen::Vector3d low_right(1.0, 0.0, 0.1);
-        const CylinderRoute over = low_router.Plan(low_left, low_right);
-        Check(over.kind == CylinderRouteKind::kOver,
-              "short over-the-top route is selected when appropriate");
-        previous = low_left;
-        for (std::size_t i = 0; i < over.size; ++i) {
-            Check(!low_router.SegmentIntersects(previous, over.waypoints[i]),
-                  "each over-the-top segment stays outside the cylinder");
-            previous = over.waypoints[i];
-        }
-
-        CylinderKeepout disabled = keepout;
-        disabled.enabled = false;
-        const CylinderRoute direct = CylinderRouter(disabled).Plan(left, right);
-        Check(direct.kind == CylinderRouteKind::kDirect && direct.size == 1,
-              "disabled keep-out preserves direct motion");
-
-        CylinderRouteFollower follower(keepout);
-        follower.Reset(left);
-        follower.SetTarget(left, right);
-        Eigen::Vector3d waypoint = follower.Update(left);
-        Check((waypoint - right).norm() > 1e-6,
-              "follower first commands a detour waypoint");
-        waypoint = follower.Update(waypoint);
-        Check(waypoint.allFinite(), "follower advances without refusing motion");
-    }
-
 } // namespace
 
 int main()
@@ -239,7 +162,6 @@ int main()
     TestParseCartesianTarget();
     TestTargetStore();
     TestPositionIntegration();
-    TestCylinderRouter();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

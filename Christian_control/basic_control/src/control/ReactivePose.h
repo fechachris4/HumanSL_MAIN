@@ -30,8 +30,7 @@ public:
                  const ReactivePoseGains& gains, double arrival_tolerance_m,
                  const std::string& ee_frame_name,
                  const Eigen::Matrix<double, 7, 1>& null_midpoint_rad,
-                 const Eigen::Matrix<double, 7, 1>& null_centering_mask,
-                 const CylinderKeepout& cylinder_keepout = {});
+                 const Eigen::Matrix<double, 7, 1>& null_centering_mask);
 
     // Seeds the desired pose with the CURRENT end-effector pose (position
     // AND orientation), so the controller holds until the operator types a
@@ -55,7 +54,6 @@ private:
     Eigen::VectorXd q_measured_rad_; // preallocated deg->model boundary buffer
     Eigen::Matrix<double, 7, 1> null_midpoint_rad_;
     Eigen::Matrix<double, 7, 1> null_centering_mask_;
-    CylinderRouteFollower route_follower_;
 
     // Arrival notice state: armed only when the target sequence changes, so
     // the seeded hold target never fires and each typed target fires once.
