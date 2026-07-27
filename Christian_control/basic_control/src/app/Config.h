@@ -18,7 +18,7 @@ namespace config
     // Robot connection. Both Kortex sessions (TCP + UDP, see Connect.h) log
     // in with the same credentials; timeouts are what the base waits before
     // dropping an idle session/connection.
-    inline constexpr const char* kRobotIp = "192.168.1.10";
+    inline constexpr const char* kRobotIp = "192.168.1.9";
     inline constexpr const char* kSessionUsername = "admin";
     inline constexpr const char* kSessionPassword = "admin";
     inline constexpr int kSessionInactivityTimeoutMs = 60000;
@@ -72,7 +72,7 @@ namespace config
     inline constexpr double kKpRotation = 1.0; // 1/s on the rotation-log error
     inline constexpr double kKdPosition = 0.3; // on the linear-velocity error
     inline constexpr double kKdRotation = 0.3; // on the angular-velocity error
-    inline constexpr double kNullGain = 1.0;   // 1/s on the centering error
+    inline constexpr double kNullGain = 1.0; // 1/s on the centering error
     inline constexpr bool kOrientationEnabled = true;
     inline constexpr bool kVelocityTermEnabled = false; // Kd term
     inline constexpr bool kNullSpaceEnabled = false;
