@@ -8,26 +8,17 @@
 
 #include <algorithm>
 #include <cmath>
-#include <stdexcept>
-
-ResolvedRate::ResolvedRate(Dynamics& dynamics, TargetStore& targets, double kp,
-                           double dls_lambda, double arrival_tolerance_m,
-                           const std::string& ee_frame_name)
-    : dynamics_(dynamics), targets_(targets), kp_(kp), dls_lambda_(dls_lambda),
-      arrival_tolerance_m_(arrival_tolerance_m), ee_frame_(0),
-      workspace_(dynamics), q_measured_rad_(7)
-{
-    // Precondition: model_.nv == 7 — validated once in main.cpp.
-    if (!dynamics.model_.existFrame(ee_frame_name))
-        throw std::runtime_error("no frame named '" + ee_frame_name + "' in the model");
-    ee_frame_ = dynamics.model_.getFrameId(ee_frame_name);
-}
+ResolvedRate::ResolvedRate(DualArmKinematics& model, TargetStore& targets, double kp,
+                           double dls_lambda, double arrival_tolerance_m)
+    : model_(model), targets_(targets), kp_(kp), dls_lambda_(dls_lambda),
+      arrival_tolerance_m_(arrival_tolerance_m),
+      workspace_(model.dynamics())
+{}
 
 void ResolvedRate::Reset(const RobotState& state)
 {
-    const PositionJacobian ee = position_and_jacobian(
-        dynamics_, dynamics_.convertJointAnglesToConfig(state.q_rad), ee_frame_,
-        workspace_);
+    const PositionJacobian ee =
+        model_.RightPositionAndJacobian(state.q_rad, workspace_);
     targets_.Store(ee.position); // anything typed before takeover is discarded
     last_target_sequence_ = targets_.Get().sequence;
     arrival_reported_ = true;
@@ -37,12 +28,10 @@ Eigen::Matrix<double, 7, 1> ResolvedRate::DesiredVelocity(const RobotState& stat
                                                           double /*dt_s*/,
                                                           ControllerStatus& status)
 {
-    // FK and Jacobian use the SAME q_measured.
-    for (int i = 0; i < 7; ++i)
-        q_measured_rad_[i] = state.q_rad[i];
-    const PositionJacobian ee = position_and_jacobian(
-        dynamics_, dynamics_.convertJointAnglesToConfig(q_measured_rad_), ee_frame_,
-        workspace_);
+    // The adapter composes the SAME full q from measured right joints and the
+    // fixed left nominal, then selects only the right 7 Jacobian columns.
+    const PositionJacobian ee =
+        model_.RightPositionAndJacobian(state.q_rad, workspace_);
 
     // e = p_desired - p(q_measured);  v_d = Kp e;  q̇_raw = DLS(Jp, v_d).
     const TargetStore::Snapshot target = targets_.Get();

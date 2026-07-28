@@ -11,24 +11,20 @@
 #define HUMANSL_MASTERS_PROJECT_2025_REACTIVEPOSE_H
 
 #include <cstdint>
-#include <string>
-
 #include "control/Controller.h"
 #include "control/ReactiveLaw.h"
 #include "control/Target.h"
-#include "math/Kinematics.h"
-#include "Dynamics.h"
+#include "math/DualArmKinematics.h"
 
 class ReactivePose : public Controller
 {
 public:
-    // Validates the frame name against the model (throws, before any
-    // takeover can happen) and preallocates the kinematics workspace.
+    // The model adapter is validated before any hardware connection and
+    // exposes only the selected right-arm 6x7 Jacobian.
     // midpoint/mask: the null-space centering configuration (radians; mask
     // 1 = joint centers, 0 = never — the Gen3's continuous joints).
-    ReactivePose(Dynamics& dynamics, PoseTargetStore& targets,
+    ReactivePose(DualArmKinematics& model, PoseTargetStore& targets,
                  const ReactivePoseGains& gains, double arrival_tolerance_m,
-                 const std::string& ee_frame_name,
                  const Eigen::Matrix<double, 7, 1>& null_midpoint_rad,
                  const Eigen::Matrix<double, 7, 1>& null_centering_mask);
 
@@ -45,13 +41,11 @@ public:
                                                 ControllerStatus& status) override;
 
 private:
-    Dynamics& dynamics_;
+    DualArmKinematics& model_;
     PoseTargetStore& targets_;
     ReactivePoseGains gains_;
     double arrival_tolerance_m_;
-    pinocchio::FrameIndex ee_frame_;
     KinematicsWorkspace workspace_;
-    Eigen::VectorXd q_measured_rad_; // preallocated deg->model boundary buffer
     Eigen::Matrix<double, 7, 1> null_midpoint_rad_;
     Eigen::Matrix<double, 7, 1> null_centering_mask_;
 

@@ -5,7 +5,7 @@
  * soft limits the base enforces (joint speeds in deg/s). Never sends motion
  * commands and ignores config::kStartupMode entirely.
  *
- * Usage: ./query_limits   (no flags — robot IP comes from Config.h)
+ * Usage: ./query_limits   (no flags — right-arm hardware only)
  */
 
 #include <iostream>
@@ -33,7 +33,7 @@ static void print_limits(const ctl::KinematicLimits& limits, const std::string& 
 int main()
 {
     try {
-        Connect connection(config::kRobotIp);
+        Connect connection(config::kRightRobotIp);
         ctl::ControlConfigClient config(connection.router());
 
         print_limits(config.GetKinematicHardLimits(), "HARD limits (robot capability):");

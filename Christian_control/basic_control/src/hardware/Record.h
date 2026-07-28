@@ -48,7 +48,7 @@ struct LoopLogSample {
     double dt_s = 0.0; // since previous cycle
     double t_send_s = 0.0; // just before cyclic.Send
     double t_recv_s = 0.0; // just after Send returned
-    double p_desired_m[3] = {0, 0, 0}; // operator target (base frame)
+    double p_desired_m[3] = {0, 0, 0}; // dual-model world/common mount frame
     double p_current_m[3] = {0, 0, 0}; // FK of this cycle's measured q
     JointVector commanded_deg{};   // integrated position command (sent)
     JointVector commanded_velocity_deg_s{}; // clipped q̇ fed to the integrator
@@ -68,13 +68,12 @@ struct LoopLogSample {
     double rot_error_rad =   // rotation-log error norm (reactive-pose law)
         std::numeric_limits<double>::quiet_NaN(); // (NaN: law has no
                                                   // orientation task)
-    double tool_quat_xyzw[4] = { // measured tool orientation, base frame,
+    double tool_quat_xyzw[4] = { // measured tool orientation, common frame,
         std::numeric_limits<double>::quiet_NaN(), // Hamilton, w >= 0
         std::numeric_limits<double>::quiet_NaN(), // (ControllerStatus::
         std::numeric_limits<double>::quiet_NaN(), //  tool_quat; NaN when the
         std::numeric_limits<double>::quiet_NaN()}; // law has no tool frame)
-    bool pd_beyond_reach = false; // |p_desired| outside the reach sphere
-                                  // (config::kReachRadiusM - kReachMarginM)
+    bool pd_beyond_reach = false; // target outside right-base-relative sphere
 };
 
 // Fixed-capacity ring buffer, fully allocated in the constructor. push()

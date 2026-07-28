@@ -26,25 +26,28 @@ Inside `basic_control/`:
   - `src/safety/` — safety policy and reporting (`Supervisor` — stop
     classification + readiness gate; `FaultReport` — bank decoding, stop /
     fault-change reports)
-  - `src/math/` — mathematics and models (`Kinematics`)
+  - `src/math/` — mathematics and models (`Kinematics`,
+    `DualArmKinematics`)
   - `src/hardware/` — external boundaries (`Connect`, `Measure`, `Record`)
 - `tools/` — standalone diagnostic executables
 - `tests/` — hardware-free tests (CTest)
 - `scripts/` — offline Python analysis (not part of the build)
-- `config/` — our copy of the arm's URDF (`GEN3_custom.urdf`, see
-  `decisions/custom-urdf.md`)
+- `config/` — the mounted 14-joint runtime model
+  (`GEN3_dual_mounted.urdf`) and runtime configuration; see
+  `decisions/custom-urdf.md`
 
 ## Module ownership
 
 | File | Owns |
 |---|---|
-| `src/app/main.cpp` | the story: model+config (asserts nv == 7), connect, readiness check, state printout (joints + FK end-effector position), input thread, loop call, log flush, exit code |
-| `src/app/Options.{h,cpp}` | runtime configuration front-end: CLI > TOML (explicit `--config` path, or the compiled default file `config/control.toml` when it exists — fixed absolute path, never cwd-dependent) > compiled defaults; gains/thresholds/law selection/target_file, never fault-stop policy (`kStopOnFault` compile-time only); unknown keys/flags are hard errors; effective-config echo + the CSV `#` preamble (`decisions/runtime-config.md`) |
-| `src/app/Config.h` | central runtime configuration: robot IP (default 192.168.1.9), Kortex session login/timeouts, `kControlDtS` (0.001 s — the single timing source; period/frequency derived), controller gains (`kKpCartesian`, `kDlsLambda`; reactive-pose: `kKpRotation`/`kKd*`/`kNullGain`, term switches, centering midpoints+mask), `kQdotLimitDegS` (equal to `kModelVelocityLimitsDegS`: 79.6/69.9 deg/s — the one place speed limits are set, `qdot-limit-raise.md`), `kFollowingErrorLimitDeg` (3 deg guard), controlled frame, log capacity, `kModelVelocityLimitsDegS` (authoritative deg/s values behind the URDF limits) — named constants, edit and rebuild |
+| `src/app/main.cpp` | the story: load and validate the mounted dual model plus right-arm adapter, connect only to the right arm, readiness check, state printout (right joints + mounted-frame FK), input thread, loop call, log flush, exit code |
+| `src/app/Options.{h,cpp}` | runtime configuration front-end: CLI > TOML (explicit `--config` path, or the compiled default file `config/control.toml` when it exists — fixed absolute path, never cwd-dependent) > compiled defaults; law selection, gains/thresholds/target_file, never arm ownership or fault-stop policy (`kStopOnFault` compile-time only); unknown keys/flags are hard errors; effective-config echo + CSV `#` preamble (`decisions/runtime-config.md`) |
+| `src/app/Config.h` | compiled right-only hardware ownership, right end-effector name, fixed left nominal state, Kortex session settings, unchanged timing/gains/command limits/safety thresholds, and mounted-frame reach-telemetry origin |
 | `src/hardware/Connect.{h,cpp}` | Kortex sessions (TCP 10000 + real-time UDP 10001), exception-safe RAII per channel: fails fast if the arm is unreachable, closes whatever opened on any exit path, never throws from a destructor |
 | `src/hardware/Measure.{h,cpp}` | reading sensors: `read_feedback` — the single standalone robot state reader, the only `RefreshFeedback` call in the program (the loop instead reuses `Refresh(command)`'s reply) |
 | `src/hardware/Record.{h,cpp}` | telemetry: `LoopLogSample`, `LoopLog` (preallocated ring buffer; `push` is alloc/I-O-free and loop-safe), CSV output after the loop, timestamped filenames |
-| `src/math/Kinematics.{h,cpp}` | forward kinematics (Pinocchio) and `position_and_jacobian` (frame position + 3×7 translational Jacobian from the SAME q, `LOCAL_WORLD_ALIGNED`; preallocated `KinematicsWorkspace`) |
+| `src/math/Kinematics.{h,cpp}` | generic Pinocchio FK and model-root-frame Jacobian primitives; owns the dynamic 6×nv preallocated workspace |
+| `src/math/DualArmKinematics.{h,cpp}` | validates the 14-joint mounted model, assembles full q from measured right + nominal left joints by name, computes full FK/Jacobian, and selects the seven right columns in Kortex order |
 | `src/safety/Supervisor.{h,cpp}` | safety policy: `LoopStop`/`LoopResult`, `ClassifyStop` (following error FIRST, then live faults, then arm state), `RobotReadyForTakeover` (pre-takeover gate) |
 | `src/safety/FaultReport.{h,cpp}` | fault-bank decoding (base + actuator, named bits) and the human-readable stop / fault-change reports — printing only, no policy |
 | `src/math/Dls.h` | damped least squares, header-only Eigen: `qdot = Jpᵀ(JpJpᵀ+λ²I)⁻¹v` via LDLT, no explicit inverse, no allocation; plus `ClampedCycleDt` (integration dt ≤ 2×nominal) — hardware-free-tested |
@@ -53,7 +56,7 @@ Inside `basic_control/`:
 | `src/safety/ServoingGuard.{h,cpp}` | RAII servoing-mode ownership — the ONLY caller of `SetServoingMode`: ctor enters LOW_LEVEL, dtor restores SINGLE_LEVEL by unwinding on every exit path (guarded, warn-don't-throw) |
 | `src/control/Controller.h` | `RobotState` (q, q̇, t — Eigen only) with the hard rule: a field belongs here only if fillable every cycle from arm feedback alone; external sensors use store injection |
 | `src/actuation/Actuation.h`, `PositionIntegration.{h,cpp}` | actuation strategy: `Prepare` (seed, may do I/O) / `Apply` (pure: clamped q̇ → setpoints) / `TrackingErrorDeg` (the guard signal) / `Restore` (teardown, may do I/O — F5 asymmetry); PositionIntegration owns the q_command integrator |
-| `src/control/Target.{h,cpp}` | operator desired end-effector targets: position parse (3 finite numbers, meters, base frame — deliberately no reachability check) + pose parse (3 or 6 numbers; RPY radians, Rz·Ry·Rx), `TargetStore`/`PoseTargetStore` (mutex-protected latest + sequence; a position-only line keeps the stored orientation), stdin input threads (poll, so shutdown can interrupt them), and the watched target file (`RunPoseTargetFileInput`: edit+save to retarget; startup content ignored) |
+| `src/control/Target.{h,cpp}` | operator desired right end-effector targets in the dual-model world/common mount frame: position parse (3 finite numbers; deliberately no reachability check) + pose parse (3 or 6 numbers; RPY radians, Rz·Ry·Rx), stores, stdin input, and watched target file |
 | `src/control/Controller.h` | the controller interface: `RobotState` (arm-feedback-only hard rule; external sensors via store injection), `ControllerStatus` (telemetry/UX data — controllers do no I/O), `Controller` (`Reset` at T5, `DesiredVelocity` per cycle → q̇ rad/s BEFORE clamping; pure computation) |
 | `src/control/ResolvedRate.{h,cpp}` | the Cartesian resolved-rate control law: frame check at construction, `Reset` seeds p_desired = p(q), `DesiredVelocity` = FK+Jacobian from the SAME q → Kp error → DLS; arrival notice as edge-triggered status data |
 | `src/control/ReactiveLaw.h` | the reactive 6-DoF pose law's equations, header-only pure Eigen (ported from the simulation, `decisions/reactive-pose-port.md`): rotation log, PD task twist with per-term enable flags, 6-DoF DLS, damped null-space centering with [0,360)-wrap fix and continuous-joint mask — hardware-free-tested incl. cross-validation fixtures from the Python sim law |
@@ -61,7 +64,7 @@ Inside `basic_control/`:
 | `src/loop/Runner.{h,cpp}` | THE loop — MOVES THE ARM, controller-agnostic: numbered takeover T1-T6 / teardown D1-D3 sequence (spec in Runner.h), per-cycle order (dt → RobotState → controller → clamp → `Actuation::Apply` → `CyclicSession::Send` → sample → fault-edge prints → `ClassifyStop` → log → sleep_until grid), no printing/allocation beyond the documented edge-triggered exceptions |
 | `tests/test_control_logic.cpp` | hardware-free CTest coverage (runs everywhere): `DampedLeastSquares` (incl. singular case), `ClampedCycleDt`, target parsing, `TargetStore`, `PositionIntegration` (seed/integrate/tracking-error wrap) |
 | `tests/test_reactive_law.cpp`, `tests/reactive_fixtures.h` | hardware-free CTest coverage (runs everywhere) for the reactive pose law: rotation log vs pin.log3, 6-DoF DLS closed form, null-space wrap/mask/annihilation, pose parsing/store — plus cross-validation fixtures generated from the Python simulation law by `scripts/gen_reactive_fixtures.py` (checked in; regenerate only when the sim law changes) |
-| `tests/test_supervisor.cpp`, `tests/test_resolved_rate.cpp` | hardware-machine CTest battery (bundled libs are Linux ELF): `ClassifyStop` ordering/priorities; `ResolvedRate` vs closed-form DLS on the real URDF, arrival-edge semantics |
+| `tests/test_supervisor.cpp`, `tests/test_resolved_rate.cpp`, `tests/test_dual_arm_model.cpp` | Linux hardware-free CTest battery (bundled libs are Linux ELF): stop ordering; controller law; 14-joint load, mount geometry, left nominal state, and exact full-to-right Jacobian selection |
 | `tests/replay_controller.cpp` | the decision-14 replay harness (Linux): feeds a baseline CSV through ResolvedRate → clamp → PositionIntegration and reports per-joint agreement vs the recorded commands |
 | `scripts/plot_move.py`, `scripts/plot_joint.py` | offline analysis of loop/move logs |
 | `tools/query_limits.cpp` | separate READ-ONLY executable `query_limits`: prints robot kinematic hard/soft limits via ControlConfig |

@@ -1,17 +1,18 @@
 # Runtime configuration: CLI flags + TOML file (2026-07-23)
 
 Status: accepted (approved as migration decision 11 / flag F2, 2026-07-22).
-Amended 2026-07-24: default config file + controller/target_file TOML keys
-(below). Supersedes the "no command-line flags" rule (old `Config.h` header,
-`README.md`) and revisits `motion-txt-removal.md`'s removal of runtime
-configuration files.
+Amended 2026-07-24: default config file + controller/target_file TOML keys.
+Amended 2026-07-27: right-only hardware with one mounted dual-arm model.
+Supersedes the "no command-line flags" rule (old `Config.h` header, `README.md`) and revisits
+`motion-txt-removal.md`'s removal of runtime configuration files.
 
 ## Decision
 
 `./controller` accepts runtime configuration with precedence
 **CLI > TOML > compiled defaults** (`src/app/Options.{h,cpp}`):
 
-- CLI: `--controller <name>`, `--kp <v>`, `--log <file>`, `--config <path>`.
+- CLI: `--controller <name>`, `--kp <v>`, `--log <file>`,
+  `--config <path>`.
 - TOML (toml++ v3.4.0, vendored single header,
   `basic_control/third_party/tomlplusplus/`): gains, thresholds, controller
   selection and input sources —
@@ -31,14 +32,16 @@ configuration files.
 Without `--config`, the compiled default file
 `basic_control/config/control.toml` is loaded when it exists — an absolute
 path baked in at build time (`DEFAULT_CONFIG_PATH`, CMake, same mechanism
-as `GEN3_URDF_PATH`). The workflow this buys: edit one checked-in file, run
-the bare binary. The no-auto-discovery hazard (below) was behavior
+as the compiled dual-model path). The workflow this buys: edit one
+checked-in file, run the bare binary. The no-auto-discovery hazard (below)
+was behavior
 depending on files *lying in the working directory*; a single fixed
 absolute path does not reintroduce it — the file's identity never depends
 on where the program is started, `--config` still overrides it, and the
 startup echo + CSV preamble name which file was loaded (`config_file`
-line). `controller` became a TOML key with the same amendment, so the file
-can select the law; `--controller` still wins.
+line). `controller` is a TOML key, so the file selects the law;
+`--controller` still wins. Arm selection is intentionally absent: this
+executable models both branches but owns hardware only for the right arm.
 
 ## Safety boundaries (the conditions under which the old rule was lifted)
 

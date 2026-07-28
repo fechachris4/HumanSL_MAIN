@@ -25,7 +25,8 @@ std::optional<Eigen::Vector3d> ParseCartesianTarget(const std::string& line,
     Eigen::Vector3d p_desired;
     for (int i = 0; i < 3; ++i) {
         if (!(in >> p_desired[i])) {
-            error = "expected 3 numbers (desired x y z, meters, base frame)";
+            error = "expected 3 numbers (desired x y z, meters, "
+                    "dual-model world/common mount frame)";
             return std::nullopt;
         }
         if (!std::isfinite(p_desired[i])) {
@@ -77,7 +78,8 @@ void RunTargetInput(TargetStore& store, const std::atomic<bool>& stop)
         }
         store.Store(*p_desired);
         std::cout << "desired position accepted: " << p_desired->x() << " " << p_desired->y()
-                  << " " << p_desired->z() << " (m, base frame)\n";
+                  << " " << p_desired->z()
+                  << " (m, dual-model world/common mount frame)\n";
     }
 }
 
@@ -102,7 +104,8 @@ std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& 
         return std::nullopt;
     }
     if (count != 3 && count != 6) {
-        error = "expected 3 numbers (x y z, meters, base frame) or 6 "
+        error = "expected 3 numbers (x y z, meters, dual-model world/common "
+                "mount frame) or 6 "
                 "(x y z meters + roll pitch yaw, radians)";
         return std::nullopt;
     }
@@ -168,12 +171,13 @@ void RunPoseTargetInput(PoseTargetStore& store, const std::atomic<bool>& stop)
             store.Store(target->p_desired, *target->rotation);
             std::cout << "desired pose accepted: " << target->p_desired.x() << " "
                       << target->p_desired.y() << " " << target->p_desired.z()
-                      << " (m) + orientation (base frame)\n";
+                      << " (m) + orientation (dual-model world/common mount frame)\n";
         } else {
             store.StorePosition(target->p_desired);
             std::cout << "desired position accepted: " << target->p_desired.x() << " "
                       << target->p_desired.y() << " " << target->p_desired.z()
-                      << " (m, base frame; orientation target unchanged)\n";
+                      << " (m, dual-model world/common mount frame; "
+                         "orientation target unchanged)\n";
         }
     }
 }
@@ -240,13 +244,15 @@ void RunPoseTargetFileInput(PoseTargetStore& store, const std::string& path,
             store.Store(target->p_desired, *target->rotation);
             std::cout << "target file " << path << ": pose accepted "
                       << target->p_desired.x() << " " << target->p_desired.y() << " "
-                      << target->p_desired.z() << " (m) + orientation (base frame)\n";
+                      << target->p_desired.z()
+                      << " (m) + orientation (dual-model world/common mount frame)\n";
         } else {
             store.StorePosition(target->p_desired);
             std::cout << "target file " << path << ": position accepted "
                       << target->p_desired.x() << " " << target->p_desired.y() << " "
                       << target->p_desired.z()
-                      << " (m, base frame; orientation target unchanged)\n";
+                      << " (m, dual-model world/common mount frame; "
+                         "orientation target unchanged)\n";
         }
     }
 }

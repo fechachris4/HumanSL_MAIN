@@ -245,6 +245,15 @@ namespace
                 << (source != cfg.source.end() ? source->second : "compiled") << ")\n";
         };
         line("config_file", cfg.config_path.empty() ? "<none>" : cfg.config_path);
+        out << prefix << "controlled_arm = right (compile-time only)\n";
+        out << prefix << "robot_ip = " << config::kRightRobotIp
+            << " (compiled right-only hardware map)\n";
+        out << prefix << "urdf = " << GEN3_DUAL_URDF_PATH
+            << " (compiled dual mounted model)\n";
+        out << prefix << "end_effector_frame = " << config::kRightEndEffectorFrame
+            << " (compiled; dual-model world/common mount frame)\n";
+        out << prefix << "left_nominal_rad = 0,0,0,0,0,0,0"
+            << " (compiled model-only state)\n";
         line("controller", cfg.controller);
         line("target_file", cfg.target_file.empty() ? "<none>" : cfg.target_file);
         line("kp", FormatDouble(cfg.kp));

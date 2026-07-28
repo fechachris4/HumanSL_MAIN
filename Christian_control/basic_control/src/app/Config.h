@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <cstddef>
 
@@ -15,22 +16,30 @@
 
 namespace config
 {
-    // Robot connection. Both Kortex sessions (TCP + UDP, see Connect.h) log
-    // in with the same credentials; timeouts are what the base waits before
-    // dropping an idle session/connection.
-    inline constexpr const char* kRobotIp = "192.168.1.10";
+    // Hardware ownership is deliberately right-only. The single runtime URDF
+    // models both mounted arms, but only this IP gets a Kortex connection and
+    // only the right seven-joint chain reaches the command loop.
+    inline constexpr const char* kRightRobotIp = "192.168.1.10";
+    inline constexpr const char* kRightEndEffectorFrame = "EndEffector_Link";
+
+    // The left arm is model-only for the first integration stage. Its seven
+    // joints stay fixed at this explicit nominal configuration whenever the
+    // full 14-joint Pinocchio configuration is assembled. No left connection,
+    // feedback or command frame exists.
+    inline constexpr JointVector kLeftNominalRad = {0, 0, 0, 0, 0, 0, 0};
+
+    // Both right-arm Kortex sessions (TCP + UDP, see Connect.h) log in with the
+    // same credentials; timeouts are what the base waits before dropping an
+    // idle session/connection.
     inline constexpr const char* kSessionUsername = "admin";
     inline constexpr const char* kSessionPassword = "admin";
     inline constexpr int kSessionInactivityTimeoutMs = 60000;
     inline constexpr int kConnectionInactivityTimeoutMs = 2000;
 
-    // Model joint velocity limits, deg/s, joints 1-7 — the authoritative
-    // values behind config/GEN3_custom.urdf's <limit velocity="..."> fields
-    // (written there as rad/s literals: 1.3893 x4, 1.2200 x3; keep the two
-    // in sync by hand — the URDF cannot read this header). Pinocchio takes
-    // its velocityLimit straight from the URDF; no code overwrites it.
-    // The controller's commanded-speed clip is derived from these below
-    // (kQdotLimitDegS) — the ONE place speed limits are set.
+    // Right-arm commanded-speed limits, deg/s, joints 1-7. These remain the
+    // controller's one actuator-command clip. The downloaded dual URDF keeps
+    // its own 0.8727 rad/s descriptive model limits; they are not used to
+    // overwrite or derive the hardware command clip.
     inline constexpr JointVector kModelVelocityLimitsDegS = {
         79.6, 79.6, 79.6, 79.6,
         69.9, 69.9, 69.9
@@ -88,17 +97,14 @@ namespace config
     inline constexpr JointVector kNullMidpointDeg = {0, 0, 0, 0, 0, 0, 0};
     inline constexpr JointVector kNullCenteringMask = {0, 1, 0, 1, 0, 1, 0};
 
-    // The controlled frame, from config/GEN3_custom.urdf. The flange frame:
-    // no TCP offset (the gripper TCP sits ~0.12 m further along tool z —
-    // see math/Kinematics.cpp's FK cross-check).
-    inline constexpr const char* kEndEffectorFrame = "EndEffector_Link";
-
-    // Reachable-workspace telemetry: the log's pd_beyond_reach flag is set
-    // when |p_desired| > kReachRadiusM - kReachMarginM. FLAG ONLY — targets
-    // are deliberately never rejected or projected (Target.h keeps its "no
-    // reachability check" contract). The sphere is centred at the base
-    // origin, an approximation: the shoulder sits above the base, so this
-    // slightly overestimates reach for low targets — fine for a flag.
+    // Reachable-workspace telemetry remains right-base-relative even though
+    // targets/FK are now expressed in the dual model's world/common mount
+    // frame. This is the right base_link origin in that common frame, derived
+    // from the URDF's fixed +1.2085 rad roll followed by (0,-0.16,0) m.
+    // FLAG ONLY — targets are never rejected or projected.
+    inline constexpr std::array<double, 3> kRightBaseOriginCommonM = {
+        0.0, -0.056707588407779945, -0.14961366721317215
+    };
     inline constexpr double kReachRadiusM = 0.902; // Gen3 7-DOF max reach (Kinova spec)
     inline constexpr double kReachMarginM = 0.05; // near full extension is singular anyway
 

@@ -8,21 +8,17 @@
 #define HUMANSL_MASTERS_PROJECT_2025_RESOLVEDRATE_H
 
 #include <cstdint>
-#include <string>
-
 #include "control/Controller.h"
 #include "control/Target.h"
-#include "math/Kinematics.h"
-#include "Dynamics.h"
+#include "math/DualArmKinematics.h"
 
 class ResolvedRate : public Controller
 {
 public:
-    // Validates the frame name against the model (throws, before any
-    // takeover can happen) and preallocates the kinematics workspace.
-    ResolvedRate(Dynamics& dynamics, TargetStore& targets, double kp,
-                 double dls_lambda, double arrival_tolerance_m,
-                 const std::string& ee_frame_name);
+    // The model adapter is already validated before any hardware connection;
+    // this controller sees only the right arm's selected 3x7 Jacobian.
+    ResolvedRate(DualArmKinematics& model, TargetStore& targets, double kp,
+                 double dls_lambda, double arrival_tolerance_m);
 
     // Seeds the desired position with the CURRENT end-effector position, so
     // the controller holds until the operator types a target (anything
@@ -35,14 +31,12 @@ public:
                                                 ControllerStatus& status) override;
 
 private:
-    Dynamics& dynamics_;
+    DualArmKinematics& model_;
     TargetStore& targets_;
     double kp_;
     double dls_lambda_;
     double arrival_tolerance_m_;
-    pinocchio::FrameIndex ee_frame_;
     KinematicsWorkspace workspace_;
-    Eigen::VectorXd q_measured_rad_; // preallocated deg->model boundary buffer
 
     // Arrival notice state: armed only when the target sequence changes, so
     // the seeded hold target never fires and each typed target fires once.

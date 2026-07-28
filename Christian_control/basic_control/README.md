@@ -1,6 +1,8 @@
 # basic_control
 
-My controller for a **single Kinova Gen3 7-DoF** arm. It combines:
+My controller for the **right Kinova Gen3 7-DoF arm**, using the complete
+mounted dual-arm model for kinematics. It
+combines:
 
 - the bundled Kinova **Kortex API** (`../../third_party/kortex_api`) to talk
   to the arm, and
@@ -48,19 +50,20 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   runs anywhere, the rest links the bundled Linux libraries (hardware
   machine only)
 - `scripts/` — offline Python analysis (not part of the build)
-- `config/` — our copy of the arm's URDF (`GEN3_custom.urdf`)
+- `config/` — the tracked mounted dual-arm runtime URDF plus runtime config
 
 ## Files
 
 - `src/app/main.cpp` — thin coordinator: model+config, connect, readiness
   check, state printout, input thread, loop call, log flush, exit code
-- `src/app/Config.h` — the compiled defaults: robot IP, `kControlDtS`
+- `src/app/Config.h` — compiled right-only hardware ownership, left nominal
+  model state, end-effector frame, log prefix, plus defaults: `kControlDtS`
   (0.001 s — the single timing source), `kKpCartesian` (1.0 /s),
   `kDlsLambda` (0.1), `kQdotLimitDegS` (equal to the 79.6/69.9 deg/s
-  model limits), `kStopOnFault` (compile-time only), `kEndEffectorFrame`,
-  supervisor counter limits, log capacity
-- `src/app/Options.*` — runtime overrides, precedence CLI > TOML >
-  compiled (gains, thresholds, controller/input selection;
+  model limits), `kStopOnFault` (compile-time only), selected end-effector
+  frame, supervisor counter limits, log capacity
+- `src/app/Options.*` — runtime overrides, precedence CLI > TOML > compiled
+  (controller selection, gains, thresholds and input selection;
   never fault-stop policy): `../docs/decisions/runtime-config.md`
 - `src/hardware/Connect.*` — RAII: both Kortex sessions (TCP 10000 +
   real-time UDP 10001)
@@ -72,6 +75,8 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   written to a timestamped CSV after the loop; `push` is loop-safe
 - `src/math/Kinematics.*` — FK and `position_and_jacobian` (position,
   rotation + 3×7 translational Jacobian from the same measured q)
+- `src/math/DualArmKinematics.*` — explicit adapter: measured right 7 plus
+  nominal left 7 into full q, full 6×14 Jacobian, selected right 7 columns
 - `src/math/Dls.h` — damped least squares (LDLT, no explicit inverse),
   header-only and hardware-free-tested
 - `src/safety/Supervisor.*` — stop classification (following error first,
@@ -132,8 +137,9 @@ compiled/default/toml/cli, plus which config file was loaded) and embeds
 it as `#` lines in the CSV, so every data file is self-describing. Safety
 policy is not runtime-configurable.
 
-1. Loads the URDF (checks the model has exactly 7 velocity variables) and
-   connects (TCP + UDP).
+1. Loads the 14-joint mounted dual URDF and validates the exact joint-name
+   mapping. The left seven joints are held at the compiled nominal model
+   state. The only TCP/UDP connection and command frame are for the right arm.
 2. Readiness check on one feedback frame: a live fault refuses startup
    (faults are never cleared here — use the Kinova web dashboard). Prints
    the joint state and the **current end-effector position** — that printed
@@ -142,7 +148,8 @@ policy is not runtime-configurable.
    desired position from the measured state (q_command = q_measured,
    p_desired = p_current), and sends one unchanged holding frame — the arm
    holds. Actuators stay in their default POSITION mode.
-4. Type a desired position — **x y z in meters, robot base frame**:
+4. Type a desired position — **x y z in meters, dual-model world/common
+   mount frame**:
 
    ```
    0.45 0.10 0.30
@@ -166,6 +173,9 @@ policy is not runtime-configurable.
 
 First hardware runs: start from the printed current position and change
 **one coordinate by a few centimeters**.
+
+The common-frame model and hardware-free tests do not prove physical
+mount calibration, collision safety, or safe robot behavior.
 
 ## Offline analysis
 

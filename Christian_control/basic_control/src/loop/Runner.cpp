@@ -4,7 +4,7 @@
 
 #include "loop/Runner.h"
 
-#include "app/Config.h" // kReachRadiusM/kReachMarginM (telemetry flag only)
+#include "app/Config.h" // right-base-relative reach telemetry (flag only)
 #include "hardware/Cyclic.h"
 #include "math/Dls.h" // ClampedCycleDt
 #include "safety/FaultReport.h"
@@ -44,7 +44,11 @@ namespace
         s.rot_error_rad = status.rot_error_rad;
         for (int i = 0; i < 4; ++i)
             s.tool_quat_xyzw[i] = status.tool_quat.coeffs()[i]; // Eigen order x,y,z,w
-        s.pd_beyond_reach = status.p_desired.norm() >
+        const Eigen::Vector3d right_base_common{
+            config::kRightBaseOriginCommonM[0],
+            config::kRightBaseOriginCommonM[1],
+            config::kRightBaseOriginCommonM[2]};
+        s.pd_beyond_reach = (status.p_desired - right_base_common).norm() >
                             config::kReachRadiusM - config::kReachMarginM;
         for (int i = 0; i < NUM_JOINTS; ++i)
         {

@@ -5,29 +5,20 @@
 #include "control/ReactivePose.h"
 
 #include <cmath>
-#include <stdexcept>
-
-ReactivePose::ReactivePose(Dynamics& dynamics, PoseTargetStore& targets,
+ReactivePose::ReactivePose(DualArmKinematics& model, PoseTargetStore& targets,
                            const ReactivePoseGains& gains, double arrival_tolerance_m,
-                           const std::string& ee_frame_name,
                            const Eigen::Matrix<double, 7, 1>& null_midpoint_rad,
                            const Eigen::Matrix<double, 7, 1>& null_centering_mask)
-    : dynamics_(dynamics), targets_(targets), gains_(gains),
-      arrival_tolerance_m_(arrival_tolerance_m), ee_frame_(0), workspace_(dynamics),
-      q_measured_rad_(7), null_midpoint_rad_(null_midpoint_rad),
+    : model_(model), targets_(targets), gains_(gains),
+      arrival_tolerance_m_(arrival_tolerance_m), workspace_(model.dynamics()),
+      null_midpoint_rad_(null_midpoint_rad),
       null_centering_mask_(null_centering_mask)
-{
-    // Precondition: model_.nv == 7 — validated once in main.cpp.
-    if (!dynamics.model_.existFrame(ee_frame_name))
-        throw std::runtime_error("no frame named '" + ee_frame_name + "' in the model");
-    ee_frame_ = dynamics.model_.getFrameId(ee_frame_name);
-}
+{}
 
 void ReactivePose::Reset(const RobotState& state)
 {
-    const PoseJacobian ee = pose_and_jacobian(
-        dynamics_, dynamics_.convertJointAnglesToConfig(state.q_rad), ee_frame_,
-        workspace_);
+    const PoseJacobian ee =
+        model_.RightPoseAndJacobian(state.q_rad, workspace_);
     // Hold here: position AND orientation seeded from the measured pose;
     // anything typed before takeover is discarded.
     targets_.Store(ee.position, ee.rotation);
@@ -39,12 +30,10 @@ Eigen::Matrix<double, 7, 1> ReactivePose::DesiredVelocity(const RobotState& stat
                                                           double /*dt_s*/,
                                                           ControllerStatus& status)
 {
-    // FK and Jacobian use the SAME q_measured.
-    for (int i = 0; i < 7; ++i)
-        q_measured_rad_[i] = state.q_rad[i];
-    const PoseJacobian ee = pose_and_jacobian(
-        dynamics_, dynamics_.convertJointAnglesToConfig(q_measured_rad_), ee_frame_,
-        workspace_);
+    // The adapter composes the SAME full q from measured right joints and the
+    // fixed left nominal, then selects only the right 7 Jacobian columns.
+    const PoseJacobian ee =
+        model_.RightPoseAndJacobian(state.q_rad, workspace_);
 
     // Equation 1: pose error, reference minus actual (ReactiveLaw.h).
     const PoseTargetStore::Snapshot target = targets_.Get();

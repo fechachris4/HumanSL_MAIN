@@ -11,6 +11,8 @@
 #include <string>
 
 #include "control/ResolvedRate.h"
+#include "app/Config.h"
+#include "math/DualArmKinematics.h"
 #include "math/Kinematics.h"
 #include "Dynamics.h"
 
@@ -33,10 +35,12 @@ int main()
     const double lambda = 0.1;
     const double arrival_tol_m = 0.001;
 
-    Dynamics dynamics(GEN3_URDF_PATH);
+    Dynamics dynamics(GEN3_DUAL_URDF_PATH);
+    DualArmKinematics model(
+        dynamics, config::kLeftNominalRad,
+        config::kRightEndEffectorFrame);
     TargetStore targets;
-    ResolvedRate controller(dynamics, targets, kp, lambda, arrival_tol_m,
-                            "EndEffector_Link");
+    ResolvedRate controller(model, targets, kp, lambda, arrival_tol_m);
 
     RobotState state;
     state.qdot_rad_s.setZero();
@@ -57,13 +61,8 @@ int main()
     auto qdot = controller.DesiredVelocity(state, 0.01, status2);
 
     KinematicsWorkspace workspace(dynamics);
-    const pinocchio::FrameIndex frame =
-        dynamics.model_.getFrameId("EndEffector_Link");
-    Eigen::VectorXd q(7);
-    for (int i = 0; i < 7; ++i)
-        q[i] = state.q_rad[i];
-    const PositionJacobian ee = position_and_jacobian(
-        dynamics, dynamics.convertJointAnglesToConfig(q), frame, workspace);
+    const PositionJacobian ee =
+        model.RightPositionAndJacobian(state.q_rad, workspace);
     Eigen::Matrix3d jjt = ee.jacobian_p * ee.jacobian_p.transpose();
     jjt.diagonal().array() += lambda * lambda;
     const Eigen::Matrix<double, 7, 1> reference =
@@ -108,11 +107,8 @@ int main()
         ControllerStatus status_b;
         controller.DesiredVelocity(state_b, 0.01, status_b);
 
-        Eigen::VectorXd q_b(7);
-        for (int i = 0; i < 7; ++i)
-            q_b[i] = state_b.q_rad[i];
-        const Pose pose_b = forward_kinematics(
-            dynamics, dynamics.convertJointAnglesToConfig(q_b), "EndEffector_Link");
+        const PoseJacobian pose_b =
+            model.RightPoseAndJacobian(state_b.q_rad, workspace);
         Eigen::Quaterniond fk_quat_b(pose_b.rotation);
         if (fk_quat_b.w() < 0.0)
             fk_quat_b.coeffs() = -fk_quat_b.coeffs();

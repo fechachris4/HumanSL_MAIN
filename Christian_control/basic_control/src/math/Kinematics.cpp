@@ -20,7 +20,7 @@ Pose forward_kinematics(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
     // then update the frames attached to them.
     pinocchio::framesForwardKinematics(dynamics.model_, dynamics.data_, q_pin);
 
-    // oMf = "origin-to-frame" transform: the frame's pose in the base frame.
+    // oMf = "origin-to-frame": the frame pose in the model root frame.
     const auto frame_id = dynamics.model_.getFrameId(frame_name);
     const pinocchio::SE3& oMf = dynamics.data_.oMf[frame_id];
 
@@ -43,7 +43,7 @@ PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd
     result.position = dynamics.data_.oMf[frame_id].translation();
     result.rotation = dynamics.data_.oMf[frame_id].rotation();
     // Rows 0-2 of the 6D frame Jacobian are the translational part; in
-    // LOCAL_WORLD_ALIGNED they are expressed in base-frame axes.
+    // LOCAL_WORLD_ALIGNED they are expressed in model-root axes.
     result.jacobian_p = workspace.jacobian_full.topRows<3>();
     return result;
 }
@@ -65,4 +65,3 @@ PoseJacobian pose_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
     result.jacobian = workspace.jacobian_full;
     return result;
 }
-

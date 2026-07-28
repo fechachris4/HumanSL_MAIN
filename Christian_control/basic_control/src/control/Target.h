@@ -15,7 +15,7 @@
 #include <Eigen/Dense>
 
 // Parse one stdin line as a desired end-effector position: exactly 3 finite
-// numbers — x y z in METERS, in the robot BASE frame. Returns the position,
+// numbers — x y z in METERS, in the dual model's WORLD/COMMON MOUNT frame.
 // or std::nullopt with the reason in `error`. There is deliberately no
 // workspace/reachability check in this version: an unreachable target makes
 // the controller push toward it until something stops it (operator, fault).
@@ -29,7 +29,7 @@ class TargetStore
 {
 public:
     struct Snapshot {
-        Eigen::Vector3d p_desired;  // meters, base frame
+        Eigen::Vector3d p_desired;  // meters, dual-model common frame
         std::uint64_t sequence;     // increments on every Store — "is it new?"
     };
 
@@ -53,12 +53,12 @@ void RunTargetInput(TargetStore& store, const std::atomic<bool>& stop);
 // One parsed pose-target line. `rotation` is empty when the operator typed
 // only a position — the stored orientation target is then kept as-is.
 struct PoseTarget {
-    Eigen::Vector3d p_desired;                // meters, base frame
-    std::optional<Eigen::Matrix3d> rotation;  // base frame; nullopt = keep
+    Eigen::Vector3d p_desired;                // meters, dual-model common frame
+    std::optional<Eigen::Matrix3d> rotation;  // common frame; nullopt = keep
 };
 
 // Parse one stdin line as a desired end-effector pose: exactly 3 finite
-// numbers (x y z, METERS, base frame — orientation target unchanged) or
+// numbers (x y z, METERS, dual-model common frame — orientation unchanged) or
 // exactly 6 (x y z roll pitch yaw, RADIANS, R = Rz(yaw)·Ry(pitch)·Rx(roll)
 // — the simulation's convention). As with ParseCartesianTarget, there is
 // deliberately no reachability check.
@@ -72,8 +72,8 @@ class PoseTargetStore
 {
 public:
     struct Snapshot {
-        Eigen::Vector3d p_desired;   // meters, base frame
-        Eigen::Matrix3d rotation;    // desired orientation, base frame
+        Eigen::Vector3d p_desired;   // meters, dual-model common frame
+        Eigen::Matrix3d rotation;    // desired orientation, common frame
         std::uint64_t sequence;      // increments on every store
     };
 

@@ -2,8 +2,10 @@
  * main.cpp — the story of the program, told at a high level:
  *
  *   parse options (CLI > TOML > compiled defaults, app/Options)
- *     -> load configuration + URDF model (Pinocchio; must have 7 velocity vars)
- *     -> connect (TCP + UDP, Connect)
+ *     -> load the mounted dual-arm URDF (Pinocchio; exactly 14 velocity vars)
+ *     -> bind measured right joints + nominal left joints through the explicit
+ *        DualArmKinematics 14-model/7-controller adapter
+ *     -> connect only to the right arm (TCP + UDP, Connect)
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
  *     -> start the desired-target input thread (stdin: x y z meters, plus
@@ -15,7 +17,7 @@
  *     -> stop the input thread, write the loop log to CSV
  *     -> RAII teardown, exit 0 only on a clean operator stop.
  *
- * Usage: ./controller   (no flags — settings live in Config.h)
+ * Usage: ./controller
  */
 
 #include <atomic>
@@ -40,6 +42,7 @@
 #include "hardware/Measure.h"
 #include "hardware/Record.h"
 #include "loop/Runner.h"
+#include "math/DualArmKinematics.h"
 #include "math/Kinematics.h"
 #include "safety/Supervisor.h"
 #include "Dynamics.h"
@@ -70,11 +73,12 @@ namespace
     // Current joint state plus the end-effector position (our FK) — the
     // printed p is what a "hold here" desired position looks like, so the
     // operator can start from it and edit one coordinate.
-    void PrintRobotState(const k_api::BaseCyclic::Feedback& feedback, Dynamics& dynamics)
+    void PrintRobotState(const k_api::BaseCyclic::Feedback& feedback,
+                         DualArmKinematics& model)
     {
         JointVector position_deg;
         JointVector velocity_deg_s;
-        Eigen::VectorXd q_rad(static_cast<int>(position_deg.size()));
+        Eigen::Matrix<double, 7, 1> q_rad;
         for (size_t i = 0; i < position_deg.size(); ++i) {
             position_deg[i] = feedback.actuators(i).position();
             velocity_deg_s[i] = feedback.actuators(i).velocity();
@@ -84,11 +88,14 @@ namespace
         PrintRow("position deg", position_deg);
         PrintRow("velocity deg/s", velocity_deg_s);
 
-        Pose ee = forward_kinematics(dynamics, dynamics.convertJointAnglesToConfig(q_rad),
-                                     config::kEndEffectorFrame);
-        std::cout << "end-effector (" << config::kEndEffectorFrame << "): " << std::fixed
-                  << std::setprecision(4) << ee.position.x() << " " << ee.position.y() << " "
-                  << ee.position.z() << " (m, base frame)" << std::defaultfloat << "\n";
+        KinematicsWorkspace workspace(model.dynamics());
+        const PoseJacobian ee = model.RightPoseAndJacobian(q_rad, workspace);
+        std::cout << "right end-effector (" << config::kRightEndEffectorFrame << "): "
+                  << std::fixed << std::setprecision(4)
+                  << ee.position.x() << " " << ee.position.y() << " "
+                  << ee.position.z()
+                  << " (m, dual-model world/common mount frame)"
+                  << std::defaultfloat << "\n";
     }
 
 } // namespace
@@ -123,16 +130,17 @@ int main(int argc, char** argv)
 
     try {
         EchoConfig(cfg, std::cout);
+        // Full mounted model + explicit right-arm adapter before any hardware
+        // session. The adapter validates nq=nv=14 and the exact named mapping
+        // to the seven-wide controller interface.
+        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
+        DualArmKinematics controlled_model(
+            dynamics, config::kLeftNominalRad,
+            config::kRightEndEffectorFrame);
 
-        // Model + configuration before any hardware session. The controller
-        // maps 3 Cartesian velocities onto 7 joint velocities: the model
-        // must agree on that 7.
-        Dynamics dynamics(GEN3_URDF_PATH);
-        if (dynamics.model_.nv != static_cast<int>(std::tuple_size_v<JointVector>))
-            throw std::runtime_error("URDF model has " + std::to_string(dynamics.model_.nv) +
-                                     " velocity variables, expected 7");
-
-        Connect connection(config::kRobotIp);
+        // The left branch is model-only: this is the program's sole hardware
+        // connection, and it is always the right arm.
+        Connect connection(config::kRightRobotIp);
 
         // Readiness check on a standalone read, BEFORE the takeover: a live
         // fault means we never enter low-level servoing at all.
@@ -140,7 +148,7 @@ int main(int argc, char** argv)
         const bool robot_ready = RobotReadyForTakeover(initial, std::cout); // T1
         if (!robot_ready)
             return 1;
-        PrintRobotState(initial, dynamics);
+        PrintRobotState(initial, controlled_model);
 
         // All logging memory is allocated here, before the loop starts.
         // cycles per second = 1e6 / period_us (1000 at the 1 kHz default)
@@ -153,15 +161,16 @@ int main(int argc, char** argv)
         if (reactive)
             std::cout << "type a desired end-effector target and press Enter; Ctrl+C to "
                          "stop:\n"
-                         "  x y z                  (meters, base frame; orientation target "
+                         "  x y z                  (meters, dual-model world/common mount frame; "
+                         "orientation target "
                          "unchanged)\n"
-                         "  x y z roll pitch yaw   (meters + radians, R = Rz·Ry·Rx, base "
-                         "frame)\n"
+                         "  x y z roll pitch yaw   (meters + radians, R = Rz·Ry·Rx, "
+                         "dual-model world/common mount frame)\n"
                       << "reactive-pose position integration at " << config::kControlFrequencyHz
                       << " Hz (full settings echoed above and in the CSV preamble)\n";
         else
-            std::cout << "type a desired end-effector position (x y z, meters, base frame) and "
-                         "press Enter; Ctrl+C to stop\n"
+            std::cout << "type a desired right end-effector position (x y z, meters, "
+                         "dual-model world/common mount frame) and press Enter; Ctrl+C to stop\n"
                       << "resolved-rate position integration at " << config::kControlFrequencyHz
                       << " Hz (full settings echoed above and in the CSV preamble)\n";
         // Open the run's CSV BEFORE the takeover: a hardware run must never
@@ -210,12 +219,12 @@ int main(int argc, char** argv)
                 centering_mask[i] = config::kNullCenteringMask[i];
             }
             controller = std::make_unique<ReactivePose>(
-                dynamics, pose_targets, gains, cfg.arrival_tolerance_m,
-                config::kEndEffectorFrame, midpoint_rad, centering_mask);
+                controlled_model, pose_targets, gains, cfg.arrival_tolerance_m,
+                midpoint_rad, centering_mask);
         } else {
             controller = std::make_unique<ResolvedRate>(
-                dynamics, targets, cfg.kp, cfg.dls_lambda, cfg.arrival_tolerance_m,
-                config::kEndEffectorFrame);
+                controlled_model, targets, cfg.kp, cfg.dls_lambda,
+                cfg.arrival_tolerance_m);
         }
         PositionIntegration actuation;
 

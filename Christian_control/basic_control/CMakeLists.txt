@@ -33,6 +33,7 @@ if (CPPCHECK)
     add_custom_target(cppcheck
         COMMAND ${CPPCHECK} --enable=warning,performance,portability --std=c++17
                 --suppress=missingInclude --inline-suppr --quiet
+                -DGEN3_DUAL_URDF_PATH=\\\"${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_dual_mounted.urdf\\\"
                 ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_SOURCE_DIR}/tools
         COMMENT "Running cppcheck on src/ and tools/"
     )
@@ -42,12 +43,13 @@ endif ()
 set(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(KORTEX_DIR "${HUMANSL_ROOT}/third_party/kortex_api")
 
-# The arm's URDF model, used by Pinocchio. Our own copy (duplicated from
-# ../../config/GEN3_With_GRIPPER_DYNAMICS.urdf) so joint limits are ours to
-# edit: velocity limits set to Kinova's general limits (1.3893 rad/s joints
-# 1-4, 1.2200 rad/s joints 5-7 = 79.6 / 69.9 deg/s, see
-# config::kModelVelocityLimitsDegS) instead of the original 0.8727 (admittance).
-set(GEN3_URDF "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_custom.urdf")
+# The single runtime model is the downloaded 14-joint dual-arm URDF with only
+# its Windows-local mesh prefix rewritten to the checked-in Kortex assets. Its
+# fixed world/mount/base transforms remain intact. DualArmKinematics is the
+# explicit adapter from that model to the right-only seven-wide controller.
+set(GEN3_DUAL_URDF
+        "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_dual_mounted.urdf")
+add_compile_definitions(GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
 
 include_directories(
         ${KORTEX_DIR}/include
@@ -65,6 +67,7 @@ add_executable(controller
         src/hardware/Measure.cpp
         src/hardware/Cyclic.cpp
         src/math/Kinematics.cpp
+        src/math/DualArmKinematics.cpp
         src/control/ResolvedRate.cpp
         src/control/ReactivePose.cpp
         src/control/Target.cpp
@@ -178,6 +181,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             src/control/ResolvedRate.cpp
             src/control/Target.cpp
             src/math/Kinematics.cpp
+            src/math/DualArmKinematics.cpp
             ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
     )
     target_include_directories(test_resolved_rate PRIVATE
@@ -198,8 +202,34 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             -Wl,--allow-shlib-undefined
             -Wl,-z,lazy
     )
-    target_compile_definitions(test_resolved_rate PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
     add_test(NAME resolved_rate COMMAND test_resolved_rate)
+
+    # The full model/mount geometry and explicit right-7-of-14 adapter.
+    add_executable(test_dual_arm_model
+            tests/test_dual_arm_model.cpp
+            src/math/Kinematics.cpp
+            src/math/DualArmKinematics.cpp
+            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+    )
+    target_include_directories(test_dual_arm_model PRIVATE
+            src
+            ${HUMANSL_ROOT}/third_party/include
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+            ${HUMANSL_ROOT}/TrajectoryExecution/include
+    )
+    target_link_libraries(test_dual_arm_model
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+            pthread
+    )
+    set_target_properties(test_dual_arm_model PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+    )
+    target_link_options(test_dual_arm_model PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,-z,lazy
+    )
+    add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
 
     add_executable(replay_controller
             tests/replay_controller.cpp
@@ -207,6 +237,7 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             src/control/ResolvedRate.cpp
             src/control/Target.cpp
             src/math/Kinematics.cpp
+            src/math/DualArmKinematics.cpp
             ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
     )
     target_include_directories(replay_controller PRIVATE
@@ -227,18 +258,15 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             -Wl,--allow-shlib-undefined
             -Wl,-z,lazy
     )
-    target_compile_definitions(replay_controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
 endif ()
 
-target_compile_definitions(controller PRIVATE GEN3_URDF_PATH="${GEN3_URDF}")
-
 # Where run CSVs go: runs/YYYY-MM-DD/ under the repository root (the layout
-# the plot scripts' no-argument mode searches). Baked in absolute, like
-# GEN3_URDF_PATH, so the controller writes there from any working directory.
+# the plot scripts' no-argument mode searches). Baked in absolute, like the
+# dual-model path, so the controller writes there from any working directory.
 get_filename_component(HUMANSL_ROOT_ABS "${HUMANSL_ROOT}" ABSOLUTE)
 target_compile_definitions(controller PRIVATE RUNS_ROOT_DIR="${HUMANSL_ROOT_ABS}/runs")
 
-# Default runtime-config file: a COMPILED absolute path (like GEN3_URDF_PATH),
+# Default runtime-config file: a COMPILED absolute path (like the dual URDF),
 # loaded when it exists and no --config is given. Never cwd-relative — the
 # no-auto-discovery rule's hazard was files lying in the working directory
 # (docs/decisions/runtime-config.md, "Default config file" amendment).

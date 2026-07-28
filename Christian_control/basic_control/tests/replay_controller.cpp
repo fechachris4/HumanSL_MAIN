@@ -140,11 +140,13 @@ int main(int argc, char** argv)
               << config::kQdotLimitDegS[0] << "/" << config::kQdotLimitDegS[4]
               << " deg/s\n";
 
-    Dynamics dynamics(GEN3_URDF_PATH);
+    Dynamics dynamics(GEN3_DUAL_URDF_PATH);
+    DualArmKinematics model(
+        dynamics, config::kLeftNominalRad,
+        config::kRightEndEffectorFrame);
     TargetStore targets;
-    ResolvedRate controller(dynamics, targets, config::kKpCartesian,
-                            config::kDlsLambda, config::kArrivalToleranceM,
-                            config::kEndEffectorFrame);
+    ResolvedRate controller(model, targets, config::kKpCartesian,
+                            config::kDlsLambda, config::kArrivalToleranceM);
     PositionIntegration actuation;
 
     // Anchor: the integrator state after cycle 0 is exactly cmd_row0.
