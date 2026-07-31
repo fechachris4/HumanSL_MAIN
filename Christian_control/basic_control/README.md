@@ -11,9 +11,10 @@ combines:
 
 It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
 
-The program offers two control laws over the same loop: it takes over the
-arm in low-level servoing (actuators in their default POSITION mode) and
-drives the end-effector toward targets typed on stdin.
+The program offers three control laws over the same loop: it takes over
+the arm in low-level servoing (actuators in their default POSITION mode)
+and drives the end-effector toward targets typed on stdin — or, in
+playback, along one pre-validated trajectory file.
 
 `resolved-rate` (default) — position-only:
 
@@ -30,7 +31,21 @@ from the simulation (msc_project) and cross-validated against it
     ẋ = Kp·e_pose [+ Kd·e_twist, default off]
     q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, default off]
 
-Both laws use the same clamp and integrator, with q_command streamed as
+`playback` (`--controller playback --trajectory <file>`) — executes one
+GPMP2-planned joint trajectory (produced offline by
+`TrajectoryGeneration/tools/plan_move`; contract and gates in
+`src/control/TrajectoryFile.h`, design in
+`../docs/decisions/trajectory-playback.md`):
+
+    q̇_d = Δq_ref(t, t+dt)/dt  +  kp · wrap(q_ref(t) − q_measured)
+
+The file is validated before any hardware session (velocity ≤ 90% of the
+clip, Table 43 acceleration, position ranges, consistency, rest at both
+ends) and the measured position must match the trajectory start within
+0.2°/joint — otherwise the run refuses before, or holds at, the takeover.
+Completion holds the final point until Ctrl+C.
+
+All laws use the same clamp and integrator, with q_command streamed as
 position setpoints at 1 kHz (`kControlDtS`, the single timing source).
 Low-level VELOCITY
 mode was tried and abandoned — the actuator's inner velocity loop has no
