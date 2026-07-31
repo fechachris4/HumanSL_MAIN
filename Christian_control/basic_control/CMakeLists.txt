@@ -71,6 +71,8 @@ add_executable(controller
         src/control/ResolvedRate.cpp
         src/control/ReactivePose.cpp
         src/control/Target.cpp
+        src/control/TrajectoryFile.cpp
+        src/control/TrajectoryPlayback.cpp
         src/loop/Runner.cpp
         src/hardware/Record.cpp
         src/hardware/Connect.cpp
@@ -156,6 +158,35 @@ target_include_directories(test_reactive_law PRIVATE
 )
 target_link_libraries(test_reactive_law pthread)
 add_test(NAME reactive_law COMMAND test_reactive_law)
+
+# --- test_trajectory_file: hardware-free tests for the trajectory-file
+#     contract (loading, validation, sampling). Pure Eigen — safe anywhere. ---
+add_executable(test_trajectory_file
+        tests/test_trajectory_file.cpp
+        src/control/TrajectoryFile.cpp
+)
+target_include_directories(test_trajectory_file PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(test_trajectory_file pthread)
+add_test(NAME trajectory_file COMMAND test_trajectory_file)
+
+# --- test_playback: hardware-free tests for the playback law, including a
+#     closed-loop simulated-plant replay of the full playback -> clamp ->
+#     integration pipeline. Pure Eigen — safe anywhere. ---
+add_executable(test_playback
+        tests/test_playback.cpp
+        src/control/TrajectoryFile.cpp
+        src/control/TrajectoryPlayback.cpp
+        src/actuation/PositionIntegration.cpp
+)
+target_include_directories(test_playback PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(test_playback pthread)
+add_test(NAME playback COMMAND test_playback)
 
 # --- hardware-machine test battery + the decision-14 replay harness: the
 #     bundled Kortex/Pinocchio binaries are Linux x86-64 ELF, so these link

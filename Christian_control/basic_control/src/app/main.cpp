@@ -29,6 +29,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <system_error>
 #include <thread>
 #include <tuple>
@@ -39,6 +40,8 @@
 #include "control/ReactivePose.h"
 #include "control/ResolvedRate.h"
 #include "control/Target.h"
+#include "control/TrajectoryFile.h"
+#include "control/TrajectoryPlayback.h"
 #include "hardware/Connect.h"
 #include "hardware/Measure.h"
 #include "hardware/Record.h"
@@ -131,6 +134,47 @@ int main(int argc, char** argv)
 
     try {
         EchoConfig(cfg, std::cout);
+        const bool playback = cfg.controller == "playback";
+
+        // Playback: load and validate the trajectory BEFORE any hardware
+        // session — a file that fails the contract or the motion gates must
+        // never reach a takeover. Violations print in full and stop the run.
+        std::optional<Trajectory> trajectory;
+        TrajectorySummary trajectory_summary;
+        if (playback) {
+            trajectory = LoadTrajectoryCsv(cfg.trajectory_file); // throws on
+                                                                 // contract violations
+            JointVector vel_gate_deg_s;
+            for (size_t i = 0; i < vel_gate_deg_s.size(); ++i)
+                vel_gate_deg_s[i] =
+                    config::kTrajectoryVelGateFactor * config::kQdotLimitDegS[i];
+            const std::vector<std::string> violations = ValidateTrajectory(
+                *trajectory, vel_gate_deg_s, config::kTrajectoryAccelLimitDegS2,
+                trajectory_summary);
+            std::cout << "trajectory " << cfg.trajectory_file << ":\n  "
+                      << trajectory_summary.samples << " samples, dt "
+                      << trajectory->dt_s << " s, duration "
+                      << trajectory_summary.duration_s << " s\n";
+            PrintJointHeader();
+            PrintRow("displace deg", trajectory_summary.displacement_deg);
+            PrintRow("peak vel deg/s", trajectory_summary.peak_vel_deg_s);
+            PrintRow("peak acc deg/s2", trajectory_summary.peak_accel_deg_s2);
+            for (const auto& [key, value] : trajectory->metadata)
+                std::cout << "  # " << key << " = " << value << "\n";
+            if (!violations.empty()) {
+                std::cerr << "Error: trajectory FAILED validation ("
+                          << violations.size() << " violation"
+                          << (violations.size() == 1 ? "" : "s")
+                          << ") — not starting:\n";
+                for (const std::string& v : violations)
+                    std::cerr << "  - " << v << "\n";
+                return 1;
+            }
+            std::cout << "trajectory validation: PASS (vel gate "
+                      << config::kTrajectoryVelGateFactor
+                      << " x qdot clip, accel gate Kinova Table 43)\n";
+        }
+
         // Full mounted model + explicit right-arm adapter before any hardware
         // session. The adapter validates nq=nv=14 and the exact named mapping
         // to the seven-wide controller interface.
@@ -151,6 +195,65 @@ int main(int argc, char** argv)
             return 1;
         PrintRobotState(initial, controlled_model);
 
+        if (playback) {
+            // Start-state gate on the pre-takeover read: the arm must
+            // already BE at the trajectory's first row (wrapped compare —
+            // the file's continuous angles vs the arm's [0,360) feedback).
+            // TrajectoryPlayback::Reset re-checks at the takeover itself.
+            bool start_ok = true;
+            std::cout << "start-state gate (per-joint limit "
+                      << cfg.start_mismatch_limit_deg << " deg):\n";
+            JointVector start_error_deg{};
+            for (size_t j = 0; j < start_error_deg.size(); ++j) {
+                start_error_deg[j] = std::abs(std::remainder(
+                    initial.actuators(static_cast<int>(j)).position() -
+                        trajectory->pos_deg.front()[static_cast<int>(j)],
+                    360.0));
+                if (start_error_deg[j] > cfg.start_mismatch_limit_deg)
+                    start_ok = false;
+            }
+            PrintJointHeader();
+            PrintRow("|meas-start| deg", start_error_deg);
+            if (!start_ok) {
+                std::cerr << "Error: measured position does not match the "
+                             "trajectory start — refusing to start. Re-plan "
+                             "from the current position (printed above) or "
+                             "move the arm to the trajectory start first.\n";
+                return 1;
+            }
+            std::cout << "start-state gate: PASS\n";
+
+            // FK cross-check, visible before execution: what this
+            // trajectory means for the end-effector according to the URDF
+            // dual model (the controller's own kinematic authority — an
+            // independent check on the planner's DH model).
+            KinematicsWorkspace fk_workspace(controlled_model.dynamics());
+            Eigen::Matrix<double, 7, 1> q_row_rad;
+            for (int j = 0; j < 7; ++j)
+                q_row_rad[j] = trajectory->pos_deg.front()[j] * M_PI / 180.0;
+            const PoseJacobian ee_start =
+                controlled_model.RightPoseAndJacobian(q_row_rad, fk_workspace);
+            for (int j = 0; j < 7; ++j)
+                q_row_rad[j] = trajectory->pos_deg.back()[j] * M_PI / 180.0;
+            const PoseJacobian ee_end =
+                controlled_model.RightPoseAndJacobian(q_row_rad, fk_workspace);
+            const Eigen::Vector3d ee_move =
+                ee_end.position - ee_start.position;
+            std::cout << std::fixed << std::setprecision(4)
+                      << "URDF FK cross-check (dual-model common frame, "
+                      << config::kRightEndEffectorFrame << "):\n"
+                      << "  start EE: " << ee_start.position.x() << " "
+                      << ee_start.position.y() << " " << ee_start.position.z()
+                      << " m\n"
+                      << "  final EE: " << ee_end.position.x() << " "
+                      << ee_end.position.y() << " " << ee_end.position.z()
+                      << " m\n"
+                      << "  displacement: " << ee_move.x() << " " << ee_move.y()
+                      << " " << ee_move.z() << " m (|d| = " << ee_move.norm()
+                      << " m)\n"
+                      << std::defaultfloat;
+        }
+
         // All logging memory is allocated here, before the loop starts. This
         // is the handoff queue to the writer thread, not the run's record —
         // the record is the CSV, written as the run happens.
@@ -161,7 +264,14 @@ int main(int argc, char** argv)
         PoseTargetStore pose_targets; // reactive-pose (position + orientation)
         const bool reactive = cfg.controller == "reactive-pose";
 
-        if (reactive)
+        if (playback)
+            std::cout << "PLAYBACK RUN: the arm will follow the validated "
+                         "trajectory as soon as the takeover completes — "
+                      << trajectory_summary.duration_s
+                      << " s of motion, then a hold at the final point. "
+                         "Ctrl+C stops at any time (the position servo holds "
+                         "where the command stopped).\n";
+        else if (reactive)
             std::cout << "type a desired end-effector target and press Enter; Ctrl+C to "
                          "stop:\n"
                          "  x y z                  (meters, dual-model world/common mount frame; "
@@ -212,7 +322,16 @@ int main(int argc, char** argv)
         // Controller + actuation, constructed before the input thread: a bad
         // end-effector frame name must fail here, before any takeover.
         std::unique_ptr<Controller> controller;
-        if (reactive) {
+        TrajectoryPlayback* playback_controller = nullptr;
+        if (playback) {
+            PlaybackSettings settings;
+            settings.kp_s_inv = cfg.playback_kp;
+            settings.start_mismatch_limit_deg = cfg.start_mismatch_limit_deg;
+            auto owned = std::make_unique<TrajectoryPlayback>(
+                std::move(*trajectory), settings);
+            playback_controller = owned.get();
+            controller = std::move(owned);
+        } else if (reactive) {
             ReactivePoseGains gains;
             gains.kp_position_s_inv = cfg.kp;
             gains.kp_rotation_s_inv = cfg.kp_rot;
@@ -239,10 +358,14 @@ int main(int argc, char** argv)
         }
         PositionIntegration actuation;
 
-        std::thread input_thread =
-            reactive
-                ? std::thread(RunPoseTargetInput, std::ref(pose_targets), std::cref(g_stop))
-                : std::thread(RunTargetInput, std::ref(targets), std::cref(g_stop));
+        // Playback has no operator targets: no input thread at all (Ctrl+C
+        // is the signal handler, not stdin).
+        std::thread input_thread;
+        if (!playback)
+            input_thread =
+                reactive
+                    ? std::thread(RunPoseTargetInput, std::ref(pose_targets), std::cref(g_stop))
+                    : std::thread(RunTargetInput, std::ref(targets), std::cref(g_stop));
         InputThreadJoiner input_thread_joiner{input_thread};
 
         // Optional second target source (reactive-pose only, target_file in
@@ -268,7 +391,8 @@ int main(int argc, char** argv)
             cfg.following_error_limit_deg, stop_policy, robot_ready);
 
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
-        input_thread.join();
+        if (input_thread.joinable())
+            input_thread.join();
         if (target_file_thread.joinable())
             target_file_thread.join();
 
@@ -283,11 +407,28 @@ int main(int argc, char** argv)
         // Full path on its own line, ready to paste into an analysis request.
         std::cout << "\nlog: " << log_file << "\n";
 
+        // Playback outcome, stated plainly for the run record.
+        if (playback_controller) {
+            if (playback_controller->refused())
+                std::cout << "playback outcome: REFUSED at takeover (no "
+                             "motion commanded) — exit status is nonzero\n";
+            else if (playback_controller->completed())
+                std::cout << "playback outcome: trajectory completed\n";
+            else
+                std::cout << "playback outcome: stopped before the last "
+                             "sample\n";
+        }
+
         // Only a clean operator stop with no observed faults is success —
         // faults the loop was told to ignore still taint the exit code.
         if (result.faults_observed)
             std::cout << "note: faults occurred during run — exit status is nonzero\n";
-        return result.reason == LoopStop::kUserStop && !result.faults_observed ? 0 : 1;
+        const bool playback_refused =
+            playback_controller && playback_controller->refused();
+        return result.reason == LoopStop::kUserStop && !result.faults_observed &&
+                       !playback_refused
+                   ? 0
+                   : 1;
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;

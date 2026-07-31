@@ -50,6 +50,19 @@ struct ControllerStatus {
         std::numeric_limits<double>::quiet_NaN(),  // x
         std::numeric_limits<double>::quiet_NaN(),  // y
         std::numeric_limits<double>::quiet_NaN()}; // z
+
+    // Trajectory playback telemetry (control/TrajectoryPlayback.h). The
+    // reference is what this cycle's integrated command should land on —
+    // logged next to commanded_deg and measured_deg so planned, commanded
+    // and measured motion stay comparable per cycle. Other laws leave the
+    // defaults (NaN reference / state 0).
+    Eigen::Matrix<double, 7, 1> q_ref_deg =
+        Eigen::Matrix<double, 7, 1>::Constant(
+            std::numeric_limits<double>::quiet_NaN());
+    double playback_t_s = std::numeric_limits<double>::quiet_NaN();
+    int playback_state = 0;   // 0 none, 1 playing, 2 done-holding, 3 refused
+    bool playback_done_edge = false;    // first cycle past the last sample
+    bool playback_refused_edge = false; // first cycle after a Reset refusal
 };
 
 // The controller: one Reset at takeover, then one DesiredVelocity per

@@ -34,12 +34,14 @@
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 2; AppendCsvRow is the authority):
+// CSV column order (log_format = 3; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
-//   quat_x, quat_y, quat_z, quat_w, pd_beyond_reach        (69 columns)
-// New columns are appended so older tooling's column indices stay valid.
+//   quat_x, quat_y, quat_z, quat_w, pd_beyond_reach,
+//   ref_j1..7, playback_t_s, playback_state                (78 columns)
+// Format 3 appends the playback columns after format 2's, so older
+// tooling's column names and indices stay valid.
 //
 // Timestamp semantics (all from one steady_clock, seconds since t_start):
 //   time_s   — cycle start, when this cycle's feedback was consumed
@@ -86,6 +88,14 @@ struct LoopLogSample {
         std::numeric_limits<double>::quiet_NaN(), //  tool_quat; NaN when the
         std::numeric_limits<double>::quiet_NaN()}; // law has no tool frame)
     bool pd_beyond_reach = false; // target outside right-base-relative sphere
+
+    // Trajectory playback (log_format 3): the per-cycle reference the
+    // integrated command should land on, the playback clock, and the
+    // playback state (0 none, 1 playing, 2 done, 3 refused). NaN/0 for
+    // non-playback controllers.
+    JointVector ref_deg{};
+    double playback_t_s = std::numeric_limits<double>::quiet_NaN();
+    int playback_state = 0;
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully

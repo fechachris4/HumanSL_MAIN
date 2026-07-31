@@ -79,7 +79,10 @@ void WriteCsvHeader(std::ostream& csv)
     for (int i = 1; i <= 7; ++i)
         csv << ",fault_j" << i;
     csv << ",arm_state,base_fault,refresh_ok,sigma_min,rot_error_rad"
-        << ",t_send_s,t_recv_s,quat_x,quat_y,quat_z,quat_w,pd_beyond_reach\n";
+        << ",t_send_s,t_recv_s,quat_x,quat_y,quat_z,quat_w,pd_beyond_reach";
+    for (int i = 1; i <= 7; ++i)
+        csv << ",ref_j" << i;
+    csv << ",playback_t_s,playback_state\n";
 }
 
 void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
@@ -108,7 +111,10 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
         << s.rot_error_rad << "," << s.t_send_s << "," << s.t_recv_s;
     for (double v : s.tool_quat_xyzw)
         csv << "," << v;
-    csv << "," << (s.pd_beyond_reach ? 1 : 0) << "\n";
+    csv << "," << (s.pd_beyond_reach ? 1 : 0);
+    for (double v : s.ref_deg)
+        csv << "," << v;
+    csv << "," << s.playback_t_s << "," << s.playback_state << "\n";
 }
 
 LoopLogWriter::LoopLogWriter(LoopLog& log, std::ostream& csv,

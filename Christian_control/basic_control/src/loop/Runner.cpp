@@ -65,6 +65,10 @@ namespace
         s.arm_state = fb.base().active_state();
         s.base_fault_bank = fb.base().fault_bank_a();
         s.refresh_ok = true;
+        for (int i = 0; i < NUM_JOINTS; ++i)
+            s.ref_deg[i] = status.q_ref_deg[i];
+        s.playback_t_s = status.playback_t_s;
+        s.playback_state = status.playback_state;
     }
 } // namespace
 
@@ -202,6 +206,16 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           << status.p_desired[1] << " " << status.p_desired[2]
                           << " m, within " << status.arrival_error_m * 1000.0
                           << " mm — holding\n";
+            // Playback notices, same pattern (TrajectoryPlayback).
+            if (status.playback_refused_edge)
+                std::cout << "PLAYBACK REFUSED: measured start no longer "
+                             "matches the trajectory start (arm moved since "
+                             "the pre-takeover gate?) — holding here; Ctrl+C "
+                             "to stop\n";
+            if (status.playback_done_edge)
+                std::cout << "trajectory complete at t=" << status.playback_t_s
+                          << " s — holding the final setpoint; Ctrl+C to "
+                             "stop\n";
 
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.

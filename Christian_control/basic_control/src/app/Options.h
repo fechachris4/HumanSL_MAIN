@@ -20,7 +20,7 @@
 // The merged, effective configuration, with per-key source tracking
 // ("compiled" / "toml" / "cli") for the startup echo and the CSV preamble.
 struct EffectiveConfig {
-    std::string controller = "resolved-rate"; // or "reactive-pose"
+    std::string controller = "resolved-rate"; // or "reactive-pose", "playback"
     double kp = 0.0;                       // filled from config:: in ParseOptions
     double dls_lambda = 0.0;
     // Reactive-pose law only (ignored by resolved-rate); kp above doubles as
@@ -41,6 +41,12 @@ struct EffectiveConfig {
     std::string target_file; // reactive-pose only: watched pose-target file
                              // (control/Target RunPoseTargetFileInput);
                              // empty -> stdin targets only
+    // Playback only (controller = "playback"): the trajectory file to
+    // execute (required), the P gain on the reference error, and the
+    // per-joint start-state gate (control/TrajectoryPlayback.h).
+    std::string trajectory_file;
+    double playback_kp = 0.0;
+    double start_mismatch_limit_deg = 0.0;
     std::string config_path; // the TOML file actually loaded ("" = none)
 
     std::map<std::string, std::string> source; // key -> where its value came from

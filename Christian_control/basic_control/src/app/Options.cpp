@@ -23,8 +23,11 @@ namespace
             std::cerr << "error: " << error << "\n";
         std::cerr <<
             "usage: controller [options]\n"
-            "  --controller <name>   control law (valid: resolved-rate, reactive-pose)\n"
-            "  --kp <value>          Cartesian position P gain, 1/s (both laws)\n"
+            "  --controller <name>   control law (valid: resolved-rate, reactive-pose,\n"
+            "                        playback)\n"
+            "  --kp <value>          Cartesian position P gain, 1/s (reactive laws)\n"
+            "  --trajectory <file>   playback only: the trajectory CSV to execute\n"
+            "                        (trajectory_format = 1, control/TrajectoryFile.h)\n"
             "  --log <file>          CSV filename (default: run_<timestamp>.csv)\n"
             "  --config <path>       TOML file with gains/thresholds; without this\n"
             "                        flag the compiled default file\n"
@@ -39,7 +42,9 @@ namespace
             "  overrun_stop_cycles, overrun_factor;\n"
             "  reactive-pose only: kp_rot, kd_pos, kd_rot, null_gain,\n"
             "  orientation_enabled, velocity_term_enabled, null_space_enabled,\n"
-            "  target_file (watched pose-target file; edit+save to retarget)\n"
+            "  target_file (watched pose-target file; edit+save to retarget);\n"
+            "  playback only: trajectory_file, playback_kp,\n"
+            "  start_mismatch_limit_deg\n"
             "safety policy is NOT configurable at runtime (config::kStopOnFault\n"
             "is compile-time only)\n";
         std::exit(2);
@@ -106,6 +111,10 @@ namespace
             };
             if (name == "controller") text(cfg.controller);
             else if (name == "target_file") text(cfg.target_file);
+            else if (name == "trajectory_file") text(cfg.trajectory_file);
+            else if (name == "playback_kp") number(cfg.playback_kp);
+            else if (name == "start_mismatch_limit_deg")
+                number(cfg.start_mismatch_limit_deg);
             else if (name == "kp") number(cfg.kp);
             else if (name == "dls_lambda") number(cfg.dls_lambda);
             else if (name == "kp_rot") number(cfg.kp_rot);
@@ -148,12 +157,15 @@ EffectiveConfig ParseOptions(int argc, char** argv)
     cfg.nonfinite_stop_cycles = config::kNonFiniteStopCycles;
     cfg.overrun_stop_cycles = config::kOverrunStopCycles;
     cfg.overrun_factor = config::kOverrunFactor;
+    cfg.playback_kp = config::kPlaybackKp;
+    cfg.start_mismatch_limit_deg = config::kStartMismatchLimitDeg;
     for (const char* key :
          {"controller", "kp", "dls_lambda", "kp_rot", "kd_pos", "kd_rot",
           "null_gain", "orientation_enabled", "velocity_term_enabled",
           "null_space_enabled", "following_error_limit_deg",
           "arrival_tolerance_m", "nonfinite_stop_cycles", "overrun_stop_cycles",
-          "overrun_factor", "log_file", "target_file", "config_file"})
+          "overrun_factor", "log_file", "target_file", "config_file",
+          "trajectory_file", "playback_kp", "start_mismatch_limit_deg"})
         cfg.source[key] = "compiled";
 
     // First pass: locate --config so TOML applies before CLI overrides.
@@ -220,16 +232,38 @@ EffectiveConfig ParseOptions(int argc, char** argv)
             cfg.log_file = value();
             cfg.source["log_file"] = "cli";
         }
+        else if (arg == "--trajectory")
+        {
+            cfg.trajectory_file = value();
+            cfg.source["trajectory_file"] = "cli";
+        }
         else
             UsageAndExit("unknown option '" + arg + "'");
     }
 
-    if (cfg.controller != "resolved-rate" && cfg.controller != "reactive-pose")
+    if (cfg.controller != "resolved-rate" && cfg.controller != "reactive-pose" &&
+        cfg.controller != "playback")
         UsageAndExit("unknown controller '" + cfg.controller +
-                     "' (valid: resolved-rate, reactive-pose)");
+                     "' (valid: resolved-rate, reactive-pose, playback)");
     if (!cfg.target_file.empty() && cfg.controller != "reactive-pose")
         UsageAndExit("target_file requires controller = \"reactive-pose\" "
                      "(the watched file carries pose targets)");
+    if (cfg.controller == "playback" && cfg.trajectory_file.empty())
+        UsageAndExit("controller \"playback\" requires a trajectory "
+                     "(--trajectory <file> or trajectory_file in the TOML)");
+    if (!cfg.trajectory_file.empty() && cfg.controller != "playback")
+        UsageAndExit("trajectory_file requires controller = \"playback\"");
+    if (cfg.controller == "playback" &&
+        (!(cfg.playback_kp >= 0.0) || cfg.playback_kp > 5.0))
+        UsageAndExit("playback_kp must be in [0, 5] 1/s (evidence-sized "
+                     "default " + FormatDouble(config::kPlaybackKp) +
+                     "; large gains re-create the reactive-gain failure "
+                     "mode)");
+    if (cfg.controller == "playback" &&
+        (!(cfg.start_mismatch_limit_deg > 0.0) ||
+         cfg.start_mismatch_limit_deg >= cfg.following_error_limit_deg))
+        UsageAndExit("start_mismatch_limit_deg must be > 0 and below "
+                     "following_error_limit_deg");
     return cfg;
 }
 
@@ -256,6 +290,11 @@ namespace
             << " (compiled model-only state)\n";
         line("controller", cfg.controller);
         line("target_file", cfg.target_file.empty() ? "<none>" : cfg.target_file);
+        line("trajectory_file",
+             cfg.trajectory_file.empty() ? "<none>" : cfg.trajectory_file);
+        line("playback_kp", FormatDouble(cfg.playback_kp));
+        line("start_mismatch_limit_deg",
+             FormatDouble(cfg.start_mismatch_limit_deg));
         line("kp", FormatDouble(cfg.kp));
         line("dls_lambda", FormatDouble(cfg.dls_lambda));
         line("kp_rot", FormatDouble(cfg.kp_rot));
@@ -291,8 +330,8 @@ void WriteCsvPreamble(const EffectiveConfig& cfg, std::ostream& csv)
 {
     csv << "# controller run config — parsers skip '#' lines\n";
     // Bump when columns change so scripts detect the format without
-    // sniffing headers. 2 = t_send/t_recv + quaternion + pd_beyond_reach
-    // + reactive-pose rotation error (hardware/Record.h).
-    csv << "# log_format = 2 (compiled)\n";
+    // sniffing headers. 3 = format 2 + the trajectory-playback reference
+    // columns ref_j1..7, playback_t_s, playback_state (hardware/Record.h).
+    csv << "# log_format = 3 (compiled)\n";
     WriteConfigLines(cfg, csv, "# ");
 }

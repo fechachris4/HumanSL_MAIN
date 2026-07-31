@@ -151,6 +151,36 @@ namespace config
     // toward 5 mm in that case).
     inline constexpr double kArrivalToleranceM = 0.001;
 
+    // Trajectory playback (controller = "playback", control/TrajectoryPlayback.h).
+    //
+    // kPlaybackKp: P gain on the wrapped reference-minus-measured error,
+    // 1/s. Sized from the 2026-07-31 run evidence (loop_log_20260731_121752):
+    // tracking error during ~5 deg/s motion peaked at 0.089 deg, so the
+    // correction term contributes < 0.05 deg/s in normal play — feed-forward
+    // dominates, the P term only absorbs the (gated, small) start offset and
+    // clamp losses. Deliberately far below the null_gain = 10 scale that
+    // produced the 2026-07-27 windup incident.
+    inline constexpr double kPlaybackKp = 0.5;
+    //
+    // kStartMismatchLimitDeg: per-joint gate between the measured position
+    // and the trajectory's first row, checked BEFORE the takeover (main)
+    // and again at Reset (arm moved in between -> permanent hold). 0.2 deg
+    // is ~30x the still-state tracking error observed in the same run
+    // (0.006 deg) and 15x below the 3 deg following-error stop, so a pass
+    // guarantees the initial correction transient is negligible.
+    inline constexpr double kStartMismatchLimitDeg = 0.2;
+    //
+    // Validation gates a trajectory file must pass before a run (see
+    // control/TrajectoryFile.h). Velocity: 90% of the command clip, so the
+    // Runner's clamp can never engage on a validated file (the clamp stays
+    // as the independent backstop). Acceleration: the Kinova Table 43
+    // joint-trajectory limits (config/joint_limits.yaml — 1 rad/s^2 joints
+    // 1-4, 10 rad/s^2 joints 5-7).
+    inline constexpr double kTrajectoryVelGateFactor = 0.9;
+    inline constexpr JointVector kTrajectoryAccelLimitDegS2 = {
+        57.3, 57.3, 57.3, 57.3, 573.0, 573.0, 573.0
+    };
+
     // Loop log: the CSV is written DURING the run by a writer thread
     // (hardware/Record.h), so a killed run keeps everything up to the last
     // drain and the file holds the whole run, however long it is.
