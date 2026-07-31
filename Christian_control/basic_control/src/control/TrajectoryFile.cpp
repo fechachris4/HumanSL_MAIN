@@ -158,6 +158,16 @@ Trajectory LoadTrajectoryCsv(std::istream& in, const std::string& name)
     const double dt = times[1] - times[0];
     if (dt <= 0.0)
         Fail(name, "non-increasing t_s at row 2");
+    // Knot-spacing bound: execution interpolates LINEARLY at the 1 kHz
+    // loop rate, so the validator's acceleration gate only bounds what is
+    // actually executed when the knots are at loop-rate scale. A coarse
+    // grid (say 0.5 s) could pass every gate yet execute step-like
+    // velocity changes at each knot (2026-07-31 review, finding 2). It
+    // also keeps the grid tolerance meaningful (finding 6).
+    if (dt < 0.0005 - kTimeGridToleranceS || dt > 0.002 + kTimeGridToleranceS)
+        Fail(name, "knot spacing " + std::to_string(dt) +
+                       " s outside the contract's [0.0005, 0.002] s — the "
+                       "1 kHz executor requires loop-rate-scale samples");
     for (std::size_t i = 1; i < times.size(); ++i)
         if (std::abs(times[i] - times[i - 1] - dt) > kTimeGridToleranceS)
             Fail(name, "non-uniform t_s at row " + std::to_string(i + 1) +
@@ -178,6 +188,7 @@ Trajectory LoadTrajectoryCsv(const std::string& path)
 std::vector<std::string> ValidateTrajectory(const Trajectory& trajectory,
                                             const JointVector& vel_limit_deg_s,
                                             const JointVector& accel_limit_deg_s2,
+                                            const JointVector& pos_limit_deg,
                                             TrajectorySummary& summary)
 {
     std::vector<std::string> violations;
@@ -185,6 +196,15 @@ std::vector<std::string> ValidateTrajectory(const Trajectory& trajectory,
     const double dt = trajectory.dt_s;
 
     summary = TrajectorySummary{};
+    // The loader guarantees n >= 2 and dt > 0, but this is a public
+    // function tools and tests call with hand-built data — the size_t
+    // n - 1 below must never underflow.
+    if (n < 2 || trajectory.vel_deg_s.size() != n || !(dt > 0.0))
+    {
+        violations.push_back("not a loadable trajectory (fewer than 2 "
+                             "samples, mismatched columns, or dt <= 0)");
+        return violations;
+    }
     summary.samples = n;
     summary.duration_s = static_cast<double>(n - 1) * dt;
     for (int j = 0; j < NUM_JOINTS; ++j)
@@ -208,8 +228,27 @@ std::vector<std::string> ValidateTrajectory(const Trajectory& trajectory,
     {
         bool vel_reported = false, accel_reported = false, cons_reported = false,
              step_reported = false;
+        bool pos_reported = false;
         for (std::size_t i = 0; i < n; ++i)
         {
+            // Position range, wrapped: the file's continuous angles are
+            // compared as the arm sees them. Only meaningful for the
+            // bounded joints (limit 0 = continuous, skip).
+            if (pos_limit_deg[j] > 0.0 && !pos_reported)
+            {
+                const double wrapped =
+                    std::abs(std::remainder(trajectory.pos_deg[i][j], 360.0));
+                if (wrapped > pos_limit_deg[j])
+                {
+                    pos_reported = true;
+                    violation("joint " + std::to_string(j + 1) +
+                              ": position " + std::to_string(wrapped) +
+                              " deg exceeds the " +
+                              std::to_string(pos_limit_deg[j]) +
+                              " deg model range at t=" +
+                              std::to_string(i * dt) + " s");
+                }
+            }
             const double vel = std::abs(trajectory.vel_deg_s[i][j]);
             summary.peak_vel_deg_s[j] = std::max(summary.peak_vel_deg_s[j], vel);
             if (vel > vel_limit_deg_s[j] && !vel_reported)
@@ -276,6 +315,32 @@ std::vector<std::string> ValidateTrajectory(const Trajectory& trajectory,
         violation("last row is not at rest (max |qd| " +
                   std::to_string(summary.end_vel_deg_s) + " deg/s, limit " +
                   std::to_string(kRestVelDegS) + ")");
+    // Rest must also hold in the POSITIONS, not just the qd column — a
+    // file whose qd lies at the endpoints would otherwise start playback
+    // with an immediate feed-forward step (2026-07-31 review, finding 8a).
+    for (int j = 0; j < NUM_JOINTS; ++j)
+    {
+        const double implied_start =
+            std::abs(trajectory.pos_deg[1][j] - trajectory.pos_deg[0][j]) / dt;
+        const double implied_end =
+            std::abs(trajectory.pos_deg[n - 1][j] -
+                     trajectory.pos_deg[n - 2][j]) /
+            dt;
+        if (implied_start > kRestVelDegS + kVelConsistencyToleranceDegS)
+        {
+            violation("joint " + std::to_string(j + 1) +
+                      ": positions imply motion at the first row (" +
+                      std::to_string(implied_start) + " deg/s)");
+            break;
+        }
+        if (implied_end > kRestVelDegS + kVelConsistencyToleranceDegS)
+        {
+            violation("joint " + std::to_string(j + 1) +
+                      ": positions imply motion at the last row (" +
+                      std::to_string(implied_end) + " deg/s)");
+            break;
+        }
+    }
 
     return violations;
 }
@@ -290,8 +355,14 @@ Eigen::Matrix<double, 7, 1> SamplePositionDeg(const Trajectory& trajectory,
     if (t_s >= duration)
         return trajectory.pos_deg.back();
     const double u = t_s / trajectory.dt_s;
-    const std::size_t i = static_cast<std::size_t>(u); // < n-1 by the checks above
-    const double frac = u - static_cast<double>(i);
+    // Clamp the index explicitly: t_s < duration does NOT guarantee
+    // (size_t)(t_s/dt) < n-1 — floating-point rounding can push the
+    // quotient to exactly n-1 for a t one ulp below the duration, and
+    // pos_deg[i+1] would then read past the end (2026-07-31 review,
+    // finding 1).
+    const std::size_t i =
+        std::min(static_cast<std::size_t>(u), n - 2);
+    const double frac = std::min(u - static_cast<double>(i), 1.0);
     return trajectory.pos_deg[i] +
            frac * (trajectory.pos_deg[i + 1] - trajectory.pos_deg[i]);
 }

@@ -75,12 +75,20 @@ struct TrajectorySummary {
 //                     times a margin, so the Runner's clamp can never
 //                     engage on a validated file
 //   accel_limit_deg_s2 per-joint ceiling on |dqd/dt|
+//   pos_limit_deg     per-joint ceiling on the WRAPPED |q| (the Gen3's
+//                     bounded joints have ranges symmetric about 0); 0
+//                     disables the check for that joint (the continuous
+//                     joints 1/3/5/7 have no position limit)
 // Also enforced: velocity-vs-position consistency (the qd columns must
-// describe the q columns), rest at both ends, and per-sample steps small
-// enough for the position servo to follow.
+// describe the q columns), rest at both ends (both the qd column AND the
+// motion the positions imply), and per-sample steps small enough for the
+// position servo to follow. NOTE: this checks the URDF/Kinova model
+// ranges only — the arm's CONFIGURED soft limits can sit far inside them
+// (README "Safety"); read them with ./query_limits before a session.
 std::vector<std::string> ValidateTrajectory(const Trajectory& trajectory,
                                             const JointVector& vel_limit_deg_s,
                                             const JointVector& accel_limit_deg_s2,
+                                            const JointVector& pos_limit_deg,
                                             TrajectorySummary& summary);
 
 // Reference position at time t_s, linearly interpolated between samples

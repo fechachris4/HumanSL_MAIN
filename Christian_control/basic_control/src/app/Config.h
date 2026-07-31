@@ -180,6 +180,14 @@ namespace config
     inline constexpr JointVector kTrajectoryAccelLimitDegS2 = {
         57.3, 57.3, 57.3, 57.3, 573.0, 573.0, 573.0
     };
+    // Wrapped position range for the bounded joints 2/4/6 (Kinova model
+    // ranges: ±128.9 / ±147.8 / ±120.3 deg); 0 = continuous joint, no
+    // limit. Model ranges only — this arm's CONFIGURED soft limits can sit
+    // far inside them (joint 4 near −19.6°, joint 6 near +36° per the
+    // README): read them with ./query_limits before a session.
+    inline constexpr JointVector kTrajectoryPosLimitDeg = {
+        0.0, 128.9, 0.0, 147.8, 0.0, 120.3, 0.0
+    };
 
     // Loop log: the CSV is written DURING the run by a writer thread
     // (hardware/Record.h), so a killed run keeps everything up to the last

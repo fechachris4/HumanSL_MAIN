@@ -261,9 +261,18 @@ EffectiveConfig ParseOptions(int argc, char** argv)
                      "mode)");
     if (cfg.controller == "playback" &&
         (!(cfg.start_mismatch_limit_deg > 0.0) ||
-         cfg.start_mismatch_limit_deg >= cfg.following_error_limit_deg))
+         !(cfg.start_mismatch_limit_deg < cfg.following_error_limit_deg)))
         UsageAndExit("start_mismatch_limit_deg must be > 0 and below "
                      "following_error_limit_deg");
+    // The following-error guard is the loop's primary software stop; a
+    // NaN or absurd value (a valid TOML float!) would silently disable it
+    // — every ClassifyStop comparison against NaN is false (2026-07-31
+    // review, finding 3). The base's own ejection sits near 5 deg, so
+    // anything at or above 10 cannot be an intentional guard.
+    if (!(cfg.following_error_limit_deg > 0.0) ||
+        !(cfg.following_error_limit_deg < 10.0))
+        UsageAndExit("following_error_limit_deg must be a finite value in "
+                     "(0, 10) deg — it is the loop's primary stop guard");
     return cfg;
 }
 

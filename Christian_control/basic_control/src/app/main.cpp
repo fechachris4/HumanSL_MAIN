@@ -150,7 +150,7 @@ int main(int argc, char** argv)
                     config::kTrajectoryVelGateFactor * config::kQdotLimitDegS[i];
             const std::vector<std::string> violations = ValidateTrajectory(
                 *trajectory, vel_gate_deg_s, config::kTrajectoryAccelLimitDegS2,
-                trajectory_summary);
+                config::kTrajectoryPosLimitDeg, trajectory_summary);
             std::cout << "trajectory " << cfg.trajectory_file << ":\n  "
                       << trajectory_summary.samples << " samples, dt "
                       << trajectory->dt_s << " s, duration "

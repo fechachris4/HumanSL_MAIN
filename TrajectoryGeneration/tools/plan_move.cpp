@@ -73,6 +73,7 @@ namespace
     constexpr double kVelGateFactor = 0.9;
     const JointVector kAccelLimitDegS2 = {57.3, 57.3, 57.3, 57.3,
                                           573.0, 573.0, 573.0};
+    const JointVector kPosLimitDeg = {0.0, 128.9, 0.0, 147.8, 0.0, 120.3, 0.0};
 
     // Legacy acceptance threshold for the optimizer's final graph error
     // (the deleted plan.cpp retried until final_error < 100); the REAL
@@ -327,8 +328,8 @@ int main(int argc, char** argv)
         vel_gate[j] = kVelGateFactor * kQdotClipDegS[j];
     TrajectorySummary summary;
     Trajectory reloaded = LoadTrajectoryCsv(out_path);
-    const std::vector<std::string> violations =
-        ValidateTrajectory(reloaded, vel_gate, kAccelLimitDegS2, summary);
+    const std::vector<std::string> violations = ValidateTrajectory(
+        reloaded, vel_gate, kAccelLimitDegS2, kPosLimitDeg, summary);
 
     std::cout << "validation summary:\n  duration " << summary.duration_s
               << " s, " << summary.samples << " samples\n  joint displacement (deg):";

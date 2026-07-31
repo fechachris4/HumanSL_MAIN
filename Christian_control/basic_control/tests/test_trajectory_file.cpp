@@ -81,6 +81,7 @@ namespace
 
     const JointVector kVelGate = {71.6, 71.6, 71.6, 71.6, 62.9, 62.9, 62.9};
     const JointVector kAccelGate = {57.3, 57.3, 57.3, 57.3, 573.0, 573.0, 573.0};
+    const JointVector kPosGate = {0.0, 128.9, 0.0, 147.8, 0.0, 120.3, 0.0};
 
     void TestLoadValid()
     {
@@ -152,6 +153,15 @@ namespace
         std::string late = MakeCsv();
         late.replace(late.find("\n0,"), 3, "\n0.5,");
         Check(LoadRejects(late, "t0 != 0"), "nonzero start time rejected");
+
+        // Knot spacing outside the executable range: a 10 ms grid passes
+        // every motion gate but would execute step-like velocity changes
+        // at each knot — the loader must reject it (review finding 2).
+        Check(LoadRejects(MakeCsv(10.0, 2.0, 0.01), "10 ms grid"),
+              "coarse knot spacing rejected");
+        // 2 ms is inside the contract.
+        const Trajectory t2ms = LoadFrom(MakeCsv(10.0, 2.0, 0.002));
+        Check(std::abs(t2ms.dt_s - 0.002) < 1e-9, "2 ms grid accepted");
     }
 
     void TestValidation()
@@ -162,7 +172,7 @@ namespace
         {
             const Trajectory t = LoadFrom(MakeCsv());
             const auto violations =
-                ValidateTrajectory(t, kVelGate, kAccelGate, summary);
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
             Check(violations.empty(), "honest file passes validation");
             Check(std::abs(summary.duration_s - 2.0) < 1e-6, "summary duration");
             Check(std::abs(summary.displacement_deg[1] - 10.0) < 1e-6,
@@ -179,7 +189,7 @@ namespace
         {
             const Trajectory t = LoadFrom(MakeCsv(80.0, 1.0));
             const auto violations =
-                ValidateTrajectory(t, kVelGate, kAccelGate, summary);
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
             Check(!violations.empty(), "over-speed file fails");
             bool mentions = false;
             for (const auto& v : violations)
@@ -192,7 +202,7 @@ namespace
             Trajectory t = LoadFrom(MakeCsv());
             t.vel_deg_s[900][1] += 5.0;
             const auto violations =
-                ValidateTrajectory(t, kVelGate, kAccelGate, summary);
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
             bool consistency = false;
             for (const auto& v : violations)
                 consistency =
@@ -211,7 +221,7 @@ namespace
                 t.pos_deg[i][1] += 1.0 * t.dt_s * (i - 999);
             }
             const auto violations =
-                ValidateTrajectory(t, kVelGate, kAccelGate, summary);
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
             bool accel = false;
             for (const auto& v : violations)
                 accel = accel || v.find("acceleration") != std::string::npos;
@@ -223,7 +233,7 @@ namespace
             Trajectory t = LoadFrom(MakeCsv());
             t.vel_deg_s.front()[3] = 0.5;
             const auto violations =
-                ValidateTrajectory(t, kVelGate, kAccelGate, summary);
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
             bool rest = false;
             for (const auto& v : violations)
                 rest = rest || v.find("first row is not at rest") !=
@@ -238,12 +248,60 @@ namespace
             for (std::size_t i = 500; i < t.pos_deg.size(); ++i)
                 t.pos_deg[i][4] += 2.0; // 2 deg in one 1 ms sample
             const auto violations =
-                ValidateTrajectory(t, kVelGate, kAccelGate, summary);
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
             bool step = false;
             for (const auto& v : violations)
                 step = step || v.find("per-sample position step") !=
                                    std::string::npos;
             Check(step, "position teleport detected");
+        }
+
+        // A bounded joint outside its model range: joint 4 held at -150
+        // (range ±147.8) — the wrapped position gate must fire (review
+        // finding 4).
+        {
+            Trajectory t = LoadFrom(MakeCsv());
+            for (auto& q : t.pos_deg)
+                q[3] = -150.0;
+            const auto violations =
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
+            bool pos = false;
+            for (const auto& v : violations)
+                pos = pos || (v.find("joint 4") != std::string::npos &&
+                              v.find("position") != std::string::npos);
+            Check(pos, "bounded-joint range violation detected");
+            // The same value on a continuous joint (1) is fine.
+            Trajectory t2 = LoadFrom(MakeCsv());
+            for (auto& q : t2.pos_deg)
+                q[0] = -150.0;
+            Check(ValidateTrajectory(t2, kVelGate, kAccelGate, kPosGate, summary)
+                      .empty(),
+                  "continuous joint has no position gate");
+        }
+
+        // Positions that imply motion at the endpoints while the qd
+        // column claims rest (review finding 8a).
+        {
+            Trajectory t = LoadFrom(MakeCsv());
+            for (std::size_t i = 0; i < t.pos_deg.size(); ++i)
+                t.pos_deg[i][2] += 2.0 * static_cast<double>(i) * t.dt_s;
+            const auto violations =
+                ValidateTrajectory(t, kVelGate, kAccelGate, kPosGate, summary);
+            bool implied = false;
+            for (const auto& v : violations)
+                implied = implied || v.find("imply motion") != std::string::npos;
+            Check(implied, "implied endpoint motion detected");
+        }
+
+        // Hand-built garbage must not underflow n - 1 (review finding 8c).
+        {
+            Trajectory empty;
+            const auto violations =
+                ValidateTrajectory(empty, kVelGate, kAccelGate, kPosGate, summary);
+            Check(violations.size() == 1 &&
+                      violations.front().find("not a loadable") !=
+                          std::string::npos,
+                  "empty trajectory reported, no underflow");
         }
     }
 
@@ -264,6 +322,21 @@ namespace
         const Eigen::Matrix<double, 7, 1> expected =
             0.5 * (t.pos_deg[1000] + t.pos_deg[1001]);
         Check((mid - expected).norm() < 1e-9, "linear interpolation between samples");
+
+        // One ulp below the duration: floating-point rounding can push
+        // the index to n-1 — must clamp, not read past the end (review
+        // finding 1). Sweep several durations/grids to hit the window.
+        for (double dur : {2.0, 1.0, 0.9, 0.7, 0.3})
+        {
+            const Trajectory tt = LoadFrom(MakeCsv(5.0, dur, 0.001));
+            const double just_below =
+                std::nextafter(TrajectoryDurationS(tt), 0.0);
+            const Eigen::Matrix<double, 7, 1> near_end =
+                SamplePositionDeg(tt, just_below);
+            Check((near_end - tt.pos_deg.back()).norm() < 1e-6,
+                  "ulp-below-duration sample equals the last row (dur " +
+                      std::to_string(dur) + ")");
+        }
     }
 } // namespace
 
