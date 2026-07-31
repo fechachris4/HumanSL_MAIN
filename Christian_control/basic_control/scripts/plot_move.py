@@ -35,7 +35,11 @@ def load(path, allow_old):
                 "thresholds are unknown; pass --allow-old to analyze anyway.")
         header = first.rstrip("\n").split(",")
         reader = csv.reader(f)
-        data = np.array([[float(x) for x in row] for row in reader])
+        # Short rows are skipped, not fatal: a run killed mid-drain leaves a
+        # complete file up to its last full row (analyze_run.py does the
+        # same).
+        data = np.array([[float(x) for x in row]
+                         for row in reader if len(row) == len(header)])
     if data.size == 0:
         sys.exit(f"{path}: no data rows")
     cols = {name: data[:, i] for i, name in enumerate(header)}

@@ -166,10 +166,22 @@ policy is not runtime-configurable.
    converges). A new line replaces the target immediately; mid-motion
    retargeting is normal. Invalid lines are rejected with a reason.
 5. Ctrl+C stops cleanly: the integrator stops updating (the position servo
-   holds the last setpoint), single-level servoing is restored, telemetry
-   (most recent 600 s) is written to
-   `runs/YYYY-MM-DD/loop_log_YYYYMMDD_HHMMSS.csv`. Exit 0 only on this
-   clean stop; faults print a decoded report and exit 1.
+   holds the last setpoint), single-level servoing is restored, and the
+   last unwritten telemetry is flushed. Exit 0 only on this clean stop;
+   faults print a decoded report and exit 1.
+
+Telemetry goes to `runs/YYYY-MM-DD/loop_log_YYYYMMDD_HHMMSS.csv`, written
+by a writer thread **as the run happens** (100 ms drains) rather than in
+one write at the end. A run that dies without unwinding — SIGKILL, the
+IDE's stop button, a debugger detach, a crash — therefore keeps every row
+up to its last drain, and the file always ends on a complete row. The
+whole run is kept, at roughly 350 KB/s (~600 MB for 30 minutes at 1 kHz):
+prune `runs/` rather than shortening the record.
+
+If the writer ever fails to keep up with the loop, the dropped samples are
+counted and reported at exit instead of being silently overwritten — and
+the resulting hole is visible to `analyze_run.py`'s integrity report as a
+`time_s` gap.
 
 First hardware runs: start from the printed current position and change
 **one coordinate by a few centimeters**.

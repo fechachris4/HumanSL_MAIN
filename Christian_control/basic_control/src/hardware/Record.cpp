@@ -1,5 +1,7 @@
 //
-// Record: preallocated in-memory log for the cyclic loop + CSV output.
+// Record: preallocated sample queue for the cyclic loop + streaming CSV
+// output. See Record.h for the SPSC contract and why the log is written
+// during the run rather than after it.
 //
 
 #include "hardware/Record.h"
@@ -15,22 +17,51 @@ LoopLog::LoopLog(std::size_t capacity)
 
 void LoopLog::push(const LoopLogSample& sample)
 {
-    samples_[next_] = sample;
-    next_ = (next_ + 1) % samples_.size();
-    ++total_pushed_;
+    // head_ is ours; tail_ tells us how far the writer has caught up. The
+    // acquire pairs with the writer's release in Drain, so a slot it has
+    // released is safe to reuse.
+    const std::size_t head = head_.load(std::memory_order_relaxed);
+    const std::size_t tail = tail_.load(std::memory_order_acquire);
+    if (head - tail >= samples_.size()) {
+        ++dropped_; // writer a whole buffer behind — never overwrite it
+        return;
+    }
+    samples_[head % samples_.size()] = sample;
+    // Release: the sample is fully written before the writer can see the
+    // index that publishes it.
+    head_.store(head + 1, std::memory_order_release);
 }
 
-std::size_t LoopLog::size() const
+std::size_t LoopLog::Drain(std::vector<LoopLogSample>& out)
 {
-    return total_pushed_ < samples_.size() ? total_pushed_ : samples_.size();
+    const std::size_t tail = tail_.load(std::memory_order_relaxed); // ours
+    const std::size_t head = head_.load(std::memory_order_acquire);
+    const std::size_t count = head - tail;
+    out.resize(count); // no allocation once reserved to capacity()
+    for (std::size_t n = 0; n < count; ++n)
+        out[n] = samples_[(tail + n) % samples_.size()];
+    // Release only after the copy: until this store the producer treats
+    // these slots as still in use.
+    tail_.store(head, std::memory_order_release);
+    return count;
+}
+
+std::size_t LoopLog::capacity() const
+{
+    return samples_.size();
 }
 
 std::size_t LoopLog::total_pushed() const
 {
-    return total_pushed_;
+    return head_.load(std::memory_order_relaxed) + dropped_;
 }
 
-void LoopLog::WriteCsv(std::ostream& csv) const
+std::size_t LoopLog::dropped() const
+{
+    return dropped_;
+}
+
+void WriteCsvHeader(std::ostream& csv)
 {
     csv << "time_s,dt_s,pd_x,pd_y,pd_z,p_x,p_y,p_z";
     for (int i = 1; i <= 7; ++i)
@@ -49,39 +80,98 @@ void LoopLog::WriteCsv(std::ostream& csv) const
         csv << ",fault_j" << i;
     csv << ",arm_state,base_fault,refresh_ok,sigma_min,rot_error_rad"
         << ",t_send_s,t_recv_s,quat_x,quat_y,quat_z,quat_w,pd_beyond_reach\n";
+}
 
-    // Oldest-first: when the ring has wrapped, the oldest sample sits at
-    // next_ (the slot about to be overwritten).
-    const std::size_t count = size();
-    const std::size_t start = total_pushed_ > count ? next_ : 0;
-    for (std::size_t n = 0; n < count; ++n) {
-        const LoopLogSample& s = samples_[(start + n) % samples_.size()];
-        csv << s.t_s << "," << s.dt_s;
-        for (double v : s.p_desired_m)
-            csv << "," << v;
-        for (double v : s.p_current_m)
-            csv << "," << v;
-        for (double v : s.commanded_deg)
-            csv << "," << v;
-        for (double v : s.commanded_velocity_deg_s)
-            csv << "," << v;
-        for (double v : s.measured_deg)
-            csv << "," << v;
-        for (double v : s.measured_raw_deg)
-            csv << "," << v;
-        for (double v : s.velocity_deg_s)
-            csv << "," << v;
-        for (double v : s.torque_nm)
-            csv << "," << v;
-        for (std::uint32_t v : s.fault_bank)
-            csv << "," << v;
-        csv << "," << s.arm_state << "," << s.base_fault_bank << ","
-            << (s.refresh_ok ? 1 : 0) << "," << s.sigma_min << ","
-            << s.rot_error_rad << "," << s.t_send_s << "," << s.t_recv_s;
-        for (double v : s.tool_quat_xyzw)
-            csv << "," << v;
-        csv << "," << (s.pd_beyond_reach ? 1 : 0) << "\n";
+void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
+{
+    csv << s.t_s << "," << s.dt_s;
+    for (double v : s.p_desired_m)
+        csv << "," << v;
+    for (double v : s.p_current_m)
+        csv << "," << v;
+    for (double v : s.commanded_deg)
+        csv << "," << v;
+    for (double v : s.commanded_velocity_deg_s)
+        csv << "," << v;
+    for (double v : s.measured_deg)
+        csv << "," << v;
+    for (double v : s.measured_raw_deg)
+        csv << "," << v;
+    for (double v : s.velocity_deg_s)
+        csv << "," << v;
+    for (double v : s.torque_nm)
+        csv << "," << v;
+    for (std::uint32_t v : s.fault_bank)
+        csv << "," << v;
+    csv << "," << s.arm_state << "," << s.base_fault_bank << ","
+        << (s.refresh_ok ? 1 : 0) << "," << s.sigma_min << ","
+        << s.rot_error_rad << "," << s.t_send_s << "," << s.t_recv_s;
+    for (double v : s.tool_quat_xyzw)
+        csv << "," << v;
+    csv << "," << (s.pd_beyond_reach ? 1 : 0) << "\n";
+}
+
+LoopLogWriter::LoopLogWriter(LoopLog& log, std::ostream& csv,
+                             std::chrono::milliseconds interval)
+    : log_(log), csv_(csv), interval_(interval)
+{
+    WriteCsvHeader(csv_);
+    // Preamble + header on disk before the takeover: a run killed while
+    // connecting still leaves a file that says what it was going to do.
+    csv_.flush();
+    staging_.reserve(log_.capacity()); // the drain loop allocates nothing
+    thread_ = std::thread(&LoopLogWriter::Run, this);
+}
+
+LoopLogWriter::~LoopLogWriter()
+{
+    try {
+        Stop();
+    } catch (...) {
+        // A destructor on an unwinding path must not throw. A failed final
+        // drain has already cost us at most the last interval of samples.
     }
+}
+
+void LoopLogWriter::Run()
+{
+    while (!stop_.load(std::memory_order_acquire)) {
+        std::this_thread::sleep_for(interval_);
+        DrainOnce();
+    }
+}
+
+void LoopLogWriter::DrainOnce()
+{
+    const std::size_t count = log_.Drain(staging_);
+    if (count == 0)
+        return;
+    // Format the whole batch first, at the stream's default precision, then
+    // hand it over in one write: the file can only ever be cut between
+    // rows, never inside one.
+    std::ostringstream batch;
+    for (const LoopLogSample& s : staging_)
+        WriteCsvRow(batch, s);
+    const std::string text = batch.str();
+    csv_.write(text.data(), static_cast<std::streamsize>(text.size()));
+    csv_.flush(); // out of our buffer and into the kernel's
+    rows_written_ += count;
+}
+
+void LoopLogWriter::Stop()
+{
+    if (!thread_.joinable())
+        return;
+    stop_.store(true, std::memory_order_release);
+    thread_.join();
+    // The producer has stopped and the thread is gone, so this drain is the
+    // last one and it sees everything the loop left behind.
+    DrainOnce();
+}
+
+std::size_t LoopLogWriter::rows_written() const
+{
+    return rows_written_;
 }
 
 std::string timestamped_csv_name(const std::string& prefix)

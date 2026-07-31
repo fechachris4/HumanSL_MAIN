@@ -151,8 +151,19 @@ namespace config
     // toward 5 mm in that case).
     inline constexpr double kArrivalToleranceM = 0.001;
 
-    // Loop log: preallocated ring buffer, most recent kLogCapacitySeconds
-    // kept on very long runs; written to one timestamped CSV after the loop.
-    inline constexpr std::size_t kLogCapacitySeconds = 600;
+    // Loop log: the CSV is written DURING the run by a writer thread
+    // (hardware/Record.h), so a killed run keeps everything up to the last
+    // drain and the file holds the whole run, however long it is.
+    //
+    // kLogBufferSeconds only sizes the handoff queue between the loop and
+    // that thread — it is slack for a disk hiccup, not a retention limit.
+    // 30 s of samples is ~15 MB and 300x the drain interval; if the writer
+    // ever falls that far behind, samples are dropped and counted rather
+    // than silently overwritten.
+    //
+    // Cost of keeping everything: ~350 KB/s of CSV at 1 kHz, so a 30-minute
+    // run is ~600 MB. Prune runs/ rather than shortening the record.
+    inline constexpr std::size_t kLogBufferSeconds = 30;
+    inline constexpr std::chrono::milliseconds kLogDrainInterval{100};
     inline constexpr const char* kLoopLogPrefix = "loop_log";
 } // namespace config

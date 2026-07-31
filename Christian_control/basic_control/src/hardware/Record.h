@@ -1,17 +1,29 @@
 //
-// Record: preallocated in-memory log for the cyclic loop, written to CSV
-// once the loop has ended. Nothing here runs inside the loop except push(),
-// which is allocation- and I/O-free.
+// Record: preallocated sample queue for the cyclic loop, drained to CSV by
+// a writer thread WHILE the loop runs. Nothing here runs inside the loop
+// except push(), which is allocation-, lock- and I/O-free.
+//
+// Why streaming rather than one write at the end: the log used to be held
+// entirely in RAM until the loop returned, so any exit that skipped
+// destructors — SIGKILL, the IDE stop button, a debugger detach, abort()
+// via std::terminate — left a zero-byte CSV and no evidence whatsoever.
+// 16 of the first 60 runs recorded under that design are empty files.
+// Rows now reach the kernel every kLogDrainInterval, so a killed run keeps
+// everything up to the last drain and the file always ends on a row
+// boundary.
 //
 
 #ifndef HUMANSL_MASTERS_PROJECT_2025_RECORD_H
 #define HUMANSL_MASTERS_PROJECT_2025_RECORD_H
 
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <limits>
 #include <ostream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "JointVector.h"
@@ -22,7 +34,7 @@
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 2; WriteCsv is the authority):
+// CSV column order (log_format = 2; AppendCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -76,24 +88,85 @@ struct LoopLogSample {
     bool pd_beyond_reach = false; // target outside right-base-relative sphere
 };
 
-// Fixed-capacity ring buffer, fully allocated in the constructor. push()
-// overwrites the oldest sample once full, so a very long run keeps the most
-// recent kCapacity samples. WriteCsv emits rows oldest-first.
+// Single-producer / single-consumer queue over a fixed-capacity ring, fully
+// allocated in the constructor. The control loop is the only producer
+// (push); a LoopLogWriter thread is the only consumer (Drain).
+//
+// The producer never overwrites a slot the consumer has not released, so no
+// sample is ever read while it is being written — the race a lossy ring
+// would have. The price is that when the consumer falls a whole buffer
+// behind, push() drops the sample rather than the oldest one and counts it
+// in dropped(). At the shipped sizing (kLogBufferSeconds of slack against a
+// kLogDrainInterval drain) the consumer would have to stall for hundreds of
+// drains for that to happen; dropped() > 0 means the disk, not the loop.
 class LoopLog
 {
 public:
     explicit LoopLog(std::size_t capacity);
 
-    void push(const LoopLogSample& sample); // alloc-free, loop-safe
-    void WriteCsv(std::ostream& csv) const;
+    // Producer side — the cyclic loop. Allocation-, lock- and I/O-free.
+    void push(const LoopLogSample& sample);
 
-    std::size_t size() const;          // samples currently held
-    std::size_t total_pushed() const;  // samples ever pushed (>= size)
+    // Consumer side — the writer thread. Copies every sample published
+    // since the previous call into `out` (resized to fit; reserve to
+    // capacity() once to keep it allocation-free) and returns the count.
+    std::size_t Drain(std::vector<LoopLogSample>& out);
+
+    std::size_t capacity() const;
+    std::size_t total_pushed() const; // samples ever offered by the loop
+    std::size_t dropped() const;      // offered but refused (queue full)
 
 private:
     std::vector<LoopLogSample> samples_;
-    std::size_t next_ = 0;         // ring write position
-    std::size_t total_pushed_ = 0;
+    std::atomic<std::size_t> head_{0}; // published by the producer
+    std::atomic<std::size_t> tail_{0}; // released by the consumer
+    std::size_t dropped_ = 0;          // producer only; read after the loop
+};
+
+// Column header and one data row — the authority for log_format = 2. Both
+// rely on the stream's default formatting (six significant digits), which
+// is what every existing run log and every parsing script assumes.
+void WriteCsvHeader(std::ostream& csv);
+void WriteCsvRow(std::ostream& csv, const LoopLogSample& s);
+
+// Drains a LoopLog to CSV on its own thread while the loop runs. The loop
+// thread never touches the file; this thread never touches the robot.
+//
+// Construction writes the column header and flushes, so the file is already
+// self-describing before the takeover. Each drain formats whole rows into
+// one buffer, writes it, and flushes — the bytes are in the kernel's hands
+// from that moment, and a kill can only ever cut the file at a row
+// boundary, never mid-row.
+class LoopLogWriter
+{
+public:
+    // `log` and `csv` must outlive the writer, and nothing else may write
+    // to `csv` until Stop() has returned.
+    LoopLogWriter(LoopLog& log, std::ostream& csv,
+                  std::chrono::milliseconds interval);
+    ~LoopLogWriter(); // Stop(), swallowing exceptions
+
+    LoopLogWriter(const LoopLogWriter&) = delete;
+    LoopLogWriter& operator=(const LoopLogWriter&) = delete;
+
+    // Stops the thread, drains what the loop left behind, flushes.
+    // Idempotent. Call it only once the producer has stopped pushing (i.e.
+    // after RunControlLoop has returned), so the final drain is final.
+    void Stop();
+
+    std::size_t rows_written() const; // valid once Stop() has returned
+
+private:
+    void Run();
+    void DrainOnce();
+
+    LoopLog& log_;
+    std::ostream& csv_;
+    std::chrono::milliseconds interval_;
+    std::atomic<bool> stop_{false};
+    std::vector<LoopLogSample> staging_; // reused every drain
+    std::size_t rows_written_ = 0;       // writer thread only until joined
+    std::thread thread_;
 };
 
 // "<prefix>_YYYYMMDD_HHMMSS.csv" in local time — one file per run, so a

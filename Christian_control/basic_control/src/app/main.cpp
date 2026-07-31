@@ -14,7 +14,8 @@
  *        sequence T1-T6, the selected controller (ResolvedRate or
  *        ReactivePose) + PositionIntegration actuation, single-level
  *        servoing restored on every exit path)
- *     -> stop the input thread, write the loop log to CSV
+ *     -> stop the input thread, drain the last of the loop log (the rest
+ *        of the CSV was written by the writer thread as the run happened)
  *     -> RAII teardown, exit 0 only on a clean operator stop.
  *
  * Usage: ./controller
@@ -150,9 +151,11 @@ int main(int argc, char** argv)
             return 1;
         PrintRobotState(initial, controlled_model);
 
-        // All logging memory is allocated here, before the loop starts.
+        // All logging memory is allocated here, before the loop starts. This
+        // is the handoff queue to the writer thread, not the run's record —
+        // the record is the CSV, written as the run happens.
         // cycles per second = 1e6 / period_us (1000 at the 1 kHz default)
-        LoopLog log(config::kLogCapacitySeconds *
+        LoopLog log(config::kLogBufferSeconds *
                     (1'000'000 / static_cast<std::size_t>(config::kCyclePeriod.count())));
         TargetStore targets;          // resolved-rate (position only)
         PoseTargetStore pose_targets; // reactive-pose (position + orientation)
@@ -176,6 +179,7 @@ int main(int argc, char** argv)
         // Open the run's CSV BEFORE the takeover: a hardware run must never
         // end with zero evidence because the file could not be created. The
         // '#' config preamble makes every data file self-describing (F3).
+        // The rows follow during the run, from the writer thread below.
         // Default: <repo>/runs/YYYY-MM-DD/ (RUNS_ROOT_DIR, baked in by
         // CMake) — the layout the plot scripts search; an explicit
         // cfg.log_file is used verbatim.
@@ -197,6 +201,13 @@ int main(int argc, char** argv)
             return 1;
         }
         WriteCsvPreamble(cfg, csv);
+
+        // From here the CSV writes itself: the writer thread drains the log
+        // to disk every kLogDrainInterval for as long as it is alive. It is
+        // declared after `csv` and before the loop, so it is torn down
+        // first on every exit path — including an exception — and its
+        // destructor performs the final drain.
+        LoopLogWriter log_writer(log, csv, config::kLogDrainInterval);
 
         // Controller + actuation, constructed before the input thread: a bad
         // end-effector frame name must fail here, before any takeover.
@@ -261,12 +272,14 @@ int main(int argc, char** argv)
         if (target_file_thread.joinable())
             target_file_thread.join();
 
-        // Flush the log — one file per run (opened before the loop above).
-        log.WriteCsv(csv);
-        std::cout << log.size() << " samples written";
-        if (log.total_pushed() > log.size())
-            std::cout << " (" << (log.total_pushed() - log.size())
-                      << " oldest samples overwritten by the ring buffer)";
+        // Final drain — everything before this was already on disk.
+        log_writer.Stop();
+        std::cout << log_writer.rows_written() << " samples written";
+        if (log.dropped() > 0)
+            std::cout << " — WARNING: " << log.dropped()
+                      << " samples never reached the file (the CSV writer "
+                         "could not keep up with the loop; the gap is "
+                         "visible in time_s)";
         // Full path on its own line, ready to paste into an analysis request.
         std::cout << "\nlog: " << log_file << "\n";
 
