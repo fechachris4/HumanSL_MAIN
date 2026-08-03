@@ -63,11 +63,25 @@ public:
     }
 
     // The TCP (configuration) router, for building additional service
-    // clients (DeviceManager, DeviceConfig, ControlConfig) outside this
-    // class — read-only diagnostics tools use this.
+    // clients outside this class — read-only diagnostics tools use this.
+    //
+    // CAUTION: each Kortex service client registers a notification callback
+    // on its router, and the router rejects a SECOND registration for the
+    // same service ("notification callback is already registered in the
+    // client router"). Connect already owns a DeviceConfigClient, so build
+    // only services it does NOT own here (DeviceManager, ControlConfig) and
+    // reach the owned one through device_config() below.
     k_api::RouterClient* tcp_router()
     {
         return tcp_.router.get();
+    }
+
+    // The DeviceConfig service this connection already owns — safety
+    // thresholds, device-level configuration. Shared rather than rebuilt,
+    // see the caution on tcp_router().
+    k_api::DeviceConfig::DeviceConfigClient* device_config()
+    {
+        return device_config_.get();
     }
 
     // Read, set if necessary, and re-read all seven actuator control modes.

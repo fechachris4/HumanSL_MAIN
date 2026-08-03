@@ -153,20 +153,41 @@ bool Connect::EnsurePositionControlModes(std::ostream& out)
     bool changed = false;
     for (std::uint32_t id = 1; id <= 7; ++id)
     {
-        const auto before = actuator_config_->GetControlMode(id);
-        if (before.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
+        // Name the joint before every RPC. These calls are routed to one
+        // actuator, and a single actuator whose CONFIGURATION service has
+        // stopped answering makes them time out while the cyclic path keeps
+        // reporting that joint normally (2026-08-04: joint 6). Without the
+        // joint in the message the failure reads as a whole-arm timeout,
+        // which sends you looking at the network instead of one device.
+        try
         {
-            out << "joint " << id << " control mode was "
-                << k_api::ActuatorConfig::ControlMode_Name(before.control_mode())
-                << "; setting POSITION\n";
-            actuator_config_->SetControlMode(desired, id);
-            changed = true;
+            const auto before = actuator_config_->GetControlMode(id);
+            if (before.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
+            {
+                out << "joint " << id << " control mode was "
+                    << k_api::ActuatorConfig::ControlMode_Name(before.control_mode())
+                    << "; setting POSITION\n";
+                actuator_config_->SetControlMode(desired, id);
+                changed = true;
+            }
+            const auto verified = actuator_config_->GetControlMode(id);
+            if (verified.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
+            {
+                out << "robot NOT ready: joint " << id
+                    << " did not enter POSITION control mode\n";
+                return false;
+            }
         }
-        const auto verified = actuator_config_->GetControlMode(id);
-        if (verified.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
+        catch (std::exception& ex)
         {
             out << "robot NOT ready: joint " << id
-                << " did not enter POSITION control mode\n";
+                << " did not answer its control-mode service (" << ex.what()
+                << ").\n"
+                   "  The joint may still report position on the cyclic path;"
+                   " this is its CONFIGURATION channel.\n"
+                   "  Its control mode cannot be verified, so the takeover is"
+                   " refused. Power-cycle the arm and re-check with"
+                   " tools/read_safety_limits.\n";
             return false;
         }
     }

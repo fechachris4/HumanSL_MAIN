@@ -34,15 +34,34 @@ namespace
                     << " at " << fb.actuators(i).position() << " deg (raw)\n";
     }
 
+    // The same criterion the controller's readiness gate applies
+    // (Safety.cpp RobotReadyForTakeover), and for the same reason: the
+    // base's JOINT_FAULT (16) summary bit is a LATCHED HISTORICAL
+    // aggregate, not a live interlock. With it set, every actuator bank
+    // clear and the arm SERVOING_READY, the Kinova Web App moves the arm
+    // normally (fault-handling-hardening.md, correction of 2026-07-20).
+    //
+    // This tool used to treat any nonzero base bank as fatal and print "Do
+    // not proceed to a takeover", contradicting the controller it is meant
+    // to support and sending the operator hunting a fault that was not
+    // there (2026-08-04).
     bool AllClear(const k_api::BaseCyclic::Feedback& fb)
     {
-        if (fb.base().fault_bank_a() != 0)
+        if ((fb.base().fault_bank_a() & ~kJointFaultBit) != 0)
             return false;
         for (int i = 0; i < fb.actuators_size(); ++i)
             if (fb.actuators(i).fault_bank_a() != 0)
                 return false;
         return static_cast<k_api::Common::ArmState>(fb.base().active_state()) ==
             k_api::Common::ArmState::ARMSTATE_SERVOING_READY;
+    }
+
+    // True when the only thing left is that latched summary bit — worth
+    // saying out loud, because ClearFaults will never clear it.
+    bool OnlyStaleJointFault(const k_api::BaseCyclic::Feedback& fb)
+    {
+        return (fb.base().fault_bank_a() & kJointFaultBit) != 0 &&
+               AllClear(fb);
     }
 } // namespace
 
@@ -57,7 +76,12 @@ int main()
 
         if (AllClear(fb))
         {
-            std::cout << "nothing to clear — arm is READY with zero fault banks\n";
+            std::cout << (OnlyStaleJointFault(fb)
+                              ? "nothing to clear — arm is READY, every actuator "
+                                "bank clear; the base JOINT_FAULT bit is a stale "
+                                "summary and will not clear (expected)\n"
+                              : "nothing to clear — arm is READY with zero fault "
+                                "banks\n");
             return 0;
         }
 
@@ -78,12 +102,18 @@ int main()
 
         if (!AllClear(fb))
         {
-            std::cout << "NOT CLEAR after ClearFaults — a fault is re-latching "
-                "(joint likely outside its configured limit) or the arm is "
-                "not READY. Do not proceed to a takeover.\n";
+            std::cout << "NOT CLEAR after ClearFaults — an ACTUATOR bank is "
+                "re-latching (joint likely outside its configured limit), a "
+                "non-JOINT_FAULT base bit is set, or the arm is not READY. "
+                "Do not proceed to a takeover.\n";
             return 1;
         }
-        std::cout << "all fault banks zero, arm SERVOING_READY\n";
+        std::cout << (OnlyStaleJointFault(fb)
+                          ? "clear: every actuator bank zero and arm "
+                            "SERVOING_READY; the base JOINT_FAULT bit remains "
+                            "latched, which is expected and does not block a "
+                            "takeover\n"
+                          : "all fault banks zero, arm SERVOING_READY\n");
         return 0;
     }
     catch (k_api::KDetailedException& ex)

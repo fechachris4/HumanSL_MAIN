@@ -12,6 +12,7 @@
 
 #include "Config.h"
 #include "Hardware.h"
+#include "Safety.h" // DecodeBaseBank / DecodeActuatorBank
 
 #include <DeviceConfigClientRpc.h>
 #include <DeviceManagerClientRpc.h>
@@ -33,10 +34,35 @@ int main()
         const k_api::BaseCyclic::Feedback fb =
             connection.base_cyclic()->RefreshFeedback();
 
+        // The live fault picture FIRST, from the real-time path, before any
+        // per-device configuration read. This is what says whether a fault
+        // is live: it comes from the cyclic feedback, which keeps working
+        // even when an actuator's configuration service does not answer.
+        std::cout << "arm state "
+                  << k_api::Common::ArmState_Name(static_cast<k_api::Common::ArmState>(
+                         fb.base().active_state()))
+                  << ", base fault bank " << DecodeBaseBank(fb.base().fault_bank_a())
+                  << "\n";
+        for (int i = 0; i < fb.actuators_size(); ++i)
+        {
+            const std::uint32_t bank = fb.actuators(i).fault_bank_a();
+            std::cout << "  joint " << (i + 1) << "  position "
+                      << std::fixed << std::setprecision(2)
+                      << fb.actuators(i).position() << " deg  "
+                      << std::defaultfloat
+                      << (bank == 0 ? "no fault"
+                                    : "FAULT " + DecodeActuatorBank(bank))
+                      << "\n";
+        }
+        std::cout << "\n";
+
+        // DeviceManager is not owned by Connect, so build it here. DeviceConfig
+        // IS owned by Connect — building a second one on the same router fails
+        // with "notification callback is already registered".
         k_api::DeviceManager::DeviceManagerClient device_manager(
             connection.tcp_router());
-        k_api::DeviceConfig::DeviceConfigClient device_config(
-            connection.tcp_router());
+        k_api::DeviceConfig::DeviceConfigClient& device_config =
+            *connection.device_config();
 
         const k_api::DeviceManager::DeviceHandles devices =
             device_manager.ReadAllDevices();
@@ -66,19 +92,36 @@ int main()
                 << "), live position " << std::fixed << std::setprecision(2)
                 << position_deg << " deg raw:\n" << std::defaultfloat;
 
-            // Configured thresholds, keyed by safety identifier.
+            // One unresponsive actuator must not hide the other six. A
+            // configuration RPC that times out is itself a finding — the
+            // actuator is alive on the real-time bus (its position printed
+            // above) but its config service is not answering — so report it
+            // and carry on down the chain.
             std::map<unsigned, std::pair<float, float>> configured; // id -> (warn, err)
-            const auto configs = device_config.GetAllSafetyConfiguration(
-                handle.device_identifier());
-            for (int c = 0; c < configs.configuration_size(); ++c)
+            k_api::DeviceConfig::SafetyInformationList infos;
+            try
             {
-                const auto& sc = configs.configuration(c);
-                configured[sc.handle().identifier()] = {
-                    sc.warning_threshold(), sc.error_threshold()};
+                const auto configs = device_config.GetAllSafetyConfiguration(
+                    handle.device_identifier());
+                for (int c = 0; c < configs.configuration_size(); ++c)
+                {
+                    const auto& sc = configs.configuration(c);
+                    configured[sc.handle().identifier()] = {
+                        sc.warning_threshold(), sc.error_threshold()};
+                }
+                infos = device_config.GetAllSafetyInformation(
+                    handle.device_identifier());
+            }
+            catch (std::exception& ex)
+            {
+                std::cout << "  CONFIGURATION SERVICE DID NOT ANSWER: "
+                          << ex.what() << "\n"
+                          << "  (the actuator still reports position on the "
+                             "cyclic path, so this is the config channel, "
+                             "not a dead joint)\n";
+                continue;
             }
 
-            const auto infos = device_config.GetAllSafetyInformation(
-                handle.device_identifier());
             for (int s = 0; s < infos.information_size(); ++s)
             {
                 const auto& si = infos.information(s);

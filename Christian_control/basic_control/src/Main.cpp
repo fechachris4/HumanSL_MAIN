@@ -322,12 +322,16 @@ int main(int argc, char** argv)
         const bool robot_ready = RobotReadyForTakeover(initial, std::cout); // T1
         if (!robot_ready)
             return 1;
-        if (!connection.EnsurePositionControlModes(std::cout))
-            return 1;
-        // Re-assert the configured JOINT_LIMIT thresholds: they do not
-        // survive a robot power cycle, and a degenerate 0/0 band makes the
-        // firmware fault any motion away from zero (Config.h).
+        // Joint limits FIRST. They do not survive a robot power cycle, and a
+        // degenerate 0/0 band makes the firmware fault any motion away from
+        // zero (Config.h). Restoring them is the more important of the two
+        // gates and must not be blocked by the other: until 2026-08-04 the
+        // control-mode probe ran first, so a single actuator whose
+        // configuration service had stopped answering exited the program
+        // before any limit was ever re-applied.
         if (!connection.EnsureJointLimits(std::cout))
+            return 1;
+        if (!connection.EnsurePositionControlModes(std::cout))
             return 1;
         PrintRobotState(initial, controlled_model);
 

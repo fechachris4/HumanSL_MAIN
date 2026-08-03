@@ -169,6 +169,7 @@ target_link_libraries(set_joint_limits
 add_executable(read_safety_limits
         tools/read_safety_limits.cpp
         src/Hardware.cpp
+        src/Safety.cpp   # DecodeBaseBank / DecodeActuatorBank
 )
 target_include_directories(read_safety_limits PRIVATE
         src
