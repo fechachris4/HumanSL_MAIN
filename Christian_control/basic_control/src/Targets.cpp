@@ -16,6 +16,16 @@
 
 #include "Targets.h"
 
+Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw)
+{
+    // R = Rz(yaw) · Ry(pitch) · Rx(roll) — the simulation's convention
+    // (msc_project controller/transforms.py rotation_from_rpy).
+    return (Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()))
+        .toRotationMatrix();
+}
+
 std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& error)
 {
     std::istringstream in(line);
@@ -42,17 +52,8 @@ std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& 
 
     PoseTarget target;
     target.p_desired = Eigen::Vector3d(values[0], values[1], values[2]);
-    if (count == 6) {
-        // R = Rz(yaw) · Ry(pitch) · Rx(roll) — the simulation's convention
-        // (msc_project controller/transforms.py rotation_from_rpy).
-        const double roll = values[3];
-        const double pitch = values[4];
-        const double yaw = values[5];
-        target.rotation = (Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
-                           Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
-                           Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()))
-                              .toRotationMatrix();
-    }
+    if (count == 6)
+        target.rotation = RotationFromRpy(values[3], values[4], values[5]);
     return target;
 }
 
@@ -195,8 +196,8 @@ void RunPoseTargetFileInput(PoseTargetStore& store, const std::string& path,
 
 PoseTargetSource::PoseTargetSource(
     const PoseTargetStore& store,
-    std::optional<Eigen::Vector3d> initial_position)
-    : store_(store), initial_position_(std::move(initial_position))
+    std::optional<PoseTarget> initial_target)
+    : store_(store), initial_target_(std::move(initial_target))
 {}
 
 void PoseTargetSource::Reset(const RobotState& /*state*/)
@@ -214,11 +215,13 @@ Reference PoseTargetSource::Get(const RobotState& /*state*/, double /*dt_s*/,
     if (snapshot.sequence != baseline_sequence_)
         reference.pose = PoseReference{snapshot.p_desired, snapshot.rotation,
                                        snapshot.sequence};
-    else if (initial_position_)
+    else if (initial_target_)
         // Sequence 0 never collides with a live store sequence (those
         // continue from the takeover baseline), so the arrival notice
-        // arms exactly once for the initial target too.
-        reference.pose = PoseReference{*initial_position_, std::nullopt, 0};
+        // arms exactly once for the initial target too. An empty rotation
+        // here means the controller keeps the takeover orientation.
+        reference.pose = PoseReference{initial_target_->p_desired,
+                                       initial_target_->rotation, 0};
     return reference;
 }
 

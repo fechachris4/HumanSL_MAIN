@@ -80,10 +80,17 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");
     line("use_fixed_target", config::kUseFixedTarget ? "true" : "false");
-    if (config::kUseFixedTarget)
+    if (config::kUseFixedTarget) {
         line("fixed_target_m", FormatDouble(config::kFixedTargetM[0]) + " " +
                                    FormatDouble(config::kFixedTargetM[1]) + " " +
                                    FormatDouble(config::kFixedTargetM[2]));
+        line("fixed_target_use_rpy", config::kFixedTargetUseRpy ? "true" : "false");
+        if (config::kFixedTargetUseRpy)
+            line("fixed_target_rpy_rad",
+                 FormatDouble(config::kFixedTargetRpyRad[0]) + " " +
+                     FormatDouble(config::kFixedTargetRpyRad[1]) + " " +
+                     FormatDouble(config::kFixedTargetRpyRad[2]));
+    }
     line("following_error_limit_deg", FormatDouble(config::kFollowingErrorLimitDeg));
     line("arrival_tolerance_m", FormatDouble(config::kArrivalToleranceM));
     line("nonfinite_stop_cycles", std::to_string(config::kNonFiniteStopCycles));
@@ -180,12 +187,18 @@ namespace
 
         KinematicsWorkspace workspace(model.dynamics());
         const PoseJacobian ee = model.RightPoseAndJacobian(q_rad, workspace);
+        // Decompose R back into the SAME roll/pitch/yaw convention targets
+        // use (R = Rz·Ry·Rx), so the printed triple can be pasted straight
+        // into kFixedTargetRpyRad or typed as the last 3 of a 6-number line.
+        const Eigen::Vector3d zyx = ee.rotation.eulerAngles(2, 1, 0);
         std::cout << "right end-effector (" << config::kRightEndEffectorFrame
                   << " in " << config::kRightBaseFrame << "): "
                   << std::fixed << std::setprecision(4)
                   << ee.position.x() << " " << ee.position.y() << " "
                   << ee.position.z()
-                  << " (m, right-arm base frame)"
+                  << " (m, right-arm base frame)\n"
+                  << "  orientation rpy: " << zyx.z() << " " << zyx.y() << " "
+                  << zyx.x() << " (rad, R = Rz*Ry*Rx)"
                   << std::defaultfloat << "\n";
     }
 
@@ -458,11 +471,20 @@ int main(int argc, char** argv)
             // source NOW and applies from the first cycle after takeover
             // (with the takeover orientation); it does NOT go through the
             // store, whose pre-takeover content is deliberately discarded.
-            std::optional<Eigen::Vector3d> fixed_target;
-            if (config::kUseFixedTarget)
-                fixed_target = Eigen::Vector3d(config::kFixedTargetM[0],
-                                               config::kFixedTargetM[1],
-                                               config::kFixedTargetM[2]);
+            std::optional<PoseTarget> fixed_target;
+            if (config::kUseFixedTarget) {
+                PoseTarget target;
+                target.p_desired = Eigen::Vector3d(config::kFixedTargetM[0],
+                                                   config::kFixedTargetM[1],
+                                                   config::kFixedTargetM[2]);
+                // Empty rotation = keep the takeover orientation.
+                if (config::kFixedTargetUseRpy)
+                    target.rotation =
+                        RotationFromRpy(config::kFixedTargetRpyRad[0],
+                                        config::kFixedTargetRpyRad[1],
+                                        config::kFixedTargetRpyRad[2]);
+                fixed_target = target;
+            }
             reference =
                 std::make_unique<PoseTargetSource>(pose_targets, fixed_target);
         }
@@ -479,8 +501,17 @@ int main(int argc, char** argv)
                       << config::kFixedTargetM[1] << " "
                       << config::kFixedTargetM[2]
                       << " m — THE ARM MOVES THERE IMMEDIATELY after the "
-                         "takeover (orientation target unchanged); Ctrl+C "
-                         "to stop\n";
+                         "takeover; Ctrl+C to stop\n";
+            if (config::kFixedTargetUseRpy)
+                std::cout << "  AND ROTATES to rpy "
+                          << config::kFixedTargetRpyRad[0] << " "
+                          << config::kFixedTargetRpyRad[1] << " "
+                          << config::kFixedTargetRpyRad[2]
+                          << " rad (kFixedTargetRpyRad) — compare against the "
+                             "measured rpy printed above\n";
+            else
+                std::cout << "  orientation target unchanged "
+                             "(kFixedTargetUseRpy = false)\n";
         } else if (!playback) {
             input_thread =
                 std::thread(RunPoseTargetInput, std::ref(pose_targets), std::cref(g_stop));

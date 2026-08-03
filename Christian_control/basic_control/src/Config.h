@@ -68,12 +68,25 @@ namespace config
         static_cast<long>(kControlDtS * 1e6)
     };
 
-    // true = no stdin thread; THE ARM DRIVES TO kFixedTargetM IMMEDIATELY
-    // after the takeover, at the takeover orientation. Check the target
-    // against the pose the program prints at startup. false restores the
-    // interactive prompt.
+    // true = no stdin thread; THE ARM DRIVES TO THE FIXED TARGET BELOW
+    // IMMEDIATELY after the takeover. Check both lines against the pose the
+    // program prints at startup. false restores the interactive prompt.
     inline constexpr bool kUseFixedTarget = true;
+
+    // The fixed target, mirroring the simulation's [targets.right] table:
+    // position in METERS and orientation as roll/pitch/yaw in RADIANS
+    // (R = Rz·Ry·Rx), both in the right-arm base frame.
+    //
+    // kFixedTargetUseRpy = false keeps the takeover orientation and
+    // commands position only. true ALSO ROTATES THE TOOL to the rpy below —
+    // a large rpy change is a large rotation, so compare it against the
+    // startup printout first. The default rpy is the Home orientation
+    // (pi/2, 0, pi/2), so at Home it commands no rotation.
     inline constexpr std::array<double, 3> kFixedTargetM = {0.5562, -0.2731, 0.3987};
+    inline constexpr bool kFixedTargetUseRpy = false;
+    inline constexpr std::array<double, 3> kFixedTargetRpyRad = {
+        1.5707963267948966, 0.0, 1.5707963267948966
+    };
 
     // v_desired = kKpCartesian * (p_desired - p_current), 1/s. At 10.0 a
     // 10 cm error commands 1.0 m/s — aggressive; the per-joint clip is what

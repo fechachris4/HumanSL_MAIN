@@ -23,6 +23,12 @@ struct PoseTarget {
     std::optional<Eigen::Matrix3d> rotation; // base frame; nullopt = keep
 };
 
+// Rotation matrix from roll/pitch/yaw RADIANS, composed R = Rz·Ry·Rx —
+// the one place that convention is written down. Mirrors the simulation's
+// controller/transforms.py rotation_from_rpy, so a compiled target and a
+// typed line and the Python sim all mean the same thing by an rpy triple.
+Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw);
+
 // Parse one line: exactly 3 finite numbers (x y z METERS, right-arm base
 // frame — orientation unchanged) or 6 (x y z + roll pitch yaw RADIANS,
 // R = Rz(yaw)·Ry(pitch)·Rx(roll), the simulation's convention). There is
@@ -76,17 +82,19 @@ void RunPoseTargetFileInput(PoseTargetStore& store, const std::string& path,
 //
 // The operator's targets as a ReferenceSource. Reset snapshots the store's
 // sequence, so anything stored BEFORE takeover is discarded — except
-// `initial_position` (Config.h kUseFixedTarget), which Main passes
-// deliberately and which applies from the first cycle with the takeover
-// orientation. Until any target exists the source returns an empty
-// reference and the controller holds where takeover happened.
+// `initial_target` (Config.h kUseFixedTarget), which Main passes
+// deliberately and which applies from the first cycle. That target is a
+// full PoseTarget: its rotation commands an orientation, and leaving the
+// rotation empty keeps the takeover orientation. Until any target exists
+// the source returns an empty reference and the controller holds where
+// takeover happened.
 //
 class PoseTargetSource : public ReferenceSource
 {
 public:
     explicit PoseTargetSource(
         const PoseTargetStore& store,
-        std::optional<Eigen::Vector3d> initial_position = std::nullopt);
+        std::optional<PoseTarget> initial_target = std::nullopt);
 
     void Reset(const RobotState& state) override;
     Reference Get(const RobotState& state, double dt_s,
@@ -94,6 +102,6 @@ public:
 
 private:
     const PoseTargetStore& store_;
-    std::optional<Eigen::Vector3d> initial_position_;
+    std::optional<PoseTarget> initial_target_;
     std::uint64_t baseline_sequence_ = 0;
 };

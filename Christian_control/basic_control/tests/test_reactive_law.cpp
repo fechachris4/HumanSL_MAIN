@@ -343,15 +343,63 @@ namespace
               "position-only target carries no orientation");
 
         // The initial (fixed) target applies from the first cycle even
-        // though it never went through the store.
+        // though it never went through the store. Position-only form: an
+        // empty rotation leaves the takeover orientation to the controller.
         PoseTargetStore untouched;
-        PoseTargetSource fixed(untouched, Eigen::Vector3d(0.1, 0.2, 0.3));
+        PoseTarget position_only;
+        position_only.p_desired = Eigen::Vector3d(0.1, 0.2, 0.3);
+        PoseTargetSource fixed(untouched, position_only);
         fixed.Reset(state);
         auto initial = fixed.Get(state, 0.001, status);
         Check(initial.pose &&
                   (initial.pose->p_desired - Eigen::Vector3d(0.1, 0.2, 0.3))
                           .norm() == 0.0,
               "initial fixed target is served after Reset");
+        Check(initial.pose && !initial.pose->rotation.has_value(),
+              "position-only fixed target commands no orientation");
+
+        // With an rpy configured (Config.h kFixedTargetUseRpy), the same
+        // path carries the orientation through to the reference.
+        PoseTargetStore untouched_rpy;
+        PoseTarget with_rpy;
+        with_rpy.p_desired = Eigen::Vector3d(0.1, 0.2, 0.3);
+        with_rpy.rotation = RotationFromRpy(0.0, 1.6, 0.8);
+        PoseTargetSource oriented(untouched_rpy, with_rpy);
+        oriented.Reset(state);
+        auto initial_rpy = oriented.Get(state, 0.001, status);
+        Check(initial_rpy.pose && initial_rpy.pose->rotation.has_value(),
+              "fixed target with rpy commands an orientation");
+        Check(initial_rpy.pose && initial_rpy.pose->rotation &&
+                  (*initial_rpy.pose->rotation -
+                   RotationFromRpy(0.0, 1.6, 0.8))
+                          .norm() < 1e-12,
+              "the commanded orientation is the configured rpy");
+    }
+
+    // RotationFromRpy is the one place R = Rz*Ry*Rx is written down, and
+    // both the typed 6-number line and the compiled target go through it.
+    void TestRotationFromRpy()
+    {
+        std::string error;
+        const auto typed = ParsePoseTarget("0.1 0.2 0.3 0.4 0.5 0.6", error);
+        Check(typed && typed->rotation.has_value(),
+              "a 6-number line yields a rotation");
+        Check(typed && typed->rotation &&
+                  (*typed->rotation - RotationFromRpy(0.4, 0.5, 0.6)).norm() <
+                      1e-12,
+              "parsing and RotationFromRpy agree on the same rpy");
+
+        // Rz(yaw) alone: x -> y. Catches a Rx*Ry*Rz transposition.
+        const Eigen::Matrix3d rz = RotationFromRpy(0.0, 0.0, M_PI / 2.0);
+        Check((rz * Eigen::Vector3d::UnitX() - Eigen::Vector3d::UnitY())
+                      .norm() < 1e-12,
+              "yaw about +z maps +x to +y");
+
+        // The Home orientation used as the kFixedTargetRpyRad default.
+        const Eigen::Matrix3d home =
+            RotationFromRpy(M_PI / 2.0, 0.0, M_PI / 2.0);
+        Check(std::abs(home.determinant() - 1.0) < 1e-12,
+              "the Home rpy default is a proper rotation");
     }
 
 } // namespace
@@ -368,6 +416,7 @@ int main()
     TestNullSpace();
     TestAgainstSimulationFixtures();
     TestParsePoseTarget();
+    TestRotationFromRpy();
     TestFirstTargetLine();
     TestPoseTargetStore();
     TestPoseTargetSource();
