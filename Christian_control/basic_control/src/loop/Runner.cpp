@@ -4,7 +4,7 @@
 
 #include "loop/Runner.h"
 
-#include "app/Config.h" // right-base-relative reach telemetry (flag only)
+#include "app/Config.h" // right-base-frame reach telemetry (flag only)
 #include "hardware/Cyclic.h"
 #include "math/Dls.h" // ClampedCycleDt
 #include "safety/FaultReport.h"
@@ -26,11 +26,17 @@ namespace
     constexpr double kDegToRad = M_PI / 180.0;
     constexpr double kRadToDeg = 180.0 / M_PI;
 
+    struct TakeoverStop
+    {
+        LoopStop reason;
+    };
+
     // Copy one cycle's data into a log row. Feedback positions are wrapped
     // to [0, 360) but the integrated command is continuous, so each
     // measurement is shifted by whole turns next to its command — tracking
     // error (cmd - meas) and plots then live on the same axis.
     void FillSample(LoopLogSample& s, const k_api::BaseCyclic::Feedback& fb,
+                    std::uint32_t command_frame_id,
                     const JointVector& commanded_deg,
                     const JointVector& commanded_velocity_deg_s,
                     const ControllerStatus& status)
@@ -44,12 +50,13 @@ namespace
         s.rot_error_rad = status.rot_error_rad;
         for (int i = 0; i < 4; ++i)
             s.tool_quat_xyzw[i] = status.tool_quat.coeffs()[i]; // Eigen order x,y,z,w
-        const Eigen::Vector3d right_base_common{
-            config::kRightBaseOriginCommonM[0],
-            config::kRightBaseOriginCommonM[1],
-            config::kRightBaseOriginCommonM[2]};
-        s.pd_beyond_reach = (status.p_desired - right_base_common).norm() >
-                            config::kReachRadiusM - config::kReachMarginM;
+        const Eigen::Vector3d right_base_origin{
+            config::kRightBaseOriginControlM[0],
+            config::kRightBaseOriginControlM[1],
+            config::kRightBaseOriginControlM[2]
+        };
+        s.pd_beyond_reach = (status.p_desired - right_base_origin).norm() >
+            config::kReachRadiusM - config::kReachMarginM;
         for (int i = 0; i < NUM_JOINTS; ++i)
         {
             const auto& a = fb.actuators(i);
@@ -61,7 +68,12 @@ namespace
             s.velocity_deg_s[i] = a.velocity();
             s.torque_nm[i] = a.torque();
             s.fault_bank[i] = a.fault_bank_a();
+            s.actuator_command_ack[i] = a.command_id();
+            s.actuator_status_flags[i] = a.status_flags();
+            s.actuator_jitter_us[i] = a.jitter_comm();
         }
+        s.command_frame_id = command_frame_id;
+        s.feedback_frame_id = fb.frame_id();
         s.arm_state = fb.base().active_state();
         s.base_fault_bank = fb.base().fault_bank_a();
         s.refresh_ok = true;
@@ -100,6 +112,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     long cycle = 0;
     bool joint_fault_was_latched = false;
     CycleCounters counters;
+    FeedbackFreshnessMonitor freshness_monitor;
 
     CyclicSession cyclic(base_cyclic);
 
@@ -119,13 +132,6 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
         }
 
-        // T4: the integrator seed, q_command = q_measured — the ONLY time
-        // (resolved-rate-position-integration.md, "state distinction").
-        actuation.Prepare(state);
-
-        // T5: the controller seeds its own hold-here state.
-        controller.Reset(state);
-
         // Fault-change printing state, seeded from the startup read so a
         // bank already latched at entry (allowed by RobotReadyForTakeover
         // for the JOINT_FAULT summary) does not print as a fresh event.
@@ -140,11 +146,57 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         for (int i = 0; i < NUM_JOINTS; ++i)
             commanded_deg[i] = state.q_rad[i] * kRadToDeg;
 
-        // T6: first unchanged holding frame (command == measured); its reply
-        // is the loop's first input.
+        // T4: first unchanged holding frame (command == measured). Keep
+        // streaming that exact position for a bounded handshake window:
+        // this proves the low-level POSITION path remains healthy before
+        // either controller state or the command integrator can advance.
         feedback = cyclic.Send(commanded_deg);
 
         using clock = std::chrono::steady_clock;
+        const auto hold_start = clock::now();
+        auto hold_next = hold_start;
+        ControllerStatus hold_status;
+        while (!stop &&
+            std::chrono::duration<double>(clock::now() - hold_start).count() <
+            config::kTakeoverHoldS)
+        {
+            hold_next += period;
+            FillSample(sample, feedback, cyclic.last_command_frame_id(), commanded_deg,
+                       commanded_velocity_deg_s, hold_status);
+            // The hold streams one fixed setpoint: nothing is requested
+            // beyond it and no constraint is active, so requested == sent.
+            sample.cycle = 0;
+            sample.requested_deg = commanded_deg;
+            sample.requested_velocity_deg_s = JointVector{};
+            sample.lead_limited = {};
+            LoopStop hold_reason = LoopStop::kUserStop;
+            if (ClassifyStop(sample, following_error_limit_deg, hold_reason))
+                throw TakeoverStop{hold_reason};
+            freshness_monitor.Update(sample.actuator_command_ack);
+            sample.ack_unchanged_cycles = freshness_monitor.unchanged_cycles();
+            feedback = cyclic.Send(commanded_deg);
+            if (hold_next > clock::now())
+                std::this_thread::sleep_until(hold_next);
+        }
+        if (!stop)
+            std::cout << "takeover hold: PASS (" << config::kTakeoverHoldS
+                << " s unchanged POSITION command)\n";
+
+        // T5: reseed from the feedback at the END of the handshake. This is
+        // the integrator's only measurement seed and the controller's
+        // hold-here pose, so harmless drift during the gate cannot become an
+        // initial command jump.
+        for (int i = 0; i < NUM_JOINTS; ++i)
+        {
+            state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
+            state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
+            commanded_deg[i] = feedback.actuators(i).position();
+        }
+        actuation.Prepare(state);
+        controller.Reset(state);
+        feedback = cyclic.Send(commanded_deg);
+
+        // T6: normal control begins only after the mode gate and hold phase.
         const auto t_start = clock::now();
         auto t_prev = t_start;
         auto next_cycle = t_start;
@@ -167,7 +219,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                         nominal_dt_s);
             if (cycle > 0 &&
                 std::chrono::duration<double>(t_now - t_prev).count() >
-                    policy.overrun_factor * nominal_dt_s)
+                policy.overrun_factor * nominal_dt_s)
             {
                 ++counters.overrun;
                 ++counters.overrun_total;
@@ -189,6 +241,14 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
                 controller.DesiredVelocity(state, dt_s, status);
 
+            // The requested velocity for the record is the controller's own
+            // output, captured BEFORE the non-finite hold and the speed
+            // clamp below can modify it (a non-finite value is logged as
+            // such — that is the evidence for the kNonFiniteCommand stop).
+            JointVector requested_velocity_deg_s{};
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                requested_velocity_deg_s[i] = qdot_raw_rad_s[i] * kRadToDeg;
+
             // Non-finite output never reaches the integrator: hold this
             // cycle and count it (decision 12).
             if (!qdot_raw_rad_s.allFinite())
@@ -203,19 +263,19 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             // print lives out here — controllers do no I/O).
             if (status.arrived_edge)
                 std::cout << "target reached: " << status.p_desired[0] << " "
-                          << status.p_desired[1] << " " << status.p_desired[2]
-                          << " m, within " << status.arrival_error_m * 1000.0
-                          << " mm — holding\n";
+                    << status.p_desired[1] << " " << status.p_desired[2]
+                    << " m, within " << status.arrival_error_m * 1000.0
+                    << " mm — holding\n";
             // Playback notices, same pattern (TrajectoryPlayback).
             if (status.playback_refused_edge)
                 std::cout << "PLAYBACK REFUSED: measured start no longer "
-                             "matches the trajectory start (arm moved since "
-                             "the pre-takeover gate?) — holding here; Ctrl+C "
-                             "to stop\n";
+                    "matches the trajectory start (arm moved since "
+                    "the pre-takeover gate?) — holding here; Ctrl+C "
+                    "to stop\n";
             if (status.playback_done_edge)
                 std::cout << "trajectory complete at t=" << status.playback_t_s
-                          << " s — holding the final setpoint; Ctrl+C to "
-                             "stop\n";
+                    << " s — holding the final setpoint; Ctrl+C to "
+                    "stop\n";
 
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
@@ -227,8 +287,9 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     std::clamp(qdot_raw_rad_s[i] * kRadToDeg,
                                -qdot_limit_deg_s[i], qdot_limit_deg_s[i]) *
                     kDegToRad;
-            actuation.Apply(qdot_clamped_rad_s, dt_s, commanded_deg,
-                            commanded_velocity_deg_s);
+            const Actuation::ApplyStatus actuation_status =
+                actuation.Apply(qdot_clamped_rad_s, state, dt_s, commanded_deg,
+                                commanded_velocity_deg_s);
 
             // The one exchange: send this cycle's position command, receive
             // the feedback the next iteration will use. Stamped on both
@@ -243,8 +304,12 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             sample.t_send_s = std::chrono::duration<double>(t_send - t_start).count();
             sample.t_recv_s = std::chrono::duration<double>(t_recv - t_start).count();
             t_prev = t_now;
-            FillSample(sample, feedback, commanded_deg, commanded_velocity_deg_s,
-                       status);
+            FillSample(sample, feedback, cyclic.last_command_frame_id(),
+                       commanded_deg, commanded_velocity_deg_s, status);
+            sample.cycle = cycle;
+            sample.requested_deg = actuation_status.requested_deg;
+            sample.requested_velocity_deg_s = requested_velocity_deg_s;
+            sample.lead_limited = actuation_status.lead_limited;
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
 
@@ -259,8 +324,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     PrintFaultChange(sample, cycle, prev_joint_banks, prev_base_bank);
                     if (++fault_prints == kMaxFaultChangePrints)
                         std::cout << "further fault-bank changes not printed (limit "
-                                  << kMaxFaultChangePrints
-                                  << "); every cycle's banks are in the CSV\n";
+                            << kMaxFaultChangePrints
+                            << "); every cycle's banks are in the CSV\n";
                 }
                 prev_base_bank = sample.base_fault_bank;
                 prev_joint_banks = sample.fault_bank;
@@ -283,6 +348,12 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 }
                 reason = LoopStop::kUserStop; // ignored fault: not a stop reason
             }
+            // Feedback-freshness evidence is RECORDED, never acted on: a
+            // repeated acknowledgement ID and a stationary joint are logged
+            // (ack_unchanged_j*, req/cmd/meas) and left for offline review.
+            // Neither ends the run — see Config.h kCommandLeadLimitDeg.
+            freshness_monitor.Update(sample.actuator_command_ack);
+            sample.ack_unchanged_cycles = freshness_monitor.unchanged_cycles();
             // Decision-12 counters, checked AFTER ClassifyStop so the guard
             // and live faults keep priority.
             if (const auto counter_stop = ClassifyCounters(counters, policy))
@@ -302,12 +373,23 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 next_cycle = now;
         }
     }
+    catch (const TakeoverStop& ex)
+    {
+        reason = ex.reason;
+        if (reason == LoopStop::kRobotFault)
+            faults_observed = true;
+        log.push(sample);
+        std::cout << "takeover hold failed before controller motion began\n";
+    }
     catch (k_api::KDetailedException& ex)
     {
         reason = LoopStop::kCommunication;
         sample.refresh_ok = false;
         log.push(sample);
-        std::cout << "Kortex API error: " << ex.what() << "\n";
+        std::cout << "Kortex API error: " << ex.what() << " (sub-code "
+            << k_api::SubErrorCodes_Name(static_cast<k_api::SubErrorCodes>(
+                ex.getErrorInfo().getError().error_sub_code()))
+            << ")\n";
     }
     catch (std::runtime_error& ex)
     {
@@ -334,14 +416,18 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         std::cout << "internal error: unknown exception type\n";
     }
 
-    // D1 -> D2; D3 is the guard's destructor, after the return statement.
+    // D1 -> D2 (with destructor retry if D2 fails) -> D3.
     actuation.Restore();
+    // TrajectoryExecution restores explicitly immediately after its cyclic
+    // loop. Do the same here (with RAII retry still retained) so any Kortex
+    // sub-error is visible and the base gets its documented settling time.
+    servoing_guard.Restore(std::cout);
     PrintStopReport(reason, sample, cycle, following_error_limit_deg);
     std::cout << "cycle overruns: " << counters.overrun_total << " of " << cycle
-              << " cycles (dt > " << policy.overrun_factor << " x nominal)\n";
+        << " cycles (dt > " << policy.overrun_factor << " x nominal)\n";
     if (joint_fault_was_latched)
         std::cout << "note: base JOINT_FAULT was latched during the run (stale summary "
             "diagnostic unless a joint fault is shown above; not cleared here)\n";
 
-    return {reason, faults_observed};
+    return {reason, faults_observed, sample.t_s, cycle};
 }

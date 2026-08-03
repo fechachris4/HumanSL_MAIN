@@ -14,6 +14,33 @@ namespace
     constexpr int NUM_JOINTS = 7;
 } // namespace
 
+void FeedbackFreshnessMonitor::Reset()
+{
+    initialized_ = false;
+    unchanged_cycles_.fill(0);
+}
+
+void FeedbackFreshnessMonitor::Update(
+    const std::array<std::uint32_t, 7>& command_ack)
+{
+    // The first frame has nothing to compare against: seed and report zero.
+    if (!initialized_)
+    {
+        previous_ = command_ack;
+        initialized_ = true;
+        unchanged_cycles_.fill(0);
+        return;
+    }
+    for (int i = 0; i < NUM_JOINTS; ++i)
+    {
+        if (command_ack[i] == previous_[i])
+            ++unchanged_cycles_[i];
+        else
+            unchanged_cycles_[i] = 0;
+        previous_[i] = command_ack[i];
+    }
+}
+
 bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
                   LoopStop& reason)
 {
@@ -79,14 +106,28 @@ bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ost
         }
     }
 
+    // The arm's own state outranks any bank heuristic: IN_FAULT means the
+    // base considers itself faulted RIGHT NOW, whatever the decodable banks
+    // show — the stale-summary tolerance below must never talk past it
+    // (2026-07-31: a run proceeded to takeover while the arm printed
+    // ARMSTATE_IN_FAULT).
+    const bool in_fault_state =
+        static_cast<k_api::Common::ArmState>(feedback.base().active_state()) ==
+        k_api::Common::ArmState::ARMSTATE_IN_FAULT;
+
     const std::uint32_t base_fatal = base_bank & ~kJointFaultBit;
-    if (!actuator_fault && (base_bank & kJointFaultBit) != 0)
+    if (!actuator_fault && !in_fault_state && (base_bank & kJointFaultBit) != 0)
         out << "note: base JOINT_FAULT is latched but every actuator bank is clear — "
             "stale summary diagnostic, continuing (not cleared by this program)\n";
-    if (actuator_fault || base_fatal != 0)
+    if (actuator_fault || base_fatal != 0 || in_fault_state)
     {
-        out << "robot NOT ready: live fault present — not taking over "
-            "(clear deliberately via the Kinova web dashboard)\n";
+        if (in_fault_state)
+            out << "robot NOT ready: the arm reports ARMSTATE_IN_FAULT — not "
+                "taking over, even with clear fault banks (clear deliberately "
+                "via the Kinova web dashboard)\n";
+        else
+            out << "robot NOT ready: live fault present — not taking over "
+                "(clear deliberately via the Kinova web dashboard)\n";
         return false;
     }
     return true;

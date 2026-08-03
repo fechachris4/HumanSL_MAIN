@@ -4,7 +4,7 @@
  *   parse options (CLI > TOML > compiled defaults, app/Options)
  *     -> load the mounted dual-arm URDF (Pinocchio; exactly 14 velocity vars)
  *     -> bind measured right joints + nominal left joints through the explicit
- *        DualArmKinematics 14-model/7-controller adapter
+ *        DualArmKinematics 14-DoF-model/7-controller adapter
  *     -> connect only to the right arm (TCP + UDP, Connect)
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
@@ -48,8 +48,11 @@
 #include "loop/Runner.h"
 #include "math/DualArmKinematics.h"
 #include "math/Kinematics.h"
+#include "safety/FaultReport.h" // StopReasonName, for the CSV exit trailer
 #include "safety/Supervisor.h"
 #include "Dynamics.h"
+
+#include <KDetailedException.h>
 
 namespace
 {
@@ -94,19 +97,23 @@ namespace
 
         KinematicsWorkspace workspace(model.dynamics());
         const PoseJacobian ee = model.RightPoseAndJacobian(q_rad, workspace);
-        std::cout << "right end-effector (" << config::kRightEndEffectorFrame << "): "
+        std::cout << "right end-effector (" << config::kRightEndEffectorFrame
+                  << " in " << config::kRightBaseFrame << "): "
                   << std::fixed << std::setprecision(4)
                   << ee.position.x() << " " << ee.position.y() << " "
                   << ee.position.z()
-                  << " (m, dual-model world/common mount frame)"
+                  << " (m, right-arm base frame)"
                   << std::defaultfloat << "\n";
     }
 
 } // namespace
 
-// Ctrl+C sets this flag; the loop and the input thread both observe it.
+// Ctrl+C (SIGINT) and SIGTERM (CLion Stop, kill) set this flag; the loop
+// and the input thread both observe it. Both signals must leave through
+// the same graceful path — stop report, CSV drain, servoing restore —
+// or an IDE stop kills the process mid-takeover with none of them.
 std::atomic<bool> g_stop{false};
-void on_sigint(int)
+void on_stop_signal(int)
 {
     g_stop = true;
 }
@@ -128,13 +135,21 @@ struct InputThreadJoiner {
 
 int main(int argc, char** argv)
 {
-    std::signal(SIGINT, on_sigint);
+    std::signal(SIGINT, on_stop_signal);
+    std::signal(SIGTERM, on_stop_signal);
 
-    const EffectiveConfig cfg = ParseOptions(argc, argv);
+    const RunOptions options = ParseRunOptions(argc, argv);
 
     try {
-        EchoConfig(cfg, std::cout);
-        const bool playback = cfg.controller == "playback";
+        EchoConfig(options, std::cout);
+        const bool playback = std::string(config::kController) == "playback";
+        const bool reactive = std::string(config::kController) == "reactive-pose";
+        if (!playback && !reactive && std::string(config::kController) != "resolved-rate")
+            throw std::runtime_error("Config.h kController must be resolved-rate, reactive-pose, or playback");
+        if (config::kTargetFile[0] != '\0' && !reactive)
+            throw std::runtime_error("Config.h kTargetFile requires reactive-pose");
+        if (playback && config::kTrajectoryFile[0] == '\0')
+            throw std::runtime_error("Config.h kTrajectoryFile is required for playback");
 
         // Playback: load and validate the trajectory BEFORE any hardware
         // session — a file that fails the contract or the motion gates must
@@ -142,7 +157,7 @@ int main(int argc, char** argv)
         std::optional<Trajectory> trajectory;
         TrajectorySummary trajectory_summary;
         if (playback) {
-            trajectory = LoadTrajectoryCsv(cfg.trajectory_file); // throws on
+            trajectory = LoadTrajectoryCsv(config::kTrajectoryFile); // throws on
                                                                  // contract violations
             JointVector vel_gate_deg_s;
             for (size_t i = 0; i < vel_gate_deg_s.size(); ++i)
@@ -151,7 +166,7 @@ int main(int argc, char** argv)
             const std::vector<std::string> violations = ValidateTrajectory(
                 *trajectory, vel_gate_deg_s, config::kTrajectoryAccelLimitDegS2,
                 config::kTrajectoryPosLimitDeg, trajectory_summary);
-            std::cout << "trajectory " << cfg.trajectory_file << ":\n  "
+            std::cout << "trajectory " << config::kTrajectoryFile << ":\n  "
                       << trajectory_summary.samples << " samples, dt "
                       << trajectory->dt_s << " s, duration "
                       << trajectory_summary.duration_s << " s\n";
@@ -181,6 +196,7 @@ int main(int argc, char** argv)
         Dynamics dynamics(GEN3_DUAL_URDF_PATH);
         DualArmKinematics controlled_model(
             dynamics, config::kLeftNominalRad,
+            config::kRightBaseFrame,
             config::kRightEndEffectorFrame);
 
         // The left branch is model-only: this is the program's sole hardware
@@ -193,6 +209,8 @@ int main(int argc, char** argv)
         const bool robot_ready = RobotReadyForTakeover(initial, std::cout); // T1
         if (!robot_ready)
             return 1;
+        if (!connection.EnsurePositionControlModes(std::cout))
+            return 1;
         PrintRobotState(initial, controlled_model);
 
         if (playback) {
@@ -202,14 +220,14 @@ int main(int argc, char** argv)
             // TrajectoryPlayback::Reset re-checks at the takeover itself.
             bool start_ok = true;
             std::cout << "start-state gate (per-joint limit "
-                      << cfg.start_mismatch_limit_deg << " deg):\n";
+                      << config::kStartMismatchLimitDeg << " deg):\n";
             JointVector start_error_deg{};
             for (size_t j = 0; j < start_error_deg.size(); ++j) {
                 start_error_deg[j] = std::abs(std::remainder(
                     initial.actuators(static_cast<int>(j)).position() -
                         trajectory->pos_deg.front()[static_cast<int>(j)],
                     360.0));
-                if (start_error_deg[j] > cfg.start_mismatch_limit_deg)
+                if (start_error_deg[j] > config::kStartMismatchLimitDeg)
                     start_ok = false;
             }
             PrintJointHeader();
@@ -240,7 +258,7 @@ int main(int argc, char** argv)
             const Eigen::Vector3d ee_move =
                 ee_end.position - ee_start.position;
             std::cout << std::fixed << std::setprecision(4)
-                      << "URDF FK cross-check (dual-model common frame, "
+                      << "URDF FK cross-check (right-arm base frame, "
                       << config::kRightEndEffectorFrame << "):\n"
                       << "  start EE: " << ee_start.position.x() << " "
                       << ee_start.position.y() << " " << ee_start.position.z()
@@ -262,7 +280,6 @@ int main(int argc, char** argv)
                     (1'000'000 / static_cast<std::size_t>(config::kCyclePeriod.count())));
         TargetStore targets;          // resolved-rate (position only)
         PoseTargetStore pose_targets; // reactive-pose (position + orientation)
-        const bool reactive = cfg.controller == "reactive-pose";
 
         if (playback)
             std::cout << "PLAYBACK RUN: the arm will follow the validated "
@@ -274,16 +291,16 @@ int main(int argc, char** argv)
         else if (reactive)
             std::cout << "type a desired end-effector target and press Enter; Ctrl+C to "
                          "stop:\n"
-                         "  x y z                  (meters, dual-model world/common mount frame; "
+                         "  x y z                  (meters, right-arm base frame; "
                          "orientation target "
                          "unchanged)\n"
                          "  x y z roll pitch yaw   (meters + radians, R = Rz·Ry·Rx, "
-                         "dual-model world/common mount frame)\n"
+                         "right-arm base frame)\n"
                       << "reactive-pose position integration at " << config::kControlFrequencyHz
                       << " Hz (full settings echoed above and in the CSV preamble)\n";
         else
             std::cout << "type a desired right end-effector position (x y z, meters, "
-                         "dual-model world/common mount frame) and press Enter; Ctrl+C to stop\n"
+                         "right-arm base frame) and press Enter; Ctrl+C to stop\n"
                       << "resolved-rate position integration at " << config::kControlFrequencyHz
                       << " Hz (full settings echoed above and in the CSV preamble)\n";
         // Open the run's CSV BEFORE the takeover: a hardware run must never
@@ -292,8 +309,8 @@ int main(int argc, char** argv)
         // The rows follow during the run, from the writer thread below.
         // Default: <repo>/runs/YYYY-MM-DD/ (RUNS_ROOT_DIR, baked in by
         // CMake) — the layout the plot scripts search; an explicit
-        // cfg.log_file is used verbatim.
-        std::string log_file = cfg.log_file;
+        // An explicit --log filename is used verbatim.
+        std::string log_file = options.log_file;
         if (log_file.empty()) {
             const std::string run_dir = dated_run_dir(RUNS_ROOT_DIR);
             std::error_code dir_error;
@@ -310,7 +327,7 @@ int main(int argc, char** argv)
             std::cerr << "Error: cannot open " << log_file << " — not starting\n";
             return 1;
         }
-        WriteCsvPreamble(cfg, csv);
+        WriteCsvPreamble(options, csv);
 
         // From here the CSV writes itself: the writer thread drains the log
         // to disk every kLogDrainInterval for as long as it is alive. It is
@@ -325,23 +342,23 @@ int main(int argc, char** argv)
         TrajectoryPlayback* playback_controller = nullptr;
         if (playback) {
             PlaybackSettings settings;
-            settings.kp_s_inv = cfg.playback_kp;
-            settings.start_mismatch_limit_deg = cfg.start_mismatch_limit_deg;
+            settings.kp_s_inv = config::kPlaybackKp;
+            settings.start_mismatch_limit_deg = config::kStartMismatchLimitDeg;
             auto owned = std::make_unique<TrajectoryPlayback>(
                 std::move(*trajectory), settings);
             playback_controller = owned.get();
             controller = std::move(owned);
         } else if (reactive) {
             ReactivePoseGains gains;
-            gains.kp_position_s_inv = cfg.kp;
-            gains.kp_rotation_s_inv = cfg.kp_rot;
-            gains.kd_position = cfg.kd_pos;
-            gains.kd_rotation = cfg.kd_rot;
-            gains.null_gain_s_inv = cfg.null_gain;
-            gains.dls_lambda = cfg.dls_lambda;
-            gains.orientation_enabled = cfg.orientation_enabled;
-            gains.velocity_enabled = cfg.velocity_term_enabled;
-            gains.null_space_enabled = cfg.null_space_enabled;
+            gains.kp_position_s_inv = config::kKpCartesian;
+            gains.kp_rotation_s_inv = config::kKpRotation;
+            gains.kd_position = config::kKdPosition;
+            gains.kd_rotation = config::kKdRotation;
+            gains.null_gain_s_inv = config::kNullGain;
+            gains.dls_lambda = config::kDlsLambda;
+            gains.orientation_enabled = config::kOrientationEnabled;
+            gains.velocity_enabled = config::kVelocityTermEnabled;
+            gains.null_space_enabled = config::kNullSpaceEnabled;
             Eigen::Matrix<double, 7, 1> midpoint_rad;
             Eigen::Matrix<double, 7, 1> centering_mask;
             for (int i = 0; i < 7; ++i) {
@@ -349,14 +366,14 @@ int main(int argc, char** argv)
                 centering_mask[i] = config::kNullCenteringMask[i];
             }
             controller = std::make_unique<ReactivePose>(
-                controlled_model, pose_targets, gains, cfg.arrival_tolerance_m,
-                midpoint_rad, centering_mask);
+                controlled_model, pose_targets, gains, config::kArrivalToleranceM,
+                midpoint_rad, centering_mask, config::kNullRampDurationS);
         } else {
             controller = std::make_unique<ResolvedRate>(
-                controlled_model, targets, cfg.kp, cfg.dls_lambda,
-                cfg.arrival_tolerance_m);
+                controlled_model, targets, config::kKpCartesian, config::kDlsLambda,
+                config::kArrivalToleranceM);
         }
-        PositionIntegration actuation;
+        PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
         // Playback has no operator targets: no input thread at all (Ctrl+C
         // is the signal handler, not stdin).
@@ -372,23 +389,23 @@ int main(int argc, char** argv)
         // the config): edit+save the watched file to retarget. Its content
         // at startup is ignored — only in-session edits become targets.
         std::thread target_file_thread;
-        if (reactive && !cfg.target_file.empty()) {
-            std::cout << "watching target file: " << cfg.target_file
+        if (reactive && config::kTargetFile[0] != '\0') {
+            std::cout << "watching target file: " << config::kTargetFile
                       << " (current content ignored; edit and save to retarget)\n";
             target_file_thread = std::thread(RunPoseTargetFileInput, std::ref(pose_targets),
-                                             cfg.target_file, std::cref(g_stop));
+                                             config::kTargetFile, std::cref(g_stop));
         }
         InputThreadJoiner target_file_thread_joiner{target_file_thread};
 
         // MOVES THE ARM (toward typed positions): servoing mode is entered
         // and restored inside the Runner, on every exit path (T2/D3).
         const StopPolicy stop_policy{
-            config::kStopOnFault, cfg.nonfinite_stop_cycles,
-            cfg.overrun_stop_cycles, cfg.overrun_factor};
+            config::kStopOnFault, config::kNonFiniteStopCycles,
+            config::kOverrunStopCycles, config::kOverrunFactor};
         const LoopResult result = RunControlLoop(
             connection.base(), connection.base_cyclic(), *controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
-            cfg.following_error_limit_deg, stop_policy, robot_ready);
+            config::kFollowingErrorLimitDeg, stop_policy, robot_ready);
 
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
         if (input_thread.joinable())
@@ -398,6 +415,15 @@ int main(int argc, char** argv)
 
         // Final drain — everything before this was already on disk.
         log_writer.Stop();
+        // Exit trailer: the last line of the file names how the run ended and
+        // when, so a CSV is self-describing without the console output. A '#'
+        // line, like the preamble, so every existing parser skips it.
+        csv << "# exit_reason = " << StopReasonName(result.reason)
+            << "\n# exit_time_s = " << result.stop_t_s
+            << "\n# exit_cycle = " << result.cycles
+            << "\n# faults_observed = " << (result.faults_observed ? 1 : 0)
+            << "\n";
+        csv.flush();
         std::cout << log_writer.rows_written() << " samples written";
         if (log.dropped() > 0)
             std::cout << " — WARNING: " << log.dropped()
@@ -429,6 +455,12 @@ int main(int argc, char** argv)
                        !playback_refused
                    ? 0
                    : 1;
+    } catch (k_api::KDetailedException& e) {
+        std::cerr << "Kortex error: " << e.what() << " (sub-code "
+                  << k_api::SubErrorCodes_Name(static_cast<k_api::SubErrorCodes>(
+                         e.getErrorInfo().getError().error_sub_code()))
+                  << ")\n";
+        return 1;
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << "\n";
         return 1;

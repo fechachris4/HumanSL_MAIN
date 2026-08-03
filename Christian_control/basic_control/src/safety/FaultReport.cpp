@@ -50,6 +50,22 @@ std::string DecodeActuatorBank(std::uint32_t bank)
     });
 }
 
+std::string StopReasonName(LoopStop reason)
+{
+    switch (reason)
+    {
+    case LoopStop::kUserStop:       return "user_stop";
+    case LoopStop::kRobotFault:     return "robot_fault";
+    case LoopStop::kFollowingError: return "following_error";
+    case LoopStop::kLeftLowLevel:   return "left_low_level_servoing";
+    case LoopStop::kCommunication:  return "communication";
+    case LoopStop::kInternalError:  return "internal_error";
+    case LoopStop::kNonFiniteCommand: return "nonfinite_command";
+    case LoopStop::kOverrun:        return "overrun";
+    }
+    return "unknown";
+}
+
 void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
                      double following_error_limit_deg)
 {

@@ -82,7 +82,23 @@ void WriteCsvHeader(std::ostream& csv)
         << ",t_send_s,t_recv_s,quat_x,quat_y,quat_z,quat_w,pd_beyond_reach";
     for (int i = 1; i <= 7; ++i)
         csv << ",ref_j" << i;
-    csv << ",playback_t_s,playback_state\n";
+    csv << ",playback_t_s,playback_state,command_frame_id,feedback_frame_id";
+    for (int i = 1; i <= 7; ++i)
+        csv << ",command_ack_j" << i;
+    for (int i = 1; i <= 7; ++i)
+        csv << ",status_flags_j" << i;
+    for (int i = 1; i <= 7; ++i)
+        csv << ",jitter_us_j" << i;
+    csv << ",cycle";
+    for (int i = 1; i <= 7; ++i)
+        csv << ",req_j" << i;
+    for (int i = 1; i <= 7; ++i)
+        csv << ",reqvel_j" << i;
+    for (int i = 1; i <= 7; ++i)
+        csv << ",lead_limited_j" << i;
+    for (int i = 1; i <= 7; ++i)
+        csv << ",ack_unchanged_j" << i;
+    csv << "\n";
 }
 
 void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
@@ -114,7 +130,24 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
     csv << "," << (s.pd_beyond_reach ? 1 : 0);
     for (double v : s.ref_deg)
         csv << "," << v;
-    csv << "," << s.playback_t_s << "," << s.playback_state << "\n";
+    csv << "," << s.playback_t_s << "," << s.playback_state
+        << "," << s.command_frame_id << "," << s.feedback_frame_id;
+    for (std::uint32_t v : s.actuator_command_ack)
+        csv << "," << v;
+    for (std::uint32_t v : s.actuator_status_flags)
+        csv << "," << v;
+    for (std::uint32_t v : s.actuator_jitter_us)
+        csv << "," << v;
+    csv << "," << s.cycle;
+    for (double v : s.requested_deg)
+        csv << "," << v;
+    for (double v : s.requested_velocity_deg_s)
+        csv << "," << v;
+    for (bool v : s.lead_limited)
+        csv << "," << (v ? 1 : 0);
+    for (int v : s.ack_unchanged_cycles)
+        csv << "," << v;
+    csv << "\n";
 }
 
 LoopLogWriter::LoopLogWriter(LoopLog& log, std::ostream& csv,

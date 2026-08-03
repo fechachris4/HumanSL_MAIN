@@ -25,6 +25,11 @@ std::string DecodeActuatorBank(std::uint32_t bank);
 // fault STOPS the loop is StopPolicy's call.
 inline constexpr int kMaxFaultChangePrints = 20;
 
+// Stable machine-readable token for a stop reason ("user_stop",
+// "following_error", ...) — the run CSV's exit trailer, so offline tooling
+// can name the exit without parsing the prose report.
+std::string StopReasonName(LoopStop reason);
+
 void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
                      double following_error_limit_deg);
 

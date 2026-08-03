@@ -7,6 +7,7 @@
 #define HUMANSL_MASTERS_PROJECT_2025_SUPERVISOR_H
 
 #include <cstdint>
+#include <array>
 #include <optional>
 #include <ostream>
 
@@ -45,6 +46,11 @@ enum class LoopStop {
 struct LoopResult {
     LoopStop reason;
     bool faults_observed;
+    // When the run ended, seconds on the loop's steady clock since control
+    // began, and how many control cycles ran. Both come from the last logged
+    // sample, so they line up with time_s / cycle in the run CSV.
+    double stop_t_s = 0.0;
+    long cycles = 0;
 };
 
 // The Runner's stop policy. stop_on_fault is COMPILE-TIME ONLY (F2,
@@ -64,6 +70,33 @@ struct StopPolicy {
     int nonfinite_stop_cycles = 3;   // non-finite controller output (held)
     int overrun_stop_cycles = 10;    // dt above overrun_factor x nominal
     double overrun_factor = 1.5;
+};
+
+// Each actuator feedback carries the command ID of the most recently
+// processed cyclic command. A healthy stream advances every joint's
+// acknowledgement each cycle; an ID that stays put while command frames keep
+// going out is evidence of stale or non-advancing downstream feedback.
+//
+// TELEMETRY ONLY (2026-08-03). This used to stop the run after N unchanged
+// cycles — a short-window "this feedback value did not change" exit. It now
+// only counts, and the Runner logs the counters (ack_unchanged_j*); nothing
+// here ends a run. Genuine communication failure still surfaces where it
+// always did: a throwing Refresh (kCommunication).
+//
+// The counter is the number of CONSECUTIVE cycles this joint's
+// command-acknowledgement ID has repeated; 0 means it advanced this cycle.
+class FeedbackFreshnessMonitor
+{
+public:
+    void Update(const std::array<std::uint32_t, 7>& command_ack);
+    void Reset();
+
+    const std::array<int, 7>& unchanged_cycles() const { return unchanged_cycles_; }
+
+private:
+    bool initialized_ = false;
+    std::array<std::uint32_t, 7> previous_{};
+    std::array<int, 7> unchanged_cycles_{};
 };
 
 // Consecutive-cycle counters, updated by the Runner every cycle (reset to
@@ -93,8 +126,10 @@ bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
 
 // Pre-takeover readiness check on a standalone feedback frame (read BEFORE
 // the servoing-mode switch): prints the arm state and decoded fault banks to
-// `out`; returns false on any LIVE fault (actuator fault bit, or base fault
-// other than the latched JOINT_FAULT summary, which alone is only noted).
+// `out`; returns false on any LIVE fault (actuator fault bit, base fault
+// other than the latched JOINT_FAULT summary, or the arm state itself
+// reporting ARMSTATE_IN_FAULT — the summary is only noted when nothing
+// live contradicts it).
 bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ostream& out);
 
 #endif // HUMANSL_MASTERS_PROJECT_2025_SUPERVISOR_H

@@ -119,7 +119,8 @@ namespace
         // Zero velocity holds the seeded position exactly, reports zero.
         JointVector setpoints{};
         JointVector velocity{};
-        act.Apply(Eigen::Matrix<double, 7, 1>::Zero(), 0.01, setpoints, velocity);
+        act.Apply(Eigen::Matrix<double, 7, 1>::Zero(), seed, 0.01,
+                  setpoints, velocity);
         Check(std::abs(setpoints[0] - 0.1 * kRadToDeg) < 1e-12,
               "hold keeps the seeded position");
         Check(velocity[3] == 0.0, "hold reports zero velocity");
@@ -127,7 +128,7 @@ namespace
         // Integration arithmetic: q_command += q̇·dt, outputs in degrees.
         const Eigen::Matrix<double, 7, 1> qdot =
             Eigen::Matrix<double, 7, 1>::Constant(0.5); // rad/s
-        act.Apply(qdot, 0.02, setpoints, velocity);
+        act.Apply(qdot, seed, 0.02, setpoints, velocity);
         Check(std::abs(setpoints[0] - (0.1 + 0.5 * 0.02) * kRadToDeg) < 1e-12,
               "Apply integrates q̇·dt onto the persistent command");
         Check(std::abs(velocity[0] - 0.5 * kRadToDeg) < 1e-12,
@@ -151,6 +152,41 @@ namespace
         auto wrap_error = act_wrap.TrackingErrorDeg(wrapped);
         Check(std::abs((*wrap_error)[0] - 2.0) < 1e-9,
               "tracking error shifts the measurement to within ±180 deg");
+
+        // Runtime lead limiter: a stationary plant can never accumulate an
+        // unbounded command gap. The returned status is telemetry — it
+        // records what was requested and which joints the limiter changed.
+        PositionIntegration limited(1.0);
+        RobotState stationary;
+        stationary.q_rad.setZero();
+        stationary.qdot_rad_s.setZero();
+        limited.Prepare(stationary);
+        const auto limited_status = limited.Apply(
+            Eigen::Matrix<double, 7, 1>::Constant(1.0), stationary, 0.1,
+            setpoints, velocity);
+        Check(limited_status.lead_limited[0],
+              "lead limiter reports an active constraint");
+        Check(std::abs(setpoints[0] - 1.0) < 1e-9,
+              "stationary feedback bounds the position command to 1 deg lead");
+        // requested is the unconstrained proposal: 1 rad/s for 0.1 s is
+        // 0.1 rad = 5.7296 deg, well past the 1 deg the limiter allowed.
+        Check(std::abs(limited_status.requested_deg[0] -
+                       0.1 * 180.0 / M_PI) < 1e-9,
+              "requested setpoint is recorded before the lead limiter");
+        Check(limited_status.requested_deg[0] > setpoints[0],
+              "requested exceeds sent exactly where the limiter engaged");
+
+        // And where the limiter does NOT engage, requested == sent, so
+        // offline tooling can trust req - cmd as the limiter's whole effect.
+        PositionIntegration free_run(1.0);
+        free_run.Prepare(stationary);
+        const auto free_status = free_run.Apply(
+            Eigen::Matrix<double, 7, 1>::Constant(0.001), stationary, 0.1,
+            setpoints, velocity);
+        Check(!free_status.lead_limited[0],
+              "small step leaves the lead limiter inactive");
+        Check(std::abs(free_status.requested_deg[0] - setpoints[0]) < 1e-12,
+              "requested equals sent when no constraint is active");
     }
 
 } // namespace

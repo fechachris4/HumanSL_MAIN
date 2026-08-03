@@ -43,10 +43,10 @@ endif ()
 set(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../..")
 set(KORTEX_DIR "${HUMANSL_ROOT}/third_party/kortex_api")
 
-# The single runtime model is the downloaded 14-joint dual-arm URDF with only
-# its Windows-local mesh prefix rewritten to the checked-in Kortex assets. Its
-# fixed world/mount/base transforms remain intact. DualArmKinematics is the
-# explicit adapter from that model to the right-only seven-wide controller.
+# The single runtime model retains the downloaded dual-arm world/mount
+# topology, with both Gen3 chains aligned to Kinova's official ros_kortex
+# v2.5.2 URDF. DualArmKinematics handles Pinocchio's continuous-joint
+# representation and adapts that model to the right-only seven-wide controller.
 set(GEN3_DUAL_URDF
         "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_dual_mounted.urdf")
 add_compile_definitions(GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
@@ -114,18 +114,18 @@ target_link_options(controller PRIVATE
         -Wl,-z,lazy
 )
 
-# --- query_limits: READ-ONLY helper that prints the robot's kinematic hard
-#     limits (no Pinocchio, no motion code) ---
-add_executable(query_limits
-        tools/query_limits.cpp
-        src/hardware/Connect.cpp
+# --- make_synthetic_log: writes a SYNTHETIC log_format 5 CSV through the
+#     real Record.cpp writer, so the telemetry schema and scripts/plot_run.py
+#     can be exercised with no robot. No Kortex, no Pinocchio. ---
+add_executable(make_synthetic_log
+        tools/make_synthetic_log.cpp
+        src/hardware/Record.cpp
 )
-# query_limits.cpp lives in tools/ but includes headers from src/.
-target_include_directories(query_limits PRIVATE src)
-target_link_libraries(query_limits
-        ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
-        pthread
+target_include_directories(make_synthetic_log PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
 )
+target_link_libraries(make_synthetic_log pthread)
 
 # --- test_control_logic: hardware-free tests for the controller's pure
 #     logic (DLS resolution, target parsing, TargetStore). No Kortex, no
@@ -296,10 +296,3 @@ endif ()
 # dual-model path, so the controller writes there from any working directory.
 get_filename_component(HUMANSL_ROOT_ABS "${HUMANSL_ROOT}" ABSOLUTE)
 target_compile_definitions(controller PRIVATE RUNS_ROOT_DIR="${HUMANSL_ROOT_ABS}/runs")
-
-# Default runtime-config file: a COMPILED absolute path (like the dual URDF),
-# loaded when it exists and no --config is given. Never cwd-relative — the
-# no-auto-discovery rule's hazard was files lying in the working directory
-# (docs/decisions/runtime-config.md, "Default config file" amendment).
-target_compile_definitions(controller PRIVATE
-        DEFAULT_CONFIG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/control.toml")

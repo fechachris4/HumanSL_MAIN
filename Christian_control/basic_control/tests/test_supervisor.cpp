@@ -6,6 +6,7 @@
 //
 
 #include <iostream>
+#include <sstream>
 #include <string>
 
 #include "safety/Supervisor.h"
@@ -34,6 +35,19 @@ namespace
         }
         s.base_fault_bank = 0;
         return s;
+    }
+
+    // A healthy pre-takeover feedback frame: single-level servoing, every
+    // bank clear.
+    k_api::BaseCyclic::Feedback CleanFeedback()
+    {
+        k_api::BaseCyclic::Feedback fb;
+        fb.mutable_base()->set_active_state(
+            k_api::Common::ArmState::ARMSTATE_SERVOING_READY);
+        fb.mutable_base()->set_fault_bank_a(0);
+        for (int i = 0; i < 7; ++i)
+            fb.add_actuators()->set_fault_bank_a(0);
+        return fb;
     }
 } // namespace
 
@@ -102,6 +116,93 @@ int main()
           "consecutive overruns stop");
     policy.overrun_stop_cycles = 0; // disabled
     Check(!ClassifyCounters(c, policy).has_value(), "N <= 0 disables a counter");
+
+    // FeedbackFreshnessMonitor is TELEMETRY ONLY (2026-08-03): it counts
+    // consecutive repeated acknowledgement IDs per joint and never stops a
+    // run. The old short-window "unchanged feedback" and "no measured
+    // motion" stops were removed; the counters below replace their evidence.
+    FeedbackFreshnessMonitor freshness;
+    std::array<std::uint32_t, 7> ack{};
+    freshness.Update(ack);
+    for (int i = 0; i < 7; ++i)
+        Check(freshness.unchanged_cycles()[i] == 0,
+              "the seeding frame counts nothing as unchanged");
+
+    for (auto& value : ack)
+        ++value;
+    freshness.Update(ack);
+    for (int i = 0; i < 7; ++i)
+        Check(freshness.unchanged_cycles()[i] == 0,
+              "advancing acknowledgements keep every counter at zero");
+
+    // Joint 3 (index 2) freezes while the others keep advancing.
+    for (int cycle = 1; cycle <= 4; ++cycle)
+    {
+        for (int i = 0; i < 7; ++i)
+            if (i != 2)
+                ++ack[i];
+        freshness.Update(ack);
+        Check(freshness.unchanged_cycles()[2] == cycle,
+              "a frozen acknowledgement accumulates one count per cycle");
+        Check(freshness.unchanged_cycles()[0] == 0,
+              "a moving joint's counter stays at zero alongside a frozen one");
+    }
+
+    // The counter is a live measure, not a latch: it clears the moment the
+    // acknowledgement advances again, so the run record shows the gap and
+    // its end rather than a permanent flag.
+    ++ack[2];
+    freshness.Update(ack);
+    Check(freshness.unchanged_cycles()[2] == 0,
+          "the counter clears when the acknowledgement advances again");
+
+    freshness.Reset();
+    for (int i = 0; i < 7; ++i)
+        Check(freshness.unchanged_cycles()[i] == 0,
+              "Reset clears every counter");
+
+    // RobotReadyForTakeover: the pre-takeover gate.
+    {
+        std::ostringstream sink;
+        Check(RobotReadyForTakeover(CleanFeedback(), sink),
+              "clean feedback passes the readiness gate");
+
+        // Latched JOINT_FAULT summary alone: noted, still ready.
+        k_api::BaseCyclic::Feedback fb = CleanFeedback();
+        fb.mutable_base()->set_fault_bank_a(kJointFaultBit);
+        std::ostringstream note;
+        Check(RobotReadyForTakeover(fb, note),
+              "latched JOINT_FAULT with clear actuator banks is ready");
+        Check(note.str().find("stale summary") != std::string::npos,
+              "the latched-summary tolerance is stated, not silent");
+
+        // Any actuator fault bit refuses.
+        fb = CleanFeedback();
+        fb.mutable_actuators(3)->set_fault_bank_a(2);
+        Check(!RobotReadyForTakeover(fb, sink),
+              "an actuator fault bit refuses takeover");
+
+        // Any non-summary base bit refuses.
+        fb = CleanFeedback();
+        fb.mutable_base()->set_fault_bank_a(kJointFaultBit | 1);
+        Check(!RobotReadyForTakeover(fb, sink),
+              "a non-summary base fault bit refuses takeover");
+
+        // ARMSTATE_IN_FAULT refuses even with every bank clear — the arm's
+        // own state outranks the latched-summary heuristic, and the stale
+        // note must not print against it (2026-07-31 finding).
+        fb = CleanFeedback();
+        fb.mutable_base()->set_active_state(
+            k_api::Common::ArmState::ARMSTATE_IN_FAULT);
+        fb.mutable_base()->set_fault_bank_a(kJointFaultBit);
+        std::ostringstream in_fault_out;
+        Check(!RobotReadyForTakeover(fb, in_fault_out),
+              "ARMSTATE_IN_FAULT refuses takeover despite clear banks");
+        Check(in_fault_out.str().find("stale summary") == std::string::npos,
+              "no stale-summary claim while the arm reports IN_FAULT");
+        Check(in_fault_out.str().find("ARMSTATE_IN_FAULT") != std::string::npos,
+              "the refusal names the arm state as the reason");
+    }
 
     if (failures == 0) {
         std::cout << "all supervisor tests passed\n";

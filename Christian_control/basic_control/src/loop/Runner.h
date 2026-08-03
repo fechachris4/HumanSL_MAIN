@@ -12,23 +12,30 @@
 //   T3  CyclicSession::Seed — the one standalone read, AFTER the mode
 //       switch (the round trip lets the base finish entering; commanding
 //       earlier fails with WRONG_SERVOING_MODE)
-//   T4  Actuation::Prepare(seed state) — the ONLY seed of command state
-//       from measurement
-//   T5  Controller::Reset(seed state) — before any DesiredVelocity
-//   T6  one unchanged holding frame; its reply is cycle 1's input
+//   T4  stream an unchanged measured-position command for the compiled
+//       takeover-hold window; fault/state/following-error checks remain live
+//   T5  reseed Actuation and Controller from the FINAL hold feedback — the
+//       only command-state measurement seed, before any DesiredVelocity
+//   T6  one final unchanged holding frame; its reply is cycle 1's input
 //
 // Per cycle: dt (measured, clamped; nominal on cycle 0) -> RobotState from
 // the previous exchange's reply -> Controller::DesiredVelocity -> per-joint
-// clamp to ±qdot_limit_deg_s -> Actuation::Apply -> CyclicSession::Send ->
-// log sample -> edge-triggered fault prints -> ClassifyStop -> sleep_until
-// grid. Loop I/O rules as documented in
+// clamp to ±qdot_limit_deg_s -> Actuation::Apply (including command-lead
+// bound) -> CyclicSession::Send -> log sample -> edge-triggered fault prints
+// -> ClassifyStop -> feedback-freshness counters (RECORDED, never a stop)
+// -> ClassifyCounters -> sleep_until grid. Loop I/O rules as documented in
 // docs/decisions/resolved-rate-position-integration.md ("Cycle order").
+//
+// No stop in this loop is keyed on "this joint did not move" or "this
+// feedback value did not change" (both removed 2026-08-03); that evidence
+// is telemetry now — see Config.h kCommandLeadLimitDeg for what it means
+// for an unresponsive arm.
 //
 // Teardown, on EVERY exit path (exceptions of any type included):
 //   D1  Actuation::Restore (guarded internally)
-//   D2  decoded stop report
-//   D3  ServoingGuard destructor restores SINGLE_LEVEL by unwinding —
-//       cannot be skipped, cannot overwrite the recorded stop reason
+//   D2  explicit ServoingGuard restore to SINGLE_LEVEL + settling wait;
+//       destructor retries by unwinding if the explicit call failed
+//   D3  decoded stop report
 //
 
 #ifndef HUMANSL_MASTERS_PROJECT_2025_RUNNER_H

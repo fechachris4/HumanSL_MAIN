@@ -34,14 +34,40 @@
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 3; WriteCsvRow is the authority):
+// CSV column order (log_format = 5; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
 //   quat_x, quat_y, quat_z, quat_w, pd_beyond_reach,
-//   ref_j1..7, playback_t_s, playback_state                (78 columns)
-// Format 3 appends the playback columns after format 2's, so older
-// tooling's column names and indices stay valid.
+//   ref_j1..7, playback_t_s, playback_state,
+//   command_frame_id, feedback_frame_id, command_ack_j1..7,
+//   status_flags_j1..7, jitter_us_j1..7,
+//   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
+//   ack_unchanged_j1..7                                   (130 columns)
+// Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
+// format 3's columns. Format 5 (2026-08-03) drops the two columns that only
+// named the removed no-motion/stale-feedback stops
+// (stale_feedback_joint, no_response_joint) and appends the
+// requested-vs-sent telemetry below. Every format-3 name and index is still
+// valid; format-4 tooling that read the two dropped columns by NAME keeps
+// working, by index does not.
+//
+// Requested vs sent vs measured — the three quantities and their units:
+//   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
+//   cmdvel_j*  deg/s  velocity actually realised by the integrated command
+//   req_j*     deg    integrated position command BEFORE the lead limiter
+//   cmd_j*     deg    position actually written into the cyclic message
+//   meas_j*    deg    position returned by the robot in the Send reply
+// So req_j* - cmd_j* is exactly what the lead limiter removed this cycle
+// (nonzero only where lead_limited_j* is 1), and cmd_j* - meas_j* is the
+// same-unit tracking error the following-error guard tests.
+//
+// ack_unchanged_j* is a COUNT OF CONSECUTIVE CYCLES this joint's
+// command-acknowledgement ID repeated (0 = advanced this cycle). It is
+// evidence about the feedback stream, not about acceptance: the Kortex 2.7.0
+// BaseCyclic ActuatorFeedback exposes command_id (fixed32) as the ID of the
+// last command the actuator PROCESSED — it does not report whether a
+// setpoint was accepted or acted upon, so nothing here may be read that way.
 //
 // Timestamp semantics (all from one steady_clock, seconds since t_start):
 //   time_s   — cycle start, when this cycle's feedback was consumed
@@ -62,7 +88,7 @@ struct LoopLogSample {
     double dt_s = 0.0; // since previous cycle
     double t_send_s = 0.0; // just before cyclic.Send
     double t_recv_s = 0.0; // just after Send returned
-    double p_desired_m[3] = {0, 0, 0}; // dual-model world/common mount frame
+    double p_desired_m[3] = {0, 0, 0}; // right-arm base frame
     double p_current_m[3] = {0, 0, 0}; // FK of this cycle's measured q
     JointVector commanded_deg{};   // integrated position command (sent)
     JointVector commanded_velocity_deg_s{}; // clipped q̇ fed to the integrator
@@ -82,7 +108,7 @@ struct LoopLogSample {
     double rot_error_rad =   // rotation-log error norm (reactive-pose law)
         std::numeric_limits<double>::quiet_NaN(); // (NaN: law has no
                                                   // orientation task)
-    double tool_quat_xyzw[4] = { // measured tool orientation, common frame,
+    double tool_quat_xyzw[4] = { // measured tool orientation, right base,
         std::numeric_limits<double>::quiet_NaN(), // Hamilton, w >= 0
         std::numeric_limits<double>::quiet_NaN(), // (ControllerStatus::
         std::numeric_limits<double>::quiet_NaN(), //  tool_quat; NaN when the
@@ -96,6 +122,23 @@ struct LoopLogSample {
     JointVector ref_deg{};
     double playback_t_s = std::numeric_limits<double>::quiet_NaN();
     int playback_state = 0;
+
+    // Cyclic freshness evidence (log_format 4). command_frame_id is what
+    // this process sent; feedback_frame_id and actuator_command_ack are what
+    // Kortex returned. Per-actuator status/jitter distinguish a stale
+    // downstream device from a healthy but mechanically stationary joint.
+    std::uint32_t command_frame_id = 0;
+    std::uint32_t feedback_frame_id = 0;
+    std::array<std::uint32_t, 7> actuator_command_ack{};
+    std::array<std::uint32_t, 7> actuator_status_flags{};
+    std::array<std::uint32_t, 7> actuator_jitter_us{};
+
+    // Requested-vs-sent telemetry (log_format 5). See the column note above.
+    long cycle = 0; // 0 during the takeover hold, then 1.. per control cycle
+    JointVector requested_deg{};            // before the command-lead limiter
+    JointVector requested_velocity_deg_s{}; // before the per-joint speed clamp
+    std::array<bool, 7> lead_limited{};     // limiter changed this setpoint
+    std::array<int, 7> ack_unchanged_cycles{}; // consecutive repeated ack IDs
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully
@@ -133,7 +176,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 2. Both
+// Column header and one data row — the authority for log_format = 5. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);
