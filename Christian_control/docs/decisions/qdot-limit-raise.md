@@ -1,12 +1,36 @@
 # Set the resolved-rate speed clip from the model limits
 
 Date: 2026-07-22
-Status: accepted; amended 2026-07-24 to remove the 0.9 factor; supersedes
-the uniform 45 deg/s clip
-("Why the clip is 45 deg/s" in
-`resolved-rate-position-integration.md`)
+Status: accepted; amended 2026-07-24 to remove the 0.9 factor; superseded
+the uniform 45 deg/s clip ("Why the clip is 45 deg/s" in
+`resolved-rate-position-integration.md`).
+**Currently NOT in force — see "Reverted to 45 deg/s" below.**
 
-## Decision
+## Reverted to 45 deg/s (2026-08-03)
+
+`config::kModelVelocityLimitsDegS` — and therefore `kQdotLimitDegS` — is a
+uniform **45 deg/s**, well below the model limits this record argues for.
+It is a temporary bring-up value, adopted alongside the reference-source
+restructure, not a repudiation of the reasoning below: everything in this
+document about which limit binds low-level streaming still holds, and the
+79.64/69.91 figures remain the correct Table 40 model limits.
+
+Two consequences worth stating, because they are not obvious:
+
+- The clip is now the *first* thing that binds, not the last. At 79.64 the
+  base's own streaming enforcement was reachable; at 45 the controller
+  clamps well before the base has an opinion, so the failure mode this
+  record describes (setpoints outrunning an enforced limit until the
+  ~5 deg ejection) is much harder to provoke.
+- Anything that gates on a fraction of the clip tightens with it. The
+  trajectory validator's velocity gate is 90% of the clip, so planned
+  trajectories are now checked against 40.5 deg/s rather than 71.6.
+  `plan_move` reads the same constant, so the two cannot drift.
+
+Raising it back toward Table 40 is a deliberate decision, not a cleanup:
+re-read this record first.
+
+## Decision (2026-07-22, as taken)
 
 `config::kQdotLimitDegS` is set to the Kinova general (model) limits:
 79.64 deg/s for joints 1–4 and 69.91 deg/s for joints 5–7

@@ -65,6 +65,15 @@ error 0.006°, moving (~5 deg/s) 0.089°, dt jitter mean 1.115 ms / max
 4.83 ms → `kStartMismatchLimitDeg = 0.2` (≈30× noise, 15× under the
 guard), `kPlaybackKp = 0.5 /s` (correction < 0.05 deg/s in normal play).
 
+`kPlaybackKp` is deliberately far below the `null_gain = 10` scale that
+produced the 2026-07-27 windup incident. Feed-forward dominates in normal
+play: the P term only absorbs the (gated, small) start offset and losses
+to the velocity clamp, so there is nothing for it to wind up against.
+
+`kStartMismatchLimitDeg` is checked twice — before the takeover in `Main`,
+and again at `Reset`, because the arm can move in between. Failing the
+second check is a permanent hold, not a retry.
+
 ## Telemetry
 
 `log_format = 3` appends `ref_j1..7`, `playback_t_s`, `playback_state`

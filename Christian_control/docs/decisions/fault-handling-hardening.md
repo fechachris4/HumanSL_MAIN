@@ -14,6 +14,25 @@ looking at it, immediately before the default startup mode moves the arm.
 The call is deleted, with no replacement logic. Clearing a fault is now a
 deliberate human act (Kinova web dashboard).
 
+**Reversed 2026-08-03. Startup clears faults again, unconditionally.**
+`Main.cpp` issues `Base::ClearFaults()` immediately after connecting,
+before anything else talks to the arm — no motion, the same operation as
+the web dashboard's "Clear faults" button — then sleeps 500 ms so the base
+can re-arm the actuators, and the readiness gate runs on a fresh
+post-clear frame.
+
+What makes this safe now, and was missing on 2026-07-20, is the ordering:
+the clear happens *before* the gate rather than instead of it. A fault that
+re-latches after the clear is live, not stale, and still refuses the
+takeover. The 2026-07-20 objection — that clearing erased protective state
+immediately before the arm moved — no longer applies, because the gate
+between the clear and any motion reads the arm again.
+
+What this buys: a latched leftover from a previous run (typically the
+`JOINT_FAULT` aggregate discussed in the correction below, which is a
+historical bit rather than a live interlock) no longer requires a trip to
+the web dashboard before every session.
+
 **Correction (2026-07-20, same day):** the original rationale claimed a
 faulted arm refuses `LOW_LEVEL_SERVOING`. Hardware evidence disproved this
 for the base's `JOINT_FAULT` (16) summary bit: with that bit latched, every
