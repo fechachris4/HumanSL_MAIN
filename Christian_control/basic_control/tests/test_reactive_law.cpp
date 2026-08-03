@@ -100,6 +100,74 @@ namespace
               "all terms disabled -> zero twist");
     }
 
+    // Equation 2 (ReactiveLaw.h TwistError), the counterpart of
+    // reactive_controller.py twist_error.
+    void TestTwistError()
+    {
+        Eigen::Matrix<double, 6, 1> measured;
+        measured << 0.01, -0.02, 0.03, 0.10, 0.00, -0.10;
+
+        // A zero reference twist must reproduce the law exactly as it stood
+        // before the reference twist existed: e = -measured, pure damping.
+        // This is the regression guard for every existing source, all of
+        // which leave the twist at its default.
+        const Twist damping_only = TwistError(Twist{}, measured);
+        Check((damping_only.linear_m_s + measured.head<3>()).norm() == 0.0,
+              "zero reference twist gives exactly -measured (linear)");
+        Check((damping_only.angular_rad_s + measured.tail<3>()).norm() == 0.0,
+              "zero reference twist gives exactly -measured (angular)");
+
+        // A moving target: both halves are reference minus measured, so the
+        // Kd term feeds the commanded velocity forward instead of resisting
+        // it. This is what a future orientation policy needs.
+        Twist reference;
+        reference.linear_m_s = Eigen::Vector3d(0.05, 0.00, -0.01);
+        reference.angular_rad_s = Eigen::Vector3d(0.20, -0.30, 0.40);
+        const Twist error = TwistError(reference, measured);
+        Check((error.linear_m_s -
+               (reference.linear_m_s - measured.head<3>()))
+                      .norm() < 1e-15,
+              "linear twist error is reference minus measured");
+        Check((error.angular_rad_s -
+               (reference.angular_rad_s - measured.tail<3>()))
+                      .norm() < 1e-15,
+              "angular twist error is reference minus measured");
+
+        // A target moving exactly as fast as the arm is a zero error: the
+        // Kd term contributes nothing and the P term alone closes the pose
+        // gap. Under the old hardcoded law this case was unreachable.
+        Twist matched;
+        matched.linear_m_s = measured.head<3>();
+        matched.angular_rad_s = measured.tail<3>();
+        const Twist none = TwistError(matched, measured);
+        Check(none.linear_m_s.norm() == 0.0 && none.angular_rad_s.norm() == 0.0,
+              "a reference twist matching the measurement is zero error");
+    }
+
+    // The reference twist reaches the law through PoseReference, and every
+    // operator target leaves it zero.
+    void TestPoseReferenceTwistDefault()
+    {
+        PoseReference reference;
+        reference.p_desired = Eigen::Vector3d(0.4, 0.1, 0.3);
+        Check(reference.twist.linear_m_s.norm() == 0.0 &&
+                  reference.twist.angular_rad_s.norm() == 0.0,
+              "a PoseReference defaults to a stationary target");
+
+        RobotState state;
+        state.q_rad.setZero();
+        state.qdot_rad_s.setZero();
+        ControllerStatus status;
+        PoseTargetStore store;
+        PoseTargetSource source(store);
+        source.Reset(state);
+        store.StorePosition(Eigen::Vector3d(0.4, 0.1, 0.3));
+        const auto served = source.Get(state, 0.001, status);
+        Check(served.pose && served.pose->twist.linear_m_s.norm() == 0.0 &&
+                  served.pose->twist.angular_rad_s.norm() == 0.0,
+              "operator targets command no reference velocity");
+    }
+
     void TestDampedLeastSquares6()
     {
         // Identity-like Jacobian on joints 1-6: undamped solution exact.
@@ -411,6 +479,8 @@ int main()
           "null ramp scales linearly during startup");
     Check(UnitRamp(2.0, 1.0) == 1.0, "null ramp clamps after duration");
     TestRotationLog();
+    TestTwistError();
+    TestPoseReferenceTwistDefault();
     TestTaskTwistGating();
     TestDampedLeastSquares6();
     TestNullSpace();

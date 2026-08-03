@@ -4,7 +4,7 @@
 // Read the functions below in order:
 //
 //   1. pose error         e_pos, e_rot = log3(R_des · Rᵀ)
-//   2. twist error        e_v, e_w (zero reference twist)
+//   2. twist error        e_v, e_w = reference twist − J·q̇
 //   3. task twist         ẋ = Kp·e_pose + Kd·e_twist
 //   4. damped least sq.   q̇_task = Jᵀ(JJᵀ + λ²I₆)⁻¹ ẋ
 //   5. joint centering    q̇_null = −k_null · wrap(q − q_mid)
@@ -30,6 +30,8 @@
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
+
+#include "State.h" // Twist — the reference velocity equation 2 subtracts
 
 // Gains and term switches. Disabled terms contribute exactly zero, so the
 // staged bring-up (P-only, then Kd, then centering) is configuration.
@@ -63,6 +65,23 @@ inline Eigen::Vector3d RotationLog(const Eigen::Matrix3d& rotation)
 {
     const Eigen::AngleAxisd angle_axis(rotation);
     return angle_axis.angle() * angle_axis.axis();
+}
+
+// Equation 2: twist error, reference minus actual — the Kd term's input.
+// `measured` is the end-effector twist J·q̇, linear in rows 0-2 and angular
+// in rows 3-5, the row order the Jacobian already uses. Mirrors
+// reactive_controller.py twist_error.
+//
+// A zero reference (the default Twist) reduces this to −measured, i.e. pure
+// damping toward a standstill; a moving target supplies its own velocity
+// here so the law feeds it forward instead of resisting it.
+inline Twist TwistError(const Twist& reference,
+                        const Eigen::Matrix<double, 6, 1>& measured)
+{
+    Twist error;
+    error.linear_m_s = reference.linear_m_s - measured.head<3>();
+    error.angular_rad_s = reference.angular_rad_s - measured.tail<3>();
+    return error;
 }
 
 // Equation 3: desired task twist [v; ω]. Row order matches the Jacobian:

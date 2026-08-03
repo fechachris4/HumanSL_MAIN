@@ -94,12 +94,14 @@ TrackingController::DesiredVelocity(const RobotState& state,
     const Eigen::Vector3d e_rot =
         RotationLog(rotation_desired * ee.rotation.transpose());
 
-    // Equation 2: twist error against a zero reference twist (static
-    // targets); the measured end-effector twist is J q̇_measured.
+    // Equation 2: twist error, the source's reference velocity minus the
+    // measured end-effector twist J q̇_measured. The hold pose is stationary,
+    // so its reference twist is genuinely zero rather than a placeholder.
     const Eigen::Matrix<double, 6, 1> measured_twist =
         ee.jacobian * state.qdot_rad_s;
-    const Eigen::Vector3d e_v = -measured_twist.head<3>();
-    const Eigen::Vector3d e_w = -measured_twist.tail<3>();
+    const Twist reference_twist =
+        reference.pose ? reference.pose->twist : Twist{};
+    const Twist e_twist = TwistError(reference_twist, measured_twist);
 
     // Arrival notice (position-based): edge-triggered data — the Runner
     // prints.
@@ -126,7 +128,8 @@ TrackingController::DesiredVelocity(const RobotState& state,
     ReactivePoseGains ramped_gains = gains_;
     ramped_gains.null_gain_s_inv *=
         UnitRamp(state.t_s, config::kNullRampDurationS);
-    return SolveReactiveVelocity(ee.jacobian, e_pos, e_rot, e_v, e_w,
-                                 state.q_rad, null_midpoint_rad_,
-                                 null_centering_mask_, ramped_gains);
+    return SolveReactiveVelocity(ee.jacobian, e_pos, e_rot, e_twist.linear_m_s,
+                                 e_twist.angular_rad_s, state.q_rad,
+                                 null_midpoint_rad_, null_centering_mask_,
+                                 ramped_gains);
 }

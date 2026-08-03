@@ -212,16 +212,20 @@ Reference PoseTargetSource::Get(const RobotState& /*state*/, double /*dt_s*/,
 {
     const PoseTargetStore::Snapshot snapshot = store_.Get();
     Reference reference;
+    // Operator targets are STATIONARY: a typed or compiled pose is a place
+    // to be, not a motion, so the reference twist stays zero and the Kd
+    // term stays pure damping. A source that moves its target (an
+    // orientation policy, a Cartesian path) fills the twist instead.
     if (snapshot.sequence != baseline_sequence_)
         reference.pose = PoseReference{snapshot.p_desired, snapshot.rotation,
-                                       snapshot.sequence};
+                                       Twist{}, snapshot.sequence};
     else if (initial_target_)
         // Sequence 0 never collides with a live store sequence (those
         // continue from the takeover baseline), so the arrival notice
         // arms exactly once for the initial target too. An empty rotation
         // here means the controller keeps the takeover orientation.
         reference.pose = PoseReference{initial_target_->p_desired,
-                                       initial_target_->rotation, 0};
+                                       initial_target_->rotation, Twist{}, 0};
     return reference;
 }
 

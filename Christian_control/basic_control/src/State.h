@@ -65,12 +65,29 @@ struct ControllerStatus {
     bool playback_refused_edge = false; // first cycle after a Reset refusal
 };
 
-// A desired end-effector pose. Empty `rotation` means "no orientation
-// requested" — the controller keeps its takeover hold orientation.
-// `sequence` identifies distinct targets so arrival fires once per target.
+// A Cartesian velocity — the reference twist a source commands, or a
+// measured one. Mirrors controller/state.py Twist. Both halves default to
+// zero, which is what Python spells Twist.zero(): a source that sets
+// nothing commands a stationary target.
+struct Twist {
+    Eigen::Vector3d linear_m_s = Eigen::Vector3d::Zero();
+    Eigen::Vector3d angular_rad_s = Eigen::Vector3d::Zero();
+};
+
+// A desired end-effector pose and the velocity it is moving at. Empty
+// `rotation` means "no orientation requested" — the controller keeps its
+// takeover hold orientation. `sequence` identifies distinct targets so
+// arrival fires once per target.
+//
+// `twist` is the FEED-FORWARD reference for the Kd term (ReactiveLaw.h
+// equation 2), the counterpart of Python's WorldTarget.twist_world. Leaving
+// it zero makes the Kd term pure damping, which is what every source does
+// today; a source that moves its target should fill it, or the law will
+// fight the motion it asked for.
 struct PoseReference {
     Eigen::Vector3d p_desired;               // meters, right-arm base frame
     std::optional<Eigen::Matrix3d> rotation; // base frame; nullopt = hold
+    Twist twist;                             // reference velocity, base frame
     std::uint64_t sequence = 0;
 };
 
