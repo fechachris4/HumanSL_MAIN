@@ -92,6 +92,14 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
                      FormatDouble(config::kFixedTargetRpyRad[2]));
     }
     line("following_error_limit_deg", FormatDouble(config::kFollowingErrorLimitDeg));
+    // Guard overrides — recorded on every run so a log can be read back
+    // knowing which protections were active while it was captured.
+    line("stop_on_fault", config::kStopOnFault ? "true" : "false");
+    line("allow_unverified_actuators",
+         config::kAllowUnverifiedActuators ? "true" : "false");
+    line("skip_startup_gates", config::kSkipStartupGates ? "true" : "false");
+    line("disable_following_error_stop",
+         config::kDisableFollowingErrorStop ? "true" : "false");
     line("arrival_tolerance_m", FormatDouble(config::kArrivalToleranceM));
     line("nonfinite_stop_cycles", std::to_string(config::kNonFiniteStopCycles));
     line("overrun_stop_cycles", std::to_string(config::kOverrunStopCycles));
@@ -329,10 +337,18 @@ int main(int argc, char** argv)
         // control-mode probe ran first, so a single actuator whose
         // configuration service had stopped answering exited the program
         // before any limit was ever re-applied.
-        if (!connection.EnsureJointLimits(std::cout))
-            return 1;
-        if (!connection.EnsurePositionControlModes(std::cout))
-            return 1;
+        if (config::kSkipStartupGates)
+            std::cout
+                << "WARNING: STARTUP GATES SKIPPED (config::kSkipStartupGates)"
+                   " — no control mode verified, and the joint 4/6 JOINT_LIMIT\n"
+                   "         bands are NOT restored. A band left at 0/0 faults"
+                   " outward motion at the firmware level.\n";
+        else {
+            if (!connection.EnsureJointLimits(std::cout))
+                return 1;
+            if (!connection.EnsurePositionControlModes(std::cout))
+                return 1;
+        }
         PrintRobotState(initial, controlled_model);
 
         if (playback) {

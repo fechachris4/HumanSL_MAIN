@@ -103,6 +103,12 @@ bool Connect::EnsureJointLimits(std::ostream& out)
         if (warn == 0.0 && error == 0.0)
             continue; // continuous joint, or one we deliberately leave alone
 
+        // Per joint, so one actuator whose configuration service has stopped
+        // answering cannot prevent every OTHER joint's limits from being
+        // restored — the failure mode found on 2026-08-04, where joint 6
+        // aborted the gate and joint 4 was left on a degenerate 0/0 band.
+        try
+        {
         for (const unsigned identifier : {kHigh, kLow})
         {
             const double sign = (identifier == kHigh) ? 1.0 : -1.0;
@@ -139,6 +145,26 @@ bool Connect::EnsureJointLimits(std::ostream& out)
                     << ")\n";
                 return false;
             }
+        }
+        } // try
+        catch (std::exception& ex)
+        {
+            out << "joint " << id
+                << " did not answer its safety-configuration service ("
+                << ex.what() << ")\n";
+            if (!config::kAllowUnverifiedActuators)
+            {
+                out << "  robot NOT ready: its JOINT_LIMIT band cannot be"
+                       " restored, and a degenerate 0/0 band faults outward"
+                       " motion. Power-cycle the arm, or set"
+                       " config::kAllowUnverifiedActuators.\n";
+                return false;
+            }
+            out << "  WARNING: continuing with joint " << id
+                << "'s JOINT_LIMIT band UNKNOWN"
+                   " (config::kAllowUnverifiedActuators). If it is 0/0, the"
+                   " firmware will fault this joint on any motion away from"
+                   " zero.\n";
         }
     }
     out << "joint-limit gate: PASS (configured thresholds verified"
@@ -180,15 +206,22 @@ bool Connect::EnsurePositionControlModes(std::ostream& out)
         }
         catch (std::exception& ex)
         {
-            out << "robot NOT ready: joint " << id
-                << " did not answer its control-mode service (" << ex.what()
-                << ").\n"
+            out << "joint " << id << " did not answer its control-mode service ("
+                << ex.what() << ").\n"
                    "  The joint may still report position on the cyclic path;"
-                   " this is its CONFIGURATION channel.\n"
-                   "  Its control mode cannot be verified, so the takeover is"
-                   " refused. Power-cycle the arm and re-check with"
-                   " tools/read_safety_limits.\n";
-            return false;
+                   " this is its CONFIGURATION channel.\n";
+            if (!config::kAllowUnverifiedActuators)
+            {
+                out << "  robot NOT ready: its control mode cannot be verified,"
+                       " so the takeover is refused. Power-cycle the arm and"
+                       " re-check with tools/read_safety_limits, or set"
+                       " config::kAllowUnverifiedActuators.\n";
+                return false;
+            }
+            out << "  WARNING: continuing with joint " << id
+                << " UNVERIFIED (config::kAllowUnverifiedActuators). If it is"
+                   " not in POSITION mode, its response to a position setpoint"
+                   " is undefined.\n";
         }
     }
     out << "actuator control-mode gate: PASS (all joints POSITION"

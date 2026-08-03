@@ -64,13 +64,18 @@ bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
     // first match). measured_deg sits within ±180° of the command
     // (FillSample) and the gap grows by well under a degree per
     // cycle, so at a small limit the comparison is unambiguous.
-    for (int i = 0; i < NUM_JOINTS; ++i)
-        if (std::abs(s.measured_deg[i] - s.commanded_deg[i]) >
-            following_error_limit_deg)
-        {
-            reason = LoopStop::kFollowingError;
-            return true;
-        }
+    //
+    // config::kDisableFollowingErrorStop removes this stop entirely. With
+    // kStopOnFault also false, the only automatic stop left below is
+    // "the arm left low-level servoing".
+    if (!config::kDisableFollowingErrorStop)
+        for (int i = 0; i < NUM_JOINTS; ++i)
+            if (std::abs(s.measured_deg[i] - s.commanded_deg[i]) >
+                following_error_limit_deg)
+            {
+                reason = LoopStop::kFollowingError;
+                return true;
+            }
     for (int i = 0; i < NUM_JOINTS; ++i)
         if (s.fault_bank[i] != 0)
         {

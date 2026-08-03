@@ -140,6 +140,40 @@ namespace config
     // only, never runtime-settable (qdot-limit-raise.md).
     inline constexpr bool kStopOnFault = false;
 
+    // ---- Guard overrides. All three default false = every guard active. ----
+    // Each one trades a protection for the ability to run through a fault.
+    // They are compile-time only and echoed into the CSV preamble, so a run
+    // recorded with one enabled is identifiable afterwards. Turn them back
+    // off the moment the hardware problem they work around is fixed.
+
+    // true = the startup gates ACCEPT an actuator whose configuration
+    // service does not answer, instead of refusing the takeover. The
+    // joints that do answer are still verified and still get their limits
+    // restored. CONSEQUENCE: the unreachable joint is commanded with its
+    // control mode UNVERIFIED and its JOINT_LIMIT band unknown — if it is
+    // not in POSITION mode, what it does with a position setpoint is
+    // undefined. (2026-08-04: joint 6's config service stopped answering
+    // while it still reported position normally.)
+    inline constexpr bool kAllowUnverifiedActuators = false;
+
+    // true = skip BOTH startup gates for every joint. Nothing is verified
+    // and, critically, the j4/j6 JOINT_LIMIT thresholds are NEVER
+    // re-applied — they revert to a degenerate 0/0 band on each power
+    // cycle, and the firmware faults outward motion on a 0/0 band. Prefer
+    // kAllowUnverifiedActuators, which keeps both gates working for every
+    // healthy joint.
+    inline constexpr bool kSkipStartupGates = false;
+
+    // true = the loop NEVER stops on following error. Read this next to
+    // kStopOnFault above, which is already false: with both set, and the
+    // no-motion stops removed on 2026-08-03, the ONLY remaining automatic
+    // stop is loss of low-level servoing. Nothing else ends a run — not a
+    // fault, not a joint that has stopped following its setpoint. The
+    // operator and the robot's own firmware limits are the entire safety
+    // margin. kFollowingErrorLimitDeg keeps its value for the telemetry
+    // and the stop report; this only removes the stop.
+    inline constexpr bool kDisableFollowingErrorStop = false;
+
     // Consecutive-cycle stop counters; N <= 0 disables one. Non-finite
     // controller output is never integrated (that cycle holds); overrun =
     // measured dt above kOverrunFactor x nominal.

@@ -99,6 +99,14 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         std::cout << "WARNING: FAULT-STOP DISABLED (config::kStopOnFault = false) — live "
             "fault bits will NOT stop the loop; the following-error guard and the "
             "operator are the backstops. Attended use only.\n";
+    if (config::kDisableFollowingErrorStop)
+        std::cout << "WARNING: FOLLOWING-ERROR STOP DISABLED "
+            "(config::kDisableFollowingErrorStop) — a joint that stops following "
+            "its setpoint will NOT stop the loop.\n";
+    if (!config::kStopOnFault && config::kDisableFollowingErrorStop)
+        std::cout << "WARNING: BOTH the fault stop and the following-error stop are "
+            "off. The ONLY automatic stop left is loss of low-level servoing. "
+            "YOU are the safety system — hand on the e-stop for this run.\n";
 
     const double nominal_dt_s = std::chrono::duration<double>(period).count();
 
