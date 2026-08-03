@@ -7,6 +7,7 @@
 #define HUMANSL_MASTERS_PROJECT_2025_CONNECT_H
 
 #include <memory>
+#include <ostream>
 #include <string>
 
 #include <RouterClient.h>
@@ -14,6 +15,7 @@
 #include <SessionManager.h>
 #include <BaseClientRpc.h>
 #include <BaseCyclicClientRpc.h>
+#include <ActuatorConfigClientRpc.h>
 
 namespace k_api = Kinova::Api;
 
@@ -39,12 +41,9 @@ public:
         return base_cyclic_.get();
     }
 
-    // The TCP router, for building extra service clients (e.g. ControlConfig)
-    // on the same session.
-    k_api::RouterClient* router()
-    {
-        return tcp_.router.get();
-    }
+    // Read, set if necessary, and re-read all seven actuator control modes.
+    // Must pass before the low-level takeover begins.
+    bool EnsurePositionControlModes(std::ostream& out);
 
 private:
     // One connected transport + router + logged-in session. Members are
@@ -67,6 +66,7 @@ private:
     Channel udp_; // port 10001: real-time cyclic channel
 
     std::unique_ptr<k_api::Base::BaseClient> base_;
+    std::unique_ptr<k_api::ActuatorConfig::ActuatorConfigClient> actuator_config_;
     std::unique_ptr<k_api::BaseCyclic::BaseCyclicClient> base_cyclic_;
 };
 

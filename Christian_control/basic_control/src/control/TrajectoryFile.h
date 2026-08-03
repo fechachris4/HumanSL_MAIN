@@ -84,7 +84,8 @@ struct TrajectorySummary {
 // motion the positions imply), and per-sample steps small enough for the
 // position servo to follow. NOTE: this checks the URDF/Kinova model
 // ranges only — the arm's CONFIGURED soft limits can sit far inside them
-// (README "Safety"); read them with ./query_limits before a session.
+// (README "Safety"); confirm them in the Kinova web dashboard before a
+// session.
 std::vector<std::string> ValidateTrajectory(const Trajectory& trajectory,
                                             const JointVector& vel_limit_deg_s,
                                             const JointVector& accel_limit_deg_s2,

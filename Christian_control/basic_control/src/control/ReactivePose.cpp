@@ -8,11 +8,13 @@
 ReactivePose::ReactivePose(DualArmKinematics& model, PoseTargetStore& targets,
                            const ReactivePoseGains& gains, double arrival_tolerance_m,
                            const Eigen::Matrix<double, 7, 1>& null_midpoint_rad,
-                           const Eigen::Matrix<double, 7, 1>& null_centering_mask)
+                           const Eigen::Matrix<double, 7, 1>& null_centering_mask,
+                           double null_ramp_duration_s)
     : model_(model), targets_(targets), gains_(gains),
       arrival_tolerance_m_(arrival_tolerance_m), workspace_(model.dynamics()),
       null_midpoint_rad_(null_midpoint_rad),
-      null_centering_mask_(null_centering_mask)
+      null_centering_mask_(null_centering_mask),
+      null_ramp_duration_s_(null_ramp_duration_s)
 {}
 
 void ReactivePose::Reset(const RobotState& state)
@@ -74,6 +76,8 @@ Eigen::Matrix<double, 7, 1> ReactivePose::DesiredVelocity(const RobotState& stat
     status.sigma_min = std::sqrt(std::max(0.0, eigensolver.eigenvalues()(0)));
 
     // Equations 3-6: task twist -> DLS -> null-space (ReactiveLaw.h).
+    ReactivePoseGains ramped_gains = gains_;
+    ramped_gains.null_gain_s_inv *= UnitRamp(state.t_s, null_ramp_duration_s_);
     return SolveReactiveVelocity(ee.jacobian, e_pos, e_rot, e_v, e_w, state.q_rad,
-                                 null_midpoint_rad_, null_centering_mask_, gains_);
+                                 null_midpoint_rad_, null_centering_mask_, ramped_gains);
 }

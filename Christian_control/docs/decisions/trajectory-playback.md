@@ -76,5 +76,5 @@ Free-space SDF only (no obstacles, no Vicon); single right arm; the
 planner's DH model differs from the URDF (grasp-point tool frame), so
 compare displacement NORMS between plan_move's printout and the
 controller's FK cross-check, not absolute positions; the arm's CONFIGURED
-soft limits are inside the model ranges — `./query_limits` before every
-session remains mandatory.
+soft limits are inside the model ranges — confirm them in the Kinova web
+dashboard before every session.

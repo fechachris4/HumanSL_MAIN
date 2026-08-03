@@ -20,7 +20,7 @@ playback, along one pre-validated trajectory file.
 
     e = p_desired − p(q_measured);   v_d = Kp · e
     q̇_raw = Jpᵀ (Jp Jpᵀ + λ² I₃)⁻¹ v_d      (damped least squares)
-    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (79.6 deg/s joints 1–4, 69.9 joints 5–7)
+    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (79.64 deg/s joints 1–4, 69.91 joints 5–7)
     q_command += q̇_clipped · dt              (persistent integrator)
 
 `reactive-pose` (`--controller reactive-pose`) — full 6-DoF pose, ported
@@ -60,7 +60,6 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   strategy), `loop/` (the Runner — moves the arm), `safety/` (policy +
   reporting), `math/` (kinematics, DLS), `hardware/` (Kortex I/O and
   telemetry)
-- `tools/` — standalone diagnostic executables
 - `tests/` — tests (CTest) + the CSV replay harness; the portable suite
   runs anywhere, the rest links the bundled Linux libraries (hardware
   machine only)
@@ -74,7 +73,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 - `src/app/Config.h` — compiled right-only hardware ownership, left nominal
   model state, end-effector frame, log prefix, plus defaults: `kControlDtS`
   (0.001 s — the single timing source), `kKpCartesian` (1.0 /s),
-  `kDlsLambda` (0.1), `kQdotLimitDegS` (equal to the 79.6/69.9 deg/s
+  `kDlsLambda` (0.1), `kQdotLimitDegS` (equal to the 79.64/69.91 deg/s
   model limits), `kStopOnFault` (compile-time only), selected end-effector
   frame, supervisor counter limits, log capacity
 - `src/app/Options.*` — runtime overrides, precedence CLI > TOML > compiled
@@ -110,8 +109,6 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   q_command integrator)
 - `src/loop/Runner.*` — **the loop — moves the arm**: takeover sequence
   T1-T6, per-cycle order, teardown D1-D3 (spec in `Runner.h`)
-- `tools/query_limits.cpp` — separate read-only executable: prints the
-  robot's reported kinematic hard limits
 
 ## Build and test
 
@@ -163,8 +160,8 @@ policy is not runtime-configurable.
    desired position from the measured state (q_command = q_measured,
    p_desired = p_current), and sends one unchanged holding frame — the arm
    holds. Actuators stay in their default POSITION mode.
-4. Type a desired position — **x y z in meters, dual-model world/common
-   mount frame**:
+4. Type a desired position — **x y z in meters, right-arm `base_link`
+   frame**:
 
    ```
    0.45 0.10 0.30
@@ -242,8 +239,8 @@ rules above apply):
 
 ## Safety — read before every session
 
-- **The controller's explicit motion limit is a per-joint velocity clamp** — 79.6 deg/s
-  (joints 1–4) / 69.9 deg/s (joints 5–7) (`kQdotLimitDegS`, equal to
+- **The controller's explicit motion limit is a per-joint velocity clamp** — 79.64 deg/s
+  (joints 1–4) / 69.91 deg/s (joints 5–7) (`kQdotLimitDegS`, equal to
   `kModelVelocityLimitsDegS` in `Config.h`). This is a
   client-side limit; the actuator firmware safeties are separate, and a
   stream that outruns them can fault mid-move.

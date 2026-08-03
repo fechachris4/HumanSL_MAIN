@@ -41,8 +41,8 @@ struct ControllerStatus {
     // orientation (e.g. ResolvedRate).
     double rot_error_rad = std::numeric_limits<double>::quiet_NaN();
     // MEASURED right-tool orientation from this cycle's dual-model FK:
-    // flange frame (no TCP offset), expressed in the model's world/common
-    // mount frame. Hamilton convention, unit norm, hemisphere-fixed to
+    // flange frame (no TCP offset), expressed in the right-arm base frame.
+    // Hamilton convention, unit norm, hemisphere-fixed to
     // w >= 0 so logged trajectories never jump sign. Telemetry only; NaN
     // coefficients when the law exposes no tool frame.
     Eigen::Quaterniond tool_quat{

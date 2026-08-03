@@ -26,7 +26,8 @@ public:
     ReactivePose(DualArmKinematics& model, PoseTargetStore& targets,
                  const ReactivePoseGains& gains, double arrival_tolerance_m,
                  const Eigen::Matrix<double, 7, 1>& null_midpoint_rad,
-                 const Eigen::Matrix<double, 7, 1>& null_centering_mask);
+                 const Eigen::Matrix<double, 7, 1>& null_centering_mask,
+                 double null_ramp_duration_s = 0.0);
 
     // Seeds the desired pose with the CURRENT end-effector pose (position
     // AND orientation), so the controller holds until the operator types a
@@ -48,6 +49,7 @@ private:
     KinematicsWorkspace workspace_;
     Eigen::Matrix<double, 7, 1> null_midpoint_rad_;
     Eigen::Matrix<double, 7, 1> null_centering_mask_;
+    double null_ramp_duration_s_;
 
     // Arrival notice state: armed only when the target sequence changes, so
     // the seeded hold target never fires and each typed target fires once.

@@ -1,5 +1,17 @@
 <robot name="GEN3_URDF_V12" version="1.0">
 
+  <!--
+    Project-specific dual-arm mounting model. Each Gen3 7-DoF arm's joint
+    types, limits, transforms, link inertials, and mesh geometry are aligned
+    with Kinova's official ros_kortex v2.5.2 vision V12 URDF:
+    kortex_description/arms/gen3/7dof/urdf/
+    GEN3-7DOF-VISION_ARM_URDF_V12.urdf
+
+    The shared world root, fixed mounting transforms, dual-arm naming, and
+    omission of camera frames are project-specific. URDF limits are model
+    metadata; installed firmware/configured soft limits remain separate.
+  -->
+
   <!-- World base link (new) -->
   <link name="world"/>
 
@@ -63,12 +75,12 @@
       </geometry>
     </collision>
   </link>
-  <joint name="Actuator1" type="revolute">
+  <joint name="Actuator1" type="continuous">
     <origin xyz="0 0 0.15643" rpy="3.1416 2.7629E-18 -4.9305E-36" />
     <parent link="base_link" />
     <child link="Shoulder_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="39" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="39" velocity="1.3963" />
   </joint>
   <link name="HalfArm1_Link">
     <inertial>
@@ -97,7 +109,7 @@
     <parent link="Shoulder_Link" />
     <child link="HalfArm1_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.41" upper="2.41" effort="39" velocity="0.8727" />
+    <limit lower="-2.24" upper="2.24" effort="39" velocity="1.3963" />
   </joint>
   <link name="HalfArm2_Link">
     <inertial>
@@ -121,12 +133,12 @@
       </geometry>
     </collision>
   </link>
-  <joint name="Actuator3" type="revolute">
+  <joint name="Actuator3" type="continuous">
     <origin xyz="0 -0.21038 -0.006375" rpy="-1.5708 1.2326E-32 -2.9122E-16" />
     <parent link="HalfArm1_Link" />
     <child link="HalfArm2_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="39" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="39" velocity="1.3963" />
   </joint>
   <link name="ForeArm_Link">
     <inertial>
@@ -155,7 +167,7 @@
     <parent link="HalfArm2_Link" />
     <child link="ForeArm_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.66" upper="2.66" effort="39" velocity="0.8727" />
+    <limit lower="-2.57" upper="2.57" effort="39" velocity="1.3963" />
   </joint>
   <link name="SphericalWrist1_Link">
     <inertial>
@@ -179,12 +191,12 @@
       </geometry>
     </collision>
   </link>
-  <joint name="Actuator5" type="revolute">
+  <joint name="Actuator5" type="continuous">
     <origin xyz="0 -0.20843 -0.006375" rpy="-1.5708 2.2204E-16 -6.373E-17" />
     <parent link="ForeArm_Link" />
     <child link="SphericalWrist1_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="9" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="9" velocity="1.2218" />
   </joint>
   <link name="SphericalWrist2_Link">
     <inertial>
@@ -213,7 +225,7 @@
     <parent link="SphericalWrist1_Link" />
     <child link="SphericalWrist2_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.23" upper="2.23" effort="9" velocity="0.8727" />
+    <limit lower="-2.09" upper="2.09" effort="9" velocity="1.2218" />
   </joint>
   <link name="Bracelet_Link">
     <inertial>
@@ -237,19 +249,20 @@
       </geometry>
     </collision>
   </link>
-  <joint name="Actuator7" type="revolute">
+  <joint name="Actuator7" type="continuous">
     <origin xyz="0 -0.10593 -0.00017505" rpy="-1.5708 -5.5511E-17 9.6396E-17" />
     <parent link="SphericalWrist2_Link" />
     <child link="Bracelet_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="9" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="9" velocity="1.2218" />
   </joint>
-  <link name="EndEffector_Link" />
-  <inertial>
-    <origin xyz="0 0 0" rpy="0 0 0"/> <!-- Adjust xyz if the centre of mass is offset -->
-    <mass value="0.5"/>
-    <inertia ixx="0.0012" ixy="0" ixz="0" iyy="0.0012" iyz="0" izz="0.0022"/>
-  </inertial>
+  <link name="EndEffector_Link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
   <joint name="EndEffector" type="fixed">
     <origin xyz="0 0 -0.0615250000000001" rpy="3.14159265358979 1.09937075168372E-32 0" />
     <parent link="Bracelet_Link" />
@@ -325,12 +338,12 @@
       </geometry>
     </collision>
   </link>
-  <joint name="leftActuator1" type="revolute">
+  <joint name="leftActuator1" type="continuous">
     <origin xyz="0 0 0.15643" rpy="3.1416 2.7629E-18 -4.9305E-36" />
     <parent link="leftbase_link" />
     <child link="leftShoulder_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="39" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="39" velocity="1.3963" />
   </joint>
   <link name="leftHalfArm1_Link">
     <inertial>
@@ -359,7 +372,7 @@
     <parent link="leftShoulder_Link" />
     <child link="leftHalfArm1_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.41" upper="2.41" effort="39" velocity="0.8727" />
+    <limit lower="-2.24" upper="2.24" effort="39" velocity="1.3963" />
   </joint>
   <link name="leftHalfArm2_Link">
     <inertial>
@@ -383,12 +396,12 @@
       </geometry>
     </collision>
   </link>
-  <joint name="leftActuator3" type="revolute">
+  <joint name="leftActuator3" type="continuous">
     <origin xyz="0 -0.21038 -0.006375" rpy="-1.5708 1.2326E-32 -2.9122E-16" />
     <parent link="leftHalfArm1_Link" />
     <child link="leftHalfArm2_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="39" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="39" velocity="1.3963" />
   </joint>
   <link name="leftForeArm_Link">
     <inertial>
@@ -417,7 +430,7 @@
     <parent link="leftHalfArm2_Link" />
     <child link="leftForeArm_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.66" upper="2.66" effort="39" velocity="0.8727" />
+    <limit lower="-2.57" upper="2.57" effort="39" velocity="1.3963" />
   </joint>
   <link name="leftSphericalWrist1_Link">
     <inertial>
@@ -441,12 +454,12 @@
       </geometry>
     </collision>
   </link>
-  <joint name="leftActuator5" type="revolute">
+  <joint name="leftActuator5" type="continuous">
     <origin xyz="0 -0.20843 -0.006375" rpy="-1.5708 2.2204E-16 -6.373E-17" />
     <parent link="leftForeArm_Link" />
     <child link="leftSphericalWrist1_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="9" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="9" velocity="1.2218" />
   </joint>
   <link name="leftSphericalWrist2_Link">
     <inertial>
@@ -475,7 +488,7 @@
     <parent link="leftSphericalWrist1_Link" />
     <child link="leftSphericalWrist2_Link" />
     <axis xyz="0 0 1" />
-    <limit lower="-2.23" upper="2.23" effort="9" velocity="0.8727" />
+    <limit lower="-2.09" upper="2.09" effort="9" velocity="1.2218" />
   </joint>
   <link name="leftBracelet_Link">
     <inertial>
@@ -499,19 +512,20 @@
       </geometry>
     </collision>
   </link>
-  <joint name="leftActuator7" type="revolute">
+  <joint name="leftActuator7" type="continuous">
     <origin xyz="0 -0.10593 -0.00017505" rpy="-1.5708 -5.5511E-17 9.6396E-17" />
     <parent link="leftSphericalWrist2_Link" />
     <child link="leftBracelet_Link" />
     <axis xyz="0 0 1" />
-    <limit effort="9" velocity="0.8727" lower="-3.14" upper="3.14"/>
+    <limit effort="9" velocity="1.2218" />
   </joint>
-  <link name="leftEndEffector_Link" />
-  <inertial>
-    <origin xyz="0 0 0" rpy="0 0 0"/> <!-- Adjust xyz if the centre of mass is offset -->
-    <mass value="2.5"/>
-    <inertia ixx="0.0012" ixy="0" ixz="0" iyy="0.0012" iyz="0" izz="0.0022"/>
-  </inertial>
+  <link name="leftEndEffector_Link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <mass value="0" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
   <joint name="leftEndEffector" type="fixed">
     <origin xyz="0 0 -0.0615250000000001" rpy="3.14159265358979 1.09937075168372E-32 0" />
     <parent link="leftBracelet_Link" />

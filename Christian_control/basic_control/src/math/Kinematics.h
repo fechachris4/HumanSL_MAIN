@@ -34,13 +34,13 @@ struct KinematicsWorkspace {
     Eigen::Matrix<double, 6, Eigen::Dynamic> jacobian_full;
 };
 
-// Position of `frame_id` and its translational Jacobian Jp (3×7, model-root
-// frame, LOCAL_WORLD_ALIGNED), both from the SAME configuration q_pin —
-// the Jacobian must describe the exact configuration the position error is
-// computed at. Requires model_.nv == 7 (checked by the caller at startup).
+// Cartesian pose and translational Jacobian result. Position, rotation, and
+// Jacobian rows must use the same declared frame. The generic producer below
+// uses model-root axes; DualArmKinematics transforms this result to base_link.
+// Pose and Jacobian must describe the same configuration q_pin.
 struct PositionJacobian {
-    Eigen::Vector3d position;                 // meters, model-root frame
-    Eigen::Matrix3d rotation;                 // orientation in model-root frame
+    Eigen::Vector3d position;                 // meters, declared Cartesian frame
+    Eigen::Matrix3d rotation;                 // orientation in that frame
     Eigen::Matrix<double, 3, 7> jacobian_p;   // rows: x,y,z; cols: joints 1-7
 };
 
@@ -48,14 +48,12 @@ PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd
                                        pinocchio::FrameIndex frame_id,
                                        KinematicsWorkspace& workspace);
 
-// Full pose of `frame_id` and its 6×7 frame Jacobian (rows: linear x,y,z
-// then angular x,y,z; model-root frame, LOCAL_WORLD_ALIGNED), from the SAME
-// configuration q_pin — the 6-DoF counterpart of position_and_jacobian for
-// the reactive pose controller. Requires model_.nv == 7 (checked at startup).
+// Full-pose counterpart of PositionJacobian. All six Jacobian rows
+// ([linear; angular]) use the same declared axes as position and rotation.
 struct PoseJacobian {
-    Eigen::Vector3d position;                // meters, model-root frame
-    Eigen::Matrix3d rotation;                // model-root rotation matrix
-    Eigen::Matrix<double, 6, 7> jacobian;    // [linear; angular] × joints 1-7
+    Eigen::Vector3d position;                // meters, declared Cartesian frame
+    Eigen::Matrix3d rotation;                // orientation in that frame
+    Eigen::Matrix<double, 6, 7> jacobian;    // [linear; angular] x joints 1-7
 };
 
 PoseJacobian pose_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,

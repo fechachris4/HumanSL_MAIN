@@ -26,6 +26,7 @@
 #define HUMANSL_MASTERS_PROJECT_2025_REACTIVELAW_H
 
 #include <cmath>
+#include <algorithm>
 
 #include <Eigen/Dense>
 
@@ -45,6 +46,16 @@ struct ReactivePoseGains {
     bool velocity_enabled = false;
     bool null_space_enabled = false;
 };
+
+// Smooth startup multiplier for a secondary objective. The task-space law
+// is available immediately; only null-space centering is introduced over
+// time so takeover cannot begin with a full projected joint transient.
+inline double UnitRamp(double elapsed_s, double duration_s)
+{
+    if (duration_s <= 0.0)
+        return 1.0;
+    return std::clamp(elapsed_s / duration_s, 0.0, 1.0);
+}
 
 // Equation 1 (rotation part): the SO(3) logarithm as a 3-vector,
 // angle · axis — identical to Pinocchio's log3, but pure Eigen.

@@ -314,6 +314,10 @@ namespace
 
 int main()
 {
+    Check(UnitRamp(-0.1, 1.0) == 0.0, "null ramp clamps before start");
+    Check(std::abs(UnitRamp(0.25, 1.0) - 0.25) < 1e-12,
+          "null ramp scales linearly during startup");
+    Check(UnitRamp(2.0, 1.0) == 1.0, "null ramp clamps after duration");
     TestRotationLog();
     TestTaskTwistGating();
     TestDampedLeastSquares6();

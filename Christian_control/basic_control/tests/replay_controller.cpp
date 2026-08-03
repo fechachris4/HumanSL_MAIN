@@ -143,6 +143,7 @@ int main(int argc, char** argv)
     Dynamics dynamics(GEN3_DUAL_URDF_PATH);
     DualArmKinematics model(
         dynamics, config::kLeftNominalRad,
+        config::kRightBaseFrame,
         config::kRightEndEffectorFrame);
     TargetStore targets;
     ResolvedRate controller(model, targets, config::kKpCartesian,
@@ -191,7 +192,7 @@ int main(int argc, char** argv)
                                          -config::kQdotLimitDegS[j],
                                          config::kQdotLimitDegS[j]) *
                               kDegToRad;
-        actuation.Apply(qdot_clamped, dt_s, setpoints, velocity);
+        actuation.Apply(qdot_clamped, state, dt_s, setpoints, velocity);
 
         for (int j = 0; j < 7; ++j)
         {

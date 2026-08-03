@@ -38,6 +38,7 @@ int main()
     Dynamics dynamics(GEN3_DUAL_URDF_PATH);
     DualArmKinematics model(
         dynamics, config::kLeftNominalRad,
+        config::kRightBaseFrame,
         config::kRightEndEffectorFrame);
     TargetStore targets;
     ResolvedRate controller(model, targets, kp, lambda, arrival_tol_m);

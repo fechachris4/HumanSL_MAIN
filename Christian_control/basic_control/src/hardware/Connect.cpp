@@ -64,7 +64,38 @@ Connect::Connect(const std::string& ip_address)
     : tcp_(std::make_unique<k_api::TransportClientTcp>(), ip_address, kTcpPort, "TCP"),
       udp_(std::make_unique<k_api::TransportClientUdp>(), ip_address, kUdpPort, "UDP"),
       base_(std::make_unique<k_api::Base::BaseClient>(tcp_.router.get())),
+      actuator_config_(std::make_unique<k_api::ActuatorConfig::ActuatorConfigClient>(
+          tcp_.router.get())),
       base_cyclic_(std::make_unique<k_api::BaseCyclic::BaseCyclicClient>(udp_.router.get()))
 {
     std::cout << "Connected to arm at " << ip_address << " (TCP + real-time UDP).\n";
+}
+
+bool Connect::EnsurePositionControlModes(std::ostream& out)
+{
+    auto desired = k_api::ActuatorConfig::ControlModeInformation();
+    desired.set_control_mode(k_api::ActuatorConfig::ControlMode::POSITION);
+    bool changed = false;
+    for (std::uint32_t id = 1; id <= 7; ++id)
+    {
+        const auto before = actuator_config_->GetControlMode(id);
+        if (before.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
+        {
+            out << "joint " << id << " control mode was "
+                << k_api::ActuatorConfig::ControlMode_Name(before.control_mode())
+                << "; setting POSITION\n";
+            actuator_config_->SetControlMode(desired, id);
+            changed = true;
+        }
+        const auto verified = actuator_config_->GetControlMode(id);
+        if (verified.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
+        {
+            out << "robot NOT ready: joint " << id
+                << " did not enter POSITION control mode\n";
+            return false;
+        }
+    }
+    out << "actuator control-mode gate: PASS (all joints POSITION"
+        << (changed ? ", corrections verified" : "") << ")\n";
+    return true;
 }

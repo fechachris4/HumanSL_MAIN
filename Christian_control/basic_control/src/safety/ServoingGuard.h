@@ -1,14 +1,15 @@
 //
 // ServoingGuard: RAII ownership of the base's servoing mode — the ONLY code
 // allowed to call SetServoingMode. Constructing enters LOW_LEVEL_SERVOING
-// (from here until destruction WE are the controller and must stream, or at
-// least seed, commands); destruction restores SINGLE_LEVEL_SERVOING by
-// unwinding, so the restore runs on every exit path, exceptions of any
-// type included.
+// (from here until Restore WE are the controller and must stream, or at
+// least seed, commands); explicit Restore returns to SINGLE_LEVEL and the
+// destructor retries by unwinding on every exit path if that call failed.
 //
 
 #ifndef HUMANSL_MASTERS_PROJECT_2025_SERVOINGGUARD_H
 #define HUMANSL_MASTERS_PROJECT_2025_SERVOINGGUARD_H
+
+#include <ostream>
 
 #include <BaseClientRpc.h>
 
@@ -25,11 +26,17 @@ public:
     // (a throwing destructor would abort the program).
     ~ServoingGuard();
 
+    // Restore immediately after cyclic streaming ends, report the exact
+    // Kortex failure when possible, and wait for the mode transition to
+    // settle. The destructor retries as a final RAII backstop if this fails.
+    bool Restore(std::ostream& out) noexcept;
+
     ServoingGuard(const ServoingGuard&) = delete;
     ServoingGuard& operator=(const ServoingGuard&) = delete;
 
 private:
     k_api::Base::BaseClient* base_;
+    bool restored_ = false;
 };
 
 #endif // HUMANSL_MASTERS_PROJECT_2025_SERVOINGGUARD_H

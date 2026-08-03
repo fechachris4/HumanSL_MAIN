@@ -55,8 +55,8 @@ changes.
 3. **Centering mask.** Gen3 joints 1/3/5/7 are continuous and have no
    midpoint: masked out (`config::kNullCenteringMask` = {0,1,0,1,0,1,0},
    midpoints 0°). Caution: this arm has CONFIGURED soft limits far inside
-   the URDF range (joint 4 ≈ −19.6°, joint 6 ≈ +36°) — verify with
-   `./query_limits` before enabling centering.
+   the URDF range (joint 4 ≈ −19.6°, joint 6 ≈ +36°) — confirm them
+   in the Kinova web dashboard before enabling centering.
 4. **log3 via Eigen.** `e_rot` comes from `Eigen::AngleAxisd` (angle·axis),
    mathematically identical to Pinocchio's `log3` (fixture-verified incl.
    near-π) but dependency-free, keeping the law portable.
@@ -80,8 +80,8 @@ Configuration, not code: `orientation_enabled` (default true),
 
 1. Hardware machine: full build; `ctest` all green (incl. the fixture
    cross-check).
-2. Read-only: startup FK-vs-robot report; `./query_limits` (speed limits
-   match the model; note the configured J4/J6 position limits).
+2. Read-only: startup FK-vs-robot report; confirm the configured J4/J6
+   position limits in the Kinova web dashboard.
 3. P-only hold: takeover, no target typed — no drift, clean teardown,
    `rot_error_rad`/`sigma_min` in the CSV.
 4. Single-axis 2–5 cm position steps — convergence ≈ Kp·error, no

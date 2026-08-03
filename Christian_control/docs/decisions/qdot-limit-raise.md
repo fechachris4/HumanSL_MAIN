@@ -9,7 +9,7 @@ the uniform 45 deg/s clip
 ## Decision
 
 `config::kQdotLimitDegS` is set to the Kinova general (model) limits:
-79.6 deg/s for joints 1–4 and 69.9 deg/s for joints 5–7
+79.64 deg/s for joints 1–4 and 69.91 deg/s for joints 5–7
 (`config::kModelVelocityLimitsDegS`, `custom-urdf.md`). It was initially
 set to 90% of those values on 2026-07-22; Christian removed that margin on
 2026-07-24.

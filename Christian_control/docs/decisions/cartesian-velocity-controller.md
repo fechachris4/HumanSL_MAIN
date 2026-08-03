@@ -46,7 +46,7 @@ from the removed controller and the accepted risks are recorded here.
 
 - **The only limiting is a per-joint velocity clamp** (added same day):
   after the DLS solve, each q̇_i is independently clipped to
-  ±`kModelVelocityLimitsDegS[i]` (79.6 deg/s joints 1–4, 69.9 deg/s joints
+  ±`kModelVelocityLimitsDegS[i]` (79.64 deg/s joints 1–4, 69.91 deg/s joints
   5–7 — the URDF/model limits). No Cartesian velocity limiting, no
   acceleration limiting, no workspace clipping. Two consequences accepted:
   (1) when any joint saturates, the Cartesian direction of motion is

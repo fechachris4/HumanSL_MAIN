@@ -6,6 +6,8 @@
 #ifndef HUMANSL_MASTERS_PROJECT_2025_CYCLIC_H
 #define HUMANSL_MASTERS_PROJECT_2025_CYCLIC_H
 
+#include <cstdint>
+
 #include <BaseCyclicClientRpc.h>
 
 #include "JointVector.h"
@@ -29,6 +31,7 @@ public:
 
     k_api::BaseCyclic::Feedback Seed();
     k_api::BaseCyclic::Feedback Send(const JointVector& setpoints_deg);
+    std::uint32_t last_command_frame_id() const { return command_.frame_id(); }
 
 private:
     k_api::BaseCyclic::BaseCyclicClient* base_cyclic_;

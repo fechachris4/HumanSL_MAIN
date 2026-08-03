@@ -133,7 +133,7 @@ namespace
                 qdot[j] = std::clamp(qdot[j] * kRadToDeg, -kClipDegS[j],
                                      kClipDegS[j]) *
                           kDegToRad;
-            actuation.Apply(qdot, dt, cmd_deg, cmd_vel);
+            actuation.Apply(qdot, state, dt, cmd_deg, cmd_vel);
 
             r.done_edges += status.playback_done_edge ? 1 : 0;
             r.refused_edges += status.playback_refused_edge ? 1 : 0;
@@ -284,7 +284,7 @@ namespace
         {
             Eigen::Matrix<double, 7, 1> qdot =
                 controller.DesiredVelocity(state, 0.001, status);
-            actuation.Apply(qdot, 0.001, cmd, vel);
+            actuation.Apply(qdot, state, 0.001, cmd, vel);
             for (int j = 0; j < 7; ++j)
                 state.q_rad[j] = cmd[j] * kDegToRad;
         }
