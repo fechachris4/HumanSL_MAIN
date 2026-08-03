@@ -1,0 +1,62 @@
+//
+// Runner — the cyclic control loop: timing, clamping, safety hooks,
+// logging and the hardware exchange. It owns the cycle ORDER and contains
+// no control math (that is Controller.h) and no program setup (Main.cpp).
+//
+// Takeover sequence — each step exactly once, in this order:
+//   T1  the readiness gate has passed (RobotReadyForTakeover) — a hard
+//       precondition, asserted via the robot_ready argument
+//   T2  ServoingGuard construction -> base enters LOW_LEVEL_SERVOING
+//   T3  CyclicSession::Seed — the one standalone read, AFTER the mode
+//       switch (commanding earlier fails with WRONG_SERVOING_MODE)
+//   T4  one measured-position holding frame; its reply seeds the actuation,
+//       the controller and the reference source (the only command-state
+//       measurement seed), then one more holding frame whose reply is
+//       cycle 1's input
+//   T5  normal control
+//
+// Per cycle: dt (measured, clamped; nominal on cycle 0) -> RobotState from
+// the previous exchange -> ReferenceSource::Get ->
+// TrackingController::DesiredVelocity -> per-joint clamp to
+// ±qdot_limit_deg_s -> PositionIntegration::Apply (including the command-lead bound)
+// -> CyclicSession::Send -> log sample -> edge-triggered fault prints ->
+// ClassifyStop -> feedback-freshness counters (RECORDED, never a stop) ->
+// the counter stops -> sleep_until grid.
+//
+// No stop is keyed on "this joint did not move" or "this feedback value did
+// not change" (both removed 2026-08-03); that evidence is telemetry now.
+//
+// Teardown, on EVERY exit path (exceptions of any type included):
+//   D1  PositionIntegration::Restore (guarded internally)
+//   D2  explicit ServoingGuard restore to SINGLE_LEVEL + settling wait;
+//       the destructor retries by unwinding if the explicit call failed
+//   D3  decoded stop report
+//
+
+#pragma once
+
+#include <algorithm>
+#include <atomic>
+#include <chrono>
+
+#include <BaseClientRpc.h>
+#include <BaseCyclicClientRpc.h>
+
+#include "Actuation.h"
+#include "Config.h"
+#include "Controller.h"
+#include "Hardware.h"
+#include "Safety.h"
+#include "State.h"
+
+// MOVES THE ARM. Runs the sequence above until `stop`, a guard trip, or a
+// communication failure; restores single-level servoing on every exit path.
+LoopResult RunControlLoop(Kinova::Api::Base::BaseClient* base,
+                          Kinova::Api::BaseCyclic::BaseCyclicClient* base_cyclic,
+                          ReferenceSource& reference,
+                          TrackingController& controller,
+                          PositionIntegration& actuation,
+                          LoopLog& log, const std::atomic<bool>& stop,
+                          std::chrono::microseconds period,
+                          const JointVector& qdot_limit_deg_s,
+                          double following_error_limit_deg, bool robot_ready);

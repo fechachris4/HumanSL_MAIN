@@ -1,6 +1,6 @@
 # Standalone build for plan_move — the offline planner CLI. Compiles the
 # TrajectoryGeneration sources directly (plus the Jacobian they use from
-# TrajectoryExecution and basic_control's TrajectoryFile for the shared
+# TrajectoryExecution and basic_control's Trajectory for the shared
 # validation gate); links the bundled GTSAM/GPMP2 stack. Independent of
 # the broken root build and of basic_control's build.
 #
@@ -31,7 +31,7 @@ add_executable(plan_move
         ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryInitiation.cpp
         ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryOptimization.cpp
         ${HUMANSL_ROOT}/TrajectoryExecution/src/Jacobian.cpp
-        ${HUMANSL_ROOT}/Christian_control/basic_control/src/control/TrajectoryFile.cpp
+        ${HUMANSL_ROOT}/Christian_control/basic_control/src/Trajectory.cpp
 )
 
 target_include_directories(plan_move PRIVATE

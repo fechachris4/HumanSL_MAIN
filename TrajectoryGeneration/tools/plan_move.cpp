@@ -3,7 +3,7 @@
 // stack (GPMP2/GTSAM, unmodified) for ONE free-space right-arm move and
 // writes the result as a trajectory_format = 1 CSV that basic_control's
 // playback controller can execute (contract:
-// Christian_control/basic_control/src/control/TrajectoryFile.h).
+// Christian_control/basic_control/src/Trajectory.h).
 //
 // This tool NEVER touches the robot. Planning happens here, offline;
 // execution happens later, in basic_control, after its own validation
@@ -58,7 +58,7 @@
 #include "TrajectoryOptimization.h"
 #include "utils.h"
 
-#include "control/TrajectoryFile.h" // basic_control's contract + validation
+#include "Trajectory.h" // basic_control's contract + validation
 
 namespace
 {
@@ -66,14 +66,17 @@ namespace
     constexpr double kDegToRad = M_PI / 180.0;
     constexpr double kRadToDeg = 180.0 / M_PI;
 
-    // The same gates basic_control compiles in (src/app/Config.h). Kept in
-    // sync by the shared validation code reading these exact numbers there;
-    // duplicated here because this standalone tool does not link the app.
-    const JointVector kQdotClipDegS = {79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9};
-    constexpr double kVelGateFactor = 0.9;
-    const JointVector kAccelLimitDegS2 = {57.3, 57.3, 57.3, 57.3,
-                                          573.0, 573.0, 573.0};
-    const JointVector kPosLimitDeg = {0.0, 128.9, 0.0, 147.8, 0.0, 120.3, 0.0};
+    // The gates come from basic_control's own Config.h, which this tool
+    // includes through Trajectory.h — NOT copied. They were duplicated here
+    // until 2026-08-03, and the copy went stale the moment the controller's
+    // clip changed: the planner kept gating at 79.6/69.9 deg/s while the
+    // controller clamped at 45, so a "PASS" could still hit the Runner's
+    // clamp. Reading the same constants makes that impossible by
+    // construction.
+    const JointVector& kQdotClipDegS = config::kQdotLimitDegS;
+    constexpr double kVelGateFactor = config::kTrajectoryVelGateFactor;
+    const JointVector& kAccelLimitDegS2 = config::kTrajectoryAccelLimitDegS2;
+    const JointVector& kPosLimitDeg = config::kTrajectoryPosLimitDeg;
 
     // Legacy acceptance threshold for the optimizer's final graph error
     // (the deleted plan.cpp retried until final_error < 100); the REAL

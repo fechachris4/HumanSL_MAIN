@@ -9,7 +9,7 @@
 #include <sstream>
 #include <string>
 
-#include "safety/Supervisor.h"
+#include "Safety.h"
 
 namespace
 {
@@ -99,23 +99,21 @@ int main()
     s.measured_deg[0] = s.commanded_deg[0] + 2.9;
     Check(!ClassifyStop(s, limit, reason), "tracking lag inside the limit continues");
 
-    // Decision-12 consecutive-cycle counters (no saturation counter — the
-    // saturation stop was removed 2026-07-23; a pinned clamp is normal
-    // transit toward a far target).
-    StopPolicy policy; // defaults: 3 / 10
+    // Decision-12 consecutive-cycle stops now live inline in the Runner
+    // (the StopPolicy/ClassifyCounters indirection was trimmed 2026-08-03):
+    // it compares CycleCounters directly against the Config.h thresholds.
+    // Pin the configuration those inline checks rely on — a disabled (<= 0)
+    // or absurd threshold would silently defang the stops.
+    static_assert(config::kNonFiniteStopCycles > 0,
+                  "non-finite stop must be enabled");
+    static_assert(config::kNonFiniteStopCycles <= 10,
+                  "non-finite output must stop within a few cycles");
+    static_assert(config::kOverrunStopCycles > 0, "overrun stop must be enabled");
+    static_assert(config::kOverrunFactor > 1.0,
+                  "overrun factor must sit above nominal dt");
     CycleCounters c;
-    Check(!ClassifyCounters(c, policy).has_value(), "zeroed counters do not stop");
-    c.nonfinite = policy.nonfinite_stop_cycles - 1;
-    Check(!ClassifyCounters(c, policy).has_value(), "below the non-finite limit continues");
-    c.nonfinite = policy.nonfinite_stop_cycles;
-    Check(ClassifyCounters(c, policy) == LoopStop::kNonFiniteCommand,
-          "non-finite output at the limit stops");
-    c = CycleCounters{};
-    c.overrun = policy.overrun_stop_cycles;
-    Check(ClassifyCounters(c, policy) == LoopStop::kOverrun,
-          "consecutive overruns stop");
-    policy.overrun_stop_cycles = 0; // disabled
-    Check(!ClassifyCounters(c, policy).has_value(), "N <= 0 disables a counter");
+    Check(c.nonfinite == 0 && c.overrun == 0 && c.overrun_total == 0,
+          "fresh counters start at zero");
 
     // FeedbackFreshnessMonitor is TELEMETRY ONLY (2026-08-03): it counts
     // consecutive repeated acknowledgement IDs per joint and never stops a

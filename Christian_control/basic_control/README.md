@@ -11,30 +11,33 @@ combines:
 
 It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
 
-The program offers three control laws over the same loop: it takes over
-the arm in low-level servoing (actuators in their default POSITION mode)
-and drives the end-effector toward targets typed on stdin — or, in
-playback, along one pre-validated trajectory file.
+The program has ONE controller and pluggable **reference sources**
+(selected by `kReferenceSource` in `Config.h`; architecture diagram at the
+top of `src/Controller.h`). A source says WHERE the end-effector or joints
+should be each cycle; the `TrackingController` says HOW to move toward it.
+It takes over the arm in low-level servoing (actuators in their default
+POSITION mode) and tracks whichever reference channel the source provides
+— a pose (typed targets) or a joint configuration (trajectory files). New
+research inputs (Vicon, a Python bridge) are new sources, never new
+controllers. (Historical modes: position-only `resolved-rate` removed
+2026-08-03, superseded; the welded per-mode controller classes
+(`ReactivePose`, `TrajectoryPlayback`) were decomposed into
+source + controller the same day; git history has both.)
 
-`resolved-rate` (default) — position-only:
-
-    e = p_desired − p(q_measured);   v_d = Kp · e
-    q̇_raw = Jpᵀ (Jp Jpᵀ + λ² I₃)⁻¹ v_d      (damped least squares)
-    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (79.64 deg/s joints 1–4, 69.91 joints 5–7)
-    q_command += q̇_clipped · dt              (persistent integrator)
-
-`reactive-pose` (`--controller reactive-pose`) — full 6-DoF pose, ported
+Pose references run the reactive law — full 6-DoF pose, ported
 from the simulation (msc_project) and cross-validated against it
 (`../docs/decisions/reactive-pose-port.md`):
 
     e_pos = p_desired − p(q);   e_rot = log3(R_desired · R(q)ᵀ)
-    ẋ = Kp·e_pose [+ Kd·e_twist, default off]
-    q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, default off]
+    ẋ = Kp·e_pose + Kd·e_twist
+    q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, currently off]
+    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (45 deg/s, temporary bring-up clip)
+    q_command += q̇_clipped · dt              (persistent integrator)
 
-`playback` (`--controller playback --trajectory <file>`) — executes one
+`kReferenceSource = "trajectory"` executes one
 GPMP2-planned joint trajectory (produced offline by
 `TrajectoryGeneration/tools/plan_move`; contract and gates in
-`src/control/TrajectoryFile.h`, design in
+`src/Trajectory.h`, design in
 `../docs/decisions/trajectory-playback.md`):
 
     q̇_d = Δq_ref(t, t+dt)/dt  +  kp · wrap(q_ref(t) − q_measured)
@@ -46,7 +49,7 @@ ends) and the measured position must match the trajectory start within
 Completion holds the final point until Ctrl+C.
 
 All laws use the same clamp and integrator, with q_command streamed as
-position setpoints at 1 kHz (`kControlDtS`, the single timing source).
+position setpoints at 500 Hz (`kControlDtS`, the single timing source).
 Low-level VELOCITY
 mode was tried and abandoned — the actuator's inner velocity loop has no
 gravity compensation (hardware evidence + Kinova kortex issues
@@ -55,60 +58,34 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
 
 ## Layout
 
-- `src/` — one subfolder per technical layer: `app/` (orchestration),
-  `control/` (control laws + operator input), `actuation/` (command-state
-  strategy), `loop/` (the Runner — moves the arm), `safety/` (policy +
-  reporting), `math/` (kinematics, DLS), `hardware/` (Kortex I/O and
-  telemetry)
-- `tests/` — tests (CTest) + the CSV replay harness; the portable suite
-  runs anywhere, the rest links the bundled Linux libraries (hardware
-  machine only)
+- `src/` — one file per job, named for that job. The layout deliberately
+  mirrors `msc_project/controller/` so the two projects are navigable the
+  same way (restructured 2026-08-03):
+
+  | file | job | msc_project counterpart |
+  | --- | --- | --- |
+  | `Config.h` | every compiled setting; `--log` is the only runtime argument | `config/control.toml` |
+  | `State.h` | the records that cross boundaries: `RobotState`, `ControllerStatus`, `Reference`, `ReferenceSource` | `state.py` + `backend.py` |
+  | `ReactiveLaw.h` | the pose equations 1-6, header-only, no robot | `reactive_controller.py` |
+  | `Controller.h/.cpp` | **THE controller** — tracks whichever reference channel is set | `servo.py` |
+  | `Targets.h/.cpp` | operator targets: parse, store, stdin/file threads, `PoseTargetSource` | `desired_pos.py` |
+  | `Trajectory.h/.cpp` | the file contract, the joint-tracking law, `TrajectorySource` | `trajectory.py` |
+  | `Actuation.h/.cpp` | `PositionIntegration`: q_command integrator + lead limiter | `position_actuation.py` |
+  | `Kinematics.h/.cpp` | Pinocchio FK/Jacobians + the `DualArmKinematics` adapter | `pin_fk.py` |
+  | `Safety.h/.cpp` | stop classification, readiness gate, fault decoding, `ServoingGuard` | (hardware-only) |
+  | `Hardware.h/.cpp` | `Connect`, `CyclicSession`, the run log + CSV writer | (hardware-only) |
+  | `Runner.h/.cpp` | **the loop — moves the arm**: takeover T1-T5, cycle order, teardown D1-D3 | `runner.py` |
+  | `Main.cpp` | the program: wiring, config echo, reports | `main.py` |
+
+  Everything above `Kinematics` is pure Eigen — no Kortex, no Pinocchio —
+  which is what lets the portable tests build and run anywhere.
+- `tests/` — tests (CTest); the portable suite runs anywhere, the rest
+  links the bundled Linux libraries (hardware machine only)
+- `tools/` — standalone robot utilities: `clear_faults`,
+  `read_safety_limits`, `set_joint_limits`, `probe_direction`,
+  `make_synthetic_log`
 - `scripts/` — offline Python analysis (not part of the build)
-- `config/` — the tracked mounted dual-arm runtime URDF plus runtime config
-
-## Files
-
-- `src/app/main.cpp` — thin coordinator: model+config, connect, readiness
-  check, state printout, input thread, loop call, log flush, exit code
-- `src/app/Config.h` — compiled right-only hardware ownership, left nominal
-  model state, end-effector frame, log prefix, plus defaults: `kControlDtS`
-  (0.001 s — the single timing source), `kKpCartesian` (1.0 /s),
-  `kDlsLambda` (0.1), `kQdotLimitDegS` (equal to the 79.64/69.91 deg/s
-  model limits), `kStopOnFault` (compile-time only), selected end-effector
-  frame, supervisor counter limits, log capacity
-- `src/app/Options.*` — runtime overrides, precedence CLI > TOML > compiled
-  (controller selection, gains, thresholds and input selection;
-  never fault-stop policy): `../docs/decisions/runtime-config.md`
-- `src/hardware/Connect.*` — RAII: both Kortex sessions (TCP 10000 +
-  real-time UDP 10001)
-- `src/hardware/Measure.*` — `read_feedback`, the program's single
-  standalone `RefreshFeedback`
-- `src/hardware/Cyclic.*` — `CyclicSession`: owns the command frame; seed
-  read + the one stamped `Refresh` exchange per cycle
-- `src/hardware/Record.*` — telemetry: preallocated ring buffer (`LoopLog`),
-  written to a timestamped CSV after the loop; `push` is loop-safe
-- `src/math/Kinematics.*` — FK and `position_and_jacobian` (position,
-  rotation + 3×7 translational Jacobian from the same measured q)
-- `src/math/DualArmKinematics.*` — explicit adapter: measured right 7 plus
-  nominal left 7 into full q, full 6×14 Jacobian, selected right 7 columns
-- `src/math/Dls.h` — damped least squares (LDLT, no explicit inverse),
-  header-only and hardware-free-tested
-- `src/safety/Supervisor.*` — stop classification (following error first,
-  then live faults, then arm state) + the pre-takeover readiness gate
-- `src/safety/FaultReport.*` — fault-bank decoding and the stop /
-  fault-change reports
-- `src/safety/ServoingGuard.*` — RAII servoing-mode ownership: LOW_LEVEL on
-  construction, guaranteed SINGLE_LEVEL restore on destruction
-- `src/control/Controller.h` — the controller interface (`RobotState`,
-  arm-feedback-only by hard rule; pure computation, no I/O)
-- `src/control/ResolvedRate.*` — the Cartesian control law (see above)
-- `src/control/Target.*` — desired end-effector position: stdin thread,
-  parsing (3 finite numbers; deliberately no reachability check), latest-
-  value store
-- `src/actuation/*` — `Actuation` strategy + `PositionIntegration` (the
-  q_command integrator)
-- `src/loop/Runner.*` — **the loop — moves the arm**: takeover sequence
-  T1-T6, per-cycle order, teardown D1-D3 (spec in `Runner.h`)
+- `config/` — the tracked mounted dual-arm runtime URDF
 
 ## Build and test
 
@@ -125,70 +102,84 @@ ctest            # hardware-free control-logic tests
 > e-stop in hand, authorization required for every session.
 
 ```bash
-./controller                       # loads ../config/control.toml if present,
-                                   # else compiled defaults
-./controller --kp 0.8              # one-off gain override
-./controller --config gains.toml   # explicit file instead of the default one
-./controller --help                # full option + TOML-key list
+./controller                       # everything comes from Config.h
+./controller --log my_run.csv      # name the CSV; the only runtime argument
 ```
 
-The everyday workflow is **edit `config/control.toml`, run the bare
-binary**: that checked-in file is loaded automatically (compiled absolute
-path — never a working-directory lookup) and selects the control law
-(`controller = "reactive-pose"`), gains, term switches, and optionally a
-`target_file`. Precedence stays CLI > TOML > compiled defaults.
+**There is no runtime configuration.** `--log` is the only flag; every
+gain, term switch, limit, and the reference-source selection is a compiled
+constant in `src/Config.h`, so changing behaviour means editing that file
+and rebuilding. (The TOML/CLI configuration front-end — `Options.{h,cpp}`,
+`config/control.toml`, `--kp`, `--config` — was removed on 2026-08-03; git
+history has it, and `../docs/decisions/runtime-config.md` records why it
+existed.) Every run still echoes its effective configuration and embeds it
+as `#` lines in the CSV, so each data file stays self-describing.
 
-With `target_file` set (reactive-pose only), the controller also watches
-that file: during a run, edit and save it with one line — `x y z` or
-`x y z roll pitch yaw` — and the arm retargets, same as typing on stdin
-(latest source wins). The file's content at startup is deliberately
-ignored: a stale target file never starts a motion.
+**Read `Config.h` before every session** — with no runtime override, the
+compiled values are the only thing standing between you and the arm. In
+particular check `kReferenceSource`, `kUseFixedTarget`, `kQdotLimitDegS`,
+and `kStopOnFault`.
 
-Every run echoes its full effective configuration (each value tagged
-compiled/default/toml/cli, plus which config file was loaded) and embeds
-it as `#` lines in the CSV, so every data file is self-describing. Safety
-policy is not runtime-configurable.
+What a run does, in order:
 
 1. Loads the 14-joint mounted dual URDF and validates the exact joint-name
    mapping. The left seven joints are held at the compiled nominal model
    state. The only TCP/UDP connection and command frame are for the right arm.
-2. Readiness check on one feedback frame: a live fault refuses startup
-   (faults are never cleared here — use the Kinova web dashboard). Prints
-   the joint state and the **current end-effector position** — that printed
-   `x y z` is what a "hold here" target looks like.
-3. Enters LOW_LEVEL_SERVOING, seeds the position integrator and the
-   desired position from the measured state (q_command = q_measured,
-   p_desired = p_current), and sends one unchanged holding frame — the arm
-   holds. Actuators stay in their default POSITION mode.
-4. Type a desired position — **x y z in meters, right-arm `base_link`
-   frame**:
+2. Clears faults unconditionally right after connecting (`Base::ClearFaults`
+   — the same operation as the dashboard's "Clear faults", commands no
+   motion), waits 500 ms, then runs the readiness check on a fresh
+   post-clear frame. A fault that re-latches is live and still refuses the
+   takeover. Prints the joint state and the **current end-effector
+   position** — that printed `x y z` is what a "hold here" target looks
+   like.
+3. Enters LOW_LEVEL_SERVOING, seeds the position integrator from the
+   measured state (q_command = q_measured) and captures the current pose as
+   the hold pose, then sends one unchanged holding frame — the arm holds.
+   Actuators stay in their default POSITION mode.
+4. Where it goes next depends on `kReferenceSource`:
 
-   ```
-   0.45 0.10 0.30
-   ```
+   - **`"operator"` with `kUseFixedTarget = true`** (the current default):
+     there is **no stdin thread**. The arm drives to the compiled
+     `kFixedTargetM` **immediately** after the takeover, keeping the
+     takeover orientation. Check that target against the printed current
+     position before you start.
+   - **`"operator"` with `kUseFixedTarget = false`**: type a target —
+     **x y z in meters, right-arm `base_link` frame** — on stdin:
 
-   With `--controller reactive-pose` a 3-number line moves the position
-   target and keeps the current orientation target; a 6-number line
-   `x y z roll pitch yaw` (radians, R = Rz(yaw)·Ry(pitch)·Rx(roll)) sets
-   both. The arrival notice is position-based in both laws; judge
-   orientation convergence from the CSV's `rot_error_rad` column.
+     ```
+     0.45 0.10 0.30
+     ```
 
-   The end-effector moves toward it at `Kp × distance` (1.0 /s × error —
-   e.g. a 10 cm error starts at 0.1 m/s and slows exponentially as it
-   converges). A new line replaces the target immediately; mid-motion
-   retargeting is normal. Invalid lines are rejected with a reason.
+     A 3-number line moves the position target and keeps the current
+     orientation target; a 6-number line `x y z roll pitch yaw` (radians,
+     R = Rz(yaw)·Ry(pitch)·Rx(roll)) sets both. A new line replaces the
+     target immediately; mid-motion retargeting is normal. Invalid lines
+     are rejected with a reason.
+   - **`"trajectory"`**: replays `kTrajectoryFile` as soon as the takeover
+     completes, then holds the final point. No operator input.
+
+   The arrival notice is position-based; judge orientation convergence from
+   the CSV's `rot_error_rad` column.
+
+   The end-effector moves toward a pose target at `Kp × distance`, with
+   `kKpCartesian = 10.0 /s` — so a 10 cm error commands **1.0 m/s** at the
+   start, decaying exponentially as it converges, subject to the per-joint
+   velocity clamp. This gain is aggressive; a target a long way from the
+   current pose pins the clamp for the whole transit.
 5. Ctrl+C stops cleanly: the integrator stops updating (the position servo
    holds the last setpoint), single-level servoing is restored, and the
-   last unwritten telemetry is flushed. Exit 0 only on this clean stop;
-   faults print a decoded report and exit 1.
+   last unwritten telemetry is flushed. Exit 0 only on a clean operator
+   stop with no faults seen — a fault the loop was told to ignore still
+   taints the exit code and prints a decoded report, so a nonzero exit
+   after an apparently normal run means "check the CSV".
 
 Telemetry goes to `runs/YYYY-MM-DD/loop_log_YYYYMMDD_HHMMSS.csv`, written
 by a writer thread **as the run happens** (100 ms drains) rather than in
 one write at the end. A run that dies without unwinding — SIGKILL, the
 IDE's stop button, a debugger detach, a crash — therefore keeps every row
 up to its last drain, and the file always ends on a complete row. The
-whole run is kept, at roughly 350 KB/s (~600 MB for 30 minutes at 1 kHz):
-prune `runs/` rather than shortening the record.
+whole run is kept, at roughly 175 KB/s (~300 MB for 30 minutes at the
+500 Hz loop rate): prune `runs/` rather than shortening the record.
 
 If the writer ever fails to keep up with the loop, the dropped samples are
 counted and reported at exit instead of being silently overwritten — and
@@ -239,9 +230,11 @@ rules above apply):
 
 ## Safety — read before every session
 
-- **The controller's explicit motion limit is a per-joint velocity clamp** — 79.64 deg/s
-  (joints 1–4) / 69.91 deg/s (joints 5–7) (`kQdotLimitDegS`, equal to
-  `kModelVelocityLimitsDegS` in `Config.h`). This is a
+- **The controller's explicit motion limit is a per-joint velocity clamp** —
+  currently **45 deg/s on every joint** (`kQdotLimitDegS`, equal to
+  `kModelVelocityLimitsDegS` in `Config.h`). That is a temporary bring-up
+  value well below the rated Table 40 limits of 79.64 deg/s (joints 1–4) and
+  69.91 deg/s (joints 5–7), which this clamp held until 2026-08-03. This is a
   client-side limit; the actuator firmware safeties are separate, and a
   stream that outruns them can fault mid-move.
   There is NO Cartesian velocity,
@@ -260,8 +253,16 @@ rules above apply):
   (joint 4 near −19.6°, joint 6 near +36° — both found by faulting into
   them; check/adjust via the Kinova web dashboard). The controller does not
   know them; the arm faults if a solution path crosses one.
-- On any live fault, loss of low-level servoing, or exchange failure the
-  loop stops streaming (the position servo holds the last setpoint) and
-  restores SINGLE_LEVEL servoing — guarded, with a warning if it fails.
-  If you see such a warning, check the arm (web dashboard) before running
-  anything else.
+- **A live fault does NOT currently stop the run.** `kStopOnFault` is
+  `false` in `Config.h` — the 2026-07-20 fault-ignoring experiment, still
+  switched on. Faults are decoded, printed on their edges and logged, but
+  the loop keeps commanding. The run prints a `FAULT-STOP DISABLED` warning
+  at takeover for exactly this reason. **ATTENDED USE ONLY: you are the
+  stop.** Set `kStopOnFault = true` to restore the fault stop.
+- What still ends the run unconditionally: a following error above
+  `kFollowingErrorLimitDeg` (3°, checked before the fault bits so the
+  experiment policy cannot mask it), loss of low-level servoing, and
+  exchange failure. On any of these the loop stops streaming (the position
+  servo holds the last setpoint) and restores SINGLE_LEVEL servoing —
+  guarded, with a warning if it fails. If you see such a warning, check the
+  arm (web dashboard) before running anything else.

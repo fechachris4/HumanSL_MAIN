@@ -56,7 +56,7 @@ loop grid and frequency derive from it. The integrator uses the MEASURED
 elapsed cycle time, clamped to at most 2 × nominal (`ClampedCycleDt`,
 `src/math/Dls.h`, unit-tested): integration stays honest under jitter, but
 a scheduler stall cannot turn into one large position jump — the base's
-tracking safety faults on those (`src/app/Config.h`'s clip comment).
+tracking safety faults on those (`src/Config.h`'s clip comment).
 
 ## Why the clip is 45 deg/s, not the model limits
 
@@ -68,7 +68,7 @@ the base enforces.)*
 In position streaming the base's enforced 50 deg/s soft limit empirically
 causes WRONG_SERVOING_MODE faults when outrun (the joint stands still,
 tracking error grows, and at ~5° the arm is kicked out of low-level
-servoing — mechanism now documented at `src/app/Config.h`'s
+servoing — mechanism now documented at `src/Config.h`'s
 `kQdotLimitDegS`), and the
 subsystem rule caps any client-side limiting at 45 deg/s. So
 `config::kQdotLimitDegS` = 45 ×7 (static-asserted against

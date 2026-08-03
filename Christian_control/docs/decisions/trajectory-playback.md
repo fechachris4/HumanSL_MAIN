@@ -13,7 +13,8 @@ dependency and not through Kortex's native trajectory APIs:
    plans ONE free-space right-arm move offline and writes a
    `trajectory_format = 1` CSV — 7 joints in Kinova order, deg / deg/s,
    uniform implicit time in [0.5, 2] ms steps, rest at both ends
-   (`basic_control/src/control/TrajectoryFile.h` is the contract).
+   (`basic_control/src/Trajectory.h` is the contract; it was
+   `src/control/TrajectoryFile.h` when this was written).
 2. `controller --controller playback --trajectory <file>` executes it
    through the UNCHANGED loop: velocity interface → per-joint clamp →
    PositionIntegration → 1 kHz cyclic stream, with every existing guard

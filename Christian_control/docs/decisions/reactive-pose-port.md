@@ -18,14 +18,15 @@ fault.
 
 ## What lives where
 
-- `src/control/ReactiveLaw.h` — the equations, header-only and pure Eigen
+- `src/ReactiveLaw.h` — the equations, header-only and pure Eigen
   (mirrors the simulation file: pose error, twist error, task twist, DLS,
   null-space). No Kortex, no Pinocchio: testable anywhere.
-- `src/control/ReactivePose.{h,cpp}` — binds the law to the `Controller`
+- `src/control/ReactivePose.{h,cpp}` (REMOVED 2026-08-03; the law is now
+  bound by `src/Controller.{h,cpp}`) — bound the law to the `Controller`
   interface: FK + full 6×7 `LOCAL_WORLD_ALIGNED` Jacobian from the SAME
   measured q (`pose_and_jacobian`, math/Kinematics), measured end-effector
   twist = J·q̇_measured, pose targets from `PoseTargetStore`.
-- `src/control/Target.{h,cpp}` — `ParsePoseTarget` / `PoseTargetStore` /
+- `src/Targets.{h,cpp}` — `ParsePoseTarget` / `PoseTargetStore` /
   `RunPoseTargetInput`: stdin lines of `x y z` (meters, base frame;
   orientation target kept) or `x y z roll pitch yaw` (radians,
   R = Rz(yaw)·Ry(pitch)·Rx(roll) — the simulation's convention).

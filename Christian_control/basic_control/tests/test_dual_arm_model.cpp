@@ -9,9 +9,8 @@
 #include <string>
 #include <tuple>
 
-#include "app/Config.h"
-#include "math/DualArmKinematics.h"
-#include "math/Kinematics.h"
+#include "Config.h"
+#include "Kinematics.h"
 #include "Dynamics.h"
 
 #include <pinocchio/algorithm/frames.hpp>

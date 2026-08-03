@@ -1,7 +1,7 @@
 //
 // Hardware-free tests for the controller's safety-relevant pure logic:
-// damped-least-squares resolution, target parsing, TargetStore snapshots,
-// PositionIntegration actuation. No robot, no sessions, no Pinocchio.
+// damped-least-squares resolution, cycle-dt clamping, PositionIntegration
+// actuation. No robot, no sessions, no Pinocchio.
 // Returns nonzero on the first failure.
 //
 
@@ -9,9 +9,8 @@
 #include <iostream>
 #include <string>
 
-#include "actuation/PositionIntegration.h"
-#include "control/Target.h"
-#include "math/Dls.h"
+#include "Actuation.h"
+#include "ReactiveLaw.h"
 
 namespace
 {
@@ -65,42 +64,11 @@ namespace
               "unreachable direction commands ~zero, not a blow-up");
     }
 
-    void TestParseCartesianTarget()
-    {
-        std::string error;
-        auto ok = ParseCartesianTarget("0.4 0.1 0.3", error);
-        Check(ok.has_value(), "valid x y z accepted");
-        Check(ok && (*ok - Eigen::Vector3d(0.4, 0.1, 0.3)).norm() == 0.0,
-              "parsed values are exact");
-
-        Check(!ParseCartesianTarget("0.4 0.1", error).has_value(), "too few rejected");
-        Check(!ParseCartesianTarget("0.4 0.1 0.3 0.2", error).has_value(),
-              "too many rejected");
-        Check(!ParseCartesianTarget("0.4 x 0.3", error).has_value(), "non-numeric rejected");
-        Check(!ParseCartesianTarget("nan 0 0", error).has_value(), "NaN rejected");
-        Check(!ParseCartesianTarget("inf 0 0", error).has_value(), "Inf rejected");
-        Check(ParseCartesianTarget("-0.4 -0.1 0.0", error).has_value(),
-              "negative coordinates accepted");
-    }
-
     void TestClampedCycleDt()
     {
         Check(ClampedCycleDt(0.010, 0.010) == 0.010, "nominal dt passes through");
         Check(ClampedCycleDt(0.012, 0.010) == 0.012, "small jitter passes through");
         Check(ClampedCycleDt(0.250, 0.010) == 0.020, "a stall clamps to 2x nominal");
-    }
-
-    void TestTargetStore()
-    {
-        TargetStore store;
-        Check(store.Get().sequence == 0, "fresh store has sequence 0");
-        const Eigen::Vector3d p(0.4, 0.1, 0.3);
-        store.Store(p);
-        TargetStore::Snapshot snap = store.Get();
-        Check(snap.sequence == 1, "sequence increments on Store");
-        Check((snap.p_desired - p).norm() == 0.0, "snapshot returns the stored position");
-        store.Store(p);
-        Check(store.Get().sequence == 2, "sequence increments again");
     }
 
     void TestPositionIntegration()
@@ -195,8 +163,6 @@ int main()
 {
     TestDampedLeastSquares();
     TestClampedCycleDt();
-    TestParseCartesianTarget();
-    TestTargetStore();
     TestPositionIntegration();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";

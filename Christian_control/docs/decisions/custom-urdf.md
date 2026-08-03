@@ -47,7 +47,7 @@ The Pinocchio model has 14 velocity variables (`nv = 14`) but 22 configuration
 variables (`nq = 22`): each of the eight continuous joints across both arms is
 stored as `(cos(q), sin(q))`. Neither the control policy nor the Kortex command
 path is 14-wide.
-`src/math/DualArmKinematics.{h,cpp}` is the required boundary:
+`src/Kinematics.{h,cpp}` (`DualArmKinematics`) is the required boundary:
 
 1. resolve the seven right joints (`Actuator1` through `Actuator7`) and seven
    left joints (`leftActuator1` through `leftActuator7`) by exact URDF name;

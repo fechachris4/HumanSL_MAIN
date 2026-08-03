@@ -20,7 +20,7 @@
 //   ./make_synthetic_log [output.csv]
 //
 
-#include "hardware/Record.h"
+#include "Hardware.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -37,7 +37,7 @@ namespace
     // Phases, in cycles. The hold streams a fixed setpoint; tracking moves
     // with the plant following; frozen keeps commanding while every
     // measurement and acknowledgement stops advancing.
-    constexpr long kHoldCycles = 250;   // 0.5 s, config::kTakeoverHoldS
+    constexpr long kHoldCycles = 250;   // 0.5 s of pre-motion hold frames
     constexpr long kTrackCycles = 1500; // 3.0 s of healthy motion
     constexpr long kFrozenCycles = 1500; // 3.0 s of no response
 

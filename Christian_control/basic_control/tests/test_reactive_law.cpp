@@ -14,8 +14,8 @@
 #include <iostream>
 #include <string>
 
-#include "control/ReactiveLaw.h"
-#include "control/Target.h"
+#include "ReactiveLaw.h"
+#include "Targets.h"
 #include "reactive_fixtures.h"
 
 namespace
@@ -293,21 +293,65 @@ namespace
     void TestPoseTargetStore()
     {
         PoseTargetStore store;
+        Check(!store.Get().rotation.has_value(),
+              "fresh store has no orientation target");
         const Eigen::Matrix3d rotation =
             Eigen::AngleAxisd(0.5, Eigen::Vector3d::UnitZ()).toRotationMatrix();
 
         store.Store(Eigen::Vector3d(0.1, 0.2, 0.3), rotation);
         auto snapshot = store.Get();
         Check(snapshot.sequence == 1, "Store increments the sequence");
-        Check((snapshot.rotation - rotation).norm() == 0.0, "rotation stored");
+        Check(snapshot.rotation &&
+                  (*snapshot.rotation - rotation).norm() == 0.0,
+              "rotation stored");
 
         store.StorePosition(Eigen::Vector3d(0.4, 0.5, 0.6));
         snapshot = store.Get();
         Check(snapshot.sequence == 2, "StorePosition increments the sequence");
         Check((snapshot.p_desired - Eigen::Vector3d(0.4, 0.5, 0.6)).norm() == 0.0,
               "position updated");
-        Check((snapshot.rotation - rotation).norm() == 0.0,
+        Check(snapshot.rotation &&
+                  (*snapshot.rotation - rotation).norm() == 0.0,
               "StorePosition keeps the stored orientation");
+    }
+
+    void TestPoseTargetSource()
+    {
+        // Pre-takeover content is discarded: only stores AFTER Reset (and
+        // the deliberate initial target) become references.
+        PoseTargetStore store;
+        store.StorePosition(Eigen::Vector3d(9.0, 9.0, 9.0)); // typed early
+
+        RobotState state;
+        state.q_rad.setZero();
+        state.qdot_rad_s.setZero();
+        ControllerStatus status;
+
+        PoseTargetSource plain(store);
+        plain.Reset(state);
+        Check(!plain.Get(state, 0.001, status).pose.has_value(),
+              "pre-takeover store content is discarded");
+
+        store.StorePosition(Eigen::Vector3d(0.4, 0.1, 0.3));
+        auto reference = plain.Get(state, 0.001, status);
+        Check(reference.pose.has_value(), "in-session store becomes a reference");
+        Check(reference.pose &&
+                  (reference.pose->p_desired - Eigen::Vector3d(0.4, 0.1, 0.3))
+                          .norm() == 0.0,
+              "reference carries the stored position");
+        Check(reference.pose && !reference.pose->rotation.has_value(),
+              "position-only target carries no orientation");
+
+        // The initial (fixed) target applies from the first cycle even
+        // though it never went through the store.
+        PoseTargetStore untouched;
+        PoseTargetSource fixed(untouched, Eigen::Vector3d(0.1, 0.2, 0.3));
+        fixed.Reset(state);
+        auto initial = fixed.Get(state, 0.001, status);
+        Check(initial.pose &&
+                  (initial.pose->p_desired - Eigen::Vector3d(0.1, 0.2, 0.3))
+                          .norm() == 0.0,
+              "initial fixed target is served after Reset");
     }
 
 } // namespace
@@ -326,6 +370,7 @@ int main()
     TestParsePoseTarget();
     TestFirstTargetLine();
     TestPoseTargetStore();
+    TestPoseTargetSource();
 
     if (failures == 0) {
         std::cout << "all reactive-law tests passed\n";

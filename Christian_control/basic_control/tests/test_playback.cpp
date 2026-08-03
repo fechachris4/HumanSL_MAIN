@@ -1,9 +1,11 @@
 //
-// Hardware-free tests for TrajectoryPlayback, including a closed-loop
-// replay of the full pipeline the Runner executes per cycle:
+// Hardware-free tests for the trajectory reference path (TrajectorySource
+// + the joint tracking law), including a closed-loop replay of the full
+// pipeline the Runner executes per cycle:
 //
-//   measured state -> DesiredVelocity -> per-joint clamp ->
-//   PositionIntegration::Apply -> commanded setpoint -> (simulated plant)
+//   measured state -> ReferenceSource::Get -> JointTrackVelocity ->
+//   per-joint clamp -> PositionIntegration::Apply -> commanded setpoint
+//   -> (simulated plant)
 //
 // The simulated plant is the position servo's idealization: the measured
 // position each cycle is the PREVIOUS cycle's commanded setpoint (one
@@ -20,14 +22,28 @@
 #include <string>
 #include <vector>
 
-#include "actuation/PositionIntegration.h"
-#include "control/TrajectoryPlayback.h"
+#include "Actuation.h"
+#include "Trajectory.h"
 
 namespace
 {
     int failures = 0;
     constexpr double kDegToRad = M_PI / 180.0;
     constexpr double kRadToDeg = 180.0 / M_PI;
+
+    // What the Runner + TrackingController do with a trajectory reference:
+    // Get this cycle's reference, then the joint law (an empty reference —
+    // the refused case — commands zero, standing in for the controller's
+    // pose hold, which needs the Pinocchio model and is out of scope here).
+    Eigen::Matrix<double, 7, 1>
+    StepTrajectory(TrajectorySource& source, const RobotState& state,
+                   double dt_s, double kp_s_inv, ControllerStatus& status)
+    {
+        const Reference reference = source.Get(state, dt_s, status);
+        if (!reference.joints)
+            return Eigen::Matrix<double, 7, 1>::Zero();
+        return JointTrackVelocity(*reference.joints, state, dt_s, kp_s_inv);
+    }
 
     void Check(bool ok, const std::string& what)
     {
@@ -37,7 +53,9 @@ namespace
         }
     }
 
-    const JointVector kClipDegS = {79.6, 79.6, 79.6, 79.6, 69.9, 69.9, 69.9};
+    // The clamp the Runner applies, taken from Config so this simulation
+    // cannot drift away from the clip the program actually commands.
+    const JointVector kClipDegS = config::kQdotLimitDegS;
 
     // Quintic move on joints 2 and 4, rest elsewhere — built directly (the
     // loader has its own tests).
@@ -93,7 +111,7 @@ namespace
                        bool wrap_measurement = false)
     {
         SimResult r;
-        TrajectoryPlayback controller(trajectory, settings);
+        TrajectorySource source(trajectory, settings);
         PositionIntegration actuation;
 
         auto wrap = [&](double deg)
@@ -114,7 +132,7 @@ namespace
         state.qdot_rad_s.setZero();
 
         actuation.Prepare(state); // T4: integrator seeded from measurement
-        controller.Reset(state);  // T5
+        source.Reset(state);      // T5 (start gate)
 
         JointVector cmd_deg{};
         JointVector cmd_vel{};
@@ -128,7 +146,7 @@ namespace
             const double dt = dt_of_cycle(cycle);
             ControllerStatus status;
             Eigen::Matrix<double, 7, 1> qdot =
-                controller.DesiredVelocity(state, dt, status);
+                StepTrajectory(source, state, dt, settings.kp_s_inv, status);
             for (int j = 0; j < 7; ++j)
                 qdot[j] = std::clamp(qdot[j] * kRadToDeg, -kClipDegS[j],
                                      kClipDegS[j]) *
@@ -173,7 +191,10 @@ namespace
     void TestNominalTracking()
     {
         const Trajectory t = MakeTrajectory();
-        // 2 s of motion + 1 s of hold at 1 kHz nominal dt.
+        // 2 s of motion + 1 s of hold, stepped at 0.001 s. That is FINER
+        // than the 500 Hz loop (config::kControlDtS = 0.002) on purpose:
+        // the contract admits knots in [0.0005, 0.002] s, and the finer
+        // grid exercises the sampling path rather than landing on knots.
         const SimResult r =
             Simulate(t, kDefaults, 3000, [](int) { return 0.001; });
         Check(r.max_cmd_vs_ref_deg < 0.05,
@@ -187,7 +208,7 @@ namespace
                   "nominal: final command = final reference, joint " +
                       std::to_string(j + 1));
         // No command step may exceed what the clamp allows in one cycle.
-        Check(r.max_step_deg <= 79.6 * 0.001 + 1e-9,
+        Check(r.max_step_deg <= kClipDegS[0] * 0.001 + 1e-9,
               "nominal: every command step within clip*dt");
     }
 
@@ -208,7 +229,7 @@ namespace
               "jitter: command still tracks the reference (max " +
                   std::to_string(r.max_cmd_vs_ref_deg) + " deg)");
         Check(r.done_edges == 1, "jitter: exactly one completion edge");
-        Check(r.max_step_deg <= 79.6 * 0.002 + 1e-9,
+        Check(r.max_step_deg <= kClipDegS[0] * 0.002 + 1e-9,
               "jitter: steps bounded by clip * dt even on slow cycles");
     }
 
@@ -221,7 +242,7 @@ namespace
         const SimResult r =
             Simulate(t, kDefaults, 8000, [](int) { return 0.001; }, 0.15);
         Check(r.refused_edges == 0, "offset: plays (inside the gate)");
-        Check(r.max_step_deg <= 79.6 * 0.001 + 1e-9,
+        Check(r.max_step_deg <= kClipDegS[0] * 0.001 + 1e-9,
               "offset: absorbed without a command jump");
         double final_err = 0.0;
         for (int j = 0; j < 7; ++j)
@@ -261,21 +282,21 @@ namespace
         Check(r.max_cmd_vs_ref_deg < 0.05,
               "wrap: tracks (max " + std::to_string(r.max_cmd_vs_ref_deg) +
                   " deg)");
-        Check(r.max_step_deg <= 79.6 * 0.001 + 1e-9,
+        Check(r.max_step_deg <= kClipDegS[0] * 0.001 + 1e-9,
               "wrap: no phantom 360-degree step");
     }
 
     void TestHoldRejectsDisturbance()
     {
         const Trajectory t = MakeTrajectory();
-        TrajectoryPlayback controller(t, kDefaults);
+        TrajectorySource source(t, kDefaults);
         PositionIntegration actuation;
         RobotState state;
         for (int j = 0; j < 7; ++j)
             state.q_rad[j] = t.pos_deg.front()[j] * kDegToRad;
         state.qdot_rad_s.setZero();
         actuation.Prepare(state);
-        controller.Reset(state);
+        source.Reset(state);
 
         JointVector cmd{}, vel{};
         ControllerStatus status;
@@ -283,7 +304,7 @@ namespace
         for (int cycle = 0; cycle < 2500; ++cycle)
         {
             Eigen::Matrix<double, 7, 1> qdot =
-                controller.DesiredVelocity(state, 0.001, status);
+                StepTrajectory(source, state, 0.001, kDefaults.kp_s_inv, status);
             actuation.Apply(qdot, state, 0.001, cmd, vel);
             for (int j = 0; j < 7; ++j)
                 state.q_rad[j] = cmd[j] * kDegToRad;
@@ -293,7 +314,7 @@ namespace
         // kp term must command a restoring velocity toward the reference.
         state.q_rad[1] += 0.05 * kDegToRad;
         Eigen::Matrix<double, 7, 1> qdot =
-            controller.DesiredVelocity(state, 0.001, status);
+            StepTrajectory(source, state, 0.001, kDefaults.kp_s_inv, status);
         Check(qdot[1] < -1e-6, "hold: restoring velocity opposes the push");
         Check(std::abs(qdot[1] * kRadToDeg + 0.5 * 0.05) < 1e-6,
               "hold: restoring velocity = kp * error exactly");

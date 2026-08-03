@@ -1,6 +1,6 @@
 //
 // Hardware-free tests for the trajectory-file contract
-// (control/TrajectoryFile.h): loading, structural rejection, motion-limit
+// (Trajectory.h): loading, structural rejection, motion-limit
 // validation and time-indexed sampling. No robot, no Pinocchio.
 // Returns nonzero on the first failure.
 //
@@ -11,7 +11,7 @@
 #include <sstream>
 #include <string>
 
-#include "control/TrajectoryFile.h"
+#include "Trajectory.h"
 
 namespace
 {

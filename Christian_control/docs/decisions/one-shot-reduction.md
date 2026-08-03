@@ -47,4 +47,4 @@ loop will need.
 - The 45 deg/s command-speed ceiling (10% under the base's enforced 50 deg/s
   soft limit) remains binding for any future motion path. (Raised 2026-07-22
   with the arm-reconfiguration precondition, and consolidated into the
-  single derived clip in `src/app/Config.h` — `qdot-limit-raise.md`.)
+  single derived clip in `src/Config.h` — `qdot-limit-raise.md`.)

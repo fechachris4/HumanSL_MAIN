@@ -15,7 +15,7 @@ on top of the one-shot base:
   `docs/robotics-contracts.md`, since removed).
 - **Bumpless takeover**: commanded = target = measured at the seed; the
   first frame is an unchanged holding command.
-- **Targets from stdin**: a separate input thread (`src/control/Target.cpp`)
+- **Targets from stdin**: a separate input thread (`src/Targets.cpp`)
   parses lines of 7 absolute joint degrees, validates them (finite; limited
   joints inside the URDF position limits after normalizing to [-180, 180)),
   and stores the latest valid target in a mutex-protected `TargetStore`.
@@ -28,7 +28,7 @@ on top of the one-shot base:
   shortest wrap direction; limited joints (2/4/6) use the direct signed
   difference so the path cannot cross the forbidden arc.
 - **No printing/allocation/file I/O in the loop**: samples go to a
-  preallocated ring buffer (`LoopLog`, `src/hardware/Record.cpp`, capacity
+  preallocated ring buffer (`LoopLog`, `src/Hardware.cpp`, capacity
   `kLogCapacitySeconds`), written to one timestamped CSV after the loop.
   Fault reports are recorded as a stop reason and printed after the loop.
 - **Stop policy** (unchanged from the previous executor): live actuator
