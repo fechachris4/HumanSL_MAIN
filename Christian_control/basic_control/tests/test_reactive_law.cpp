@@ -8,11 +8,13 @@
 // Returns nonzero on the first failure.
 //
 
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "ReactiveLaw.h"
 #include "Targets.h"
@@ -160,7 +162,8 @@ namespace
         ControllerStatus status;
         PoseTarget target;
         target.p_desired = Eigen::Vector3d(0.4, 0.1, 0.3);
-        PoseTargetSource source(target);
+        PoseTargetMailbox mailbox;
+        PoseTargetSource source(target, mailbox);
         const auto served = source.Get(state, 0.001, status);
         Check(served.pose && served.pose->twist.linear_m_s.norm() == 0.0 &&
                   served.pose->twist.angular_rad_s.norm() == 0.0,
@@ -296,6 +299,81 @@ namespace
         }
     }
 
+    void TestParsePoseTarget()
+    {
+        std::string error;
+        const auto target = ParsePoseTarget("0.4 0.1 0.3", error);
+        Check(target.has_value(), "three finite base_link coordinates are accepted");
+        Check(target && (target->p_desired - Eigen::Vector3d(0.4, 0.1, 0.3)).norm() == 0.0,
+              "parsed target keeps metre coordinates");
+        Check(target && !target->rotation.has_value(),
+              "runtime target is position-only");
+
+        Check(!ParsePoseTarget("0.4 0.1", error).has_value(),
+              "too few coordinates are rejected");
+        Check(!ParsePoseTarget("0.4 0.1 0.3 trailing", error).has_value(),
+              "trailing text is rejected");
+        Check(!ParsePoseTarget("0.4 0.1 0.3 0.0", error).has_value(),
+              "a fourth coordinate is rejected");
+        Check(!ParsePoseTarget("0.4 x 0.3", error).has_value(),
+              "malformed coordinate is rejected");
+        Check(!ParsePoseTarget("nan 0.1 0.3", error).has_value(),
+              "non-finite coordinate is rejected");
+        Check(!ParsePoseTarget("0.853 0 0", error).has_value(),
+              "target outside the conservative reach sphere is rejected");
+        Check(ParsePoseTarget("0.852 0 0", error).has_value(),
+              "target on the conservative reach boundary is accepted");
+        Check(ParsePoseTarget("0.3834 -0.4051 0.7225", error).has_value(),
+              "the compiled fixed target remains accepted outside the sphere");
+    }
+
+    PoseTarget PositionTarget(double x, double y, double z)
+    {
+        PoseTarget target;
+        target.p_desired = Eigen::Vector3d(x, y, z);
+        return target;
+    }
+
+    void TestPoseTargetMailbox()
+    {
+        PoseTargetMailbox mailbox;
+        for (int i = 0; i < 8; ++i)
+            Check(mailbox.Enqueue(PositionTarget(0.1 * i, 0.0, 0.0)),
+                  "mailbox accepts each of its eight entries");
+        Check(!mailbox.Enqueue(PositionTarget(0.9, 0.0, 0.0)),
+              "mailbox rejects a ninth entry while full");
+
+        for (int i = 0; i < 8; ++i) {
+            const auto target = mailbox.TryDequeue();
+            Check(target.has_value(), "mailbox returns queued entry");
+            Check(target && target->p_desired == Eigen::Vector3d(0.1 * i, 0.0, 0.0),
+                  "mailbox preserves FIFO target ordering");
+        }
+        Check(!mailbox.TryDequeue().has_value(), "mailbox is empty after eight dequeues");
+    }
+
+    void TestPoseTargetMailboxConcurrentHandoff()
+    {
+        constexpr int kTargetCount = 128;
+        PoseTargetMailbox mailbox;
+        std::thread producer([&mailbox] {
+            for (int i = 0; i < kTargetCount; ++i) {
+                const PoseTarget target = PositionTarget(0.001 * i, 0.0, 0.0);
+                while (!mailbox.Enqueue(target))
+                    std::this_thread::yield();
+            }
+        });
+
+        for (int i = 0; i < kTargetCount; ++i) {
+            std::optional<PoseTarget> target;
+            while (!(target = mailbox.TryDequeue()))
+                std::this_thread::yield();
+            Check(target->p_desired == Eigen::Vector3d(0.001 * i, 0.0, 0.0),
+                  "concurrent SPSC handoff preserves FIFO ordering");
+        }
+        producer.join();
+    }
+
     void TestPoseTargetSource()
     {
         RobotState state;
@@ -304,11 +382,10 @@ namespace
         ControllerStatus status;
 
         // The fixed target applies from the first cycle.
-        // Position-only form: an empty rotation leaves the takeover
-        // orientation to the controller.
-        PoseTarget position_only;
-        position_only.p_desired = Eigen::Vector3d(0.1, 0.2, 0.3);
-        PoseTargetSource fixed(position_only);
+        // Every target is position-only, so takeover orientation is held.
+        const PoseTarget position_only = PositionTarget(0.1, 0.2, 0.3);
+        PoseTargetMailbox mailbox;
+        PoseTargetSource fixed(position_only, mailbox);
         auto initial = fixed.Get(state, 0.001, status);
         Check(initial.pose &&
                   (initial.pose->p_desired - Eigen::Vector3d(0.1, 0.2, 0.3))
@@ -316,25 +393,52 @@ namespace
               "the fixed target is served from the first Get");
         Check(initial.pose && !initial.pose->rotation.has_value(),
               "position-only fixed target commands no orientation");
+        Check(initial.pose && initial.pose->sequence == 0,
+              "fixed target has sequence zero");
 
-        // With an rpy configured (Config.h kFixedTargetUseRpy), the same
-        // path carries the orientation through to the reference.
-        PoseTarget with_rpy;
-        with_rpy.p_desired = Eigen::Vector3d(0.1, 0.2, 0.3);
-        with_rpy.rotation = RotationFromRpy(0.0, 1.6, 0.8);
-        PoseTargetSource oriented(with_rpy);
-        auto initial_rpy = oriented.Get(state, 0.001, status);
-        Check(initial_rpy.pose && initial_rpy.pose->rotation.has_value(),
-              "fixed target with rpy commands an orientation");
-        Check(initial_rpy.pose && initial_rpy.pose->rotation &&
-                  (*initial_rpy.pose->rotation -
-                   RotationFromRpy(0.0, 1.6, 0.8))
-                          .norm() < 1e-12,
-              "the commanded orientation is the configured rpy");
+        Check(mailbox.Enqueue(PositionTarget(0.2, 0.3, 0.4)),
+              "first live target queues before fixed arrival");
+        Check(mailbox.Enqueue(PositionTarget(0.3, 0.4, 0.5)),
+              "second live target queues before fixed arrival");
+        auto before_arrival = fixed.Get(state, 0.001, status);
+        Check(before_arrival.pose && before_arrival.pose->sequence == 0 &&
+                  before_arrival.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
+              "queued targets cannot bypass the fixed target");
+
+        fixed.OnArrived();
+        auto first_live = fixed.Get(state, 0.001, status);
+        Check(first_live.pose && first_live.pose->sequence == 1 &&
+                  first_live.pose->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
+              "one queued target activates after an arrival");
+        auto held = fixed.Get(state, 0.001, status);
+        Check(held.pose && held.pose->sequence == 1 &&
+                  held.pose->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
+              "active target holds until the next arrival");
+
+        fixed.OnArrived();
+        auto second_live = fixed.Get(state, 0.001, status);
+        Check(second_live.pose && second_live.pose->sequence == 2 &&
+                  second_live.pose->p_desired == Eigen::Vector3d(0.3, 0.4, 0.5),
+              "each arrival advances exactly one queued target");
+        fixed.OnArrived();
+        auto final_hold = fixed.Get(state, 0.001, status);
+        Check(final_hold.pose && final_hold.pose->sequence == 2 &&
+                  final_hold.pose->p_desired == Eigen::Vector3d(0.3, 0.4, 0.5),
+              "final target holds when no queued target remains");
+
+        PoseTargetMailbox late_mailbox;
+        PoseTargetSource late_source(position_only, late_mailbox);
+        late_source.OnArrived();
+        Check(late_mailbox.Enqueue(PositionTarget(0.5, 0.4, 0.3)),
+              "target can be queued after an empty arrival");
+        auto late_target = late_source.Get(state, 0.001, status);
+        Check(late_target.pose && late_target.pose->sequence == 1 &&
+                  late_target.pose->p_desired == Eigen::Vector3d(0.5, 0.4, 0.3),
+              "empty arrival leaves source ready for a later target");
     }
 
-    // RotationFromRpy is the one place R = Rz*Ry*Rx is written down, and
-    // the compiled target goes through it.
+    // RotationFromRpy documents the R = Rz*Ry*Rx convention used by the
+    // retained configuration utility.
     void TestRotationFromRpy()
     {
         // Rz(yaw) alone: x -> y. Catches a Rx*Ry*Rz transposition.
@@ -365,6 +469,9 @@ int main()
     TestDampedLeastSquares6();
     TestNullSpace();
     TestAgainstSimulationFixtures();
+    TestParsePoseTarget();
+    TestPoseTargetMailbox();
+    TestPoseTargetMailboxConcurrentHandoff();
     TestRotationFromRpy();
     TestPoseTargetSource();
 

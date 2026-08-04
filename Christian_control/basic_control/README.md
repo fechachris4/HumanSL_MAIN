@@ -15,13 +15,10 @@ The program has ONE controller and one **reference source** (architecture
 diagram at the top of `src/Controller.h`). The source says WHERE the
 end-effector should be each cycle; the `TrackingController` says HOW to
 move toward it. It takes over the arm in low-level servoing (actuators in
-their default POSITION mode) and tracks the compiled fixed pose target
-(`kFixedTargetM` in `Config.h`). New research inputs (Vicon, a Python
-bridge) are new sources, never new controllers. (Historical modes:
-position-only `resolved-rate` removed 2026-08-03, superseded; the welded
-per-mode controller classes were decomposed into source + controller the
-same day; trajectory playback and the stdin operator input removed
-2026-08-04; git history has all of them.)
+their default POSITION mode) and starts at the compiled fixed position
+target (`kFixedTargetM` in `Config.h`). It then accepts queued stdin
+positions. New research inputs (Vicon, a Python bridge) are new sources,
+never new controllers.
 
 Pose references run the reactive law — full 6-DoF pose, ported
 from the simulation (msc_project) and cross-validated against it
@@ -53,7 +50,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   | `State.h` | the records that cross boundaries: `RobotState`, `ControllerStatus`, `Reference`, `ReferenceSource` | `state.py` + `backend.py` |
   | `ReactiveLaw.h` | the pose equations 1-6, header-only, no robot | `reactive_controller.py` |
   | `Controller.h/.cpp` | **THE controller** — tracks whichever reference channel is set | `servo.py` |
-  | `Targets.h/.cpp` | the pose target types, `RotationFromRpy`, `PoseTargetSource` | `desired_pos.py` |
+  | `Targets.h/.cpp` | position targets, strict stdin parsing, eight-entry SPSC mailbox, `PoseTargetSource` | `desired_pos.py` |
   | `Actuation.h/.cpp` | `PositionIntegration`: q_command integrator + lead limiter | `position_actuation.py` |
   | `Kinematics.h/.cpp` | Pinocchio FK/Jacobians + the `DualArmKinematics` adapter | `pin_fk.py` |
   | `Safety.h/.cpp` | stop classification, readiness gate, fault decoding, `ServoingGuard` | (hardware-only) |
@@ -86,18 +83,16 @@ ctest            # hardware-free control-logic tests
 > e-stop in hand, authorization required for every session.
 
 ```bash
-./controller                       # everything comes from Config.h
+./controller                       # fixed target, then optional stdin positions
 ./controller --log my_run.csv      # name the CSV; the only runtime argument
 ```
 
 **There is no runtime configuration.** `--log` is the only flag; every
-gain, term switch, limit, and the reference-source selection is a compiled
-constant in `src/Config.h`, so changing behaviour means editing that file
-and rebuilding. (The TOML/CLI configuration front-end — `Options.{h,cpp}`,
-`config/control.toml`, `--kp`, `--config` — was removed on 2026-08-03; git
-history has it, and `../docs/decisions/runtime-config.md` records why it
-existed.) Every run still echoes its effective configuration and embeds it
-as `#` lines in the CSV, so each data file stays self-describing.
+gain, term switch, and limit is a compiled constant in `src/Config.h`.
+During a run, stdin accepts exactly `x y z` as three finite values in metres
+in `base_link`; this is target input, not configuration. Every run still
+echoes its effective configuration and embeds it as `#` lines in the CSV,
+so each data file stays self-describing.
 
 **Read `Config.h` before every session** — with no runtime override, the
 compiled values are the only thing standing between you and the arm. In
@@ -121,12 +116,17 @@ What a run does, in order:
    the hold pose, then sends one unchanged holding frame — the arm holds.
    Actuators stay in their default POSITION mode.
 4. The arm drives to the compiled `kFixedTargetM` **immediately** after
-   the takeover, keeping the takeover orientation unless
-   `kFixedTargetUseRpy` also commands one. There is **no stdin thread**
-   and no other target source. A freshness gate refuses the run if the
-   compiled target is farther than `kMaxFixedTargetDistanceM` from the
-   measured end-effector position at startup. Check the target against
-   the printed current position before you start.
+   takeover and preserves the captured takeover orientation. The stdin
+   thread accepts one `x y z` target per line in metres, `base_link` only.
+   It rejects malformed, trailing, non-finite, or out-of-reach input. The
+   conservative reach test is `||p|| ≤ 0.852 m`; the compiled fixed target
+   itself is allowed as the initial target. At most eight live targets are
+   queued in FIFO order. They cannot bypass the fixed target: each target
+   activates only after the previous target emits its arrival edge, and the
+   final target holds. A freshness gate refuses the run if the compiled
+   target is farther than `kMaxFixedTargetDistanceM` from the measured
+   end-effector position at startup. Check the target against the printed
+   current position before you start.
 
    The arrival notice is position-based; judge orientation convergence from
    the CSV's `rot_error_rad` column.
@@ -190,8 +190,9 @@ rules above apply):
 
 1. Move the arm to a pose well inside the workspace, start `./controller`,
    and let it hold for at least 2 seconds without typing anything.
-2. Type exactly one target: the printed hold position with **one axis
-   changed by +0.02 m** (2 cm keeps speeds trivial).
+2. Type one target: the printed hold position with **one axis changed by
+   +0.02 m** (2 cm keeps speeds trivial). It queues after the compiled
+   target reaches its arrival tolerance.
 3. Wait for "target reached" plus ~2 seconds, then Ctrl+C.
 4. `python3 scripts/measure_delay.py` — prints the time from the command
    step to first motion above the noise floor, and the time to settle
@@ -213,8 +214,10 @@ rules above apply):
   pins the clamp for the whole transit (allowed — the saturation stop was
   removed 2026-07-23), and a saturated joint distorts the motion
   direction: the arm drifts toward the target but NOT in a straight line.
-- **No reachability check**: an unreachable target makes the controller
-  push toward it until you retarget, stop, or the arm faults.
+- **Input reach check is spherical only**: stdin rejects a target outside
+  `||p|| ≤ 0.852 m` in `base_link`, but this does not prove inverse-
+  kinematics feasibility, collision clearance, joint-limit clearance, or a
+  safe path.
 - **Low-level servoing bypasses the robot's motion supervisor** — no
   onboard planning, obstacle avoidance or self-collision avoidance. The
   end effector travels the straight line to the target and the DLS solution

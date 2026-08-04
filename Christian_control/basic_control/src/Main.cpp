@@ -184,7 +184,7 @@ namespace
         const PoseJacobian ee = model.RightPoseAndJacobian(q_rad, workspace);
         // Decompose R back into the SAME roll/pitch/yaw convention targets
         // use (R = Rz·Ry·Rx), so the printed triple can be pasted straight
-        // into kFixedTargetRpyRad or typed as the last 3 of a 6-number line.
+        // into kFixedTargetRpyRad for offline configuration comparison.
         const Eigen::Vector3d zyx = ee.rotation.eulerAngles(2, 1, 0);
         std::cout << "right end-effector (" << config::kRightEndEffectorFrame
                   << " in " << config::kRightBaseFrame << "): "
@@ -208,6 +208,36 @@ void on_stop_signal(int)
 {
     g_stop = true;
 }
+
+namespace
+{
+    // The input thread only polls stdin, but it must never outlive the
+    // mailbox it writes. This guard covers normal loop exit and exceptions
+    // from RunControlLoop alike.
+    class InputThreadStopJoiner
+    {
+    public:
+        InputThreadStopJoiner(std::thread& thread, std::atomic<bool>& stop)
+            : thread_(thread), stop_(stop)
+        {}
+
+        ~InputThreadStopJoiner()
+        {
+            Join();
+        }
+
+        void Join()
+        {
+            stop_.store(true, std::memory_order_relaxed);
+            if (thread_.joinable())
+                thread_.join();
+        }
+
+    private:
+        std::thread& thread_;
+        std::atomic<bool>& stop_;
+    };
+} // namespace
 
 int main(int argc, char** argv)
 {
@@ -360,43 +390,37 @@ int main(int argc, char** argv)
         target.p_desired = Eigen::Vector3d(config::kFixedTargetM[0],
                                            config::kFixedTargetM[1],
                                            config::kFixedTargetM[2]);
-        // Empty rotation = keep the takeover orientation.
-        if (config::kFixedTargetUseRpy)
-            target.rotation =
-                RotationFromRpy(config::kFixedTargetRpyRad[0],
-                                config::kFixedTargetRpyRad[1],
-                                config::kFixedTargetRpyRad[2]);
-        // The source holds the compiled target from here on; it applies
-        // from the first cycle after takeover.
-        PoseTargetSource reference(target);
+        // All targets, including the compiled first target, are position
+        // only in base_link and preserve the orientation captured at
+        // takeover.
+        PoseTargetMailbox pose_targets;
+        PoseTargetSource reference(target, pose_targets);
         PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
-        // The arm drives to the fixed target as soon as the takeover
-        // completes (Ctrl+C is the signal handler, not stdin).
+        // The arm drives to the fixed target first. Stdin targets may queue
+        // immediately, but each waits for an arrival edge before activation.
         std::cout << "FIXED TARGET (Config.h kFixedTargetM): "
                   << config::kFixedTargetM[0] << " "
                   << config::kFixedTargetM[1] << " "
                   << config::kFixedTargetM[2]
                   << " m — THE ARM MOVES THERE IMMEDIATELY after the "
                      "takeover; Ctrl+C to stop\n";
-        if (config::kFixedTargetUseRpy)
-            std::cout << "  AND ROTATES to rpy "
-                      << config::kFixedTargetRpyRad[0] << " "
-                      << config::kFixedTargetRpyRad[1] << " "
-                      << config::kFixedTargetRpyRad[2]
-                      << " rad (kFixedTargetRpyRad) — compare against the "
-                         "measured rpy printed above\n";
-        else
-            std::cout << "  orientation target unchanged "
-                         "(kFixedTargetUseRpy = false)\n";
+        std::cout << "  type x y z (metres, base_link) to queue up to eight "
+                     "position-only targets; the takeover orientation holds\n";
 
-        // MOVES THE ARM (toward the fixed target): servoing mode is entered
-        // and restored inside the Runner, on every exit path (T2/D3).
+        std::thread input_thread(RunPoseTargetInput, std::ref(pose_targets),
+                                 std::cref(g_stop));
+        InputThreadStopJoiner input_thread_joiner(input_thread, g_stop);
+
+        // MOVES THE ARM: servoing mode is entered and restored inside the
+        // Runner on every exit path (T2/D3).
         const LoopResult result = RunControlLoop(
             connection.base(), connection.base_cyclic(), reference,
             controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
             config::kFollowingErrorLimitDeg, robot_ready);
+
+        input_thread_joiner.Join();
 
         // Final drain — everything before this was already on disk.
         log_writer.Stop();
