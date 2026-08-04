@@ -13,7 +13,8 @@ enum class StopPriorityReason {
     kRobotFault,
     kFollowingError,
     kLeftLowLevel,
-    kJointLimitWarning
+    kJointLimitWarning,
+    kStaleFeedback
 };
 
 struct StopPriorityDecision {
@@ -23,11 +24,11 @@ struct StopPriorityDecision {
 
 // Unconditional live state always wins. A live fault is always recorded, but
 // only wins the stop reason when the compile-time policy enables fault stops.
-// A held-frame joint warning wins only when no unconditional state (and no
-// enabled fault stop) is present.
+// A held-frame joint warning and then stale acknowledgement win only when no
+// unconditional state (and no enabled fault stop) is present.
 inline constexpr StopPriorityDecision ResolveStopPriority(
     bool following_error, bool live_fault, bool left_low_level,
-    bool joint_limit_warning, bool stop_on_fault)
+    bool joint_limit_warning, bool stop_on_fault, bool stale_feedback = false)
 {
     if (following_error)
         return {StopPriorityReason::kFollowingError, live_fault};
@@ -37,5 +38,7 @@ inline constexpr StopPriorityDecision ResolveStopPriority(
         return {StopPriorityReason::kRobotFault, true};
     if (joint_limit_warning)
         return {StopPriorityReason::kJointLimitWarning, live_fault};
+    if (stale_feedback)
+        return {StopPriorityReason::kStaleFeedback, live_fault};
     return {StopPriorityReason::kNone, live_fault};
 }

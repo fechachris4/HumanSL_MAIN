@@ -224,9 +224,12 @@ namespace config
 
     // Consecutive-cycle stop counters; N <= 0 disables one. Non-finite
     // controller output is never integrated (that cycle holds); overrun =
-    // measured dt above kOverrunFactor x nominal.
+    // measured dt above kOverrunFactor x nominal. A stale cyclic
+    // acknowledgement stops after 25 samples = 50 ms at 500 Hz: command IDs
+    // must advance per actuator even when physical motion is stationary.
     inline constexpr int kNonFiniteStopCycles = 3;
     inline constexpr int kOverrunStopCycles = 10;
+    inline constexpr int kStaleFeedbackStopCycles = 25;
     inline constexpr double kOverrunFactor = 1.5;
 
     // Following-error guard: stop when any joint's |command - measured|

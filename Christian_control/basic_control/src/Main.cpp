@@ -92,6 +92,8 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("arrival_tolerance_m", FormatDouble(config::kArrivalToleranceM));
     line("nonfinite_stop_cycles", std::to_string(config::kNonFiniteStopCycles));
     line("overrun_stop_cycles", std::to_string(config::kOverrunStopCycles));
+    line("stale_feedback_stop_cycles",
+         std::to_string(config::kStaleFeedbackStopCycles));
     line("overrun_factor", FormatDouble(config::kOverrunFactor));
     out << prefix << "log_file = " << (log_file.empty() ? "<timestamped>" : log_file)
         << (log_file.empty() ? " (default)\n" : " (--log)\n");

@@ -19,11 +19,13 @@
 // TrackingController::DesiredVelocity -> per-joint clamp to
 // ±qdot_limit_deg_s -> PositionIntegration::Apply (command lead plus the
 // joint-warning hold) -> CyclicSession::Send -> log sample -> edge-triggered fault prints ->
-// ClassifyStop -> feedback-freshness counters (RECORDED, never a stop) ->
-// the counter stops -> sleep_until grid.
+// acknowledgement-freshness update -> live-state/joint-boundary/stale-feedback
+// priority -> the counter stops -> sleep_until grid.
 //
-// No stop is keyed on "this joint did not move" or "this feedback value did
-// not change" (both removed 2026-08-03); that evidence is telemetry now.
+// No stop is keyed on physical motion or a stationary position value. A
+// per-actuator cyclic command acknowledgement that fails to advance for the
+// configured 25 completed replies does stop, because it evidences a stalled
+// downstream cyclic-feedback path.
 //
 // Teardown, on EVERY exit path (exceptions of any type included):
 //   D1  explicit ServoingGuard restore to SINGLE_LEVEL + settling wait;

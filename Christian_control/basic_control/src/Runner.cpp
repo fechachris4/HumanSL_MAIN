@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <tuple>
@@ -93,7 +94,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     if (!config::kStopOnFault)
         std::cout << "WARNING: FAULT-STOP DISABLED (config::kStopOnFault = false) — live "
             "fault bits will NOT stop the loop; following-error, low-level-servoing, "
-            "joint-boundary, non-finite, and overrun guards still can. Attended use only.\n";
+            "joint-boundary, stale-feedback, non-finite, and overrun guards still can. "
+            "Attended use only.\n";
     if (config::kDisableFollowingErrorStop)
         std::cout << "WARNING: FOLLOWING-ERROR STOP DISABLED "
             "(config::kDisableFollowingErrorStop) — a joint that stops following "
@@ -101,8 +103,9 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     if (!config::kStopOnFault)
         if (config::kDisableFollowingErrorStop)
             std::cout << "WARNING: BOTH the fault stop and the following-error stop are "
-                "off. Low-level-servoing, joint-boundary, non-finite, and overrun "
-                "guards remain; YOU are the safety system — hand on the e-stop for this run.\n";
+                "off. Low-level-servoing, joint-boundary, stale-feedback, non-finite, "
+                "and overrun guards remain; YOU are the safety system — hand on the e-stop "
+                "for this run.\n";
 
     const double nominal_dt_s = std::chrono::duration<double>(period).count();
 
@@ -111,6 +114,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     LoopLogSample sample; // reused every cycle
     long cycle = 0;
     int joint_limit_warning_joint = -1;
+    int stale_feedback_joint = -1;
     bool joint_fault_was_latched = false;
     CycleCounters counters;
     FeedbackFreshnessMonitor freshness_monitor;
@@ -300,6 +304,15 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 prev_joint_banks = sample.fault_bank;
             }
 
+            // Update and record acknowledgement freshness before resolving
+            // this completed feedback sample. The count is evidence of a
+            // stalled cyclic feedback path, not of physical motion.
+            freshness_monitor.Update(sample.actuator_command_ack);
+            sample.ack_unchanged_cycles = freshness_monitor.unchanged_cycles();
+            const std::optional<int> stale_acknowledgement_joint =
+                StaleAcknowledgementJoint(sample.ack_unchanged_cycles,
+                                          config::kStaleFeedbackStopCycles);
+
             // Resolve every fact independently: an ignored fault must still
             // taint the exit and must never mask following error or loss of
             // low-level servoing. Communication exits in the Send catch
@@ -309,7 +322,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 HasLiveFault(sample),
                 sample.arm_state != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL,
                 actuation_status.joint_limit_warning_joint.has_value(),
-                config::kStopOnFault);
+                config::kStopOnFault,
+                stale_acknowledgement_joint.has_value());
             faults_observed = faults_observed || priority.live_fault_observed;
             switch (priority.reason)
             {
@@ -330,21 +344,21 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 reason = LoopStop::kJointLimitWarning;
                 log.push(sample);
                 break;
+            case StopPriorityReason::kStaleFeedback:
+                stale_feedback_joint = *stale_acknowledgement_joint;
+                reason = LoopStop::kStaleFeedback;
+                log.push(sample);
+                break;
             case StopPriorityReason::kNone:
                 break;
             }
             if (priority.reason != StopPriorityReason::kNone)
                 break;
-            // Feedback-freshness evidence is RECORDED, never acted on: a
-            // repeated acknowledgement ID and a stationary joint are logged
-            // (ack_unchanged_j*, req/cmd/meas) and left for offline review.
-            // Neither ends the run — see Config.h kCommandLeadLimitDeg.
-            freshness_monitor.Update(sample.actuator_command_ack);
-            sample.ack_unchanged_cycles = freshness_monitor.unchanged_cycles();
             // Decision-12 counters, checked after the independent live-state
-            // priority so those guards keep priority; N <= 0 disables one. There is
-            // deliberately NO saturation stop: a pinned velocity clamp is
-            // normal transit toward a far target (removed 2026-07-23).
+            // and stale-feedback priority so those guards keep priority; N <=
+            // 0 disables one. There is deliberately NO saturation stop: a
+            // pinned velocity clamp is normal transit toward a far target
+            // (removed 2026-07-23).
             if (config::kNonFiniteStopCycles > 0 &&
                 counters.nonfinite >= config::kNonFiniteStopCycles)
             {
@@ -411,7 +425,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     // sub-error is visible and the base gets its documented settling time.
     servoing_guard.Restore(std::cout);
     PrintStopReport(reason, sample, cycle, following_error_limit_deg,
-                    joint_limit_warning_joint);
+                    joint_limit_warning_joint, stale_feedback_joint);
     std::cout << "cycle overruns: " << counters.overrun_total << " of " << cycle
         << " cycles (dt > " << config::kOverrunFactor << " x nominal)\n";
     if (joint_fault_was_latched)

@@ -29,27 +29,6 @@ namespace
     constexpr int NUM_JOINTS = std::tuple_size_v<JointVector>;
 } // namespace
 
-void FeedbackFreshnessMonitor::Update(
-    const std::array<std::uint32_t, 7>& command_ack)
-{
-    // The first frame has nothing to compare against: seed and report zero.
-    if (!initialized_)
-    {
-        previous_ = command_ack;
-        initialized_ = true;
-        unchanged_cycles_.fill(0);
-        return;
-    }
-    for (int i = 0; i < NUM_JOINTS; ++i)
-    {
-        if (command_ack[i] == previous_[i])
-            ++unchanged_cycles_[i];
-        else
-            unchanged_cycles_[i] = 0;
-        previous_[i] = command_ack[i];
-    }
-}
-
 bool FollowingErrorExceeded(const LoopLogSample& s,
                             double following_error_limit_deg)
 {
@@ -198,6 +177,7 @@ std::string StopReasonName(LoopStop reason)
     case LoopStop::kCommunication:  return "communication";
     case LoopStop::kInternalError:  return "internal_error";
     case LoopStop::kJointLimitWarning: return "joint_limit_warning";
+    case LoopStop::kStaleFeedback: return "stale_feedback";
     case LoopStop::kNonFiniteCommand: return "nonfinite_command";
     case LoopStop::kOverrun:        return "overrun";
     }
@@ -206,7 +186,8 @@ std::string StopReasonName(LoopStop reason)
 
 void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
                      double following_error_limit_deg,
-                     int joint_limit_warning_joint)
+                     int joint_limit_warning_joint,
+                     int stale_feedback_joint)
 {
     switch (reason)
     {
@@ -256,6 +237,14 @@ void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
             << " s (cycle " << cycle << "): held the last safe command before joint "
             << (joint_limit_warning_joint + 1)
             << " crossed its outward software position boundary\n";
+        break;
+    case LoopStop::kStaleFeedback:
+        std::cout << "loop stopped: stale cyclic feedback acknowledgement at t="
+            << s.t_s << " s (cycle " << cycle << "): joint "
+            << (stale_feedback_joint + 1) << " acknowledgement was unchanged for "
+            << s.ack_unchanged_cycles[stale_feedback_joint]
+            << " completed feedback replies (limit "
+            << config::kStaleFeedbackStopCycles << ")\n";
         break;
     case LoopStop::kNonFiniteCommand:
         std::cout << "loop stopped: non-finite controller output (consecutive-cycle "

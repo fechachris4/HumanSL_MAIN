@@ -252,10 +252,13 @@ rules above apply):
 - What still ends the run unconditionally: a following error above
   `kFollowingErrorLimitDeg` (3°), a live fault when `kStopOnFault` is true,
   loss of low-level servoing, exchange failure, then the software
-  joint-limit warning guard, plus enabled consecutive non-finite-command and
-  overrun guards. That ordering means a simultaneous live state cannot be
-  hidden by the held-frame warning; an ignored live fault still taints the
-  exit result. On any of these the loop stops streaming (the position servo
-  holds the last setpoint) and restores SINGLE_LEVEL servoing — guarded, with
-  a warning if it fails. If you see such a warning, check the arm (web
-  dashboard) before running anything else.
+  joint-limit warning guard, then a per-actuator cyclic acknowledgement that
+  stays unchanged for 25 completed replies (50 ms), plus enabled consecutive
+  non-finite-command and overrun guards. An acknowledgement stall is a
+  downstream-feedback-path signal, not a physical-motion detector. That
+  ordering means a simultaneous live state cannot be hidden by the held-frame
+  warning; an ignored live fault still taints the exit result. On any of these
+  the loop stops streaming (the position servo holds the last setpoint) and
+  restores SINGLE_LEVEL servoing — guarded, with a warning if it fails. If you
+  see such a warning, check the arm (web dashboard) before running anything
+  else.

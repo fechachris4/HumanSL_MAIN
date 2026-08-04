@@ -16,6 +16,7 @@
 #include <BaseCyclicClientRpc.h>
 
 #include "Config.h"
+#include "Freshness.h"
 #include "Hardware.h"
 
 // ---------------------------------------------------------------
@@ -37,8 +38,11 @@ namespace k_api = Kinova::Api;
 // runtime_error escaped the cycle — caught by the loop's catch-all so the
 // servoing restore still runs. kJointLimitWarning holds the last safe full
 // command frame before a bounded joint's outward warning crossing can be
-// transmitted. The last two are the decision-12 consecutive-cycle counters:
-// non-finite controller output (held, never integrated) and cycle overruns.
+// transmitted. kStaleFeedback stops when one actuator's cyclic command
+// acknowledgement has not advanced for the configured number of completed
+// feedback replies. The last two are the decision-12 consecutive-cycle
+// counters: non-finite controller output (held, never integrated) and cycle
+// overruns.
 enum class LoopStop {
     kUserStop,
     kRobotFault,
@@ -47,6 +51,7 @@ enum class LoopStop {
     kCommunication,
     kInternalError,
     kJointLimitWarning,
+    kStaleFeedback,
     kNonFiniteCommand,
     kOverrun
 };
@@ -66,37 +71,11 @@ struct LoopResult {
     long cycles = 0;
 };
 
-// Each actuator feedback carries the command ID of the most recently
-// processed cyclic command. A healthy stream advances every joint's
-// acknowledgement each cycle; an ID that stays put while command frames keep
-// going out is evidence of stale or non-advancing downstream feedback.
-//
-// TELEMETRY ONLY (2026-08-03). This used to stop the run after N unchanged
-// cycles — a short-window "this feedback value did not change" exit. It now
-// only counts, and the Runner logs the counters (ack_unchanged_j*); nothing
-// here ends a run. Genuine communication failure still surfaces where it
-// always did: a throwing Refresh (kCommunication).
-//
-// The counter is the number of CONSECUTIVE cycles this joint's
-// command-acknowledgement ID has repeated; 0 means it advanced this cycle.
-class FeedbackFreshnessMonitor
-{
-public:
-    void Update(const std::array<std::uint32_t, 7>& command_ack);
-
-    const std::array<int, 7>& unchanged_cycles() const { return unchanged_cycles_; }
-
-private:
-    bool initialized_ = false;
-    std::array<std::uint32_t, 7> previous_{};
-    std::array<int, 7> unchanged_cycles_{};
-};
-
 // Consecutive-cycle counters, updated by the Runner every cycle (reset to
 // zero on a healthy cycle) and compared directly against the Config.h
-// thresholds there (decision 12; the checks run AFTER ClassifyStop so the
-// guard and live faults keep priority). overrun_total is the whole-run
-// tally reported after the loop.
+// thresholds there (decision 12; they run after live-state, joint-boundary,
+// and stale-feedback priority). overrun_total is the whole-run tally reported
+// after the loop.
 struct CycleCounters {
     int nonfinite = 0;
     int overrun = 0;
@@ -159,7 +138,8 @@ std::string StopReasonName(LoopStop reason);
 
 void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
                      double following_error_limit_deg,
-                     int joint_limit_warning_joint);
+                     int joint_limit_warning_joint,
+                     int stale_feedback_joint);
 
 void PrintFaultChange(const LoopLogSample& s, long cycle,
                       const std::array<std::uint32_t, 7>& prev_joint_banks,

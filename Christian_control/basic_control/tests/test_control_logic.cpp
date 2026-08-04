@@ -11,6 +11,7 @@
 #include <string>
 
 #include "Actuation.h"
+#include "Freshness.h"
 #include "ReactiveLaw.h"
 #include "StopPriority.h"
 
@@ -500,6 +501,88 @@ namespace
               "following error wins while a simultaneous live fault still taints");
     }
 
+    void TestStaleAcknowledgementGuard()
+    {
+        constexpr int kStopCycles = config::kStaleFeedbackStopCycles;
+        constexpr int kFrozenJoint = 4;
+        FeedbackFreshnessMonitor freshness;
+        std::array<std::uint32_t, 7> acknowledgement{};
+
+        Check(kStopCycles == 25,
+              "stale-feedback guard is configured for 25 cycles (50 ms at 500 Hz)");
+
+        // The first returned cyclic frame only establishes the per-actuator
+        // command-ID baseline; it must not consume any 50 ms stop budget.
+        freshness.Update(acknowledgement);
+        Check(!StaleAcknowledgementJoint(freshness.unchanged_cycles(), kStopCycles),
+              "the acknowledgement seeding frame cannot request a stale-feedback stop");
+
+        // Advancing command acknowledgements are healthy, even while other
+        // feedback fields happen to be stationary.
+        for (auto& value : acknowledgement)
+            ++value;
+        freshness.Update(acknowledgement);
+        Check(!StaleAcknowledgementJoint(freshness.unchanged_cycles(), kStopCycles),
+              "advancing acknowledgements remain below the stale-feedback stop");
+
+        // A single frozen actuator reaches the stop exactly on sample 25,
+        // not one completed feedback cycle earlier.
+        for (int cycle = 1; cycle < kStopCycles; ++cycle)
+        {
+            for (int i = 0; i < 7; ++i)
+                if (i != kFrozenJoint)
+                    ++acknowledgement[i];
+            freshness.Update(acknowledgement);
+            Check(!StaleAcknowledgementJoint(freshness.unchanged_cycles(), kStopCycles),
+                  "a frozen acknowledgement remains below the stop before 25 samples");
+        }
+        for (int i = 0; i < 7; ++i)
+            if (i != kFrozenJoint)
+                ++acknowledgement[i];
+        freshness.Update(acknowledgement);
+        Check(StaleAcknowledgementJoint(freshness.unchanged_cycles(), kStopCycles) ==
+                  kFrozenJoint,
+              "the 25th unchanged acknowledgement stops the exact frozen joint");
+
+        // The condition is not latched: an advancing acknowledgement resets
+        // this joint's count and removes the stale indication.
+        ++acknowledgement[kFrozenJoint];
+        freshness.Update(acknowledgement);
+        Check(!StaleAcknowledgementJoint(freshness.unchanged_cycles(), kStopCycles),
+              "an advancing acknowledgement resets the stale-feedback guard");
+
+        // Detection is indexed by Kortex actuator order, not a hard-coded
+        // joint: every one of the seven counters can independently stop.
+        for (int joint = 0; joint < 7; ++joint)
+        {
+            std::array<int, 7> counts{};
+            counts[joint] = kStopCycles;
+            Check(StaleAcknowledgementJoint(counts, kStopCycles) == joint,
+                  "each actuator acknowledgement counter can identify its own stale joint");
+        }
+
+        const auto stale_after_warning = ResolveStopPriority(
+            false, false, false, true, true, false);
+        Check(stale_after_warning.reason == StopPriorityReason::kJointLimitWarning,
+              "joint-boundary warning outranks stale feedback in the same reply");
+        const auto stale_after_following = ResolveStopPriority(
+            true, false, false, false, false, true);
+        Check(stale_after_following.reason == StopPriorityReason::kFollowingError,
+              "following error outranks stale feedback in the same reply");
+        const auto stale_after_servo_loss = ResolveStopPriority(
+            false, false, true, false, false, true);
+        Check(stale_after_servo_loss.reason == StopPriorityReason::kLeftLowLevel,
+              "low-level servo loss outranks stale feedback in the same reply");
+        const auto stale_after_enabled_fault = ResolveStopPriority(
+            false, true, false, false, true, true);
+        Check(stale_after_enabled_fault.reason == StopPriorityReason::kRobotFault,
+              "an enabled live-fault stop outranks stale feedback in the same reply");
+        const auto stale_before_counters = ResolveStopPriority(
+            false, false, false, false, false, true);
+        Check(stale_before_counters.reason == StopPriorityReason::kStaleFeedback,
+              "stale feedback becomes the next stop after live-state and joint-boundary priority");
+    }
+
 } // namespace
 
 int main()
@@ -511,6 +594,7 @@ int main()
     TestJointLimitWarningGuard();
     TestJointPositionConfiguration();
     TestStopPriority();
+    TestStaleAcknowledgementGuard();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

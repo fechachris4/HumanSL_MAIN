@@ -65,6 +65,8 @@ int main()
           "joint-limit error contract configures bounded joints 2, 4, and 6");
     Check(StopReasonName(LoopStop::kJointLimitWarning) == "joint_limit_warning",
           "joint-limit warning has a distinct CSV exit token");
+    Check(StopReasonName(LoopStop::kStaleFeedback) == "stale_feedback",
+          "stale feedback has a distinct CSV exit token");
 
     Check(!ClassifyStop(CleanSample(), limit, reason), "clean sample does not stop");
 
@@ -121,14 +123,15 @@ int main()
     static_assert(config::kOverrunStopCycles > 0, "overrun stop must be enabled");
     static_assert(config::kOverrunFactor > 1.0,
                   "overrun factor must sit above nominal dt");
+    static_assert(config::kStaleFeedbackStopCycles == 25,
+                  "stale feedback must stop after 25 completed replies");
     CycleCounters c;
     Check(c.nonfinite == 0 && c.overrun == 0 && c.overrun_total == 0,
           "fresh counters start at zero");
 
-    // FeedbackFreshnessMonitor is TELEMETRY ONLY (2026-08-03): it counts
-    // consecutive repeated acknowledgement IDs per joint and never stops a
-    // run. The old short-window "unchanged feedback" and "no measured
-    // motion" stops were removed; the counters below replace their evidence.
+    // FeedbackFreshnessMonitor counts consecutive repeated acknowledgements
+    // per joint. The Runner stops when a count reaches the configured 25;
+    // it does not infer this from unchanged position or physical motion.
     FeedbackFreshnessMonitor freshness;
     std::array<std::uint32_t, 7> ack{};
     freshness.Update(ack);
