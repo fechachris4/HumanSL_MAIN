@@ -31,7 +31,9 @@ ReactivePoseGains ConfiguredGains()
 TrackingController::TrackingController(DualArmKinematics& model)
     : model_(model),
       workspace_(std::make_unique<KinematicsWorkspace>(model.dynamics())),
-      gains_(ConfiguredGains())
+      gains_(ConfiguredGains()),
+      arrival_monitor_(config::kArrivalDwellS),
+      timeout_monitor_(config::kTargetHoldS)
 {
     for (int i = 0; i < 7; ++i) {
         null_midpoint_rad_[i] = config::kNullMidpointDeg[i] * kDegToRad;
@@ -51,6 +53,8 @@ void TrackingController::Reset(const RobotState& state)
     hold_rotation_ = ee.rotation;
     pose_sequence_seen_ = false;
     arrival_reported_ = true;
+    arrival_monitor_.Rearm();
+    timeout_monitor_.Rearm();
 }
 
 Eigen::Matrix<double, 7, 1>
@@ -75,6 +79,8 @@ TrackingController::DesiredVelocity(const RobotState& state,
         pose_sequence_seen_ = true;
         last_pose_sequence_ = reference.pose->sequence;
         arrival_reported_ = false;
+        arrival_monitor_.Rearm();
+        timeout_monitor_.Rearm();
     }
 
     // The adapter composes the SAME full q from measured right joints and the
@@ -103,10 +109,23 @@ TrackingController::DesiredVelocity(const RobotState& state,
     const bool position_arrived = e_pos.norm() <= config::kArrivalToleranceM;
     const bool orientation_arrived = !gains_.orientation_enabled ||
         e_rot.norm() <= config::kArrivalOrientationToleranceRad;
-    if (!arrival_reported_ && arrival_eligible && position_arrived &&
-        orientation_arrived) {
+    const bool in_tolerance =
+        arrival_eligible && position_arrived && orientation_arrived;
+
+    // Positive: debounce arrival over kArrivalDwellS, then edge-fire once per
+    // target so Runner/Targets keep their once-per-target semantics.
+    const bool reported = arrival_monitor_.Update(in_tolerance, dt_s);
+    if (!arrival_reported_ && reported) {
         arrival_reported_ = true;
         status.arrived_edge = true;
+        status.arrival_error_m = e_pos.norm();
+    }
+
+    // Negative: while parked at a target and not yet arrived, fire a one-shot
+    // non-arrival edge after kTargetHoldS. Reporting only — no motion change.
+    const bool waiting = arrival_eligible && !arrival_reported_;
+    if (timeout_monitor_.Update(waiting, dt_s)) {
+        status.not_reached_edge = true;
         status.arrival_error_m = e_pos.norm();
     }
     status.p_desired = p_desired;

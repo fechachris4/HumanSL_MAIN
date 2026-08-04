@@ -40,6 +40,7 @@ struct ControllerStatus {
     Eigen::Vector3d p_current = Eigen::Vector3d::Zero(); // FK this cycle
     bool arrived_edge = false;    // first crossing under the tolerance
     double arrival_error_m = 0.0; // error norm at that crossing
+    bool not_reached_edge = false; // set the cycle the non-arrival timeout fires
     double sigma_min = std::numeric_limits<double>::quiet_NaN();     // σ_min(J)
     double rot_error_rad = std::numeric_limits<double>::quiet_NaN(); // |log3|
 

@@ -22,6 +22,7 @@
 
 #include <Eigen/Dense>
 
+#include "Arrival.h"
 #include "ReactiveLaw.h"
 #include "State.h"
 
@@ -69,4 +70,9 @@ private:
     std::uint64_t last_pose_sequence_ = 0;
     bool pose_sequence_seen_ = false;
     bool arrival_reported_ = true;
+
+    // Positive/negative arrival gates. Constructed from Config.h in the .cpp
+    // (this header stays Config-free). Declared last so init order matches.
+    ArrivalSettlingMonitor arrival_monitor_;
+    ArrivalTimeoutMonitor timeout_monitor_;
 };

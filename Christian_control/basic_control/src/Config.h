@@ -107,6 +107,11 @@ namespace config
     inline constexpr double kProfileMaxSpeedMps = 0.025;
     inline constexpr double kProfileMaxAccelerationMps2 = 0.05;
     inline constexpr double kProfileMaxJerkMps3 = 0.25;
+    // Dwell held at each reached target before the queue advances, s. Also
+    // reused as the non-arrival timeout: if the arm is parked at a target and
+    // has not arrived within this long, the run reports "target NOT reached"
+    // and keeps holding (Controller.cpp / Runner.cpp). Shortening this also
+    // shortens that timeout.
     inline constexpr double kTargetHoldS = 2.0;
 
     // DLS damping λ (ReactiveLaw.h). Larger = slower but better conditioned
@@ -252,6 +257,13 @@ namespace config
     // comes within this distance of a new target, m. Informational only.
     // 1 mm is tight — raise toward 5 mm if the notice comes late or never.
     inline constexpr double kArrivalToleranceM = 0.001;
+
+    // Arrival settling debounce: the arrival notice fires only after the
+    // end-effector holds within kArrivalToleranceM continuously for this long,
+    // s. Sized above the ~144 ms measured closed-loop response lag
+    // (whole-path-validation.md) so a debounced arrival confirms the physical
+    // arm settled, not just the command. Non-positive disables the debounce.
+    inline constexpr double kArrivalDwellS = 0.15;
     inline constexpr double kArrivalOrientationToleranceRad = 0.001;
 
     // Loop log, written DURING the run by a writer thread (Hardware.h).
