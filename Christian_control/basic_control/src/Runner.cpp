@@ -108,6 +108,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     bool faults_observed = false; // live fault seen at any point (taints exit)
     LoopLogSample sample; // reused every cycle
     long cycle = 0;
+    int joint_limit_warning_joint = -1;
     bool joint_fault_was_latched = false;
     CycleCounters counters;
     FeedbackFreshnessMonitor freshness_monitor;
@@ -296,6 +297,22 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 prev_joint_banks = sample.fault_bank;
             }
 
+            // Apply held the exact last safe command for every joint. Send
+            // that holding frame above, record its reply, then stop before
+            // any outward warning-crossing setpoint can reach the robot.
+            if (actuation_status.joint_limit_warning_joint)
+            {
+                joint_limit_warning_joint = *actuation_status.joint_limit_warning_joint;
+                reason = LoopStop::kJointLimitWarning;
+                for (const std::uint32_t bank : sample.fault_bank)
+                    if (bank != 0)
+                        faults_observed = true;
+                if ((sample.base_fault_bank & ~kJointFaultBit) != 0)
+                    faults_observed = true;
+                log.push(sample);
+                break;
+            }
+
             // Stop policy: the following-error, arm-state and communication
             // exits are unconditional; fault stops obey config::kStopOnFault
             // (compile-time only — F2). With fault-stop disabled (the
@@ -388,7 +405,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     // loop. Do the same here (with RAII retry still retained) so any Kortex
     // sub-error is visible and the base gets its documented settling time.
     servoing_guard.Restore(std::cout);
-    PrintStopReport(reason, sample, cycle, following_error_limit_deg);
+    PrintStopReport(reason, sample, cycle, following_error_limit_deg,
+                    joint_limit_warning_joint);
     std::cout << "cycle overruns: " << counters.overrun_total << " of " << cycle
         << " cycles (dt > " << config::kOverrunFactor << " x nominal)\n";
     if (joint_fault_was_latched)

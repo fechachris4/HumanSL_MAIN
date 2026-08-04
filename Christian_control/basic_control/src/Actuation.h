@@ -47,10 +47,14 @@ public:
     // lead bound was active. A final rate envelope can defer lead recovery
     // after discontinuous feedback, so this flag may be true even when the
     // written setpoint stays at the requested value. With the setpoints
-    // themselves they give requested-vs-sent per joint.
+    // themselves they give requested-vs-sent per joint. If a bounded joint
+    // would move farther outward past its configured warning threshold,
+    // `joint_limit_warning_joint` names it and every setpoint holds the
+    // prior command for the Runner to transmit and stop on.
     struct ApplyStatus {
         JointVector requested_deg{};
         std::array<bool, 7> lead_limited{};
+        std::optional<int> joint_limit_warning_joint;
     };
 
     explicit PositionIntegration(double command_lead_limit_deg =
@@ -68,7 +72,9 @@ public:
     // then bounds its lead over the wrapped measurement when configured. A
     // final per-cycle rate envelope always wins: after discontinuous feedback
     // lead recovery may temporarily remain beyond the configured lead bound,
-    // leaving the existing following-error guard as the backstop. A direct
+    // leaving the existing following-error guard as the backstop. Before any
+    // state commits, a bounded joint moving farther outward past its firmware
+    // warning threshold holds the complete command frame. A direct
     // non-positive or non-finite dt is treated as zero for every result.
     // setpoint_velocity_deg_s reports the applied step after both constraints,
     // not the requested qdot.

@@ -51,9 +51,12 @@ it buys is that the arm can never run with a degenerate empty band: joints
 2, 4, and 6 are bounded, and a 0/0 threshold band faults outward motion.
 
 Firmware `JOINT_LIMIT` is the actual joint-position enforcement; the
-controller has no separate client-side joint-position clamp. Its velocity
-clip, spherical input reach screen, and following-error stop are separate
-protections. The written warnings are j2's established ±130, j4 ±145
+controller has no separate client-side joint-position clamp. Instead, its
+software warning guard holds the last safe full command frame and stops
+before a bounded joint moves farther outward past the warning, while still
+allowing inward recovery. The velocity clip, spherical input reach screen,
+and following-error stop are separate protections. The written warnings are
+j2's established ±130, j4 ±145
 (inside its documented ±147.8 range), and j6 ±118 (inside ±120.3). The
 errors ±140 / ±150 / ±123 lie outside the documented respective
 ±128.9 / ±147.8 / ±120.3 ranges.

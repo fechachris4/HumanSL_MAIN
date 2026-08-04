@@ -94,14 +94,17 @@ q_command_rad_ = state.q_rad;
   read; calling Apply first would integrate from zero — see above. This is
   the sharpest cliff in the file.
 
-## `Apply` (Actuation.cpp:31-90) — the per-cycle integration step
+## `Apply` (Actuation.cpp:31-124) — the per-cycle integration step
 
 Signature (Actuation.h:76-79): takes the clamped q̇ (rad/s), the measured
 state, dt, and *writes into* two caller-owned `JointVector`s —
 `setpoints_deg` (what gets sent) and `setpoint_velocity_deg_s` (what the
 log records). Returns an `ApplyStatus` (Actuation.h:45-54): the
 unconstrained "requested" setpoint per joint plus a `lead_limited` flag —
-the requested-vs-sent half of the run record.
+the requested-vs-sent half of the run record. It also names a bounded joint
+whose final command would move farther outward past its warning threshold;
+in that case it holds the complete prior command frame for the Runner to
+send once and stop on.
 
 Before the loop, direct non-positive or non-finite dt is mapped to zero; the
 normal Runner steady-clock path supplies a positive dt. Per joint (the loop
@@ -136,18 +139,26 @@ at 42-88):
   `previous ± abs(qdot_clamped * dt)`. It wins when a discontinuous feedback
   sample would otherwise demand a larger jump, so the sent command may stay
   more than 1° from measurement until later cycles recover the lead.
-- **Lines 81-87** — the logged velocity is derived from what was *actually
+- **Lines 82-108** — before committing candidates, every bounded joint with
+  a non-zero warning is checked in signed degrees. `std::remainder` maps
+  Kortex raw 355° to −5° and maps the candidate delta to its nearest turn,
+  so a representation wrap cannot resemble a position-limit crossing. A
+  candidate only trips when it is beyond ±warning *and* still moves farther
+  outward; a joint already beyond warning may move inward. On a trip,
+  **all** setpoints retain their previous command and all applied velocities
+  are zero; no persistent command state is advanced.
+- **Lines 111-118** — the logged velocity is derived from what was *actually
   applied* after both constraints: `(new − previous)/effective_dt`. Invalid
   direct dt is zero, so it reports an exact hold rather than dividing or
   hiding movement.
-- **Line 87** — the setpoint in degrees, still continuous; wrapping to
+- **Line 118** — the setpoint in degrees, still continuous; wrapping to
   [0,360) happens later in `CyclicSession::Send`.
 
-**FLAG `Actuation.cpp:31-90` | hides-work** — "Apply a velocity" actually
-performs five jobs per joint: integration, turn-alignment of the feedback,
-lead projection, final rate limiting, and derivation of the logged velocity.
-`req_j - cmd_j` therefore shows the combined effect of the two command
-constraints, not only lead recovery.
+**FLAG `Actuation.cpp:31-124` | hides-work** — "Apply a velocity" actually
+performs six jobs per joint: integration, turn-alignment of the feedback,
+lead projection, final rate limiting, joint-warning frame hold, and
+derivation of the logged velocity. `req_j - cmd_j` therefore shows the
+combined effect of the command constraints, not only lead recovery.
 
 ## The private state (Actuation.h:80-84)
 

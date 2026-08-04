@@ -38,11 +38,12 @@ the top would do.
 An `enum class` is a strongly-typed set of named constants — unlike a plain
 `enum`, its values do not implicitly convert to int and must be written
 `LoopStop::kUserStop`, so you cannot accidentally compare it against the
-wrong enum. Eight reasons a loop ends; the comment defines each. Only
+wrong enum. Nine reasons a loop ends; the comment defines each. Only
 `kUserStop` is success. `kFollowingError` = the arm stopped following the
 integrated command; `kLeftLowLevel` = the base dropped out of low-level
-servoing on its own; `kNonFiniteCommand` / `kOverrun` are the
-consecutive-cycle counter stops.
+servoing on its own; `kJointLimitWarning` = the software held the complete
+last-safe command frame before an outward warning crossing; and
+`kNonFiniteCommand` / `kOverrun` are the consecutive-cycle counter stops.
 
 ### Lines 56–69 — `struct LoopResult`
 What `RunControlLoop` returns to Main. `faults_observed` is the taint flag:
@@ -197,7 +198,7 @@ compiles against the function-pointer parameter.
 
 ### Lines 193–207 — `StopReasonName` (Main.cpp:411)
 The enum→token switch for the CSV exit trailer. No `default:` case — on
-purpose: with all eight enumerators handled, a newly added `LoopStop` value
+purpose: with all nine enumerators handled, a newly added `LoopStop` value
 makes the compiler warn about the switch, pointing you here. The trailing
 `return "unknown"` silences the "control reaches end" warning.
 
@@ -205,7 +206,7 @@ makes the compiler warn about the switch, pointing you here. The trailing
 One human-readable explanation per stop reason, printed once, after the
 loop:
 
-- **214–263** — the per-reason headline. The `kFollowingError` case
+- **214–269** — the per-reason headline. The `kFollowingError` case
   (221–239) re-scans the final sample to find and name the WORST joint and
   its gap — the single most useful line in a bad run's output.
 - **265–267** — desired vs current end-effector position, always printed.

@@ -17,8 +17,8 @@
 // Per cycle: dt (measured, clamped; nominal on cycle 0) -> RobotState from
 // the previous exchange -> PoseTargetSource::Get ->
 // TrackingController::DesiredVelocity -> per-joint clamp to
-// ±qdot_limit_deg_s -> PositionIntegration::Apply (including the command-lead bound)
-// -> CyclicSession::Send -> log sample -> edge-triggered fault prints ->
+// ±qdot_limit_deg_s -> PositionIntegration::Apply (command lead plus the
+// joint-warning hold) -> CyclicSession::Send -> log sample -> edge-triggered fault prints ->
 // ClassifyStop -> feedback-freshness counters (RECORDED, never a stop) ->
 // the counter stops -> sleep_until grid.
 //

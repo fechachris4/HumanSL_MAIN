@@ -170,8 +170,10 @@ casually.
 ### Lines 130–142 — JOINT_LIMIT thresholds
 The firmware-enforced joint-position bands, re-applied on EVERY connection
 because SDK writes do not survive a power cycle. There is no separate
-client-side joint-position clamp; the velocity clip, reach screen, and
-following-error stop are distinct protections.
+client-side joint-position clamp: the software warning guard instead holds
+the full last-safe frame and stops before an outward warning crossing, while
+allowing inward recovery. The velocity clip, reach screen, and following-
+error stop are distinct protections.
 **FLAG edit-hazard + hides-work (lines 141–142):** the arrays encode three
 things in one place: (a) magnitude in degrees, sign applied per HIGH/LOW by
 `EnsureJointLimits`; (b) **0 means "leave that joint alone"** — a sentinel,

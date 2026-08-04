@@ -226,19 +226,22 @@ rules above apply):
   enforcement. At startup the controller owns these thresholds: on every
   connection it re-applies as needed and verifies the bounded joints 2/4/6;
   continuous joints 1/3/5/7 remain unset. There is no separate client-side
-  joint-position clamp. The controller's velocity clip, spherical input
-  reach screen, and following-error stop are separate protections, not
-  joint-position enforcement.
+  joint-position *clamp*: before sending, the software stops and holds the
+  last safe seven-joint frame when a bounded joint would move farther
+  outward past its warning threshold (while allowing inward recovery).
+  The controller's velocity clip, spherical input reach screen, and
+  following-error stop are separate protections, not joint-position
+  enforcement.
 - **A live fault does NOT currently stop the run.** `kStopOnFault` is
   `false` in `Config.h` — the 2026-07-20 fault-ignoring experiment, still
   switched on. Faults are decoded, printed on their edges and logged, but
   the loop keeps commanding. The run prints a `FAULT-STOP DISABLED` warning
   at takeover for exactly this reason. **ATTENDED USE ONLY: you are the
   stop.** Set `kStopOnFault = true` to restore the fault stop.
-- What still ends the run unconditionally: a following error above
-  `kFollowingErrorLimitDeg` (3°, checked before the fault bits so the
-  experiment policy cannot mask it), loss of low-level servoing, and
-  exchange failure. On any of these the loop stops streaming (the position
-  servo holds the last setpoint) and restores SINGLE_LEVEL servoing —
-  guarded, with a warning if it fails. If you see such a warning, check the
-  arm (web dashboard) before running anything else.
+- What still ends the run unconditionally: the software joint-limit warning
+  guard, a following error above `kFollowingErrorLimitDeg` (3°, checked
+  before the fault bits so the experiment policy cannot mask it), loss of
+  low-level servoing, and exchange failure. On any of these the loop stops
+  streaming (the position servo holds the last setpoint) and restores
+  SINGLE_LEVEL servoing — guarded, with a warning if it fails. If you see
+  such a warning, check the arm (web dashboard) before running anything else.

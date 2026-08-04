@@ -63,6 +63,8 @@ int main()
           "joint-limit warning contract configures bounded joints 2, 4, and 6");
     Check(config::kJointLimitErrorDeg == JointVector{0, 140, 0, 150, 0, 123, 0},
           "joint-limit error contract configures bounded joints 2, 4, and 6");
+    Check(StopReasonName(LoopStop::kJointLimitWarning) == "joint_limit_warning",
+          "joint-limit warning has a distinct CSV exit token");
 
     Check(!ClassifyStop(CleanSample(), limit, reason), "clean sample does not stop");
 

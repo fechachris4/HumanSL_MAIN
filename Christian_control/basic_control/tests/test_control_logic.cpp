@@ -299,6 +299,130 @@ namespace
               "wrapped feedback reports the final applied velocity");
     }
 
+    void TestJointLimitWarningGuard()
+    {
+        constexpr double kDegToRad = M_PI / 180.0;
+        constexpr double kDtS = 0.1;
+        constexpr int kJoint1 = 0;
+        constexpr int kJoint4 = 3;
+        constexpr int kJoint6 = 5;
+
+        const auto state_at_deg = [](int joint, double deg)
+        {
+            RobotState state;
+            state.q_rad.setZero();
+            state.qdot_rad_s.setZero();
+            state.q_rad[joint] = deg * kDegToRad;
+            return state;
+        };
+        const auto qdot_deg_s = [](int joint, double deg_s)
+        {
+            Eigen::Matrix<double, 7, 1> qdot =
+                Eigen::Matrix<double, 7, 1>::Zero();
+            qdot[joint] = deg_s * kDegToRad;
+            return qdot;
+        };
+
+        // A high-side warning crossing on bounded joint 6 blocks the whole
+        // seven-joint command frame before it can be sent.
+        RobotState high_seed = state_at_deg(kJoint6, 117.0);
+        high_seed.q_rad[kJoint1] = 10.0 * kDegToRad;
+        PositionIntegration high_guard;
+        high_guard.Prepare(high_seed);
+        Eigen::Matrix<double, 7, 1> high_qdot = qdot_deg_s(kJoint6, 20.0);
+        high_qdot[kJoint1] = 10.0 * kDegToRad;
+        JointVector setpoints{};
+        JointVector velocity{};
+        const auto high_status =
+            high_guard.Apply(high_qdot, high_seed, kDtS, setpoints, velocity);
+        Check(high_status.joint_limit_warning_joint == kJoint6,
+              "high warning crossing identifies the bounded joint for the stop");
+        Check(std::abs(setpoints[kJoint6] - 117.0) < 1e-12,
+              "high warning crossing holds the bounded joint's last safe command");
+        Check(std::abs(setpoints[kJoint1] - 10.0) < 1e-12,
+              "high warning crossing holds every other joint in the frame");
+        for (double v : velocity)
+            Check(v == 0.0, "high warning crossing reports zero applied velocity");
+
+        // The symmetric low-side crossing uses Kortex's raw 215 deg form of
+        // signed -145 deg for joint 4 and must be blocked too.
+        const RobotState low_seed = state_at_deg(kJoint4, 215.0);
+        PositionIntegration low_guard;
+        low_guard.Prepare(low_seed);
+        const auto low_status = low_guard.Apply(qdot_deg_s(kJoint4, -20.0), low_seed,
+                                                kDtS, setpoints, velocity);
+        Check(low_status.joint_limit_warning_joint == kJoint4,
+              "low warning crossing identifies the bounded joint for the stop");
+        Check(std::abs(setpoints[kJoint4] - 215.0) < 1e-12,
+              "low warning crossing holds a raw-wrapped bounded command");
+        Check(velocity[kJoint4] == 0.0,
+              "low warning crossing reports zero bounded-joint velocity");
+
+        // Motion fully inside a bounded joint's warning band remains live.
+        const RobotState inside_seed = state_at_deg(kJoint6, 116.0);
+        PositionIntegration inside_guard;
+        inside_guard.Prepare(inside_seed);
+        const auto inside_status = inside_guard.Apply(qdot_deg_s(kJoint6, 10.0),
+                                                      inside_seed, kDtS,
+                                                      setpoints, velocity);
+        Check(!inside_status.joint_limit_warning_joint,
+              "inside-warning motion does not request a joint-limit stop");
+        Check(std::abs(setpoints[kJoint6] - 117.0) < 1e-12,
+              "inside-warning motion remains allowed");
+
+        // Joint 4's raw 355 deg is signed -5 deg. A positive step across
+        // the 360-degree representation boundary must not look like a
+        // positive-limit crossing.
+        const RobotState wrap_seed = state_at_deg(kJoint4, 355.0);
+        PositionIntegration wrap_guard;
+        wrap_guard.Prepare(wrap_seed);
+        const auto wrap_status = wrap_guard.Apply(qdot_deg_s(kJoint4, 60.0),
+                                                  wrap_seed, kDtS,
+                                                  setpoints, velocity);
+        Check(!wrap_status.joint_limit_warning_joint,
+              "raw wrap does not request a joint-limit stop");
+        Check(std::abs(setpoints[kJoint4] - 361.0) < 1e-12,
+              "raw 355-degree bounded feedback is normalized before warning checks");
+
+        // Continuous joints have a zero warning sentinel and remain free to
+        // cross their angular representation boundary.
+        const RobotState continuous_seed = state_at_deg(kJoint1, 179.0);
+        PositionIntegration continuous_guard;
+        continuous_guard.Prepare(continuous_seed);
+        const auto continuous_status =
+            continuous_guard.Apply(qdot_deg_s(kJoint1, 20.0), continuous_seed, kDtS,
+                                   setpoints, velocity);
+        Check(!continuous_status.joint_limit_warning_joint,
+              "continuous joints do not request a joint-limit stop");
+        Check(std::abs(setpoints[kJoint1] - 181.0) < 1e-12,
+              "continuous joints are excluded from the position warning guard");
+
+        // The reproduced failure mode: joint 6 is already beyond warning at
+        // 123 deg, so another outward proposal must still be blocked.
+        const RobotState beyond_warning_seed = state_at_deg(kJoint6, 123.0);
+        PositionIntegration beyond_warning_guard;
+        beyond_warning_guard.Prepare(beyond_warning_seed);
+        const auto beyond_warning_status = beyond_warning_guard.Apply(
+            qdot_deg_s(kJoint6, 20.0), beyond_warning_seed, kDtS,
+            setpoints, velocity);
+        Check(beyond_warning_status.joint_limit_warning_joint == kJoint6,
+              "outward motion beyond warning requests the joint-limit stop");
+        Check(std::abs(setpoints[kJoint6] - 123.0) < 1e-12,
+              "outward motion beyond warning holds the last safe command");
+
+        // A joint that starts beyond warning may still move back inward.
+        const RobotState recovery_seed = state_at_deg(kJoint6, 123.0);
+        PositionIntegration recovery_guard;
+        recovery_guard.Prepare(recovery_seed);
+        const auto recovery_status =
+            recovery_guard.Apply(qdot_deg_s(kJoint6, -20.0), recovery_seed, kDtS,
+                                 setpoints, velocity);
+        Check(!recovery_status.joint_limit_warning_joint,
+              "inward recovery does not request a joint-limit stop");
+        Check(std::abs(setpoints[kJoint6] - 121.0) < 1e-12,
+              "inward recovery remains allowed beyond the warning threshold");
+    }
+
 } // namespace
 
 int main()
@@ -307,6 +431,7 @@ int main()
     TestClampedCycleDt();
     TestInvalidNominalDtHoldsPositionIntegration();
     TestPositionIntegration();
+    TestJointLimitWarningGuard();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

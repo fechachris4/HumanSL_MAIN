@@ -38,7 +38,9 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
     // pure seam: direct invalid input must hold rather than reverse or poison
     // the persistent command. Use this one effective value everywhere below.
     const double effective_dt_s = std::isfinite(dt_s) && dt_s > 0.0 ? dt_s : 0.0;
-    // Do the same small calculation independently for joints 1 through 7.
+    // Calculate all candidates before committing any of them: one bounded
+    // joint crossing its firmware warning must hold the whole command frame.
+    Eigen::Matrix<double, 7, 1> next_q_command_rad;
     for (int i = 0; i < NUM_JOINTS; ++i)
     {
         // `previous` is the last position we asked this joint to hold.
@@ -74,10 +76,44 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
         // than this cycle's already-clamped integration step, so recovery of
         // the configured lead may take later cycles.
         const double max_step_rad = std::abs(requested_step_rad);
-        q_command_rad_[i] = std::clamp(lead_bounded_candidate,
-                                       previous - max_step_rad,
-                                       previous + max_step_rad);
+        next_q_command_rad[i] = std::clamp(lead_bounded_candidate,
+                                           previous - max_step_rad,
+                                           previous + max_step_rad);
+    }
 
+    for (int i = 0; i < NUM_JOINTS; ++i)
+    {
+        const double warning_deg = config::kJointLimitWarnDeg[i];
+        if (warning_deg <= 0.0)
+            continue; // continuous joint: no bounded position warning
+
+        // Kortex reports bounded positions in [0, 360), while the firmware
+        // thresholds are signed. Keep the candidate on the nearest turn to
+        // the previous sent command, so 355 -> 356 is -5 -> -4, not a jump.
+        const double previous_signed_deg =
+            std::remainder(q_command_rad_[i] * kRadToDeg, 360.0);
+        const double step_signed_deg = std::remainder(
+            (next_q_command_rad[i] - q_command_rad_[i]) * kRadToDeg, 360.0);
+        const double candidate_signed_deg = previous_signed_deg + step_signed_deg;
+        const bool farther_outward =
+            (candidate_signed_deg > warning_deg && step_signed_deg > 0.0) ||
+            (candidate_signed_deg < -warning_deg && step_signed_deg < 0.0);
+        if (!farther_outward)
+            continue;
+
+        status.joint_limit_warning_joint = i;
+        for (int j = 0; j < NUM_JOINTS; ++j)
+        {
+            setpoints_deg[j] = q_command_rad_[j] * kRadToDeg;
+            setpoint_velocity_deg_s[j] = 0.0;
+        }
+        return status;
+    }
+
+    for (int i = 0; i < NUM_JOINTS; ++i)
+    {
+        const double previous = q_command_rad_[i];
+        q_command_rad_[i] = next_q_command_rad[i];
         // Derive log velocity from the command actually applied above, after
         // both the lead candidate and the final rate envelope.
         setpoint_velocity_deg_s[i] =

@@ -35,9 +35,10 @@ namespace k_api = Kinova::Api;
 // stopped following the integrated command — fault, stall, or limit).
 // kInternalError: an exception that is neither a Kortex error nor a
 // runtime_error escaped the cycle — caught by the loop's catch-all so the
-// servoing restore still runs. The last two are the decision-12
-// consecutive-cycle counters: non-finite controller output (held, never
-// integrated) and cycle overruns.
+// servoing restore still runs. kJointLimitWarning holds the last safe full
+// command frame before a bounded joint's outward warning crossing can be
+// transmitted. The last two are the decision-12 consecutive-cycle counters:
+// non-finite controller output (held, never integrated) and cycle overruns.
 enum class LoopStop {
     kUserStop,
     kRobotFault,
@@ -45,6 +46,7 @@ enum class LoopStop {
     kLeftLowLevel,
     kCommunication,
     kInternalError,
+    kJointLimitWarning,
     kNonFiniteCommand,
     kOverrun
 };
@@ -150,7 +152,8 @@ inline constexpr int kMaxFaultChangePrints = 20;
 std::string StopReasonName(LoopStop reason);
 
 void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
-                     double following_error_limit_deg);
+                     double following_error_limit_deg,
+                     int joint_limit_warning_joint);
 
 void PrintFaultChange(const LoopLogSample& s, long cycle,
                       const std::array<std::uint32_t, 7>& prev_joint_banks,

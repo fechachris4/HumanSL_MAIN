@@ -187,6 +187,7 @@ std::string StopReasonName(LoopStop reason)
     case LoopStop::kLeftLowLevel:   return "left_low_level_servoing";
     case LoopStop::kCommunication:  return "communication";
     case LoopStop::kInternalError:  return "internal_error";
+    case LoopStop::kJointLimitWarning: return "joint_limit_warning";
     case LoopStop::kNonFiniteCommand: return "nonfinite_command";
     case LoopStop::kOverrun:        return "overrun";
     }
@@ -194,7 +195,8 @@ std::string StopReasonName(LoopStop reason)
 }
 
 void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
-                     double following_error_limit_deg)
+                     double following_error_limit_deg,
+                     int joint_limit_warning_joint)
 {
     switch (reason)
     {
@@ -238,6 +240,12 @@ void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
     case LoopStop::kInternalError:
         std::cout << "loop stopped: internal error at t=" << s.t_s << " s (cycle "
             << cycle << ")\n";
+        break;
+    case LoopStop::kJointLimitWarning:
+        std::cout << "loop stopped: joint-limit warning at t=" << s.t_s
+            << " s (cycle " << cycle << "): held the last safe command before joint "
+            << (joint_limit_warning_joint + 1)
+            << " crossed its outward warning threshold\n";
         break;
     case LoopStop::kNonFiniteCommand:
         std::cout << "loop stopped: non-finite controller output (consecutive-cycle "

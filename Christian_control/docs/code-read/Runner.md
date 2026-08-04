@@ -296,8 +296,9 @@ edge-triggered runs blocking terminal I/O at 500 Hz and will cause overruns.
   *mutates* `commanded_deg` in place; nothing at the call site says "output
   parameter" except the Actuation.h signature. The returned `ApplyStatus`
   carries the pre-constraint requested setpoint and whether the lead
-  projection was active; `req_j - cmd_j` records the combined lead/rate
-  constraint effect for the log.
+  projection was active. If its joint-warning field is set, the two output
+  arrays instead hold the prior full command frame and zero velocities;
+  `req_j - cmd_j` preserves the blocked proposal for the log.
 
 ### Lines 259–265 — the one exchange
 `cyclic.Send(commanded_deg)` writes the setpoints into the command frame,
@@ -326,7 +327,13 @@ decoded change (once per change, not per cycle) — capped at
 500 Hz; the CSV still has every cycle's banks. Visibility only — stopping is
 `ClassifyStop`'s decision, next.
 
-### Lines 299–315 — the stop decision
+### Lines 299–315 — the joint-warning stop and stop decision
+Before `ClassifyStop`, a set joint-warning field takes priority: the Runner
+has sent the unchanged last-safe full frame, logged the reply, assigns
+`kJointLimitWarning`, and stops. This guard is independent of
+`kStopOnFault`, so the fault-ignoring experiment cannot send a newly
+outward-crossing warning command.
+
 `ClassifyStop` (Safety.md) checks, in priority order: following error,
 actuator fault, base fault (minus the JOINT_FAULT summary), left low-level
 servoing. If it fires:
