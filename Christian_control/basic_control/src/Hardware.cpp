@@ -135,12 +135,14 @@ bool Connect::EnsureJointLimits(std::ostream& out)
 
             const auto verified =
                 device_config_->GetSafetyConfiguration(handle, id);
-            if (verified.error_threshold() != want_error)
+            if (verified.warning_threshold() != want_warn ||
+                verified.error_threshold() != want_error)
             {
                 out << "robot NOT ready: joint " << id
-                    << " did not accept its JOINT_LIMIT threshold (read back "
-                    << verified.error_threshold() << ", wanted " << want_error
-                    << ")\n";
+                    << " did not accept its JOINT_LIMIT thresholds (read back warn="
+                    << verified.warning_threshold() << " error="
+                    << verified.error_threshold() << ", wanted warn=" << want_warn
+                    << " error=" << want_error << ")\n";
                 return false;
             }
         }

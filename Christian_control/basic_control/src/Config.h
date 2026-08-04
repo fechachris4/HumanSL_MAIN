@@ -73,10 +73,10 @@ namespace config
     // -3 cm in -z from the arm's 2026-08-04 01:5x pose (EE 0.3834
     // -0.4051 0.7525, joints 359.32 61.54 120.07 69.83 338.16 11.80
     // 335.94): probe_direction at THAT configuration shows -z drives
-    // joint 6 INWARD (-7.46 deg/s per 0.1 m/s; ~-2 deg over this move),
-    // safe while j6's JOINT_LIMIT band cannot be read or restored. j6
-    // sits at +11.8 deg with only ~12 deg of inward window before zero,
-    // so keep any move here SMALL and re-probe after the arm moves.
+    // joint 6 inward (-7.46 deg/s per 0.1 m/s; about -2 deg over this
+    // move). This is a small first move only; the startup gate below
+    // restores and reads back the bounded-joint firmware thresholds, but
+    // it does not prove collision clearance for any target.
     inline constexpr std::array<double, 3> kFixedTargetM = {0.3834, -0.4051, 0.7225};
     // Retained for the existing CSV key. It is a compile-time invariant, not
     // an operator-selectable orientation mode.
@@ -130,18 +130,17 @@ namespace config
     inline constexpr JointVector kQdotLimitDegS = kModelVelocityLimitsDegS;
 
     // JOINT_LIMIT thresholds re-applied on EVERY connection, because SDK
-    // writes do not survive a power cycle (compiled-config.md).
+    // writes do not survive a power cycle (compiled-config.md). Before
+    // takeover, EnsureJointLimits reads each HIGH/LOW setting, corrects it
+    // if needed, then requires both warning and error values on read-back.
     // Magnitudes in deg, sign applied per HIGH/LOW; 0 = leave that joint
     // alone. These sit just outside the rated range, so software stays
     // primary and firmware is the backstop.
-    // Joint 6 is set to 0 (leave alone) since 2026-08-04: its config
-    // service is wedged, so the gate's RPCs to it can only time out —
-    // ~15-20 s of dead wait per run buying nothing. Its band therefore
-    // stays whatever it is (presumed degenerate 0/0): ONLY j6-INWARD
-    // MOVES ARE SAFE until the service recovers; run probe_direction
-    // before choosing targets. Restore 118/123 here when j6 answers again.
-    inline constexpr JointVector kJointLimitWarnDeg = {0, 0, 0, 145.0, 0, 0, 0};
-    inline constexpr JointVector kJointLimitErrorDeg = {0, 0, 0, 150.0, 0, 0, 0};
+    // The controller owns only the bounded joint-4 and joint-6 backstops.
+    // Continuous joints 1/3/5/7 have no position thresholds here, and
+    // joint 2 keeps its dashboard-managed values.
+    inline constexpr JointVector kJointLimitWarnDeg = {0, 0, 0, 145.0, 0, 118.0, 0};
+    inline constexpr JointVector kJointLimitErrorDeg = {0, 0, 0, 150.0, 0, 123.0, 0};
 
     // false = A LIVE FAULT DOES NOT END THE RUN. Faults are still decoded,
     // printed and logged, and they taint the exit code, but the loop keeps
@@ -155,18 +154,11 @@ namespace config
     // recorded with one enabled is identifiable afterwards. Turn them back
     // off the moment the hardware problem they work around is fixed.
 
-    // true = the startup gates ACCEPT an actuator whose configuration
-    // service does not answer, instead of refusing the takeover. The
-    // joints that do answer are still verified and still get their limits
-    // restored. CONSEQUENCE: the unreachable joint is commanded with its
-    // control mode UNVERIFIED and its JOINT_LIMIT band unknown — if it is
-    // not in POSITION mode, what it does with a position setpoint is
-    // undefined. (2026-08-04: joint 6's config service stopped answering
-    // while it still reported position normally.)
-    // Back to false 2026-08-04 (later the same night): joint 6 is now
-    // excluded from the limits gate via its zero config entry, so nothing
-    // in the startup path probes the wedged service any more and the
-    // override has nothing to excuse.
+    // true = the startup gate accepts an actuator whose configured-limit
+    // service does not answer, instead of refusing takeover. The joints
+    // that do answer are still read, corrected, and verified. false keeps
+    // the required contract: every configured joint's HIGH and LOW warning
+    // and error thresholds must be read back before takeover.
     inline constexpr bool kAllowUnverifiedActuators = false;
 
     // true = skip BOTH startup gates for every joint. Nothing is verified
