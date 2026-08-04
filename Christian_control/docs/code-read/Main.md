@@ -377,7 +377,7 @@ then the 500 Hz cycle of feedback → reference source → controller →
 actuation → command, until `g_stop` or a stop condition. Everything
 constructed above is passed in by reference/pointer; main() owns, the
 runner uses. The comment's promise — servoing mode restored on *every*
-exit path (T2/D3) — is the runner's contract, which is why main() never
+exit path (T2/D1) — is the runner's contract, which is why main() never
 touches servoing modes itself. Returns a `LoopResult` (stop reason, time,
 cycle count, whether faults were observed).
 
