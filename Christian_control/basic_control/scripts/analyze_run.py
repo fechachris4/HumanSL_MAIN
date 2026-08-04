@@ -24,8 +24,8 @@ Order of business:
 
 Timestamp semantics (hardware/Record.h is the authority): commands take
 effect at t_send_s; the FK position p_* in row i comes from the feedback
-received at row i-1's t_recv_s. Old logs (no "log_format = 2" preamble
-line) fall back to time_s for both signals, with a warning.
+received at row i-1's t_recv_s. Logs without both timestamp columns fall
+back to time_s for both signals, with a warning.
 """
 
 import argparse
@@ -130,16 +130,16 @@ def integrity_report(cols):
     return frac
 
 
-def measurement_times(cols, new_format):
+def measurement_times(cols, has_exchange_timestamps):
     """When each row's p_* position was actually sampled.
 
-    New format: the FK position in row i is computed from the feedback
-    received in row i-1, so its sample time is row i-1's t_recv_s (row 0's
-    feedback predates the loop; its cycle-start stamp is the best available).
-    Old format: only time_s exists.
+    Logs with exchange timestamps: the FK position in row i is computed from
+    the feedback received in row i-1, so its sample time is row i-1's
+    t_recv_s (row 0's feedback predates the loop; its cycle-start stamp is
+    the best available). Legacy logs only have time_s.
     """
     t = cols["time_s"]
-    if not new_format:
+    if not has_exchange_timestamps:
         return t
     t_meas = np.empty_like(t)
     t_meas[0] = t[0]
@@ -193,8 +193,8 @@ def main():
     print(f"log: {path}")
     meta = parse_preamble(path)
     cols = load(path)
-    new_format = meta.get("log_format") == "2" and "t_send_s" in cols
-    if not new_format:
+    has_timestamps = runlog.has_exchange_timestamps(meta, cols)
+    if not has_timestamps:
         print("NOTE: old log format — no t_send_s/t_recv_s columns; using the "
               "per-cycle time_s stamp for both command and feedback timelines")
 
@@ -207,8 +207,8 @@ def main():
 
     pd = np.column_stack([cols["pd_x"], cols["pd_y"], cols["pd_z"]])
     p = np.column_stack([cols["p_x"], cols["p_y"], cols["p_z"]])
-    t_cmd = cols["t_send_s"] if new_format else cols["time_s"]
-    t_meas = measurement_times(cols, new_format)
+    t_cmd = cols["t_send_s"] if has_timestamps else cols["time_s"]
+    t_meas = measurement_times(cols, has_timestamps)
     median_dt = float(np.median(cols["dt_s"][1:])) if len(cols["dt_s"]) > 1 \
         else float(cols["dt_s"][0])
 

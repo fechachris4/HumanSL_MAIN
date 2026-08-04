@@ -227,6 +227,15 @@ target_include_directories(test_reactive_law PRIVATE
 target_link_libraries(test_reactive_law pthread)
 add_test(NAME reactive_law COMMAND test_reactive_law)
 
+# Python-only regression coverage for offline log-format compatibility. The
+# interpreter is optional so portable C++ test configurations remain usable.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_Interpreter_FOUND)
+    add_test(NAME runlog_compat
+             COMMAND ${Python3_EXECUTABLE}
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runlog_compat.py)
+endif ()
+
 # --- hardware-machine test battery: the bundled Kortex/Pinocchio binaries
 #     are Linux x86-64 ELF, so these link only there. ctest elsewhere runs
 #     the portable suite above. ---

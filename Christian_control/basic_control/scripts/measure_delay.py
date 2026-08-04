@@ -53,15 +53,15 @@ def main():
     print(f"log: {path}")
     meta = parse_preamble(path)
     cols = load(path)
-    new_format = meta.get("log_format") == "2" and "t_send_s" in cols
-    if not new_format:
+    has_timestamps = runlog.has_exchange_timestamps(meta, cols)
+    if not has_timestamps:
         print("NOTE: old log format — using the per-cycle time_s stamp; "
               "delay resolution is limited to one cycle")
 
     pd = np.column_stack([cols["pd_x"], cols["pd_y"], cols["pd_z"]])
     p = np.column_stack([cols["p_x"], cols["p_y"], cols["p_z"]])
-    t_cmd = cols["t_send_s"] if new_format else cols["time_s"]
-    t_meas = measurement_times(cols, new_format)
+    t_cmd = cols["t_send_s"] if has_timestamps else cols["time_s"]
+    t_meas = measurement_times(cols, has_timestamps)
 
     # A clean calibration run has exactly one target change.
     changed = np.any(np.diff(pd, axis=0) != 0.0, axis=1)

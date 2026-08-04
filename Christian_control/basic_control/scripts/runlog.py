@@ -22,3 +22,13 @@ def find_default_csv():
         if csvs:
             return csvs[-1]  # timestamped names sort chronologically
     raise SystemExit(f"no CSVs under {RUNS_DIR}; pass a CSV explicitly")
+
+
+def has_exchange_timestamps(_meta, columns):
+    """Whether a log has both clocks required for timestamp matching.
+
+    The preamble version describes the full schema, but formats 2 through 6
+    all retain these two columns. The analyzers therefore use column presence
+    rather than treating one exact format number as the timing capability.
+    """
+    return "t_send_s" in columns and "t_recv_s" in columns
