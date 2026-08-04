@@ -73,6 +73,13 @@ namespace config
     // program prints at startup. false restores the interactive prompt.
     inline constexpr bool kUseFixedTarget = true;
 
+    // Freshness gate: refuse the run if the compiled fixed target is
+    // farther than this from the measured end-effector position at
+    // startup. The arm can be moved (dashboard jog, physical push) any
+    // time after a build, and the law drives the WHOLE gap at clip speed
+    // (2026-08-04: 37 cm of drift between compile and run).
+    inline constexpr double kMaxFixedTargetDistanceM = 0.15;
+
     // The fixed target, mirroring the simulation's [targets.right] table:
     // position in METERS and orientation as roll/pitch/yaw in RADIANS
     // (R = Rz·Ry·Rx), both in the right-arm base frame.
@@ -82,7 +89,14 @@ namespace config
     // a large rpy change is a large rotation, so compare it against the
     // startup printout first. The default rpy is the Home orientation
     // (pi/2, 0, pi/2), so at Home it commands no rotation.
-    inline constexpr std::array<double, 3> kFixedTargetM = {0.5554, -0.40, 0.3983};
+    // -3 cm in -z from the arm's 2026-08-04 01:5x pose (EE 0.3834
+    // -0.4051 0.7525, joints 359.32 61.54 120.07 69.83 338.16 11.80
+    // 335.94): probe_direction at THAT configuration shows -z drives
+    // joint 6 INWARD (-7.46 deg/s per 0.1 m/s; ~-2 deg over this move),
+    // safe while j6's JOINT_LIMIT band cannot be read or restored. j6
+    // sits at +11.8 deg with only ~12 deg of inward window before zero,
+    // so keep any move here SMALL and re-probe after the arm moves.
+    inline constexpr std::array<double, 3> kFixedTargetM = {0.3834, -0.4051, 0.7225};
     inline constexpr bool kFixedTargetUseRpy = false;
     inline constexpr std::array<double, 3> kFixedTargetRpyRad = {
         1.5707963267948966, 0.0, 1.5707963267948966
@@ -154,7 +168,7 @@ namespace config
     // not in POSITION mode, what it does with a position setpoint is
     // undefined. (2026-08-04: joint 6's config service stopped answering
     // while it still reported position normally.)
-    inline constexpr bool kAllowUnverifiedActuators = true;
+    inline constexpr bool kAllowUnverifiedActuators = true; // 2026-08-04: joint 6 config channel dead, see above
 
     // true = skip BOTH startup gates for every joint. Nothing is verified
     // and, critically, the j4/j6 JOINT_LIMIT thresholds are NEVER

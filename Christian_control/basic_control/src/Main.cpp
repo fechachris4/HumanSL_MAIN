@@ -493,6 +493,42 @@ int main(int argc, char** argv)
             // store, whose pre-takeover content is deliberately discarded.
             std::optional<PoseTarget> fixed_target;
             if (config::kUseFixedTarget) {
+                // Freshness gate on the COMPILED target: the arm can have
+                // been moved (dashboard jog, physical push) any time after
+                // this binary was built, and the controller would otherwise
+                // drive the full gap at clip speed from the first cycle.
+                // 2026-08-04: the arm was jogged 37 cm between compile and
+                // run; only an unrelated failure stopped the takeover.
+                {
+                    Eigen::Matrix<double, 7, 1> q_now_rad;
+                    for (int j = 0; j < 7; ++j)
+                        q_now_rad[j] =
+                            initial.actuators(j).position() * M_PI / 180.0;
+                    KinematicsWorkspace gate_workspace(
+                        controlled_model.dynamics());
+                    const Eigen::Vector3d ee_now =
+                        controlled_model
+                            .RightPoseAndJacobian(q_now_rad, gate_workspace)
+                            .position;
+                    const Eigen::Vector3d target_m(config::kFixedTargetM[0],
+                                                   config::kFixedTargetM[1],
+                                                   config::kFixedTargetM[2]);
+                    const double gap_m = (target_m - ee_now).norm();
+                    if (gap_m > config::kMaxFixedTargetDistanceM) {
+                        std::cout
+                            << "robot NOT ready: the compiled fixed target is "
+                            << gap_m << " m from the CURRENT end-effector "
+                            << "position (limit "
+                            << config::kMaxFixedTargetDistanceM
+                            << " m, kMaxFixedTargetDistanceM).\n"
+                            << "  The arm has likely been moved since this "
+                            << "target was chosen. Recompile with a target "
+                            << "near the pose printed above.\n";
+                        return 1;
+                    }
+                    std::cout << "fixed-target distance gate: PASS ("
+                              << gap_m << " m to travel)\n";
+                }
                 PoseTarget target;
                 target.p_desired = Eigen::Vector3d(config::kFixedTargetM[0],
                                                    config::kFixedTargetM[1],

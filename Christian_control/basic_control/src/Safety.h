@@ -181,18 +181,8 @@ namespace k_api = Kinova::Api;
 class ServoingGuard
 {
 public:
-    // Enters LOW_LEVEL_SERVOING. Throws (Kortex) only if the arm is not in
-    // that mode AFTERWARDS — the RPC reply alone is not the test.
-    //
-    // Why: SetServoingMode can time out with the mode change already
-    // applied (2026-08-04 — the call threw, and a feedback read immediately
-    // after showed ARMSTATE_SERVOING_LOW_LEVEL). Treating the lost reply as
-    // failure both aborted a takeover that had actually succeeded and, worse,
-    // left the guard unconstructed, so its destructor never ran and the arm
-    // was stranded in low-level mode with no stream. `base_cyclic` is how we
-    // ask the arm what mode it is really in.
-    ServoingGuard(k_api::Base::BaseClient* base,
-                  k_api::BaseCyclic::BaseCyclicClient* base_cyclic);
+    // Throws (Kortex) if the mode switch fails.
+    explicit ServoingGuard(k_api::Base::BaseClient* base);
 
     // Guarded restore: the restore is a network call that can fail if the
     // link died — on failure it warns the operator instead of throwing
@@ -207,13 +197,7 @@ public:
     ServoingGuard(const ServoingGuard&) = delete;
     ServoingGuard& operator=(const ServoingGuard&) = delete;
 
-    // The arm's ACTUAL servoing mode, read from cyclic feedback. Returns
-    // nullopt if even the feedback read fails.
-    static std::optional<k_api::Common::ArmState>
-    ObservedArmState(k_api::BaseCyclic::BaseCyclicClient* base_cyclic) noexcept;
-
 private:
     k_api::Base::BaseClient* base_;
-    k_api::BaseCyclic::BaseCyclicClient* base_cyclic_;
     bool restored_ = false;
 };
