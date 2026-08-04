@@ -56,13 +56,12 @@ int main()
     const double limit = 3.0;
     LoopStop reason = LoopStop::kUserStop;
 
-    // The startup limit gate restores only the two bounded-joint backstops
-    // that do not persist across a power cycle. Continuous joints and j2's
-    // dashboard-managed limits remain untouched by this controller.
-    Check(config::kJointLimitWarnDeg == JointVector{0, 0, 0, 145, 0, 118, 0},
-          "joint-limit warning contract configures only j4 and j6");
-    Check(config::kJointLimitErrorDeg == JointVector{0, 0, 0, 150, 0, 123, 0},
-          "joint-limit error contract configures only j4 and j6");
+    // The startup gate owns every bounded joint's power-cycle-volatile
+    // firmware backstop. Continuous joints remain untouched.
+    Check(config::kJointLimitWarnDeg == JointVector{0, 130, 0, 145, 0, 118, 0},
+          "joint-limit warning contract configures bounded joints 2, 4, and 6");
+    Check(config::kJointLimitErrorDeg == JointVector{0, 140, 0, 150, 0, 123, 0},
+          "joint-limit error contract configures bounded joints 2, 4, and 6");
 
     Check(!ClassifyStop(CleanSample(), limit, reason), "clean sample does not stop");
 

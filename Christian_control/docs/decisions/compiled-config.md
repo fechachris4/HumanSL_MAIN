@@ -34,7 +34,7 @@ unchanged.
 ## Configured joint limits do not survive a power cycle
 
 Found 2026-08-03, and the reason `Connect::EnsureJointLimits` re-applies
-the joint 4 / joint 6 `JOINT_LIMIT` thresholds on **every** connection
+the bounded-joint 2 / 4 / 6 `JOINT_LIMIT` thresholds on **every** connection
 rather than once.
 
 - Values written through `DeviceConfig::SetSafetyConfiguration` were
@@ -42,22 +42,20 @@ rather than once.
   later, after a power cycle.
 - Kortex 2.7.0 exposes no save/commit RPC — there is no API call that makes
   the write durable.
-- Joint 2's ±140 / ±130 **does** persist. So the Kinova web dashboard
-  writes through a different path than the SDK does, and setting joints 4
-  and 6 there is the real permanent fix.
+- A later live read found joint 2's HIGH/LOW warning and error thresholds
+  back at 0/0. The earlier persistence observation was stale; joint 2 now
+  receives the same per-connection read/correct/readback treatment.
 
 Re-applying per connection is therefore a stopgap, not the solution. What
 it buys is that the arm can never run with a degenerate empty band: joints
-4 and 6 were found at 0/0, which faulted outward motion, and that is the
-state this gate exists to prevent.
+2, 4, and 6 are bounded, and a 0/0 threshold band faults outward motion.
 
-The written magnitudes (j4 ±145 warn / ±150 error, j6 ±118 / ±123) sit just
-*outside* the rated model range (j4 ±147.8, j6 ±120.3 per Kinova spec), so
-the software limits stay primary and the firmware is a backstop. Nothing
-here widens a limit past rated.
+The written magnitudes are j2 ±130 warn / ±140 error, j4 ±145 / ±150, and
+j6 ±118 / ±123. The software limits stay primary and the firmware is a
+backstop.
 
 Joints 1/3/5/7 are left at 0 — they are continuous, so no position limit
-applies. Joint 2 is left at 0 because it already carries persistent values.
+applies.
 
 ## What stopped being a stop (2026-08-03)
 

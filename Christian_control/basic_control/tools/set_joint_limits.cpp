@@ -1,29 +1,27 @@
 //
-// set_joint_limits — WRITES ROBOT SAFETY CONFIGURATION for joints 4 and 6.
+// set_joint_limits — WRITES ROBOT SAFETY CONFIGURATION for joints 2, 4, and 6.
 //
-// Why this exists (2026-08-03): read_safety_limits showed that on this arm
-// joint 2 carries real JOINT_LIMIT thresholds (+/-140 error, +/-130 warning)
-// while every other actuator is configured 0/0. For the two other BOUNDED
-// joints, 4 and 6, that is a degenerate empty band: the firmware latched
-// JOINT_LIMIT_LOW on joint 4 and JOINT_LIMIT_HIGH on joint 6 on any motion
-// further away from zero, wherever the joint happened to be. Joints
-// 1/3/5/7 are continuous and are deliberately NOT touched.
+// Why this exists: every bounded joint needs a non-degenerate JOINT_LIMIT
+// band. A live read found joint 2's HIGH/LOW warning and error thresholds
+// at 0/0, which faults outward motion; joints 4 and 6 have the same
+// power-cycle-volatile configuration risk. Joints 1/3/5/7 are continuous
+// and are deliberately NOT touched.
 //
 // The values below are a BACKSTOP that sits just OUTSIDE the rated model
 // range, so the software limits stay the primary constraint:
 //
+//   joint 2  warning +/-130.0, error +/-140.0
 //   joint 4  rated +/-147.8 deg (Kinova spec; URDF +/-147.25)
 //            -> warning +/-145.0, error +/-150.0
 //   joint 6  rated +/-120.3 deg (Kinova spec; URDF +/-119.75)
 //            -> warning +/-118.0, error +/-123.0
 //
-// This is deliberately TIGHTER than joint 2's factory-style margin (error
-// ~11 deg beyond rated). Nothing here widens a limit past the joint's rated
-// range; it replaces an empty band with the rated one.
+// The values match Config.h, which the controller re-applies and verifies on
+// every connection. DeviceConfig writes are not durable across a power cycle.
 //
-// The write is persistent in the actuator's configuration. To undo, run
-// with --restore-degenerate (puts 0/0 back), or use the Kinova web
-// dashboard. NO MOTION is commanded by this tool.
+// The write affects the current actuator configuration; it is not durable
+// across a power cycle. To deliberately restore a 0/0 band, run with
+// --restore-degenerate. NO MOTION is commanded by this tool.
 //
 //   ./set_joint_limits --apply
 //   ./set_joint_limits              (dry run: prints current values only)
@@ -90,8 +88,9 @@ int main(int argc, char** argv)
     }
 
     std::vector<LimitSpec> specs = {
-        {4, 145.0, 150.0},
-        {6, 118.0, 123.0},
+        {2, config::kJointLimitWarnDeg[1], config::kJointLimitErrorDeg[1]},
+        {4, config::kJointLimitWarnDeg[3], config::kJointLimitErrorDeg[3]},
+        {6, config::kJointLimitWarnDeg[5], config::kJointLimitErrorDeg[5]},
     };
     if (restore_degenerate)
         for (auto& s : specs)
@@ -103,8 +102,8 @@ int main(int argc, char** argv)
     try
     {
         Connect connection(config::kRightRobotIp);
-        k_api::DeviceConfig::DeviceConfigClient device_config(
-            connection.tcp_router());
+        k_api::DeviceConfig::DeviceConfigClient& device_config =
+            *connection.device_config();
 
         std::cout << std::fixed << std::setprecision(2);
         std::cout << "BEFORE:\n";

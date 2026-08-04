@@ -148,7 +148,7 @@ target_link_options(probe_direction PRIVATE
         -Wl,-z,lazy
 )
 
-# --- set_joint_limits: WRITES the joint 4/6 JOINT_LIMIT safety thresholds
+# --- set_joint_limits: WRITES the joint 2/4/6 JOINT_LIMIT safety thresholds
 #     (degenerate 0/0 -> rated range backstop). No motion. ---
 add_executable(set_joint_limits
         tools/set_joint_limits.cpp

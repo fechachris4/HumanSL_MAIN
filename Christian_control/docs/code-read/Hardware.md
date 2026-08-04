@@ -147,10 +147,9 @@ cycle; a 0/0 band makes the firmware fault any motion away from zero).
   from the Kortex enum. Actuator device ids are 1..7 in joint order.
 - **Lines 97-102** — loop over the seven joints; a joint whose Config.h
   warn *and* error entries are both 0.0 is skipped entirely ("leave
-  alone"). Today that is every joint except joint 4 — joint 6 was zeroed
-  on 2026-08-04 because its config service is wedged and every RPC to it
-  only times out. So in the current configuration this loop does real work
-  for exactly one joint. **FLAG `Hardware.cpp:99-102` | edit-hazard** —
+  alone"). Today that means continuous joints 1/3/5/7; the loop reads,
+  corrects, and verifies all bounded joints 2/4/6. **FLAG
+  `Hardware.cpp:99-102` | edit-hazard** —
   the 0.0/0.0 "skip" sentinel is load-bearing: setting a joint's config
   entries to zero doesn't mean "limit at zero", it means "never touch this
   joint's band". Easy to misread when tuning Config.h.

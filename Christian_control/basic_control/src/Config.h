@@ -136,11 +136,10 @@ namespace config
     // Magnitudes in deg, sign applied per HIGH/LOW; 0 = leave that joint
     // alone. These sit just outside the rated range, so software stays
     // primary and firmware is the backstop.
-    // The controller owns only the bounded joint-4 and joint-6 backstops.
-    // Continuous joints 1/3/5/7 have no position thresholds here, and
-    // joint 2 keeps its dashboard-managed values.
-    inline constexpr JointVector kJointLimitWarnDeg = {0, 0, 0, 145.0, 0, 118.0, 0};
-    inline constexpr JointVector kJointLimitErrorDeg = {0, 0, 0, 150.0, 0, 123.0, 0};
+    // The controller owns every bounded-joint backstop: joints 2, 4, and 6.
+    // Continuous joints 1/3/5/7 have no position thresholds here.
+    inline constexpr JointVector kJointLimitWarnDeg = {0, 130.0, 0, 145.0, 0, 118.0, 0};
+    inline constexpr JointVector kJointLimitErrorDeg = {0, 140.0, 0, 150.0, 0, 123.0, 0};
 
     // false = A LIVE FAULT DOES NOT END THE RUN. Faults are still decoded,
     // printed and logged, and they taint the exit code, but the loop keeps
@@ -162,7 +161,7 @@ namespace config
     inline constexpr bool kAllowUnverifiedActuators = false;
 
     // true = skip BOTH startup gates for every joint. Nothing is verified
-    // and, critically, the j4/j6 JOINT_LIMIT thresholds are NEVER
+    // and, critically, the j2/j4/j6 JOINT_LIMIT thresholds are NEVER
     // re-applied — they revert to a degenerate 0/0 band on each power
     // cycle, and the firmware faults outward motion on a 0/0 band. Prefer
     // kAllowUnverifiedActuators, which keeps both gates working for every

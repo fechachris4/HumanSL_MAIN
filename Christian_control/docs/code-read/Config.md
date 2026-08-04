@@ -174,15 +174,12 @@ writes do not survive a power cycle.
 things in one place: (a) magnitude in degrees, sign applied per HIGH/LOW by
 `EnsureJointLimits`; (b) **0 means "leave that joint alone"** — a sentinel,
 not a limit of zero degrees (an actual 0/0 band is the degenerate state
-that faults all outward motion!); (c) the current values are working around
-live hardware state — only joint 4 (145/150) is restored, and joint 6 is
-deliberately 0 since 2026-08-04 because its config service is wedged and
-every RPC to it times out (~15–20 s of dead wait per run, buying nothing).
-Consequence spelled out in the comment: j6's band stays presumed-degenerate,
-ONLY INWARD j6 MOVES ARE SAFE, run `probe_direction` before choosing
-targets, restore 118/123 when j6 answers again. Someone filling in "the
-missing limits" for joints 1–3/5/7, or restoring j6 without checking the
-service, changes startup behaviour on real hardware.
+that faults all outward motion!); (c) non-zero values deliberately cover
+every bounded joint: joint 2 (130/140), joint 4 (145/150), and joint 6
+(118/123), all warning/error magnitudes in degrees. A live read found j2's
+thresholds back at 0/0, so it is now re-applied and verified on every
+connection alongside j4/j6. Someone filling in "the missing limits" for
+continuous joints 1/3/5/7 changes startup behaviour on real hardware.
 
 ### Line 148 — `kStopOnFault = false`
 **FLAG edit-hazard:** in caps in the source for a reason: A LIVE FAULT
@@ -197,13 +194,11 @@ preamble so a run recorded with one enabled is identifiable forever after.
 - **Line 168 — `kAllowUnverifiedActuators = false`.** true = startup gates
   accept an actuator whose config service does not answer, instead of
   refusing takeover (the unreachable joint then runs with mode unverified
-  and limit band unknown). History in the comment: turned on for wedged
-  joint 6 on 2026-08-04, then back off the same night once j6 was excluded
-  from the gate via its zero entry at line 141 — the override "has nothing
-  to excuse" now. Reads as dormant, but it is the *first* knob to reach for
-  if another joint's config service wedges.
+  and limit band unknown). Keep it false: the current contract requires
+  j2/j4/j6 warning and error thresholds to read back before takeover. It is
+  only an explicit last-resort override for a failed configuration service.
 - **Line 176 — `kSkipStartupGates = false`.** true = skip both gates for
-  every joint; critically the j4/j6 bands are then NEVER re-applied and
+  every joint; critically the j2/j4/j6 bands are then NEVER re-applied and
   revert to 0/0 on power cycle → firmware faults outward motion. The
   comment steers you to the narrower override above instead. The loud
   warning it triggers is at Main.cpp:268–272.

@@ -266,10 +266,10 @@ The long comment is load-bearing history: firmware limit bands do not
 survive a power cycle, and a degenerate 0/0 band makes the firmware fault
 any motion away from zero. `EnsureJointLimits` re-writes the configured
 bands — but only for joints with non-zero entries in
-`kJointLimitWarnDeg/kJointLimitErrorDeg` (currently joint 4 only; joint 6
-is deliberately zeroed because its config service is wedged and every RPC
-to it times out). The parenthetical records why the old control-mode
-verification gate was deleted on 2026-08-04. If `kSkipStartupGates` is set
+`kJointLimitWarnDeg/kJointLimitErrorDeg` (currently bounded joints 2, 4,
+and 6; continuous joints 1/3/5/7 remain zero). The parenthetical records
+why the old control-mode verification gate was deleted on 2026-08-04. If
+`kSkipStartupGates` is set
 the restore is skipped with a loud warning instead — the warning text
 spells out exactly what protection is lost.
 
