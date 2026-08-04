@@ -264,6 +264,9 @@ namespace config
     // (whole-path-validation.md) so a debounced arrival confirms the physical
     // arm settled, not just the command. Non-positive disables the debounce.
     inline constexpr double kArrivalDwellS = 0.15;
+    static_assert(kTargetHoldS > kArrivalDwellS,
+                  "the non-arrival timeout must outlast the settling window");
+
     inline constexpr double kArrivalOrientationToleranceRad = 0.001;
 
     // Loop log, written DURING the run by a writer thread (Hardware.h).
