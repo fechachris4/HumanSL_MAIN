@@ -24,11 +24,16 @@ def find_default_csv():
     raise SystemExit(f"no CSVs under {RUNS_DIR}; pass a CSV explicitly")
 
 
-def has_exchange_timestamps(_meta, columns):
+def has_exchange_timestamps(meta, columns):
     """Whether a log has both clocks required for timestamp matching.
 
     The preamble version describes the full schema, but formats 2 through 6
-    all retain these two columns. The analyzers therefore use column presence
-    rather than treating one exact format number as the timing capability.
+    all retain these two columns. Unknown, malformed, and legacy versions
+    deliberately fall back even if a file happens to contain similarly named
+    columns, because their timestamp semantics are not a supported contract.
     """
-    return "t_send_s" in columns and "t_recv_s" in columns
+    try:
+        log_format = int(meta.get("log_format"))
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return 2 <= log_format <= 6 and "t_send_s" in columns and "t_recv_s" in columns

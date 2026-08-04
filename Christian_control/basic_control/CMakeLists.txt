@@ -231,9 +231,19 @@ add_test(NAME reactive_law COMMAND test_reactive_law)
 # interpreter is optional so portable C++ test configurations remain usable.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if (Python3_Interpreter_FOUND)
+    execute_process(
+        COMMAND ${Python3_EXECUTABLE} -c "import numpy"
+        RESULT_VARIABLE PYTHON_NUMPY_RESULT
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+endif ()
+if (Python3_Interpreter_FOUND AND PYTHON_NUMPY_RESULT EQUAL 0)
     add_test(NAME runlog_compat
              COMMAND ${Python3_EXECUTABLE}
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runlog_compat.py)
+elseif (Python3_Interpreter_FOUND)
+    message(STATUS "Skipping runlog_compat: Python numpy is unavailable")
 endif ()
 
 # --- hardware-machine test battery: the bundled Kortex/Pinocchio binaries
