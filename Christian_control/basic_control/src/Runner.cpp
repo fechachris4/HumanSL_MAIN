@@ -239,7 +239,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     << status.p_desired[1] << " " << status.p_desired[2]
                     << " m, within " << status.arrival_error_m * 1000.0
                     << " mm — holding\n";
-                reference.OnArrived();
+                NotifyPoseTargetSourceOnArrivalEdge(reference, status);
             }
 
             // Per-joint clamp — the program's single speed limit — then the

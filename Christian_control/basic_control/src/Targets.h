@@ -55,6 +55,12 @@ private:
 void RunPoseTargetInput(PoseTargetMailbox& mailbox,
                         const std::atomic<bool>& stop);
 
+// Same input loop over an owned POSIX file descriptor. Kept separate so the
+// stdin entry point stays simple and the partial-pipe teardown contract is
+// testable without robot dependencies.
+void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
+                              const std::atomic<bool>& stop, int input_fd);
+
 // Begins with the compiled fixed target (sequence 0). It holds the active
 // target until Runner reports an arrival edge; the next Get consumes exactly
 // one queued target, if any, and increments the sequence. If empty, it stays
@@ -74,3 +80,9 @@ private:
     std::uint64_t sequence_ = 0;
     bool ready_for_next_ = false;
 };
+
+// The hardware loop calls this bridge with its per-cycle status. Keeping the
+// edge gate in pure target code gives hardware-free coverage of the exact
+// arrival-to-queue handoff contract.
+void NotifyPoseTargetSourceOnArrivalEdge(PoseTargetSource& source,
+                                         const ControllerStatus& status);

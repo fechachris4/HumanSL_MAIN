@@ -182,9 +182,8 @@ namespace
 
         KinematicsWorkspace workspace(model.dynamics());
         const PoseJacobian ee = model.RightPoseAndJacobian(q_rad, workspace);
-        // Decompose R back into the SAME roll/pitch/yaw convention targets
-        // use (R = Rz·Ry·Rx), so the printed triple can be pasted straight
-        // into kFixedTargetRpyRad for offline configuration comparison.
+        // Print the measured orientation for diagnosis. Position-only targets
+        // preserve this takeover orientation rather than accepting RPY input.
         const Eigen::Vector3d zyx = ee.rotation.eulerAngles(2, 1, 0);
         std::cout << "right end-effector (" << config::kRightEndEffectorFrame
                   << " in " << config::kRightBaseFrame << "): "

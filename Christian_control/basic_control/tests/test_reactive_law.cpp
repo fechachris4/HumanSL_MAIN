@@ -9,12 +9,16 @@
 //
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <string>
 #include <thread>
+
+#include <sys/ioctl.h>
+#include <unistd.h>
 
 #include "ReactiveLaw.h"
 #include "Targets.h"
@@ -374,6 +378,97 @@ namespace
         producer.join();
     }
 
+    bool WaitFor(const std::atomic<bool>& flag, std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (!flag.load(std::memory_order_acquire) &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return flag.load(std::memory_order_acquire);
+    }
+
+    bool WaitForPipeDrain(int fd, std::chrono::milliseconds timeout)
+    {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        while (std::chrono::steady_clock::now() < deadline) {
+            int bytes_available = -1;
+            if (ioctl(fd, FIONREAD, &bytes_available) == 0 && bytes_available == 0)
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return false;
+    }
+
+    bool WriteAll(int fd, const std::string& text)
+    {
+        std::size_t written = 0;
+        while (written < text.size()) {
+            const ssize_t result = write(fd, text.data() + written, text.size() - written);
+            if (result <= 0)
+                return false;
+            written += static_cast<std::size_t>(result);
+        }
+        return true;
+    }
+
+    void TestPoseTargetInputHandlesPartialAndCompletePipeLines()
+    {
+        int partial_pipe[2] = {-1, -1};
+        Check(pipe(partial_pipe) == 0, "partial-line test creates a pipe");
+        if (partial_pipe[0] >= 0 && partial_pipe[1] >= 0) {
+            PoseTargetMailbox mailbox;
+            std::atomic<bool> stop{false};
+            std::atomic<bool> exited{false};
+            std::thread reader([&] {
+                RunPoseTargetInputFromFd(mailbox, stop, partial_pipe[0]);
+                exited.store(true, std::memory_order_release);
+            });
+
+            Check(WriteAll(partial_pipe[1], "0.1 0.2"),
+                  "partial line is written while the pipe stays open");
+            Check(WaitForPipeDrain(partial_pipe[0], std::chrono::milliseconds(250)),
+                  "reader consumes the partial line into its owned buffer");
+            stop.store(true, std::memory_order_release);
+            Check(WaitFor(exited, std::chrono::milliseconds(250)),
+                  "input reader stops while a partial pipe line remains open");
+
+            // Cleanup keeps a failing implementation from leaving a blocked
+            // test thread behind: closing the writer supplies EOF.
+            close(partial_pipe[1]);
+            reader.join();
+            close(partial_pipe[0]);
+            Check(!mailbox.TryDequeue().has_value(),
+                  "unterminated partial input is not activated after stop");
+        }
+
+        int complete_pipe[2] = {-1, -1};
+        Check(pipe(complete_pipe) == 0, "complete-line test creates a pipe");
+        if (complete_pipe[0] >= 0 && complete_pipe[1] >= 0) {
+            PoseTargetMailbox mailbox;
+            std::atomic<bool> stop{false};
+            std::atomic<bool> exited{false};
+            std::thread reader([&] {
+                RunPoseTargetInputFromFd(mailbox, stop, complete_pipe[0]);
+                exited.store(true, std::memory_order_release);
+            });
+
+            Check(WriteAll(complete_pipe[1], "0.1 0.2 0.3\n0.2 0.3 0.4\n"),
+                  "multiple complete target lines are written to one pipe");
+            close(complete_pipe[1]);
+            Check(WaitFor(exited, std::chrono::milliseconds(250)),
+                  "input reader exits after pipe EOF");
+            reader.join();
+            close(complete_pipe[0]);
+
+            const auto first = mailbox.TryDequeue();
+            const auto second = mailbox.TryDequeue();
+            Check(first && first->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
+                  "first complete pipe line queues its target");
+            Check(second && second->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
+                  "second complete pipe line queues its target");
+        }
+    }
+
     void TestPoseTargetSource()
     {
         RobotState state;
@@ -405,22 +500,30 @@ namespace
                   before_arrival.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
               "queued targets cannot bypass the fixed target");
 
-        fixed.OnArrived();
+        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
+        auto before_arrival_edge = fixed.Get(state, 0.001, status);
+        Check(before_arrival_edge.pose && before_arrival_edge.pose->sequence == 0,
+              "a non-arrival status does not advance the queued target");
+        status.arrived_edge = true;
+        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
         auto first_live = fixed.Get(state, 0.001, status);
         Check(first_live.pose && first_live.pose->sequence == 1 &&
                   first_live.pose->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
               "one queued target activates after an arrival");
+        status.arrived_edge = false;
         auto held = fixed.Get(state, 0.001, status);
         Check(held.pose && held.pose->sequence == 1 &&
                   held.pose->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
               "active target holds until the next arrival");
 
-        fixed.OnArrived();
+        status.arrived_edge = true;
+        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
         auto second_live = fixed.Get(state, 0.001, status);
         Check(second_live.pose && second_live.pose->sequence == 2 &&
                   second_live.pose->p_desired == Eigen::Vector3d(0.3, 0.4, 0.5),
               "each arrival advances exactly one queued target");
-        fixed.OnArrived();
+        status.arrived_edge = true;
+        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
         auto final_hold = fixed.Get(state, 0.001, status);
         Check(final_hold.pose && final_hold.pose->sequence == 2 &&
                   final_hold.pose->p_desired == Eigen::Vector3d(0.3, 0.4, 0.5),
@@ -438,7 +541,7 @@ namespace
     }
 
     // RotationFromRpy documents the R = Rz*Ry*Rx convention used by the
-    // retained configuration utility.
+    // retained kinematics utility.
     void TestRotationFromRpy()
     {
         // Rz(yaw) alone: x -> y. Catches a Rx*Ry*Rz transposition.
@@ -447,11 +550,11 @@ namespace
                       .norm() < 1e-12,
               "yaw about +z maps +x to +y");
 
-        // The Home orientation used as the kFixedTargetRpyRad default.
+        // A representative proper rotation remains valid for the utility.
         const Eigen::Matrix3d home =
             RotationFromRpy(M_PI / 2.0, 0.0, M_PI / 2.0);
         Check(std::abs(home.determinant() - 1.0) < 1e-12,
-              "the Home rpy default is a proper rotation");
+              "representative rpy is a proper rotation");
     }
 
 } // namespace
@@ -472,6 +575,7 @@ int main()
     TestParsePoseTarget();
     TestPoseTargetMailbox();
     TestPoseTargetMailboxConcurrentHandoff();
+    TestPoseTargetInputHandlesPartialAndCompletePipeLines();
     TestRotationFromRpy();
     TestPoseTargetSource();
 

@@ -67,15 +67,9 @@ namespace config
     // (2026-08-04: 37 cm of drift between compile and run).
     inline constexpr double kMaxFixedTargetDistanceM = 0.15;
 
-    // The fixed target, mirroring the simulation's [targets.right] table:
-    // position in METERS and orientation as roll/pitch/yaw in RADIANS
-    // (R = Rz·Ry·Rx), both in the right-arm base frame.
-    //
-    // kFixedTargetUseRpy = false keeps the takeover orientation and
-    // commands position only. true ALSO ROTATES THE TOOL to the rpy below —
-    // a large rpy change is a large rotation, so compare it against the
-    // startup printout first. The default rpy is the Home orientation
-    // (pi/2, 0, pi/2), so at Home it commands no rotation.
+    // The fixed target in right-arm base_link, in METRES. This controller's
+    // target contract is position-only: every target preserves the
+    // orientation captured at takeover.
     // -3 cm in -z from the arm's 2026-08-04 01:5x pose (EE 0.3834
     // -0.4051 0.7525, joints 359.32 61.54 120.07 69.83 338.16 11.80
     // 335.94): probe_direction at THAT configuration shows -z drives
@@ -84,7 +78,14 @@ namespace config
     // sits at +11.8 deg with only ~12 deg of inward window before zero,
     // so keep any move here SMALL and re-probe after the arm moves.
     inline constexpr std::array<double, 3> kFixedTargetM = {0.3834, -0.4051, 0.7225};
+    // Retained for the existing CSV key. It is a compile-time invariant, not
+    // an operator-selectable orientation mode.
     inline constexpr bool kFixedTargetUseRpy = false;
+    static_assert(!kFixedTargetUseRpy,
+                  "basic_control targets must preserve takeover orientation");
+    // Legacy conditional CSV field, retained only to preserve the log schema.
+    // It is not a target orientation command and is never emitted while the
+    // enforced position-only invariant above is false.
     inline constexpr std::array<double, 3> kFixedTargetRpyRad = {
         1.5707963267948966, 0.0, 1.5707963267948966
     };
@@ -117,8 +118,9 @@ namespace config
     inline constexpr JointVector kNullMidpointDeg = {0, 0, 0, 0, 0, 0, 0};
     inline constexpr JointVector kNullCenteringMask = {0, 1, 0, 1, 0, 1, 0};
 
-    // Base-frame reach telemetry. FLAG ONLY — targets are never rejected
-    // or projected.
+    // Base-link reach boundary. Stdin target parsing rejects positions beyond
+    // this conservative sphere; telemetry also flags any desired position
+    // beyond it. This remains a reach screen, not a collision or IK check.
     inline constexpr std::array<double, 3> kRightBaseOriginControlM = {0, 0, 0};
     inline constexpr double kReachRadiusM = 0.902; // Gen3 7-DOF max reach (Kinova spec)
     inline constexpr double kReachMarginM = 0.05; // near full extension is singular anyway

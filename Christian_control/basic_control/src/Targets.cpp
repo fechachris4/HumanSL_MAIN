@@ -2,6 +2,8 @@
 // Targets — implementations for Targets.h.
 //
 
+#include <array>
+#include <cerrno>
 #include <cmath>
 #include <iostream>
 #include <poll.h>
@@ -12,6 +14,58 @@
 
 #include "Config.h"
 #include "Targets.h"
+
+namespace
+{
+    constexpr int kInputPollTimeoutMs = 50;
+    constexpr std::size_t kInputReadBytes = 256;
+    constexpr std::size_t kMaxInputLineBytes = 512;
+
+    void ProcessPoseTargetLine(PoseTargetMailbox& mailbox, const std::string& line)
+    {
+        if (line.empty())
+            return;
+
+        std::string error;
+        const std::optional<PoseTarget> target = ParsePoseTarget(line, error);
+        if (!target) {
+            std::cout << "target rejected: " << error << "\n";
+        } else if (!mailbox.Enqueue(*target)) {
+            std::cout << "target rejected: queue is full (8 pending targets)\n";
+        } else {
+            std::cout << "target queued: " << target->p_desired.x() << " "
+                      << target->p_desired.y() << " " << target->p_desired.z()
+                      << " m (base_link, position-only)\n";
+        }
+    }
+
+    void ConsumeInputBytes(PoseTargetMailbox& mailbox, const char* bytes,
+                           std::size_t count, std::string& pending_line,
+                           bool& discarding_overlong_line)
+    {
+        for (std::size_t i = 0; i < count; ++i) {
+            const char character = bytes[i];
+            if (character == '\n') {
+                if (discarding_overlong_line) {
+                    std::cout << "target rejected: input line exceeds 512 bytes\n";
+                    discarding_overlong_line = false;
+                } else {
+                    if (!pending_line.empty() && pending_line.back() == '\r')
+                        pending_line.pop_back();
+                    ProcessPoseTargetLine(mailbox, pending_line);
+                }
+                pending_line.clear();
+            } else if (!discarding_overlong_line) {
+                if (pending_line.size() == kMaxInputLineBytes) {
+                    pending_line.clear();
+                    discarding_overlong_line = true;
+                } else {
+                    pending_line.push_back(character);
+                }
+            }
+        }
+    }
+} // namespace
 
 Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw)
 {
@@ -84,28 +138,57 @@ std::optional<PoseTarget> PoseTargetMailbox::TryDequeue()
 
 void RunPoseTargetInput(PoseTargetMailbox& mailbox, const std::atomic<bool>& stop)
 {
-    std::string line;
-    while (!stop.load(std::memory_order_relaxed)) {
-        pollfd stdin_fd{STDIN_FILENO, POLLIN, 0};
-        const int ready = poll(&stdin_fd, 1, 100);
-        if (ready <= 0)
-            continue;
-        if (!std::getline(std::cin, line))
-            break;
-        if (line.empty())
-            continue;
+    RunPoseTargetInputFromFd(mailbox, stop, STDIN_FILENO);
+}
 
-        std::string error;
-        const std::optional<PoseTarget> target = ParsePoseTarget(line, error);
-        if (!target) {
-            std::cout << "target rejected: " << error << "\n";
-        } else if (!mailbox.Enqueue(*target)) {
-            std::cout << "target rejected: queue is full (8 pending targets)\n";
-        } else {
-            std::cout << "target queued: " << target->p_desired.x() << " "
-                      << target->p_desired.y() << " " << target->p_desired.z()
-                      << " m (base_link, position-only)\n";
+void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
+                              const std::atomic<bool>& stop, int input_fd)
+{
+    std::array<char, kInputReadBytes> bytes{};
+    std::string pending_line;
+    bool discarding_overlong_line = false;
+
+    while (!stop.load(std::memory_order_relaxed)) {
+        pollfd input{input_fd, POLLIN, 0};
+        const int ready = poll(&input, 1, kInputPollTimeoutMs);
+        if (ready == 0)
+            continue;
+        if (ready < 0) {
+            if (errno == EINTR)
+                continue;
+            break;
         }
+        if (stop.load(std::memory_order_relaxed))
+            break;
+        if (input.revents & POLLNVAL)
+            break;
+        if (!(input.revents & (POLLIN | POLLHUP))) {
+            if (input.revents & POLLERR)
+                break;
+            continue;
+        }
+
+        const ssize_t read_count = read(input_fd, bytes.data(), bytes.size());
+        if (read_count > 0) {
+            ConsumeInputBytes(mailbox, bytes.data(),
+                              static_cast<std::size_t>(read_count), pending_line,
+                              discarding_overlong_line);
+            continue;
+        }
+        if (read_count < 0) {
+            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK)
+                continue;
+            break;
+        }
+        // EOF terminates a final line even without '\n'; a stop deliberately
+        // drops an incomplete line instead of enqueueing during teardown.
+        if (!stop.load(std::memory_order_relaxed)) {
+            if (discarding_overlong_line)
+                std::cout << "target rejected: input line exceeds 512 bytes\n";
+            else
+                ProcessPoseTargetLine(mailbox, pending_line);
+        }
+        break;
     }
 }
 
@@ -137,4 +220,11 @@ Reference PoseTargetSource::Get(const RobotState& /*state*/, double /*dt_s*/,
 void PoseTargetSource::OnArrived()
 {
     ready_for_next_ = true;
+}
+
+void NotifyPoseTargetSourceOnArrivalEdge(PoseTargetSource& source,
+                                         const ControllerStatus& status)
+{
+    if (status.arrived_edge)
+        source.OnArrived();
 }
