@@ -77,6 +77,10 @@ struct PoseReference {
     std::optional<Eigen::Matrix3d> rotation; // base frame; nullopt = hold
     Twist twist;                             // reference velocity, base frame
     std::uint64_t sequence = 0;
+    // A profile may pass through its endpoint before it is permitted to
+    // advance the target state machine.  Only a stationary terminal sample
+    // is eligible to generate the controller's arrival edge.
+    bool arrival_eligible = true;
 };
 
 // What a source hands the controller each cycle: an optional pose target.

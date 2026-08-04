@@ -96,9 +96,15 @@ TrackingController::DesiredVelocity(const RobotState& state,
         reference.pose ? reference.pose->twist : Twist{};
     const Twist e_twist = TwistError(reference_twist, measured_twist);
 
-    // Arrival notice (position-based): edge-triggered data — the Runner
-    // prints.
-    if (!arrival_reported_ && e_pos.norm() < config::kArrivalToleranceM) {
+    // Arrival is edge-triggered only on a terminal source sample.  A moving
+    // Cartesian profile may pass through a target-shaped point; it must not
+    // advance the mailbox until it explicitly becomes arrival-eligible.
+    const bool arrival_eligible = reference.pose && reference.pose->arrival_eligible;
+    const bool position_arrived = e_pos.norm() <= config::kArrivalToleranceM;
+    const bool orientation_arrived = !gains_.orientation_enabled ||
+        e_rot.norm() <= config::kArrivalOrientationToleranceRad;
+    if (!arrival_reported_ && arrival_eligible && position_arrived &&
+        orientation_arrived) {
         arrival_reported_ = true;
         status.arrived_edge = true;
         status.arrival_error_m = e_pos.norm();

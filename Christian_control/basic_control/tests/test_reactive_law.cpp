@@ -163,6 +163,8 @@ namespace
         Check(reference.twist.linear_m_s.norm() == 0.0 &&
                   reference.twist.angular_rad_s.norm() == 0.0,
               "a PoseReference defaults to a stationary target");
+        Check(reference.arrival_eligible,
+              "a stationary PoseReference is arrival-eligible by default");
 
         RobotState state;
         state.q_rad.setZero();
@@ -171,7 +173,7 @@ namespace
         PoseTarget target;
         target.p_desired = Eigen::Vector3d(0.4, 0.1, 0.3);
         PoseTargetMailbox mailbox;
-        PoseTargetSource source(target, mailbox);
+        PoseTargetSource source(target.p_desired, target, mailbox);
         const auto served = source.Get(state, 0.001, status);
         Check(served.pose && served.pose->twist.linear_m_s.norm() == 0.0 &&
                   served.pose->twist.angular_rad_s.norm() == 0.0,
@@ -327,23 +329,17 @@ namespace
               "malformed coordinate is rejected");
         Check(!ParsePoseTarget("nan 0.1 0.3", error).has_value(),
               "non-finite coordinate is rejected");
-        Check(!ParsePoseTarget("0.853 0 0", error).has_value(),
-              "target outside the conservative reach sphere is rejected");
-        Check(ParsePoseTarget("0.852 0 0", error).has_value(),
-              "target on the conservative reach boundary is accepted");
+        Check(ParsePoseTarget("5.0 -4.0 3.0", error).has_value(),
+              "any finite target is accepted without a reach sphere");
+        Check(!ParsePoseTarget("inf 0.1 0.3", error).has_value(),
+              "infinite coordinate is rejected");
         std::ostringstream compiled_target_line;
         compiled_target_line << std::setprecision(std::numeric_limits<double>::max_digits10)
                              << config::kFixedTargetM[0] << ' '
                              << config::kFixedTargetM[1] << ' '
                              << config::kFixedTargetM[2];
         Check(ParsePoseTarget(compiled_target_line.str(), error).has_value(),
-              "the compiled fixed target remains accepted outside the sphere");
-        Check(ParsePoseTarget("-0.3834 -0.2051 0.7225", error).has_value(),
-              "live validation target T1 is within the conservative sphere");
-        Check(ParsePoseTarget("0.3000 -0.4000 0.5500", error).has_value(),
-              "live validation target T2 is within the conservative sphere");
-        Check(ParsePoseTarget("0.4500 -0.4000 0.5500", error).has_value(),
-              "live validation target T3 is within the conservative sphere");
+              "the compiled terminal target remains accepted");
     }
 
     PoseTarget PositionTarget(double x, double y, double z)
@@ -491,11 +487,12 @@ namespace
         state.qdot_rad_s.setZero();
         ControllerStatus status;
 
-        // The fixed target applies from the first cycle.
-        // Every target is position-only, so takeover orientation is held.
         const PoseTarget position_only = PositionTarget(0.1, 0.2, 0.3);
         PoseTargetMailbox mailbox;
-        PoseTargetSource fixed(position_only, mailbox);
+        const CartesianMotionLimits test_limits{1.0, 1.0, 1.0};
+        constexpr double kTestHoldS = 0.004;
+        PoseTargetSource fixed(position_only.p_desired, position_only, mailbox,
+                                test_limits, kTestHoldS);
         auto initial = fixed.Get(state, 0.001, status);
         Check(initial.pose &&
                   (initial.pose->p_desired - Eigen::Vector3d(0.1, 0.2, 0.3))
@@ -505,6 +502,8 @@ namespace
               "position-only fixed target commands no orientation");
         Check(initial.pose && initial.pose->sequence == 0,
               "fixed target has sequence zero");
+        Check(initial.pose && initial.pose->arrival_eligible,
+              "fixed target is eligible for its terminal arrival");
 
         Check(mailbox.Enqueue(PositionTarget(0.2, 0.3, 0.4)),
               "first live target queues before fixed arrival");
@@ -521,38 +520,102 @@ namespace
               "a non-arrival status does not advance the queued target");
         status.arrived_edge = true;
         NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
+        for (int cycle = 0; cycle < 3; ++cycle) {
+            const auto dwell = fixed.Get(state, 0.001, status);
+            Check(dwell.pose && dwell.pose->sequence == 0 &&
+                      dwell.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
+                  "the reached fixed target holds for the configured dwell");
+        }
         auto first_live = fixed.Get(state, 0.001, status);
         Check(first_live.pose && first_live.pose->sequence == 1 &&
-                  first_live.pose->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
-              "one queued target activates after an arrival");
+                  first_live.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
+              "one queued target activates after the full arrival dwell");
+        Check(first_live.pose && !first_live.pose->arrival_eligible,
+              "a moving profile cannot trigger a terminal arrival");
         status.arrived_edge = false;
-        auto held = fixed.Get(state, 0.001, status);
-        Check(held.pose && held.pose->sequence == 1 &&
-                  held.pose->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
-              "active target holds until the next arrival");
+        bool moving_twist_seen = false;
+        Reference first_terminal;
+        for (int cycle = 0; cycle < 10000; ++cycle) {
+            first_terminal = fixed.Get(state, 0.001, status);
+            moving_twist_seen = moving_twist_seen ||
+                (first_terminal.pose &&
+                 first_terminal.pose->twist.linear_m_s.norm() > 1e-9);
+            if (first_terminal.pose && first_terminal.pose->arrival_eligible)
+                break;
+        }
+        Check(moving_twist_seen,
+              "the shaped target supplies Cartesian velocity feed-forward");
+        Check(first_terminal.pose && first_terminal.pose->sequence == 1 &&
+                  (first_terminal.pose->p_desired -
+                   Eigen::Vector3d(0.2, 0.3, 0.4)).norm() < 1e-12 &&
+                  first_terminal.pose->arrival_eligible,
+              "the shaped reference becomes arrival-eligible only at its endpoint");
 
         status.arrived_edge = true;
         NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
+        for (int cycle = 0; cycle < 4; ++cycle)
+            fixed.Get(state, 0.001, status);
         auto second_live = fixed.Get(state, 0.001, status);
-        Check(second_live.pose && second_live.pose->sequence == 2 &&
-                  second_live.pose->p_desired == Eigen::Vector3d(0.3, 0.4, 0.5),
-              "each arrival advances exactly one queued target");
+        Check(second_live.pose && second_live.pose->sequence == 2,
+              "each completed dwell activates exactly one queued target");
         status.arrived_edge = true;
         NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
         auto final_hold = fixed.Get(state, 0.001, status);
-        Check(final_hold.pose && final_hold.pose->sequence == 2 &&
-                  final_hold.pose->p_desired == Eigen::Vector3d(0.3, 0.4, 0.5),
-              "final target holds when no queued target remains");
+        Check(final_hold.pose && final_hold.pose->sequence == 2,
+              "a moving target ignores a premature arrival notification");
 
         PoseTargetMailbox late_mailbox;
-        PoseTargetSource late_source(position_only, late_mailbox);
+        PoseTargetSource late_source(position_only.p_desired, position_only,
+                                     late_mailbox, test_limits, kTestHoldS);
+        late_source.Get(state, 0.001, status);
         late_source.OnArrived();
+        for (int cycle = 0; cycle < 4; ++cycle)
+            late_source.Get(state, 0.001, status);
         Check(late_mailbox.Enqueue(PositionTarget(0.5, 0.4, 0.3)),
               "target can be queued after an empty arrival");
         auto late_target = late_source.Get(state, 0.001, status);
         Check(late_target.pose && late_target.pose->sequence == 1 &&
-                  late_target.pose->p_desired == Eigen::Vector3d(0.5, 0.4, 0.3),
+                  late_target.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
               "empty arrival leaves source ready for a later target");
+    }
+
+    void TestPoseTargetSourceStartsAtMeasuredPose()
+    {
+        RobotState state;
+        state.q_rad.setZero();
+        state.qdot_rad_s.setZero();
+        ControllerStatus status;
+        const Eigen::Vector3d startup(0.1, 0.2, 0.3);
+        const PoseTarget terminal = PositionTarget(0.4, 0.2, 0.3);
+        PoseTargetMailbox mailbox;
+        const CartesianMotionLimits limits{1.0, 1.0, 1.0};
+        PoseTargetSource source(startup, terminal, mailbox, limits, 0.0);
+
+        const Reference first = source.Get(state, 0.001, status);
+        Check(first.pose && first.pose->p_desired == startup,
+              "initial reference starts at the measured Cartesian pose");
+        Check(first.pose && first.pose->twist.linear_m_s.norm() == 0.0,
+              "initial measured-pose reference has zero velocity");
+        Check(first.pose && !first.pose->arrival_eligible,
+              "distinct startup and terminal poses are not initially arrived");
+
+        bool progressed = false;
+        Reference terminal_reference;
+        for (int cycle = 0; cycle < 10000; ++cycle) {
+            terminal_reference = source.Get(state, 0.001, status);
+            if (terminal_reference.pose &&
+                terminal_reference.pose->p_desired.x() > startup.x())
+                progressed = true;
+            if (terminal_reference.pose &&
+                terminal_reference.pose->arrival_eligible)
+                break;
+        }
+        Check(progressed,
+              "the initial profile progresses away from the measured pose");
+        Check(terminal_reference.pose &&
+                  terminal_reference.pose->p_desired == terminal.p_desired &&
+                  terminal_reference.pose->twist.linear_m_s.norm() == 0.0,
+              "the initial profile ends at the configured terminal target");
     }
 
     // RotationFromRpy documents the R = Rz*Ry*Rx convention used by the
@@ -593,6 +656,7 @@ int main()
     TestPoseTargetInputHandlesPartialAndCompletePipeLines();
     TestRotationFromRpy();
     TestPoseTargetSource();
+    TestPoseTargetSourceStartsAtMeasuredPose();
 
     if (failures == 0) {
         std::cout << "all reactive-law tests passed\n";

@@ -31,7 +31,12 @@ namespace config
     // this IP gets a connection and only its 7 joints reach the loop.
     inline constexpr const char* kRightRobotIp = "192.168.1.10";
     inline constexpr const char* kRightBaseFrame = "base_link";
-    inline constexpr const char* kRightEndEffectorFrame = "EndEffector_Link";
+    // ConfiguredTool_Link, not the bare flange (EndEffector_Link): the
+    // right arm carries a mounted tool, so this is the frame that matches
+    // both the Kinova web dashboard's tool_pose and physical reality. See
+    // the ConfiguredTool_Link comment in config/GEN3_dual_mounted.urdf for
+    // the reading this offset was taken from and when to refresh it.
+    inline constexpr const char* kRightEndEffectorFrame = "ConfiguredTool_Link";
 
     // The left arm is model-only: held here whenever the 14-joint
     // configuration is assembled. No left connection, feedback or command.
@@ -60,24 +65,25 @@ namespace config
         static_cast<long>(kControlDtS * 1e6)
     };
 
-    // Freshness gate: refuse the run if the compiled fixed target is
-    // farther than this from the measured end-effector position at
-    // startup. The arm can be moved (dashboard jog, physical push) any
-    // time after a build, and the law drives the WHOLE gap at clip speed
-    // (2026-08-04: 37 cm of drift between compile and run).
-    inline constexpr double kMaxFixedTargetDistanceM = 0.15;
+    // Before any controller or command-integrator state is initialized,
+    // stream the Seed pose for this exact grid-aligned interval. This is a
+    // low-level POSITION-path handshake, not a motion-response test.
+    inline constexpr double kTakeoverHoldS = 0.5;
+    inline constexpr std::chrono::microseconds kTakeoverHoldDuration =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::duration<double>{kTakeoverHoldS});
+    inline constexpr std::size_t kTakeoverHoldCycles =
+        static_cast<std::size_t>(kTakeoverHoldDuration / kCyclePeriod);
+    static_assert(kTakeoverHoldDuration == kCyclePeriod * kTakeoverHoldCycles,
+                  "takeover hold must be an exact number of cyclic periods");
 
-    // The fixed target in right-arm base_link, in METRES. This controller's
-    // target contract is position-only: every target preserves the
-    // orientation captured at takeover.
-    // -3 cm in -z from the arm's 2026-08-04 01:5x pose (EE 0.3834
-    // -0.4051 0.7525, joints 359.32 61.54 120.07 69.83 338.16 11.80
-    // 335.94): probe_direction at THAT configuration shows -z drives
-    // joint 6 inward (-7.46 deg/s per 0.1 m/s; about -2 deg over this
-    // move). This is a small first move only; the startup gate below
-    // restores and reads back the bounded-joint firmware thresholds, but
-    // it does not prove collision clearance for any target.
-    inline constexpr std::array<double, 3> kFixedTargetM = {0.3834, -0.4051, 0.7225};
+    // The terminal target in right-arm base_link, in METRES. This
+    // controller's target contract is position-only: every target preserves
+    // the orientation captured at takeover. The startup pose is measured at
+    // runtime and is not compiled here.
+    inline constexpr std::array<double, 3> kFixedTargetM = {
+        0.083, -0.02, 0.7225
+    };
     // Retained for the existing CSV key. It is a compile-time invariant, not
     // an operator-selectable orientation mode.
     inline constexpr bool kFixedTargetUseRpy = false;
@@ -90,11 +96,18 @@ namespace config
         1.5707963267948966, 0.0, 1.5707963267948966
     };
 
-    // v_desired = kKpCartesian * (p_desired - p_current), 1/s. At 10.0 a
-    // 10 cm error commands 1.0 m/s — aggressive; the per-joint clip is what
-    // actually bounds it. No Cartesian velocity/acceleration/workspace
-    // limiting exists (cartesian-velocity-controller.md).
+    // Feedback correction is kKpCartesian * (p_reference - p_current), 1/s.
+    // The reference itself is shaped below; the independent per-joint clip
+    // remains the final command-rate bound.
     inline constexpr double kKpCartesian = 10.0;
+
+    // Terminal-to-terminal Cartesian references use a conservative
+    // seventh-order profile.  These are source-side reference limits, not
+    // replacements for the per-joint command clip or any safety guard.
+    inline constexpr double kProfileMaxSpeedMps = 0.025;
+    inline constexpr double kProfileMaxAccelerationMps2 = 0.05;
+    inline constexpr double kProfileMaxJerkMps3 = 0.25;
+    inline constexpr double kTargetHoldS = 2.0;
 
     // DLS damping λ (ReactiveLaw.h). Larger = slower but better conditioned
     // near singularities. Also damps the null-space projector.
@@ -139,13 +152,6 @@ namespace config
     };
     inline constexpr JointVector kNullCenteringMask = kJointBoundedMask;
 
-    // Base-link reach boundary. Stdin target parsing rejects positions beyond
-    // this conservative sphere; telemetry also flags any desired position
-    // beyond it. This remains a reach screen, not a collision or IK check.
-    inline constexpr std::array<double, 3> kRightBaseOriginControlM = {0, 0, 0};
-    inline constexpr double kReachRadiusM = 0.902; // Gen3 7-DOF max reach (Kinova spec)
-    inline constexpr double kReachMarginM = 0.05; // near full extension is singular anyway
-
     // The clip applied to q̇ before integration. Equal to the model limits
     // above by construction, so the two cannot disagree.
     inline constexpr JointVector kQdotLimitDegS = kModelVelocityLimitsDegS;
@@ -185,11 +191,9 @@ namespace config
         0
     };
 
-    // false = A LIVE FAULT DOES NOT END THE RUN. Faults are still decoded,
-    // printed and logged, and they taint the exit code, but the loop keeps
-    // commanding. ATTENDED USE ONLY: the operator is the stop. Compile-time
-    // only, never runtime-settable (qdot-limit-raise.md).
-    inline constexpr bool kStopOnFault = false;
+    // Validation runs stop automatically on any live base or actuator fault.
+    // Compile-time only, never runtime-settable.
+    inline constexpr bool kStopOnFault = true;
 
     // ---- Guard overrides. All three default false = every guard active. ----
     // Each one trades a protection for the ability to run through a fault.
@@ -213,13 +217,11 @@ namespace config
     inline constexpr bool kSkipStartupGates = false;
 
     // true = the loop NEVER stops on following error. Read this next to
-    // kStopOnFault above, which is already false: with both set, a live
-    // fault and a joint that stops following its setpoint do not end the
-    // run. Loss of low-level servoing, the software joint-boundary guard,
-    // and enabled non-finite/overrun counters remain automatic stops. The
-    // operator and the robot's own firmware limits are still essential.
+    // kStopOnFault above: disabling either removes an independent automatic
+    // stop. Loss of low-level servoing, the software joint-boundary guard,
+    // and enabled non-finite/overrun counters remain automatic stops.
     // kFollowingErrorLimitDeg keeps its value for telemetry and the stop
-    // report; this only removes the following-error stop.
+    // report; this switch removes only the following-error stop.
     inline constexpr bool kDisableFollowingErrorStop = false;
 
     // Consecutive-cycle stop counters; N <= 0 disables one. Non-finite
@@ -250,6 +252,7 @@ namespace config
     // comes within this distance of a new target, m. Informational only.
     // 1 mm is tight — raise toward 5 mm if the notice comes late or never.
     inline constexpr double kArrivalToleranceM = 0.001;
+    inline constexpr double kArrivalOrientationToleranceRad = 0.001;
 
     // Loop log, written DURING the run by a writer thread (Hardware.h).
     // kLogBufferSeconds sizes only the handoff queue — slack for a disk

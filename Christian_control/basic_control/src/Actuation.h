@@ -33,6 +33,20 @@ inline double ClampedCycleDt(double measured_dt_s, double nominal_dt_s)
     return std::min(measured_dt_s, 2.0 * nominal_dt_s);
 }
 
+// Pure per-joint velocity saturation at the radians/degrees boundary used by
+// the Runner. Inputs and output velocities are radians/second; the limits are
+// degrees/second because that is the configured and operator-facing unit.
+// `saturated` identifies a requested value strictly outside its joint limit.
+struct JointVelocityClampResult {
+    Eigen::Matrix<double, 7, 1> qdot_rad_s =
+        Eigen::Matrix<double, 7, 1>::Zero();
+    std::array<bool, 7> saturated{};
+};
+
+JointVelocityClampResult ClampJointVelocity(
+    const Eigen::Matrix<double, 7, 1>& requested_rad_s,
+    const JointVector& limits_deg_s);
+
 //
 // The actuation: integrate the clamped q̇ into a persistent position
 // command streamed in verified POSITION control mode, with an optional

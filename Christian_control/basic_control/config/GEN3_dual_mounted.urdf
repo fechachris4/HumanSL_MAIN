@@ -10,6 +10,17 @@
     The shared world root, fixed mounting transforms, dual-arm naming, and
     omission of camera frames are project-specific. URDF limits are model
     metadata; installed firmware/configured soft limits remain separate.
+
+    ConfiguredTool_Link (right arm only) is also project-specific: it is
+    NOT part of Kinova's stock arm geometry. It encodes the physical tool
+    presently mounted on the right arm's flange, read from the robot itself
+    via ControlConfig::GetToolConfiguration on 2026-08-05 (tools/
+    print_tool_configuration.cpp): xyz 0 0 0.12 m, no rotation, mass
+    0.831 kg, mass center 0 0 0.0473 m. This is a live robot SETTING, not a
+    fixed property of the Gen3 arm — if the mounted tool ever changes,
+    re-read GetToolConfiguration and update this offset, or FK will again
+    diverge from the Kinova web dashboard's tool_pose the way it did before
+    this was added.
   -->
 
   <!-- World base link (new) -->
@@ -267,6 +278,22 @@
     <origin xyz="0 0 -0.0615250000000001" rpy="3.14159265358979 1.09937075168372E-32 0" />
     <parent link="Bracelet_Link" />
     <child link="EndEffector_Link" />
+    <axis xyz="0 0 0" />
+  </joint>
+
+  <!-- Project-specific: the configured tool presently mounted on the right
+       arm's flange. See the file header comment for provenance. -->
+  <link name="ConfiguredTool_Link">
+    <inertial>
+      <origin xyz="0 0 0.0473" rpy="0 0 0" />
+      <mass value="0.831" />
+      <inertia ixx="0" ixy="0" ixz="0" iyy="0" iyz="0" izz="0" />
+    </inertial>
+  </link>
+  <joint name="ConfiguredTool" type="fixed">
+    <origin xyz="0 0 0.12" rpy="0 0 0" />
+    <parent link="EndEffector_Link" />
+    <child link="ConfiguredTool_Link" />
     <axis xyz="0 0 0" />
   </joint>
 

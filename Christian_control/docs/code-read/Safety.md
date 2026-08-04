@@ -7,8 +7,9 @@
 2. `ServoingGuard servoing_guard(base)` — Runner.cpp:120 (T2, enters
    low-level servoing); `servoing_guard.Restore(std::cout)` —
    Runner.cpp:391 (D2); the destructor as the retry backstop.
-3. `ClassifyStop(sample, limit, reason)` — Runner.cpp:305, every cycle.
-4. `FeedbackFreshnessMonitor::Update` — Runner.cpp:320, every cycle.
+3. `FollowingErrorExceeded` / `HasLiveFault` — facts for each completed
+   Runner sample; `FeedbackFreshnessMonitor` supplies the stale-ack fact.
+4. `ResolveStopPriority` (StopPriority.h) — the Runner's actual precedence.
 5. `PrintFaultChange` / `PrintStopReport` / decode helpers — edge-triggered
    and post-loop printing (Runner.cpp:289, 392).
 6. `StopReasonName(result.reason)` — Main.cpp:411, the CSV exit trailer.
@@ -25,7 +26,7 @@ cycle; printing never decides anything.
 
 ### Lines 1–19 — banner and includes
 Kortex client headers (the fault enums live in the protobuf-generated API),
-plus Config and Hardware (for `LoopLogSample`, which `ClassifyStop` reads).
+plus Config and Hardware (for the `LoopLogSample` the fact helpers read).
 
 ### Lines 21–34 — section banner, `namespace k_api`
 `namespace k_api = Kinova::Api;` — a namespace alias. It appears again
@@ -38,12 +39,13 @@ the top would do.
 An `enum class` is a strongly-typed set of named constants — unlike a plain
 `enum`, its values do not implicitly convert to int and must be written
 `LoopStop::kUserStop`, so you cannot accidentally compare it against the
-wrong enum. Nine reasons a loop ends; the comment defines each. Only
+wrong enum. Ten reasons a loop ends; the comment defines each. Only
 `kUserStop` is success. `kFollowingError` = the arm stopped following the
 integrated command; `kLeftLowLevel` = the base dropped out of low-level
 servoing on its own; `kJointLimitWarning` = the software held the complete
-last-safe command frame before an outward warning crossing; and
-`kNonFiniteCommand` / `kOverrun` are the consecutive-cycle counter stops.
+last-safe command frame before an outward warning crossing;
+`kStaleFeedback` = an actuator acknowledgement remained unchanged for its
+configured window; and `kNonFiniteCommand` / `kOverrun` are counter stops.
 
 ### Lines 56–69 — `struct LoopResult`
 What `RunControlLoop` returns to Main. `faults_observed` is the taint flag:
@@ -52,38 +54,35 @@ fault-ignoring policy kept the loop running — you cannot run through a fault
 and still report success. `stop_t_s` / `cycles` come from the last logged
 sample so the console report lines up with the CSV.
 
-### Lines 71–96 — `FeedbackFreshnessMonitor`
+### Freshness.h — `FeedbackFreshnessMonitor`
 Each actuator's feedback carries the ID of the last cyclic command it
 processed; a healthy stream advances every joint's ID every cycle. This
-class counts, per joint, how many CONSECUTIVE cycles the ID repeated.
-The block comment is the important part: **TELEMETRY ONLY** since
-2026-08-03 — this used to be a stop, and the comment exists so nobody
-re-reads the counters as policy. Genuine communication failure still
-surfaces as a throwing `Refresh` → `kCommunication`.
-**[unnecessary, line 88]** `Reset()` is dead code in the executed program:
-the Runner constructs a fresh monitor per run and never calls `Reset` (the
-constructor defaults do the same job). Kept presumably for tests/reuse.
+class counts, per joint, how many CONSECUTIVE completed replies repeat the
+ID. `StaleAcknowledgementJoint` is an active Runner stop at
+`kStaleFeedbackStopCycles = 25` (50 ms at 500 Hz). The first reply seeds the
+monitor at zero; a new ID resets that joint to zero. This proves cyclic
+acknowledgement progress only, never physical motion or setpoint acceptance.
 
 ### Lines 98–107 — `struct CycleCounters`
 Plain data: the consecutive non-finite and overrun counters plus the
-whole-run overrun tally. The Runner owns the update logic; this header only
-defines the record and documents the priority rule (counter stops are
-checked AFTER `ClassifyStop`).
+whole-run overrun tally. The Runner owns the update logic; counter stops are
+checked after the completed-sample `ResolveStopPriority` decision.
 
 ### Lines 109–112 — `kJointFaultBit`
 The base's JOINT_FAULT summary bit, named once. `inline constexpr` means one
 compile-time constant shared across all files that include this header.
 **[edit-hazard, lines 109–112]** This single constant encodes the project's
 hardest-won fault-handling judgement: the latched summary bit alone is a
-stale historical aggregate, not a live interlock. It is masked out in
-`ClassifyStop` (line 85 of the .cpp) and tolerated in
+stale historical aggregate, not a live interlock. It is masked out by
+`HasLiveFault` and tolerated in
 `RobotReadyForTakeover` (127). Change either use without the other and the
 gate and the loop disagree about what a fault is.
 
-### Lines 114–126 — the two policy function declarations
-`ClassifyStop`: no printing (loop-safe), following-error checked FIRST so no
-fault-ignoring policy can mask it, returns whether to stop via `bool` and
-why via the `LoopStop& reason` out-parameter. `RobotReadyForTakeover`: the
+### Policy fact and compatibility declarations
+`FollowingErrorExceeded` and `HasLiveFault` expose loop-safe facts used by
+the Runner and StopPriority. `ClassifyStop` is a compatibility helper for
+callers that need only following-error / low-level / live-fault
+classification; the Runner does not call it. `RobotReadyForTakeover` is the
 pre-takeover gate, prints its findings to the passed `std::ostream&` (an
 output stream by reference — passing `std::cout` in production, a
 `std::ostringstream` in a test).
@@ -116,43 +115,18 @@ fight over the mode. `restored_` makes restore idempotent.
 `KDetailedException.h` the Kortex error type `Restore` decodes. `NUM_JOINTS`
 derived from `JointVector` as in Runner.cpp.
 
-### Lines 32–57 — `FeedbackFreshnessMonitor` (Update runs every cycle)
-`Reset` (32–36): back to the uninitialized state. `Update` (38–57): on the
-first call there is nothing to compare against, so it seeds `previous_` and
-reports zeros; every later call, per joint: same ID as last cycle →
-increment the counter, new ID → reset it to 0, then remember the ID. Zero
-therefore means "advanced this cycle". Pure bookkeeping, no I/O, loop-safe.
+### Lines 32–80 — sample facts and compatibility classification
+`FollowingErrorExceeded` checks the wrapped-to-command position gap unless
+the compile-time override disables it. `HasLiveFault` checks every actuator
+bank plus every base bit except the latched JOINT_FAULT summary.
 
-### Lines 59–96 — `ClassifyStop` (every cycle, Runner.cpp:305)
-Reads only the just-filled `LoopLogSample` — the classifier judges exactly
-what was logged, so the CSV always contains the evidence for the stop. The
-checks, in deliberate priority order (first match returns):
-
-1. **71–78 — following error.** Unless disabled by
-   `kDisableFollowingErrorStop`, any joint whose
-   `|measured_deg − commanded_deg|` exceeds the limit (3°) stops the loop.
-   Checked FIRST so the fault-ignoring experiment policy can never mask it
-   (a faulted joint that stops moving trips this even when fault bits are
-   ignored). **[hides-work, lines 71–78]** The comparison is only correct
-   because `FillSample` (Runner.cpp:55–56) already shifted `measured_deg`
-   to within ±180° of the command — the wrap that makes this subtraction
-   meaningful lives in another file. The comment explains why that is sound
-   (the gap grows well under a degree per cycle), but an edit to FillSample
-   changes this guard's meaning without touching this function.
-2. **79–84 — any actuator fault bit** → `kRobotFault`.
-3. **85–89 — any base fault bit EXCEPT the JOINT_FAULT summary**
-   (`base_fault_bank & ~kJointFaultBit`) → `kRobotFault`. The `~` is
-   bitwise-NOT: "all bits except that one". This is the stale-summary
-   masking decision (see Safety.h:109–112).
-4. **90–94 — the arm state itself.** If the base is no longer in
-   ARMSTATE_SERVOING_LOW_LEVEL, we are no longer the controller —
-   `kLeftLowLevel`. With every other guard disabled by config, this is the
-   one automatic stop that always remains.
-
-Returns false = keep running. **[edit-hazard, lines 59–96]** The order IS
-the policy: reordering these checks changes which reason wins when several
-are true at once, and the comments record that the current order was chosen
-on purpose (guard before faults, faults before mode).
+`ClassifyStop` composes those facts for compatibility callers in the order
+following error → left low-level → live fault. It does not include held
+joint warnings, stale acknowledgements, fault-stop policy, or counter stops,
+and the Runner does not use it. The Runner's authoritative order is
+`ResolveStopPriority`: following error → left low-level → enabled live fault
+→ held joint warning → stale acknowledgement, followed by nonfinite/overrun
+counters.
 
 ### Lines 98–142 — `RobotReadyForTakeover` (T1, Main.cpp:257)
 Runs on one standalone feedback frame, before the mode switch — a live
@@ -169,7 +143,7 @@ fault means the program never takes over at all.
   print a note and continue. **[edit-hazard, lines 126–129]** This is the
   gate's one deliberate leniency; widening it (e.g. tolerating an actuator
   bank too) removes the barrier that keeps a genuinely faulted arm from
-  being taken over, and it must stay consistent with `ClassifyStop`'s
+  being taken over, and it must stay consistent with `HasLiveFault`'s
   masking of the same bit.
 - **130–140** — refuse if: any actuator fault, any base bit besides the
   summary, or the IN_FAULT state — with a message telling the operator to
@@ -198,7 +172,7 @@ compiles against the function-pointer parameter.
 
 ### Lines 193–207 — `StopReasonName` (Main.cpp:411)
 The enum→token switch for the CSV exit trailer. No `default:` case — on
-purpose: with all nine enumerators handled, a newly added `LoopStop` value
+purpose: with all ten enumerators handled, a newly added `LoopStop` value
 makes the compiler warn about the switch, pointing you here. The trailing
 `return "unknown"` silences the "control reaches end" warning.
 

@@ -26,6 +26,11 @@ Timestamp semantics (hardware/Record.h is the authority): commands take
 effect at t_send_s; the FK position p_* in row i comes from the feedback
 received at row i-1's t_recv_s. Logs without both timestamp columns fall
 back to time_s for both signals, with a warning.
+
+Takeover-hold rows use cycle = 0 and intentionally carry no Cartesian
+ControllerStatus. They remain part of integrity and fault reporting, but
+are excluded from Cartesian tracking, lag, and plots when that column is
+available. Older logs without cycle retain their existing all-row behavior.
 """
 
 import argparse
@@ -117,10 +122,6 @@ def integrity_report(cols):
     bad_refresh = int((cols["refresh_ok"] == 0).sum())
     if bad_refresh:
         print(f"  refresh failures: {bad_refresh} row(s)")
-    if "pd_beyond_reach" in cols:
-        beyond = int((cols["pd_beyond_reach"] != 0).sum())
-        if beyond:
-            print(f"  target beyond reach sphere: {beyond} row(s)")
     faults = np.zeros(len(t), dtype=bool)
     for j in range(1, 8):
         faults |= cols[f"fault_j{j}"] != 0
@@ -145,6 +146,18 @@ def measurement_times(cols, has_exchange_timestamps):
     t_meas[0] = t[0]
     t_meas[1:] = cols["t_recv_s"][:-1]
     return t_meas
+
+
+def tracking_mask(cols):
+    """Rows with Cartesian controller status, preserving legacy logs.
+
+    The current runner logs takeover-position holds as cycle 0 before the
+    controller computes Cartesian status. Those rows are valuable safety and
+    timing evidence, but their zero p_* fields are not tracking samples.
+    """
+    if "cycle" not in cols:
+        return np.ones(len(cols["time_s"]), dtype=bool)
+    return cols["cycle"] > 0
 
 
 def estimate_lag_s(t_cmd, pd, p_interp, median_dt):
@@ -205,12 +218,29 @@ def main():
                  "limit) — averages over a log with holes mislead. "
                  "Rerun with --force to override.")
 
-    pd = np.column_stack([cols["pd_x"], cols["pd_y"], cols["pd_z"]])
-    p = np.column_stack([cols["p_x"], cols["p_y"], cols["p_z"]])
-    t_cmd = cols["t_send_s"] if has_timestamps else cols["time_s"]
-    t_meas = measurement_times(cols, has_timestamps)
-    median_dt = float(np.median(cols["dt_s"][1:])) if len(cols["dt_s"]) > 1 \
-        else float(cols["dt_s"][0])
+    # Derive feedback times BEFORE filtering cycle-0 holds: the first
+    # target-directed row must retain the preceding completed exchange time.
+    t_meas_all = measurement_times(cols, has_timestamps)
+    mask = tracking_mask(cols)
+    if "cycle" in cols:
+        hold_rows = int((~mask).sum())
+        if hold_rows:
+            print(f"tracking: ignoring {hold_rows} takeover-hold row(s) "
+                  "(cycle == 0)")
+    if not mask.any():
+        sys.exit("REFUSING to compute Cartesian statistics: no target-directed "
+                 "rows (cycle > 0) in this log")
+
+    pd_all = np.column_stack([cols["pd_x"], cols["pd_y"], cols["pd_z"]])
+    p_all = np.column_stack([cols["p_x"], cols["p_y"], cols["p_z"]])
+    t_cmd_all = cols["t_send_s"] if has_timestamps else cols["time_s"]
+    pd = pd_all[mask]
+    p = p_all[mask]
+    t_cmd = t_cmd_all[mask]
+    t_meas = t_meas_all[mask]
+    tracking_dt = cols["dt_s"][mask]
+    median_dt = float(np.median(tracking_dt[1:])) if len(tracking_dt) > 1 \
+        else float(tracking_dt[0])
 
     # Actual position at each command time — matching by clock, never by row.
     p_interp = np.column_stack(
@@ -279,17 +309,14 @@ def main():
         ax.plot(t_cmd, err_comp_norm * 1e3, lw=1, alpha=0.7,
                 label=f"|error| (lag-compensated, {lag_s * 1e3:.0f} ms)")
     events = []
-    if "pd_beyond_reach" in cols:
-        events.append((cols["pd_beyond_reach"] != 0, "target beyond reach",
-                       "tab:orange"))
-    faults = np.zeros(len(t_cmd), dtype=bool)
+    faults = np.zeros(len(cols["time_s"]), dtype=bool)
     for j in range(1, 8):
         faults |= cols[f"fault_j{j}"] != 0
     faults |= cols["base_fault"] != 0
-    events.append((faults, "fault bank nonzero", "tab:red"))
-    events.append((cols["refresh_ok"] == 0, "refresh failed", "tab:purple"))
-    for mask, label, color in events:
-        for n, idx in enumerate(rising_edges(mask)):
+    events.append((faults[mask], "fault bank nonzero", "tab:red"))
+    events.append((cols["refresh_ok"][mask] == 0, "refresh failed", "tab:purple"))
+    for event_mask, label, color in events:
+        for n, idx in enumerate(rising_edges(event_mask)):
             ax.axvline(t_cmd[idx], color=color, ls=":", lw=1,
                        label=label if n == 0 else None)
     ax.set_xlabel("time (s)")

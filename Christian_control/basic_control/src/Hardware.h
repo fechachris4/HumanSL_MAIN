@@ -85,6 +85,15 @@ public:
         return device_config_.get();
     }
 
+    // The ControlConfig service this connection already owns — see the
+    // caution on tcp_router(). VerifyKinematicHardLimits() uses it
+    // internally; read-only diagnostics reach it here instead of building
+    // a second one.
+    k_api::ControlConfig::ControlConfigClient* control_config()
+    {
+        return control_config_.get();
+    }
+
     // The configured JOINT_LIMIT safety thresholds
     // (config::kJointLimitWarnDeg / kJointLimitErrorDeg): read, correct if
     // they do not match, re-read to verify. Writes no motion. Exists
@@ -210,15 +219,15 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 6; WriteCsvRow is the authority):
+// CSV column order (log_format = 7; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
-//   quat_x, quat_y, quat_z, quat_w, pd_beyond_reach,
+//   quat_x, quat_y, quat_z, quat_w,
 //   command_frame_id, feedback_frame_id, command_ack_j1..7,
 //   status_flags_j1..7, jitter_us_j1..7,
 //   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
-//   ack_unchanged_j1..7                                   (121 columns)
+//   ack_unchanged_j1..7                                   (120 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -227,8 +236,9 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // valid; format-4 tooling that read the two dropped columns by NAME keeps
 // working, by index does not. Format 6 (2026-08-04) removes the nine
 // trajectory-playback columns (ref_j1..7, playback_t_s, playback_state)
-// with the trajectory playback feature; tooling that read them by NAME
-// no longer finds them, and every index after pd_beyond_reach shifts.
+// with the trajectory playback feature. Format 7 (2026-08-04) removes the
+// informational reach-screen column; tooling should use column names rather
+// than positional indexes.
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -293,8 +303,6 @@ struct LoopLogSample {
         std::numeric_limits<double>::quiet_NaN(), // (ControllerStatus::
         std::numeric_limits<double>::quiet_NaN(), //  tool_quat; NaN when the
         std::numeric_limits<double>::quiet_NaN()}; // law has no tool frame)
-    bool pd_beyond_reach = false; // target outside right-base-relative sphere
-
     // Cyclic freshness evidence (log_format 4). command_frame_id is what
     // this process sent; feedback_frame_id and actuator_command_ack are what
     // Kortex returned. Per-actuator status/jitter distinguish a stale
@@ -348,7 +356,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 6. Both
+// Column header and one data row — the authority for log_format = 7. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);

@@ -3,7 +3,7 @@
 **Entry point:** `Main.cpp:400` calls `RunControlLoop(...)` exactly once, after
 the readiness gate, the CSV setup and the reference-source construction. This
 is the function that MOVES THE ARM. Everything in this file exists to run the
-takeover sequence T1–T5 (documented in the Runner.h banner, lines 6–24), the
+takeover sequence T1–T6 (documented in the Runner.h banner, lines 6–24), the
 500 Hz cycle, and the teardown D1–D2 on every possible exit path.
 
 This doc follows real execution order: the header contract first, then
@@ -15,7 +15,7 @@ helper `FillSample` explained where the loop first calls it.
 ## Runner.h
 
 ### Lines 1–34 — the banner comment
-Plain-English spec of the whole file: the takeover order (T1–T5), the per-cycle
+Plain-English spec of the whole file: the takeover order (T1–T6), the per-cycle
 order, and the teardown order (D1–D2). Not code, but treat it as normative —
 the .cpp is written to match it step for step, and several past bugs were
 order bugs. If you edit the loop, update this comment or the two will drift.
@@ -86,13 +86,9 @@ Hardware.h:256, log_format 6). Field groups:
   measured tool quaternion. `status.tool_quat.coeffs()` is Eigen's internal
   x,y,z,w storage order — the comment is there because it is the opposite of
   the w-first constructor order and a classic source of silent bugs.
-- **43–49** — builds the right-base origin from Config and sets
-  `pd_beyond_reach`: is the desired position outside the arm's reach sphere
-  minus a margin. <!-- FLAG hides-work: a "copy data into a row" helper is
-  quietly computing a reach-policy judgement from Config constants; you would
-  not look here to find where "beyond reach" is decided. --> **[hides-work,
-  lines 43–49]** This is flag-only telemetry (targets are never rejected),
-  but the computation lives in a function whose name promises pure copying.
+- **43–49** — copies controller status into the log sample. This helper does
+  not perform target admission or reachability checks; those concerns are not
+  represented in the runtime telemetry.
 - **50–64** — per-joint fields. Line 55–56 is the important one:
   `measured_deg = commanded + remainder(raw − commanded, 360)`.
   `std::remainder(x, 360)` returns x reduced to the range (−180, +180], so
@@ -186,33 +182,36 @@ entry*, so a bank already latched (which `RobotReadyForTakeover` tolerates
 for the stale JOINT_FAULT summary) does not print as a fresh event on cycle
 1. `fault_prints` caps the total number of fault-change prints (Safety.h:150).
 
-### Lines 144–165 — T4: the holding frames and the seeding hand-off
+### Lines 144–250 — T4/T5: streamed hold and the seeding hand-off
 This block is the heart of the takeover and the most order-sensitive code in
-the file. **[edit-hazard, lines 144–165]**
+the file. **[edit-hazard]**
 
 - **144–147** — `commanded_deg` starts as the measured position (a "hold
   here" command). `commanded_velocity_deg_s{}` — the `{}` zero-initializes
   the array; without it a `std::array` of doubles holds garbage.
-- **155** — first `Send(commanded_deg)`: a frame whose command equals the
-  measurement. Its *reply* is a fresher measurement.
-- **156–161** — that reply reseeds `state` AND `commanded_deg`, so the next
-  three calls all see the exact same pose.
-- **162–164** — the one-time seeding chain, in this order:
+- **T4** — the unchanged command is sent for
+  `config::kTakeoverHoldCycles` frames (250 at the compiled 2 ms period),
+  so it occupies 0.5 s on the same `sleep_until` grid as normal control.
+  Every completed reply is logged and resolves following error, low-level
+  loss, live fault policy, and stale acknowledgement with the normal
+  precedence. There is no joint-boundary proposal during this fixed hold.
+- **T5** — the final hold reply reseeds `state` AND `commanded_deg`, so
+  controller state starts from the last measured pose rather than the Seed
+  pose.
+- **T5** — the one-time seeding chain, in this order:
   `actuation.Prepare(state)` (integrator command = measurement — the ONLY
-  time command state comes from measurement), `controller.Reset(state)`
-  (captures the hold pose), `reference.Reset(state)` (source baseline).
-  Reordering these changes what each one captures. The Actuation.h and
-  State.h contracts both name this order.
-- **165** — one more holding frame; its reply becomes cycle 1's input, so
+  time command state comes from measurement), then `controller.Reset(state)`
+  (captures the hold pose). Reordering these changes what each one captures.
+  The Actuation.h and State.h contracts both name this order.
+- **T5** — one more holding frame; its reply becomes cycle 1's input, so
   the first control cycle starts from feedback that postdates all seeding.
-
-The comment (149–154) records why this is two frames and not the old 0.5 s
-handshake window — history you need before "simplifying" it further.
 
 ### Lines 167–174 — clocks and status
 `std::chrono::steady_clock` is the monotonic clock (never jumps when the
-wall clock changes — mandatory for control timing). `t_start` anchors all
-CSV timestamps; `next_cycle` is the pacing grid; `status` is the
+wall clock changes — mandatory for control timing). `log_start` anchors all
+CSV timestamps across the takeover hold, while `control_start` is reset
+after that hold so the controller's `RobotState::t_s` begins at zero;
+`next_cycle` is the pacing grid; `status` is the
 `ControllerStatus` telemetry struct, declared once outside the loop.
 
 ### Line 176 — `while (!stop)`
@@ -239,8 +238,9 @@ not "sleep for a period after finishing" — errors do not accumulate.
 
 ### Lines 200–207 — refresh `state` from the previous exchange
 The feedback consumed here was *received at the end of the previous cycle*
-(or the T4 frame, on cycle 1). Degrees→radians again at the boundary, and
-`state.t_s` becomes seconds since `t_start`. **[edit-hazard, lines 200–207]**
+(or the post-reseed T5 holding frame, on cycle 1). Degrees→radians again at
+the boundary, and `state.t_s` becomes seconds since `control_start` (not the
+CSV's takeover-relative `log_start`). **[edit-hazard, lines 200–207]**
 This one-cycle offset is a design fact the whole log annotates (Hardware.h
 "cross-exchange row semantics", Hardware.h:250): in row i, the controller
 inputs come from row i−1's reply. Moving the `Send` earlier or refreshing
@@ -318,56 +318,43 @@ before the next cycle's dt measurement; moving it corrupts dt), then
 ### Lines 278–279 — the latched JOINT_FAULT note
 Sticky bool: was the base's JOINT_FAULT summary bit ever set this run? Used
 only for the post-run note (line 395). `kJointFaultBit` is the one base bit
-`ClassifyStop` masks out as a stale historical aggregate (Safety.md).
+`HasLiveFault` masks out as a stale historical aggregate (Safety.md).
 
 ### Lines 281–297 — edge-triggered fault-change printing
 If either the base bank or any joint bank differs from last cycle, print the
 decoded change (once per change, not per cycle) — capped at
 `kMaxFaultChangePrints` (20) so a flapping bank cannot flood the terminal at
-500 Hz; the CSV still has every cycle's banks. Visibility only — stopping is
-`ClassifyStop`'s decision, next.
+500 Hz; the CSV still has every cycle's banks. Visibility only — the
+completed-sample priority decision comes next.
 
-### Lines 299–315 — the joint-warning stop and stop decision
-Before `ClassifyStop`, a set joint-warning field takes priority: the Runner
-has sent the unchanged last-safe full frame, logged the reply, assigns
-`kJointLimitWarning`, and stops. This guard is independent of
-`kStopOnFault`, so the fault-ignoring experiment cannot send a newly
-outward-crossing warning command.
+### Completed-sample freshness and stop priority
+After `Send` returns, the Runner fills the row and prints any fault-bank
+edge, then updates `FeedbackFreshnessMonitor` from that same reply. The
+current `ack_unchanged_j*` counts are therefore present in the stop row.
+`StaleAcknowledgementJoint` becomes active at 25 consecutive unchanged
+replies (50 ms at 500 Hz); it is evidence that the downstream cyclic path
+stalled, not evidence that a stationary joint failed to move.
 
-`ClassifyStop` (Safety.md) checks, in priority order: following error,
-actuator fault, base fault (minus the JOINT_FAULT summary), left low-level
-servoing. If it fires:
+The Runner computes every sample fact independently and passes them to
+`ResolveStopPriority` (StopPriority.h). First true reason wins:
 
-- a fault reason sets `faults_observed = true` (taints the exit code even if
-  ignored);
-- the loop breaks *unless* the reason is a fault AND `kStopOnFault` is false
-  (the fault-ignoring experiment) — the sample is pushed before breaking so
-  the stop cycle is always in the CSV;
-- **line 314** — an ignored fault resets `reason` back to `kUserStop`.
-  **[edit-hazard, lines 305–315]** This reset is load-bearing: without it, a
-  transient ignored fault would leave `reason = kRobotFault` sitting in the
-  variable, and a later Ctrl+C would be misreported as a fault stop. The
-  taint survives in `faults_observed`; `reason` must describe why the loop
-  actually *ended*.
+1. following error;
+2. loss of LOW_LEVEL servoing;
+3. a live fault, only when `kStopOnFault` enables fault stops;
+4. the held-frame joint-warning boundary;
+5. stale actuator acknowledgement.
 
-### Lines 316–321 — freshness telemetry
-`freshness_monitor.Update(...)` counts consecutive cycles each joint's
-command-acknowledgement ID repeated; the counts go into the sample
-(`ack_unchanged_j*`). Recorded, never acted on — the old stale-feedback stop
-was removed 2026-08-03. **[edit-hazard, lines 305–321]** Note the ordering
-wrinkle: when the loop breaks at line 311/312, that final sample was pushed
-*before* this update ran, so the stop row's `ack_unchanged_j*` columns carry
-the previous cycle's counts. Harmless today (telemetry), but anyone
-tightening this into a stop again must move the update above the push.
+An ignored live fault still sets the decision's sticky
+`live_fault_observed` taint, but returns no stop reason; there is no
+`ClassifyStop` call or ignored-fault `reason` reset in the Runner. Every
+selected stop reason pushes this completed sample before leaving the loop.
 
-### Lines 322–340 — the decision-12 counter stops, then the normal push
-Checked AFTER `ClassifyStop` so the guard and live faults keep priority.
+### Decision-12 counter stops, then the normal push
+Checked after the completed-sample priority above, so live state,
+joint-boundary, and stale-feedback reasons keep priority.
 `kNonFiniteStopCycles` (3) consecutive held cycles, or `kOverrunStopCycles`
 (10) consecutive slow cycles, ends the run; `N <= 0` in Config disables one.
-Each break pushes the sample first. **[edit-hazard, lines 305–340]**
-`log.push(sample)` appears four times (311, 330, 337, 340) — one per exit
-path plus the normal path. A future early-`break` added between them that
-forgets its own push loses the most important row of the run (the stop row).
+Each break pushes the sample first; otherwise the normal path pushes it once.
 
 ### Lines 342–348 — pacing
 `sleep_until(next_cycle)` sleeps to the grid point; if the cycle overran the

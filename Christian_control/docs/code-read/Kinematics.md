@@ -22,11 +22,11 @@ Execution order in a real run:
    URDF into `model_` and allocates the scratch `data_`).
 2. `DualArmKinematics controlled_model(...)` — Main.cpp:229-232
    (constructor validates everything).
-3. `KinematicsWorkspace workspace(model.dynamics())` — Main.cpp:185,
-   Main.cpp:340-341 (fixed-target gate), and Controller.cpp:33
+3. `KinematicsWorkspace workspace(model.dynamics())` — Main.cpp startup-pose
+   measurement and Controller.cpp:33
    (preallocation).
-4. `RightPoseAndJacobian(q, workspace)` — Main.cpp:186 (startup print),
-   Main.cpp:344 (fixed-target freshness gate), and Controller.cpp:47/83 —
+4. `RightPoseAndJacobian(q, workspace)` — Main.cpp startup-pose measurement
+   and Controller.cpp:47/83 —
    **every control cycle**.
 
 The generic free functions are *not* called by the controller binary at
@@ -186,7 +186,7 @@ structural tests"; in the run it is only called through
 ### `UpdateFullKinematics` (Kinematics.cpp:242-269) — the per-cycle core
 
 Runs on **every control cycle** (via Controller.cpp:47/83) plus the
-startup print and the fixed-target freshness gate. Everything in it must
+startup-pose measurement. Everything in it must
 stay allocation-free.
 
 - **Lines 246-252** — assemble q_full, then the same one-walk pattern as
@@ -217,7 +217,7 @@ transform; the inverse-times product is "tool as seen from base") — then
 7-wide/14-wide boundary in one place.
 
 - `RightPoseAndJacobian` returns all six rows — the controller's per-cycle
-  call and Main's startup print / freshness gate use this.
+  call and Main's startup-pose measurement use this.
 - `RightPositionAndJacobian` returns only the translational 3×7 — used by
   the probe_direction tool, not by the run. Not flagged unnecessary: it is
   live tooling for the joint-6 situation, and it is the honest "position

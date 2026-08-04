@@ -15,6 +15,23 @@ namespace
     constexpr double kRadToDeg = 180.0 / M_PI;
 } // namespace
 
+JointVelocityClampResult ClampJointVelocity(
+    const Eigen::Matrix<double, 7, 1>& requested_rad_s,
+    const JointVector& limits_deg_s)
+{
+    JointVelocityClampResult result;
+    for (int i = 0; i < NUM_JOINTS; ++i)
+    {
+        const double requested_deg_s = requested_rad_s[i] * kRadToDeg;
+        const double clamped_deg_s = std::clamp(requested_deg_s,
+                                                -limits_deg_s[i],
+                                                limits_deg_s[i]);
+        result.qdot_rad_s[i] = clamped_deg_s / kRadToDeg;
+        result.saturated[i] = clamped_deg_s != requested_deg_s;
+    }
+    return result;
+}
+
 PositionIntegration::PositionIntegration(double command_lead_limit_deg)
     // Store the safety limit in radians too, so every calculation inside the
     // controller uses one unit.

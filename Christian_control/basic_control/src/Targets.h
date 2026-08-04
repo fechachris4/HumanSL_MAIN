@@ -15,7 +15,9 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 
+#include "Config.h"
 #include "State.h"
+#include "TrajectoryProfile.h"
 
 // One base_link target. Every live target is position-only, preserving the
 // controller's takeover orientation.
@@ -28,8 +30,7 @@ struct PoseTarget {
 Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw);
 
 // Parse public runtime input: exactly three finite x y z coordinates in
-// metres, in base_link. The conservative sphere is 0.852 m about the base
-// origin. The compiled fixed target remains valid within 1e-12.
+// metres, in base_link. Only syntax and finite-value validation are applied.
 std::optional<PoseTarget> ParsePoseTarget(const std::string& line,
                                           std::string& error);
 
@@ -61,24 +62,48 @@ void RunPoseTargetInput(PoseTargetMailbox& mailbox,
 void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
                               const std::atomic<bool>& stop, int input_fd);
 
-// Begins with the compiled fixed target (sequence 0). It holds the active
-// target until Runner reports an arrival edge; the next Get consumes exactly
-// one queued target, if any, and increments the sequence. If empty, it stays
-// ready for a target later enqueued by the producer.
+// Begins with a profile from the measured takeover position to the compiled
+// terminal target (sequence 0). It holds the active target until Runner
+// reports an arrival edge; the next Get consumes exactly one queued target, if
+// any, and increments the sequence. If empty, it stays ready for a target
+// later enqueued by the producer.
 class PoseTargetSource
 {
 public:
-    PoseTargetSource(PoseTarget fixed_target, PoseTargetMailbox& mailbox);
+    PoseTargetSource(
+        Eigen::Vector3d startup_position_m, PoseTarget terminal_target,
+        PoseTargetMailbox& mailbox,
+        CartesianMotionLimits profile_limits = {
+            config::kProfileMaxSpeedMps,
+            config::kProfileMaxAccelerationMps2,
+            config::kProfileMaxJerkMps3},
+        double target_hold_s = config::kTargetHoldS);
 
     Reference Get(const RobotState& state, double dt_s,
                   ControllerStatus& status);
     void OnArrived();
 
 private:
+    enum class Phase {
+        kAwaitTerminalArrival,
+        kDwell,
+        kReadyForNext,
+        kFollowingProfile,
+    };
+
+    bool ValidDt(double dt_s) const;
+    void ActivateOneQueuedTarget();
+    Reference StationaryReference() const;
+
     PoseTargetMailbox& mailbox_;
     PoseTarget active_target_;
+    CartesianMotionLimits profile_limits_;
+    double target_hold_s_ = 0.0;
     std::uint64_t sequence_ = 0;
-    bool ready_for_next_ = false;
+    Phase phase_ = Phase::kAwaitTerminalArrival;
+    double dwell_elapsed_s_ = 0.0;
+    double profile_elapsed_s_ = 0.0;
+    std::optional<CartesianSegmentProfile> active_profile_;
 };
 
 // The hardware loop calls this bridge with its per-cycle status. Keeping the

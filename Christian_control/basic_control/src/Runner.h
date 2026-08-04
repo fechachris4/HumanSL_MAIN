@@ -9,10 +9,11 @@
 //   T2  ServoingGuard construction -> base enters LOW_LEVEL_SERVOING
 //   T3  CyclicSession::Seed — the one standalone read, AFTER the mode
 //       switch (commanding earlier fails with WRONG_SERVOING_MODE)
-//   T4  one measured-position holding frame; its reply seeds the actuation
-//       and the controller (the only command-state measurement seed), then
-//       one more holding frame whose reply is cycle 1's input
-//   T5  normal control
+//   T4  stream the fixed Seed measured-position command on the normal grid
+//       for config::kTakeoverHoldS; log and safety-classify every reply
+//   T5  reseed actuation and the controller from the final hold reply, then
+//       send one measured-position frame whose reply is cycle 1's input
+//   T6  normal control
 //
 // Per cycle: dt (measured, clamped; nominal on cycle 0) -> RobotState from
 // the previous exchange -> PoseTargetSource::Get ->

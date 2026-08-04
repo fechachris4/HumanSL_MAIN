@@ -7,6 +7,7 @@
 #include <cmath>
 #include <iostream>
 #include <poll.h>
+#include <stdexcept>
 #include <sstream>
 #include <utility>
 
@@ -95,20 +96,8 @@ std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& 
         return std::nullopt;
     }
 
-    const Eigen::Vector3d position(x, y, z);
-    const Eigen::Vector3d fixed_target(config::kFixedTargetM[0],
-                                       config::kFixedTargetM[1],
-                                       config::kFixedTargetM[2]);
-    const double conservative_reach_m =
-        config::kReachRadiusM - config::kReachMarginM;
-    if ((position - fixed_target).norm() > 1e-12 &&
-        position.norm() > conservative_reach_m) {
-        error = "target is outside the 0.852 m conservative reach sphere";
-        return std::nullopt;
-    }
-
     PoseTarget target;
-    target.p_desired = position;
+    target.p_desired = Eigen::Vector3d(x, y, z);
     return target;
 }
 
@@ -192,34 +181,120 @@ void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
     }
 }
 
-PoseTargetSource::PoseTargetSource(PoseTarget fixed_target,
-                                   PoseTargetMailbox& mailbox)
-    : mailbox_(mailbox), active_target_(std::move(fixed_target))
+PoseTargetSource::PoseTargetSource(Eigen::Vector3d startup_position_m,
+                                   PoseTarget terminal_target,
+                                   PoseTargetMailbox& mailbox,
+                                   CartesianMotionLimits profile_limits,
+                                   double target_hold_s)
+    : mailbox_(mailbox), active_target_(std::move(terminal_target)),
+      profile_limits_(profile_limits), target_hold_s_(target_hold_s)
 {
+    if (!startup_position_m.allFinite())
+        throw std::invalid_argument("startup position must be finite");
+    if (!active_target_.p_desired.allFinite())
+        throw std::invalid_argument("terminal target position must be finite");
+    if (!std::isfinite(profile_limits_.max_speed_m_s) ||
+        !std::isfinite(profile_limits_.max_acceleration_m_s2) ||
+        !std::isfinite(profile_limits_.max_jerk_m_s3) ||
+        profile_limits_.max_speed_m_s <= 0.0 ||
+        profile_limits_.max_acceleration_m_s2 <= 0.0 ||
+        profile_limits_.max_jerk_m_s3 <= 0.0)
+        throw std::invalid_argument("Cartesian profile limits must be finite and positive");
+    if (!std::isfinite(target_hold_s_) || target_hold_s_ < 0.0)
+        throw std::invalid_argument("target hold duration must be finite and non-negative");
     active_target_.rotation.reset();
+    const std::optional<CartesianSegmentProfile> profile =
+        CartesianSegmentProfile::Create(startup_position_m,
+                                        active_target_.p_desired,
+                                        profile_limits_);
+    if (!profile)
+        throw std::invalid_argument("startup-to-terminal profile is invalid");
+    active_profile_ = *profile;
+    phase_ = Phase::kFollowingProfile;
 }
 
-Reference PoseTargetSource::Get(const RobotState& /*state*/, double /*dt_s*/,
+bool PoseTargetSource::ValidDt(double dt_s) const
+{
+    return std::isfinite(dt_s) && dt_s > 0.0;
+}
+
+void PoseTargetSource::ActivateOneQueuedTarget()
+{
+    const std::optional<PoseTarget> next = mailbox_.TryDequeue();
+    if (!next)
+        return;
+    const std::optional<CartesianSegmentProfile> profile =
+        CartesianSegmentProfile::Create(active_target_.p_desired,
+                                        next->p_desired, profile_limits_);
+    if (!profile)
+        throw std::invalid_argument("queued target cannot form a finite Cartesian profile");
+
+    active_target_ = *next;
+    active_target_.rotation.reset();
+    active_profile_ = *profile;
+    profile_elapsed_s_ = 0.0;
+    ++sequence_;
+    phase_ = Phase::kFollowingProfile;
+}
+
+Reference PoseTargetSource::StationaryReference() const
+{
+    Reference reference;
+    PoseReference pose;
+    pose.p_desired = active_target_.p_desired;
+    pose.rotation.reset();
+    pose.twist = Twist{};
+    pose.sequence = sequence_;
+    pose.arrival_eligible = true;
+    reference.pose = pose;
+    return reference;
+}
+
+Reference PoseTargetSource::Get(const RobotState& /*state*/, double dt_s,
                                 ControllerStatus& /*status*/)
 {
-    if (ready_for_next_) {
-        if (const std::optional<PoseTarget> next = mailbox_.TryDequeue()) {
-            active_target_ = *next;
-            active_target_.rotation.reset();
-            ++sequence_;
-            ready_for_next_ = false;
-        }
+    const bool valid_dt = ValidDt(dt_s);
+    if (phase_ == Phase::kDwell && valid_dt) {
+        dwell_elapsed_s_ += dt_s;
+        if (dwell_elapsed_s_ >= target_hold_s_)
+            phase_ = Phase::kReadyForNext;
     }
+    if (phase_ == Phase::kReadyForNext)
+        ActivateOneQueuedTarget();
+
+    if (phase_ != Phase::kFollowingProfile)
+        return StationaryReference();
+
+    const std::optional<CartesianProfileSample> profile_sample =
+        active_profile_->Sample(profile_elapsed_s_);
+    if (!profile_sample)
+        throw std::logic_error("active Cartesian profile has invalid elapsed time");
 
     Reference reference;
-    reference.pose = PoseReference{active_target_.p_desired, std::nullopt,
-                                   Twist{}, sequence_};
+    PoseReference pose;
+    pose.p_desired = profile_sample->position_m;
+    pose.rotation.reset();
+    pose.twist.linear_m_s = profile_sample->velocity_m_s;
+    pose.twist.angular_rad_s.setZero();
+    pose.sequence = sequence_;
+    pose.arrival_eligible = profile_sample->complete;
+    reference.pose = pose;
+
+    if (profile_sample->complete) {
+        active_profile_.reset();
+        phase_ = Phase::kAwaitTerminalArrival;
+    } else if (valid_dt) {
+        profile_elapsed_s_ += dt_s;
+    }
     return reference;
 }
 
 void PoseTargetSource::OnArrived()
 {
-    ready_for_next_ = true;
+    if (phase_ != Phase::kAwaitTerminalArrival)
+        return;
+    dwell_elapsed_s_ = 0.0;
+    phase_ = Phase::kDwell;
 }
 
 void NotifyPoseTargetSourceOnArrivalEdge(PoseTargetSource& source,

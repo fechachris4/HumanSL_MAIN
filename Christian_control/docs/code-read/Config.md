@@ -13,13 +13,12 @@ runtime. `inline` (on a variable, since C++17) means the header can be
 included by many .cpp files and they all share one definition instead of
 colliding at link time. Net effect: these are true compile-time constants —
 changing any of them means **recompiling**, and the running binary can be
-older than the value you think it has (the freshness gate below exists
-because exactly that bit once).
+older than the value you think it has, which is why every run records its
+effective configuration in the CSV.
 
 Since the playback removal there is no reference-source choice and no
-`kUseFixedTarget` switch: every run drives the arm to the compiled fixed
-target. That makes the target block and its freshness gate the most
-consequential lines in the file.
+`kUseFixedTarget` switch: every run profiles from its measured startup pose to
+the compiled terminal target.
 
 Flag categories used inline: **unnecessary**, **hides-work**,
 **mixed-jobs**, **edit-hazard**.
@@ -95,28 +94,13 @@ catches unit mistakes. Read by the runner (loop grid), the banner print,
 and the log-buffer sizing (where Main.cpp:283–284's integer division is the
 edit-hazard — see Main.md).
 
-### Line 68 — `kMaxFixedTargetDistanceM = 0.15`
-The freshness gate's limit (Main.cpp:350): refuse the run if the compiled
-fixed target is more than 15 cm from the *measured* end-effector at
-startup. Exists because of a real incident (2026-08-04, 37 cm of drift
-between compile and run) — the control law drives the whole gap at clip
-speed from cycle one. Now that every run is a fixed-target run, this gate
-runs unconditionally at every start; raising the number widens how wrong a
-stale target can be before anyone is warned.
-
-### Lines 70–90 — the fixed target itself
-- **Line 86** — `kFixedTargetM = {0.3834, -0.4051, 0.7225}`.
-  **FLAG edit-hazard (lines 79–86):** the value is inseparable from the
-  long comment above it — this target is −3 cm in z from a *specific
-  measured pose on a specific date*, chosen because `probe_direction`
-  showed −z drives joint 6 INWARD, the only safe direction while j6's
-  limit band cannot be restored (see lines 135–140). Joint 6 has only
-  ~12° of inward window. Editing the numbers without redoing that analysis
-  (re-probe after the arm moves, keep moves small) is exactly the mistake
-  the comment is guarding against; the 0.15 m gate catches *stale*
-  targets, not *unsafe directions*. Under fixed-target-only this line is
-  the single most consequential value in the repository: it is where the
-  arm goes, every run.
+### The terminal target
+- `kFixedTargetM` is the terminal position in the right-arm `base_link` frame,
+  in metres. The startup pose is measured at runtime, so this value is no
+  longer a startup freshness gate or a registered IK-branch requirement.
+- The target remains safety-relevant: the low-level controller follows a
+  bounded Cartesian profile, while the independent joint-rate, following-error,
+  reach telemetry, and joint-boundary guards remain active.
 - **Lines 87–90** — `kFixedTargetUseRpy = false` keeps the takeover
   orientation; `true` ALSO rotates the tool to `kFixedTargetRpyRad`
   (R = Rz·Ry·Rx, matching the startup printout's convention so values can
@@ -153,10 +137,11 @@ so centering joint 4 toward 0 can push it into its limit — confirm in the
 web dashboard before ever flipping `kNullSpaceEnabled` to true. Currently
 dormant (the toggle is false).
 
-### Lines 120–124 — reach telemetry
-Base origin, 0.902 m max reach, 5 cm margin. FLAG ONLY in the code's own
-words: targets beyond reach are flagged in telemetry, never rejected or
-projected. Nothing here stops the arm.
+### Target validation
+The stdin parser validates target syntax and finite coordinates only. There is
+no reach sphere or reach-screen telemetry in the controller. Reachability,
+collision clearance, joint-limit clearance, and path safety remain separate
+operator or planning responsibilities.
 
 ### Line 128 — `kQdotLimitDegS = kModelVelocityLimitsDegS`
 **FLAG edit-hazard:** two names for one value — the "model limits" and the
@@ -188,12 +173,11 @@ established 130 deg and j4/j6 145/118 deg (inside their documented
 j4/j6. Someone filling in "the missing limits" for continuous joints
 1/3/5/7 changes startup behaviour on real hardware.
 
-### Line 148 — `kStopOnFault = false`
-**FLAG edit-hazard:** in caps in the source for a reason: A LIVE FAULT
-DOES NOT END THE RUN. Faults are still decoded, printed, logged and taint
-the exit code (Main.cpp:428–432), but the loop keeps commanding.
-ATTENDED USE ONLY — the operator is the stop. Deliberately compile-time
-only, never runtime-settable, so changing it is a visible commit.
+### `kStopOnFault = true`
+**FLAG edit-hazard:** a live base or actuator fault ends validation motion.
+Faults are decoded, printed, logged, and taint the exit code. This policy is
+deliberately compile-time only, never runtime-settable, so changing it is a
+visible source edit and rebuild.
 
 ### Lines 150–186 — the guard overrides
 All three default false = every guard active; each is echoed into the CSV
@@ -209,9 +193,9 @@ preamble so a run recorded with one enabled is identifiable forever after.
   revert to 0/0 on power cycle → firmware faults outward motion. The
   comment steers you to the narrower override above instead. The loud
   warning it triggers is at Main.cpp:268–272.
-- **Line 186 — `kDisableFollowingErrorStop = false`.** true = the loop
-  never stops on following error. Combined with `kStopOnFault = false`, live
-  faults and following error no longer end a run, but loss of low-level
+- **`kDisableFollowingErrorStop = false`.** true = the loop never stops on
+  following error. The retained validation configuration leaves both this
+  guard and `kStopOnFault` active. Loss of low-level
   servoing, the software joint-boundary guard, and enabled non-finite and
   overrun counters still do. The limit value itself (line 192) keeps feeding
   telemetry either way.
@@ -264,7 +248,7 @@ default CSV files.
 | Lines | Flag | Reason |
 |---|---|---|
 | 50–53 | edit-hazard | the program's single speed limit; 45 is a deliberate temporary derate |
-| 79–86 | edit-hazard | fixed target valid only for one probed pose/date; j6 inward-only window; now where the arm goes every run |
+| 79–86 | edit-hazard | terminal target and its direction remain hardware-affecting |
 | 128 | edit-hazard | alias equality is a design invariant, not duplication |
 | 141–142 | edit-hazard, hides-work | 0 = "skip joint" sentinel; current values encode the wedged-j6 workaround |
 | 148 | edit-hazard | faults do not stop the run; attended use only |

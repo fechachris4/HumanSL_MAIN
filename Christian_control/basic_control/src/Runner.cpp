@@ -22,6 +22,12 @@ namespace
     constexpr double kDegToRad = M_PI / 180.0;
     constexpr double kRadToDeg = 180.0 / M_PI;
 
+    struct TakeoverStop
+    {
+        LoopStop reason;
+        bool log_sample = true;
+    };
+
     // Copy one cycle's data into a log row. Feedback positions are wrapped
     // to [0, 360) but the integrated command is continuous, so each
     // measurement is shifted by whole turns next to its command — tracking
@@ -41,13 +47,6 @@ namespace
         s.rot_error_rad = status.rot_error_rad;
         for (int i = 0; i < 4; ++i)
             s.tool_quat_xyzw[i] = status.tool_quat.coeffs()[i]; // Eigen order x,y,z,w
-        const Eigen::Vector3d right_base_origin{
-            config::kRightBaseOriginControlM[0],
-            config::kRightBaseOriginControlM[1],
-            config::kRightBaseOriginControlM[2]
-        };
-        s.pd_beyond_reach = (status.p_desired - right_base_origin).norm() >
-            config::kReachRadiusM - config::kReachMarginM;
         for (int i = 0; i < NUM_JOINTS; ++i)
         {
             const auto& a = fb.actuators(i);
@@ -86,11 +85,9 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     if (!robot_ready)
         throw std::logic_error("RunControlLoop called without a passed readiness gate");
 
-    // Stop policy is COMPILE-TIME ONLY (F2, approved 2026-07-22): the
-    // config:: constants below are read directly and no CLI flag or file
-    // may change them. kStopOnFault = false reproduces the 2026-07-20
-    // fault-ignoring experiment (bank changes still print, every cycle's
-    // banks are logged, observed faults still force a nonzero exit).
+    // Stop policy is compile-time only: the config constants below are read
+    // directly and no CLI flag or file may weaken them. Fault-bank changes
+    // are printed and logged regardless of the selected stop policy.
     if (!config::kStopOnFault)
         std::cout << "WARNING: FAULT-STOP DISABLED (config::kStopOnFault = false) — live "
             "fault bits will NOT stop the loop; following-error, low-level-servoing, "
@@ -149,15 +146,141 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         JointVector commanded_deg;
         JointVector commanded_velocity_deg_s{};
         for (int i = 0; i < NUM_JOINTS; ++i)
-            commanded_deg[i] = state.q_rad[i] * kRadToDeg;
+            commanded_deg[i] = feedback.actuators(i).position();
 
-        // T4: one holding frame (command == measured), whose reply reseeds
-        // the integrator and the controller at the exact pose control will
-        // start from. (Until 2026-08-03 this was a 0.5 s streaming
-        // handshake window with its own stop classification — trimmed to a
-        // single frame; the guards in the loop below cover the same ground
-        // from the very first control cycle.)
-        feedback = cyclic.Send(commanded_deg);
+        // Fault visibility is shared by the takeover hold and normal loop:
+        // every bank change is still printed, but policy is resolved from
+        // the independently observed sample facts below.
+        const auto print_fault_change = [&]()
+        {
+            if (sample.base_fault_bank != prev_base_bank ||
+                sample.fault_bank != prev_joint_banks)
+            {
+                if (fault_prints < kMaxFaultChangePrints)
+                {
+                    PrintFaultChange(sample, cycle, prev_joint_banks, prev_base_bank);
+                    if (++fault_prints == kMaxFaultChangePrints)
+                        std::cout << "further fault-bank changes not printed (limit "
+                            << kMaxFaultChangePrints
+                            << "); every cycle's banks are in the CSV\n";
+                }
+                prev_base_bank = sample.base_fault_bank;
+                prev_joint_banks = sample.fault_bank;
+            }
+        };
+
+        using clock = std::chrono::steady_clock;
+        // CSV time covers the entire low-level takeover, while RobotState
+        // time starts only once controller integration is permitted below.
+        const auto log_start = clock::now();
+
+        // T4: fixed POSITION hold before either controller state or the
+        // integrator can advance. The loop count is derived from the same
+        // cyclic period that paces normal control, so this is exactly 0.5 s
+        // at the compiled 500 Hz rate.
+        auto hold_next = log_start;
+        auto hold_prev = log_start;
+        ControllerStatus hold_status;
+        for (std::size_t hold_cycle = 0;
+             hold_cycle < config::kTakeoverHoldCycles && !stop;
+             ++hold_cycle)
+        {
+            hold_next += period;
+            const auto t_now = clock::now();
+            const auto t_send = clock::now();
+            feedback = cyclic.Send(commanded_deg);
+            const auto t_recv = clock::now();
+
+            const double hold_dt_s = hold_cycle == 0
+                ? nominal_dt_s
+                : std::chrono::duration<double>(t_now - hold_prev).count();
+            sample.t_s = std::chrono::duration<double>(t_now - log_start).count();
+            sample.dt_s = hold_dt_s;
+            sample.t_send_s = std::chrono::duration<double>(t_send - log_start).count();
+            sample.t_recv_s = std::chrono::duration<double>(t_recv - log_start).count();
+            hold_prev = t_now;
+            if (hold_cycle > 0 &&
+                hold_dt_s > config::kOverrunFactor * nominal_dt_s)
+            {
+                ++counters.overrun;
+                ++counters.overrun_total;
+            }
+            else
+                counters.overrun = 0;
+            FillSample(sample, feedback, cyclic.last_command_frame_id(),
+                       commanded_deg, commanded_velocity_deg_s, hold_status);
+            sample.cycle = 0;
+            sample.requested_deg = commanded_deg;
+            sample.requested_velocity_deg_s = JointVector{};
+            sample.lead_limited = {};
+            joint_fault_was_latched =
+                joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
+            print_fault_change();
+
+            // The holding command is exactly the fixed Seed measurement, so
+            // no integrator proposal exists and the joint-boundary fact is
+            // false. All other normal-loop precedence remains active.
+            freshness_monitor.Update(sample.actuator_command_ack);
+            sample.ack_unchanged_cycles = freshness_monitor.unchanged_cycles();
+            const std::optional<int> stale_acknowledgement_joint =
+                StaleAcknowledgementJoint(sample.ack_unchanged_cycles,
+                                          config::kStaleFeedbackStopCycles);
+            const StopPriorityDecision priority = ResolveStopPriority(
+                FollowingErrorExceeded(sample, following_error_limit_deg),
+                HasLiveFault(sample),
+                sample.arm_state != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL,
+                false,
+                config::kStopOnFault,
+                stale_acknowledgement_joint.has_value());
+            faults_observed = faults_observed || priority.live_fault_observed;
+            switch (priority.reason)
+            {
+            case StopPriorityReason::kFollowingError:
+                reason = LoopStop::kFollowingError;
+                break;
+            case StopPriorityReason::kLeftLowLevel:
+                reason = LoopStop::kLeftLowLevel;
+                break;
+            case StopPriorityReason::kRobotFault:
+                reason = LoopStop::kRobotFault;
+                break;
+            case StopPriorityReason::kStaleFeedback:
+                stale_feedback_joint = *stale_acknowledgement_joint;
+                reason = LoopStop::kStaleFeedback;
+                break;
+            case StopPriorityReason::kJointLimitWarning:
+            case StopPriorityReason::kNone:
+                break;
+            }
+            if (priority.reason != StopPriorityReason::kNone)
+                throw TakeoverStop{reason};
+            // A controller non-finite output and a joint-boundary proposal
+            // cannot exist during the fixed hold, but timing stalls still
+            // use the normal configured consecutive-cycle guard. It follows
+            // live-state and stale-acknowledgement precedence above.
+            if (config::kOverrunStopCycles > 0 &&
+                counters.overrun >= config::kOverrunStopCycles)
+            {
+                reason = LoopStop::kOverrun;
+                throw TakeoverStop{reason};
+            }
+            log.push(sample);
+
+            const auto now = clock::now();
+            if (hold_next > now)
+                std::this_thread::sleep_until(hold_next);
+            else
+                hold_next = now;
+        }
+        if (stop)
+            throw TakeoverStop{LoopStop::kUserStop, false};
+
+        std::cout << "takeover hold: PASS (" << config::kTakeoverHoldS
+            << " s unchanged POSITION command)\n";
+
+        // T5: only after a complete healthy hold do the integrator and
+        // controller capture the final measured pose. This prevents any
+        // harmless takeover drift becoming an initial command jump.
         for (int i = 0; i < NUM_JOINTS; ++i)
         {
             state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
@@ -168,12 +291,10 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         controller.Reset(state);
         feedback = cyclic.Send(commanded_deg);
 
-        using clock = std::chrono::steady_clock;
-
-        // T5: normal control begins only after the mode gate and the seed.
-        const auto t_start = clock::now();
-        auto t_prev = t_start;
-        auto next_cycle = t_start;
+        // T6: normal control begins only after the mode gate and full hold.
+        const auto control_start = clock::now();
+        auto t_prev = control_start;
+        auto next_cycle = control_start;
 
         ControllerStatus status;
 
@@ -208,7 +329,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
                 state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
             }
-            state.t_s = std::chrono::duration<double>(t_now - t_start).count();
+            state.t_s = std::chrono::duration<double>(t_now - control_start).count();
 
             // Reference then controller: both pure computation. The source
             // says WHERE to be this cycle; the controller turns that into
@@ -253,12 +374,10 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             // actuation integrates and produces this cycle's setpoints.
             // A pinned clamp is allowed indefinitely (no saturation stop):
             // far targets transit at clip speed by design.
-            Eigen::Matrix<double, 7, 1> qdot_clamped_rad_s;
-            for (int i = 0; i < NUM_JOINTS; ++i)
-                qdot_clamped_rad_s[i] =
-                    std::clamp(qdot_raw_rad_s[i] * kRadToDeg,
-                               -qdot_limit_deg_s[i], qdot_limit_deg_s[i]) *
-                    kDegToRad;
+            const JointVelocityClampResult clamp_result =
+                ClampJointVelocity(qdot_raw_rad_s, qdot_limit_deg_s);
+            const Eigen::Matrix<double, 7, 1>& qdot_clamped_rad_s =
+                clamp_result.qdot_rad_s;
             const PositionIntegration::ApplyStatus actuation_status =
                 actuation.Apply(qdot_clamped_rad_s, state, dt_s, commanded_deg,
                                 commanded_velocity_deg_s);
@@ -271,10 +390,10 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             const auto t_recv = clock::now();
             ++cycle;
 
-            sample.t_s = state.t_s;
+            sample.t_s = std::chrono::duration<double>(t_now - log_start).count();
             sample.dt_s = std::chrono::duration<double>(t_now - t_prev).count();
-            sample.t_send_s = std::chrono::duration<double>(t_send - t_start).count();
-            sample.t_recv_s = std::chrono::duration<double>(t_recv - t_start).count();
+            sample.t_send_s = std::chrono::duration<double>(t_send - log_start).count();
+            sample.t_recv_s = std::chrono::duration<double>(t_recv - log_start).count();
             t_prev = t_now;
             FillSample(sample, feedback, cyclic.last_command_frame_id(),
                        commanded_deg, commanded_velocity_deg_s, status);
@@ -285,24 +404,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
 
-            // Every fault-bank change prints as it happens (edge-triggered,
-            // capped — see PrintFaultChange). This is live visibility, not
-            // policy: whether the loop stops is resolved from independent
-            // sample facts below.
-            if (sample.base_fault_bank != prev_base_bank ||
-                sample.fault_bank != prev_joint_banks)
-            {
-                if (fault_prints < kMaxFaultChangePrints)
-                {
-                    PrintFaultChange(sample, cycle, prev_joint_banks, prev_base_bank);
-                    if (++fault_prints == kMaxFaultChangePrints)
-                        std::cout << "further fault-bank changes not printed (limit "
-                            << kMaxFaultChangePrints
-                            << "); every cycle's banks are in the CSV\n";
-                }
-                prev_base_bank = sample.base_fault_bank;
-                prev_joint_banks = sample.fault_bank;
-            }
+            print_fault_change();
 
             // Update and record acknowledgement freshness before resolving
             // this completed feedback sample. The count is evidence of a
@@ -383,6 +485,14 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             else
                 next_cycle = now;
         }
+    }
+    catch (const TakeoverStop& ex)
+    {
+        reason = ex.reason;
+        if (ex.log_sample)
+            log.push(sample);
+        if (reason != LoopStop::kUserStop)
+            std::cout << "takeover hold failed before controller motion began\n";
     }
     catch (k_api::KDetailedException& ex)
     {

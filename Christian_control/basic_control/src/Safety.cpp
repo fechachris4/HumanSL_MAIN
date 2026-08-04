@@ -32,15 +32,14 @@ namespace
 bool FollowingErrorExceeded(const LoopLogSample& s,
                             double following_error_limit_deg)
 {
-    // Checked FIRST so the guard cannot be masked by the experiment
-    // policy that ignores fault bits (ClassifyStop returns on the
-    // first match). measured_deg sits within ±180° of the command
+    // Checked first so the guard cannot be masked by fault classification
+    // (ClassifyStop returns on the first match). measured_deg sits within
+    // ±180° of the command
     // (FillSample) and the gap grows by well under a degree per
     // cycle, so at a small limit the comparison is unambiguous.
     //
-    // config::kDisableFollowingErrorStop removes this stop entirely. With
-    // kStopOnFault also false, the joint warning and consecutive-cycle
-    // guards remain automatic stops in the Runner as well.
+    // config::kDisableFollowingErrorStop removes this stop entirely. Joint
+    // warnings and consecutive-cycle guards remain independent in Runner.
     if (!config::kDisableFollowingErrorStop)
         for (int i = 0; i < NUM_JOINTS; ++i)
             if (std::abs(s.measured_deg[i] - s.commanded_deg[i]) >

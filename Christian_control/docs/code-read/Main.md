@@ -6,9 +6,10 @@ point. Everything below follows the order the CPU actually visits things
 when you run `./controller`, not the order they appear in the file. Helper
 functions are explained at the point main() first calls them.
 
-The program now has exactly one behaviour: connect, gate, take over, drive
-the arm to the compiled fixed target, hold, stop on Ctrl+C. There is no
-trajectory playback, no stdin target input, and no reference-source choice.
+The program now connects, performs the mandatory robot safety checks, takes
+over while holding the measured current pose, follows a bounded profile to the
+compiled terminal target, accepts queued stdin targets, holds, and stops on
+Ctrl+C. There is no exact registered-startup-pose requirement.
 
 Flag categories used inline: **unnecessary**, **hides-work**,
 **mixed-jobs**, **edit-hazard**.
@@ -84,8 +85,7 @@ a stream. Called once per run, from `WriteCsvPreamble`, with prefix `"# "`.
   variables (`out`, `prefix`) by reference. Exists to avoid repeating the
   `out << prefix << key ...` boilerplate ~20 times.
 - **Lines 67–75** — the reactive-law gains and feature toggles.
-- **Lines 76–84** — the fixed target (now recorded unconditionally — every
-  run is a fixed-target run) and, only when `kFixedTargetUseRpy` is on, its
+- **Lines 76–84** — the terminal target and, only when `kFixedTargetUseRpy` is on, its
   rpy. The `if` mirrors the config's own dependency: the rpy line only
   appears when it will actually be commanded.
 - **Lines 85–97** — the following-error limit, the guard overrides and the
@@ -120,8 +120,9 @@ wrong word.
 Writes two header comment lines then delegates to `WriteConfigLines` with
 the `"# "` prefix. CSV parsers skip `#` lines, so the preamble rides inside
 the data file without breaking it.
-**FLAG edit-hazard (line 115):** `# log_format = 6 (compiled)` is a
-hand-maintained schema version, bumped from 5 when the playback keys left
+**FLAG edit-hazard (line 115):** `# log_format = 7 (compiled)` is a
+hand-maintained schema version, bumped from 6 when the reach-screen telemetry
+column left
 the preamble in the fixed-target-only change. If someone changes the CSV
 columns or preamble contract without bumping this number — or bumps it
 without changing them — every analysis script keyed on the format number
@@ -131,8 +132,8 @@ silently misreads data.
 
 ### Lines 120–139 — the "story of the program" comment
 A prose walkthrough of main() from parse to exit, updated for the
-fixed-target-only design (the reference source is now named as "the
-fixed-target reference source"). Worth reading once; it is the file's own
+current-pose startup design (the reference source is now named as "the
+current-start reference source"). Worth reading once; it is the file's own
 table of contents. The all-caps "MOVES THE ARM" marks where hardware motion
 begins.
 
@@ -175,7 +176,7 @@ begins.
     way on the next compiled run.
   - Why this function exists at all: the comment at 167–169 says it — the
     printed pose is what "hold here" looks like, and under the
-    fixed-target-only design it is the *only* in-band way to choose the
+    current-start design it is the *only* in-band way to choose the
     next compiled target: read this printout, edit Config.h, recompile.
 
 ### Lines 204–212 — the stop flag and signal handler
@@ -251,9 +252,9 @@ with the firmware.
 
 ### Line 255 — first feedback frame
 `read_feedback` performs one standalone Feedback exchange. This single
-frame (`initial`) is reused three times below: the readiness gate, the
-state printout, and the fixed-target freshness gate — deliberately the
-*same* snapshot so all three judge the same instant.
+frame (`initial`) is reused for the readiness gate, state printout, and FK
+startup-pose measurement — deliberately the same snapshot so startup facts
+refer to one instant.
 
 ### Lines 257–259 — readiness gate (T1)
 `RobotReadyForTakeover` inspects the frame for live faults and prints its
@@ -261,13 +262,23 @@ verdict. Fails → `return 1` with the arm never entering low-level
 servoing. The `robot_ready` bool is also threaded into `RunControlLoop`
 later (line 404) as proof the gate ran.
 
-### Lines 260–276 — restore JOINT_LIMIT thresholds
+### Mandatory read-only hard-speed gate
+Immediately after readiness, `VerifyKinematicHardLimits` queries the
+Connect-owned `ControlConfigClient`. It requires seven finite positive live
+hard joint speeds and refuses takeover if the compiled per-joint
+`kQdotLimitDegS` clip exceeds any of them. This gate always runs: the
+`kSkipStartupGates` override skips configuration writes, not hard-speed
+verification. Bundled Kortex 2.7.0 exposes no live joint-position fields in
+this schema, so the gate makes no position-limit claim.
+
+### Restore and verify JOINT_LIMIT thresholds
 The long comment is load-bearing history: firmware limit bands do not
 survive a power cycle, and a degenerate 0/0 band makes the firmware fault
 any motion away from zero. `EnsureJointLimits` re-writes the configured
 bands — but only for joints with non-zero entries in
 `kJointLimitWarnDeg/kJointLimitErrorDeg` (currently bounded joints 2, 4,
-and 6; continuous joints 1/3/5/7 remain zero). The parenthetical records
+and 6; continuous joints 1/3/5/7 remain untouched). It runs only after the
+readiness and mandatory hard-speed gates. The parenthetical records
 why the old control-mode verification gate was deleted on 2026-08-04. If
 `kSkipStartupGates` is set
 the restore is skipped with a loud warning instead — the warning text
@@ -321,7 +332,7 @@ Nothing in the compiler will warn about that.
 The controller. Constructed here so a bad end-effector frame name fails
 before any takeover.
 
-### Lines 325–376 — build the fixed-target reference source
+### Lines 325–404 — build the current-start reference source
 - **Line 325** — `std::unique_ptr<ReferenceSource> reference;`
   *unique_ptr* is an owning smart pointer: exactly one owner, deletes its
   object automatically. **FLAG unnecessary (lines 325, 376):** this
@@ -338,24 +349,15 @@ before any takeover.
   plumbing matching `PoseTargetSource`'s parameter type from the era when
   interactive runs passed an empty one. If that constructor signature is
   ever tightened to take a plain `PoseTarget`, this wrapper goes with it.
-- **Lines 329–364 — the freshness gate.** Computes FK on the *current*
-  measured joints (from `initial`), takes the straight-line gap to the
-  compiled target, and refuses the run if it exceeds
-  `kMaxFixedTargetDistanceM` (0.15 m). The comment records the incident
-  that created it: on 2026-08-04 the arm was jogged 37 cm between compile
-  and run — the controller would have driven the whole gap at clip speed
-  from cycle one. The extra `{ ... }` braces around 335–364 are a
-  deliberate scope so the gate's temporaries (`q_now_rad`, workspace,
-  `ee_now`) die immediately after the check. The gate is now
-  unconditional: every run passes through it, which is the design's main
-  compensation for targets being compiled in.
-- **Lines 365–375 — build the PoseTarget.** Position from `kFixedTargetM`;
+- **Lines 379–397 — measure the startup pose.** Converts the fresh initial
+  actuator feedback to radians, computes FK in the right-arm model, rejects a
+  non-finite result, records the measured startup pose in the CSV, and prints
+  it for operator visibility. There is no comparison to a compiled joint
+  configuration or Cartesian pose.
+- **Lines 398–404 — build the PoseTargetSource.** Position from `kFixedTargetM`;
+  the constructor also receives the measured FK position as the profile start.
   rotation only if `kFixedTargetUseRpy` — an unset rotation means "keep the
-  takeover orientation" (that convention lives in Targets.h; the comment on
-  line 369 restates it here because getting it wrong rotates a real tool).
-- **Line 376** — `PoseTargetSource` now takes only the target (the shared
-  store parameter left with the stdin thread). The target is handed over
-  NOW and applies from the first cycle after takeover.
+  takeover orientation.
 
 ### Line 377 — `PositionIntegration actuation(kCommandLeadLimitDeg);`
 The actuation stage: integrates commanded velocities into position
@@ -363,13 +365,11 @@ setpoints, never letting the setpoint lead measured position by more than
 1°. See Config.md's flag on why that 1° interacts with the following-error
 guard.
 
-### Lines 379–396 — the fixed-target banner
-The shouty printout: target coordinates, "THE ARM MOVES THERE IMMEDIATELY
-after the takeover; Ctrl+C to stop", and either the rotation it will
-command or "orientation target unchanged". The banner *is* a safety
-feature — the operator's last chance to notice a wrong compiled target
-before motion — and it deliberately pairs with the measured pose printed
-at line 277 so the two can be compared by eye.
+### Lines 401–407 — the terminal-target banner
+The banner states that takeover holds the measured startup pose before the
+bounded profile moves to the terminal target. It pairs the measured startup
+position with the configured target so the operator can review both before
+motion.
 
 ### Lines 398–404 — run the loop. THE ARM MOVES HERE.
 `RunControlLoop` (Runner.cpp) is the entire run: the takeover sequence,
@@ -400,9 +400,11 @@ analysis request.
 The success condition: reason was a clean operator stop
 (`LoopStop::kUserStop`) AND no faults were observed → 0; anything else →
 1. Note the deliberate strictness on lines 428–429: with
-`kStopOnFault = false` the loop *keeps running* through faults, but they
-still taint the exit code — "the run finished" and "the run was clean" are
-different claims, and scripts keying on the exit code get the honest one.
+With the validation configuration, `kStopOnFault = true`, so a live fault
+ends the loop and also taints the exit code. If that compile-time policy is
+ever disabled for a separately approved experiment, observed faults still
+taint the exit code — "the run finished" and "the run was clean" remain
+different claims.
 
 ### Lines 433–442 — the catch blocks
 Order matters: `KDetailedException` first (it derives from

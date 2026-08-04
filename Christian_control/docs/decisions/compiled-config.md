@@ -64,27 +64,22 @@ errors ±140 / ±150 / ±123 lie outside the documented respective
 Joints 1/3/5/7 are left at 0 — they are continuous, so no position limit
 applies.
 
-## What stopped being a stop (2026-08-03)
+## Takeover hold and acknowledgement safety (2026-08-04)
 
-Three guards were removed the same day. Each is now telemetry: the evidence
-is still recorded every cycle, but none of it ends a run.
+Before any controller or integrator state can produce a target-directed
+setpoint, the low-level loop streams the exact Seed joint positions for
+0.5 s (250 frames at 500 Hz). Every hold reply is logged and applies the
+same following-error, low-level-servoing, live-fault, and stale-
+acknowledgement precedence as normal control; a failed hold restores
+SINGLE_LEVEL without beginning controller motion. The final hold reply is
+the only measurement used to seed the controller and integrator.
 
-- The **0.5 s takeover-hold window** was trimmed. Control starts directly
-  from one measured-position seed frame; the loop's guards cover the same
-  ground from the first cycle.
-- The **short-window motion-response timeout** and the
-  **unchanged-acknowledgement stop** became `req_j*` / `cmd_j*` / `meas_j*`,
-  `lead_limited_j*` and `ack_unchanged_j*` columns.
-
-**Consequence, stated plainly: a completely unresponsive arm no longer
-stops the program by itself.** The already-clamped joint velocity first
-forms a proposed command; the lead projection targets a 1 deg gap from the
-wrapped measurement. A final envelope then limits the sent command delta to
-`abs(qdot_clamped * dt)`. On discontinuous feedback that envelope wins, so
-lead recovery can temporarily remain above 1 deg and the unchanged 3 deg
-following-error stop is reachable as the backstop. For a frozen plant the
-backstops remain the operator and the robot's own firmware limits. Attended
-use only.
+The short-window physical motion-response timeout remains absent: cyclic
+freshness demonstrates downstream acknowledgement progress, not physical
+motion or setpoint acceptance. An acknowledgement that stays unchanged for
+the compiled threshold does stop the run, and the `req_j*` / `cmd_j*` /
+`meas_j*`, `lead_limited_j*`, and `ack_unchanged_j*` columns retain the
+per-cycle evidence.
 
 The saturation stop went earlier, on 2026-07-23, for a different reason: a
 pinned velocity clamp is normal transit toward a far target, not a fault.

@@ -64,9 +64,10 @@ enum class LoopStop {
 struct LoopResult {
     LoopStop reason;
     bool faults_observed;
-    // When the run ended, seconds on the loop's steady clock since control
-    // began, and how many control cycles ran. Both come from the last logged
-    // sample, so they line up with time_s / cycle in the run CSV.
+    // When the run ended, seconds on the loop's steady clock since low-level
+    // takeover began, and how many target-directed control cycles ran. Both
+    // come from the last logged sample, so they line up with time_s / cycle
+    // in the run CSV (takeover-hold rows use cycle 0).
     double stop_t_s = 0.0;
     long cycles = 0;
 };

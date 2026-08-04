@@ -63,6 +63,7 @@ include_directories(
 #     Dynamics class reused from TrajectoryExecution) ---
 add_executable(controller
         src/Main.cpp
+        src/ProcessLock.cpp
         src/Runner.cpp
         src/Controller.cpp
         src/Targets.cpp
@@ -170,11 +171,106 @@ add_executable(read_safety_limits
         src/Hardware.cpp
         src/Safety.cpp   # DecodeBaseBank / DecodeActuatorBank
 )
+
 target_include_directories(read_safety_limits PRIVATE
         src
         ${HUMANSL_ROOT}/third_party/include/eigen3
 )
 target_link_libraries(read_safety_limits
+        ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+        pthread
+)
+
+# --- print_joint_positions: READ-ONLY single-snapshot dump of live joint
+#     positions from cyclic feedback. No motion. ---
+add_executable(print_joint_positions
+        tools/print_joint_positions.cpp
+        src/Hardware.cpp
+)
+
+target_include_directories(print_joint_positions PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(print_joint_positions
+        ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+        pthread
+)
+
+# --- print_end_effector_pose: READ-ONLY single-snapshot dump of the right
+#     end-effector's Cartesian pose, via the controller's own forward
+#     kinematics on one live feedback reading. Kortex + Pinocchio, no motion. ---
+add_executable(print_end_effector_pose
+        tools/print_end_effector_pose.cpp
+        src/Kinematics.cpp
+        src/Hardware.cpp
+        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+)
+
+target_include_directories(print_end_effector_pose PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+        ${HUMANSL_ROOT}/TrajectoryExecution/include
+)
+target_link_libraries(print_end_effector_pose
+        ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+        pthread
+)
+set_target_properties(print_end_effector_pose PROPERTIES
+        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+)
+target_link_options(print_end_effector_pose PRIVATE
+        -Wl,--allow-shlib-undefined
+        -Wl,-z,lazy
+)
+
+# --- compare_end_effector_pose: READ-ONLY diagnostic — firmware tool_pose
+#     (what the web app shows) vs our Pinocchio FK, from one shared
+#     feedback snapshot. Kortex + Pinocchio, no motion. ---
+add_executable(compare_end_effector_pose
+        tools/compare_end_effector_pose.cpp
+        tools/AnalyticalKinematics.cpp
+        src/Kinematics.cpp
+        src/Hardware.cpp
+        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+)
+
+target_include_directories(compare_end_effector_pose PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+        ${HUMANSL_ROOT}/TrajectoryExecution/include
+)
+target_link_libraries(compare_end_effector_pose
+        ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+        pthread
+)
+set_target_properties(compare_end_effector_pose PROPERTIES
+        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+)
+target_link_options(compare_end_effector_pose PRIVATE
+        -Wl,--allow-shlib-undefined
+        -Wl,-z,lazy
+)
+
+# --- print_tool_configuration: READ-ONLY dump of the robot's configured
+#     Tool Frame (ControlConfig::GetToolConfiguration) — the offset firmware
+#     adds to compute tool_pose_*, invisible to any URDF. No motion. ---
+add_executable(print_tool_configuration
+        tools/print_tool_configuration.cpp
+        src/Hardware.cpp
+)
+
+target_include_directories(print_tool_configuration PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(print_tool_configuration
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
 )
@@ -227,6 +323,16 @@ target_include_directories(test_reactive_law PRIVATE
 target_link_libraries(test_reactive_law pthread)
 add_test(NAME reactive_law COMMAND test_reactive_law)
 
+# Pure fixed-size Cartesian segment time scaling. No Kortex or Pinocchio.
+add_executable(test_trajectory_profile
+        tests/test_trajectory_profile.cpp
+)
+target_include_directories(test_trajectory_profile PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+add_test(NAME trajectory_profile COMMAND test_trajectory_profile)
+
 # Python-only regression coverage for offline log-format compatibility. The
 # interpreter is optional so portable C++ test configurations remain usable.
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -250,6 +356,15 @@ endif ()
 #     are Linux x86-64 ELF, so these link only there. ctest elsewhere runs
 #     the portable suite above. ---
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux advisory-lock regression: pure filesystem/process behavior, no
+    # Kortex or Pinocchio and no robot connection.
+    add_executable(test_process_lock
+            tests/test_process_lock.cpp
+            src/ProcessLock.cpp
+    )
+    target_include_directories(test_process_lock PRIVATE src)
+    add_test(NAME process_lock COMMAND test_process_lock)
+
     add_executable(test_supervisor
             tests/test_supervisor.cpp
             src/Safety.cpp
@@ -289,6 +404,37 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             -Wl,-z,lazy
     )
     add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
+
+    # Closed-form FK cross-check against the Pinocchio path above. Links
+    # Pinocchio too (needed for the reference side of the comparison), but
+    # AnalyticalKinematics.cpp itself has no such dependency.
+    add_executable(test_analytical_kinematics
+            tests/test_analytical_kinematics.cpp
+            tools/AnalyticalKinematics.cpp
+            src/Kinematics.cpp
+            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+    )
+    target_include_directories(test_analytical_kinematics PRIVATE
+            src
+            tools
+            ${HUMANSL_ROOT}/third_party/include
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+            ${HUMANSL_ROOT}/TrajectoryExecution/include
+    )
+    target_link_libraries(test_analytical_kinematics
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+            pthread
+    )
+    set_target_properties(test_analytical_kinematics PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+    )
+    target_link_options(test_analytical_kinematics PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,-z,lazy
+    )
+    add_test(NAME analytical_kinematics COMMAND test_analytical_kinematics)
+
 endif ()
 
 # Where run CSVs go: runs/YYYY-MM-DD/ under the repository root (the layout

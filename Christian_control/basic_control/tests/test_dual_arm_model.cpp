@@ -188,12 +188,6 @@ int main()
         Check((right_base.position -
                right_rotation * Eigen::Vector3d(0, -0.16, 0)).norm() < 1e-12,
               "right fixed mount keeps -0.16 m local-y translation");
-        const Eigen::Vector3d configured_control_origin{
-            config::kRightBaseOriginControlM[0],
-            config::kRightBaseOriginControlM[1],
-            config::kRightBaseOriginControlM[2]};
-        Check(configured_control_origin.norm() < 1e-12,
-              "right-base control frame has a zero reach origin");
         Check((left_base.position -
                left_rotation * Eigen::Vector3d(0, 0.16, 0)).norm() < 1e-12,
               "left fixed mount keeps +0.16 m local-y translation");

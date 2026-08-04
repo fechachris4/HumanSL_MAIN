@@ -1,23 +1,19 @@
 # Targets.cpp / Targets.h — line-by-line read
 
-*(Updated for commit f64325c0, "remove trajectory playback: fixed-target-
-only controller". The stdin input thread, `ParsePoseTarget`, and the whole
-`PoseTargetStore` are gone — the earlier "slated for removal" set from this
-doc's first edition has been carried out. What remains is small: one
-rotation helper and one fixed-target reference source. Targets.h is now 49
-lines, Targets.cpp 46.)*
+*(Updated for current-pose startup. Targets remain position-only and the
+source now profiles from the measured takeover position to the terminal
+target. The source never talks to the robot or performs control math.)*
 
-Targets is now exactly two things: `RotationFromRpy` (the rpy→matrix
-convention) and `PoseTargetSource` (the `ReferenceSource` that serves the
-compiled fixed target every cycle). The header's first line still states
+Targets provides `RotationFromRpy` (the rpy→matrix convention), target input,
+and `PoseTargetSource` (the `ReferenceSource` that profiles from the measured
+startup pose to the terminal target). The header's first line still states
 the boundary: never talks to the robot, does no control math.
 
 Execution order in a run:
 
-1. Main builds the compiled fixed target (Main.cpp:365-375), calling
-   `RotationFromRpy` at Main.cpp:372 if `kFixedTargetUseRpy` is set.
-2. `reference = std::make_unique<PoseTargetSource>(fixed_target);` —
-   Main.cpp:376.
+1. Main measures the current FK position from the fresh actuator feedback.
+2. Main builds the terminal target from `kFixedTargetM` and constructs
+   `PoseTargetSource(start_position, terminal_target, mailbox)`.
 3. Inside the loop: `Reset(state)` once at takeover (Runner.cpp:164), then
    `Get(state, dt, status)` every cycle (Runner.cpp:214).
 
@@ -59,52 +55,34 @@ return (Eigen::AngleAxisd(yaw, UnitZ()) *
 
 ## `PoseTargetSource` (Targets.h:28-49, Targets.cpp:23-46)
 
-The bridge from the compiled target to the controller. Inherits
+The bridge from the measured startup position to the terminal target. Inherits
 `ReferenceSource` (State.h:90-103); the loop only ever sees the base-class
 interface. The class comment (Targets.h:28-36) carries the contract:
-`initial_target` applies from the first cycle; empty rotation keeps the
-takeover orientation; with no target at all the source returns an empty
-reference and the controller holds where takeover happened.
+The initial profile starts at the measured takeover position and ends at the
+terminal target; empty rotation keeps the takeover orientation.
 
 ### Constructor (Targets.cpp:23-26)
 
-Moves the `std::optional<PoseTarget>` into the member. The default
-argument (Targets.h:41) is `std::nullopt`, so a source with no target is
-constructible — that is the "hold at takeover" configuration. Main always
-passes a target today (Main.cpp:376, after the freshness gate at
-Main.cpp:335-364 has verified the compiled target is within
-`kMaxFixedTargetDistanceM` of the measured pose).
+Validates and stores the measured startup position, terminal target, profile
+limits, and hold duration, then creates the initial Cartesian segment profile.
+The first profile sample is the measured startup position with zero velocity;
+later samples advance toward the terminal target.
 
 ### `Reset` (Targets.cpp:28-30) — called once at takeover (T5)
 
 Empty body. The override must exist because `Reset` is *pure virtual* in
-`ReferenceSource` (a function the base class declares with `= 0`,
-obligating every concrete source to provide it), but a fixed target has no
-baseline to capture — the store-sequence snapshot that used to live here
-went with the store. Harmless three lines; the interface slot stays
-because a future source (Vicon) will need it.
+`ReferenceSource` (a function the base class declares with `= 0`, obligating
+every concrete source to provide it). The measured startup pose is captured by
+`TrackingController::Reset`; the target source receives its FK position from
+`Main.cpp` before the loop begins.
 
 ### `Get` (Targets.cpp:32-46) — called every cycle
 
-- **Line 35** — start from an empty `Reference`.
-- **Lines 36-39 (comment)** — targets here are **stationary**: the
-  reference `Twist{}` stays zero so the controller's Kd term is pure
-  damping. A future source that *moves* its target must fill the twist or
-  the damping term fights the motion it commands. Note the prose still
-  opens "Operator targets are STATIONARY: a typed or compiled pose..." —
-  "typed" is stale since the stdin thread's removal; compiled is the only
-  kind left. Stale words only, not behaviour.
-- **Lines 40-44** — if an initial target exists, serve it as a
-  `PoseReference` with **sequence 0** — every cycle, the same target, the
-  same sequence. The controller's arrival notice is edge-triggered per
-  *sequence*, so the constant 0 makes "target reached" print exactly once
-  per run. **FLAG `Targets.cpp:40-44` | edit-hazard** — the hard-coded
-  sequence 0 looks arbitrary but is what arms the one-shot arrival
-  detection; "improving" it to increment per cycle would re-fire the
-  arrival edge every cycle, and giving two different fixed targets the
-  same sequence in some future edit would suppress the second's notice.
-- **Line 45** — no target → empty reference → the controller holds the
-  takeover pose (State.h's "unset means no reference").
+- **Initial profile** — sequence 0 starts at the measured takeover position,
+  supplies the seventh-order position and velocity reference, and becomes
+  arrival-eligible only at the terminal sample.
+- **Queued profiles** — after the arrival edge and dwell, each queued target
+  starts at the previous terminal target and receives the next sequence number.
 
 ### What Get never does
 

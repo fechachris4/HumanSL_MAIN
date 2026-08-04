@@ -15,16 +15,19 @@ MEASURE_DELAY = SCRIPTS_DIR / "measure_delay.py"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import runlog  # noqa: E402
+import analyze_run  # noqa: E402
 
 
 class ExchangeTimestampCompatibilityTest(unittest.TestCase):
-    def write_log(self, path, log_format, include_timestamps):
+    def write_log(self, path, log_format, include_timestamps, include_legacy_reach=False):
         fields = [
             "time_s", "dt_s", "pd_x", "pd_y", "pd_z", "p_x", "p_y", "p_z",
             "refresh_ok", "base_fault",
         ] + [f"fault_j{joint}" for joint in range(1, 8)]
         if include_timestamps:
             fields += ["t_send_s", "t_recv_s"]
+        if include_legacy_reach:
+            fields += ["pd_beyond_reach"]
         targets = [0.0, 0.0, 0.0, 0.02, 0.02, 0.02]
         measured = [0.0, 0.0, 0.0, 0.0, 0.010, 0.019]
         with path.open("w", newline="") as output:
@@ -51,6 +54,8 @@ class ExchangeTimestampCompatibilityTest(unittest.TestCase):
                         "t_send_s": time_s + 0.01,
                         "t_recv_s": time_s + 0.02,
                     })
+                if include_legacy_reach:
+                    values["pd_beyond_reach"] = 1
                 values.update({f"fault_j{joint}": 0 for joint in range(1, 8)})
                 writer.writerow(values)
 
@@ -64,9 +69,41 @@ class ExchangeTimestampCompatibilityTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout
 
+    def write_takeover_hold_log(self, path):
+        fields = [
+            "time_s", "dt_s", "pd_x", "pd_y", "pd_z", "p_x", "p_y", "p_z",
+            "refresh_ok", "base_fault", "t_send_s", "t_recv_s", "cycle",
+        ] + [f"fault_j{joint}" for joint in range(1, 8)]
+        with path.open("w", newline="") as output:
+            output.write("# log_format = 6 (compiled)\n")
+            writer = csv.DictWriter(output, fieldnames=fields)
+            writer.writeheader()
+            for row in range(6):
+                is_hold = row < 2
+                time_s = 0.01 * row
+                values = {
+                    "time_s": time_s,
+                    "dt_s": 0.01,
+                    # Hold rows deliberately have the zero ControllerStatus
+                    # fields produced before Cartesian control begins.
+                    "pd_x": 0.0 if is_hold else 0.1,
+                    "pd_y": 0.0,
+                    "pd_z": 0.0,
+                    "p_x": 0.0 if is_hold else 0.1,
+                    "p_y": 0.0,
+                    "p_z": 0.0,
+                    "refresh_ok": 1,
+                    "base_fault": 0,
+                    "t_send_s": time_s + 0.001,
+                    "t_recv_s": time_s + 0.002,
+                    "cycle": 0 if is_hold else row - 1,
+                }
+                values.update({f"fault_j{joint}": 0 for joint in range(1, 8)})
+                writer.writerow(values)
+
     def test_supported_formats_with_both_timing_columns_are_current(self):
         columns = {"t_send_s": [], "t_recv_s": []}
-        for log_format in range(2, 7):
+        for log_format in range(2, 8):
             with self.subTest(log_format=log_format):
                 self.assertTrue(
                     runlog.has_exchange_timestamps({"log_format": str(log_format)}, columns)
@@ -76,7 +113,7 @@ class ExchangeTimestampCompatibilityTest(unittest.TestCase):
         columns = {"t_send_s": [], "t_recv_s": []}
         for preamble in (
             {"log_format": "1"},
-            {"log_format": "7"},
+            {"log_format": "8"},
             {},
             {"log_format": "six"},
             {"log_format": "6.0"},
@@ -108,11 +145,36 @@ class ExchangeTimestampCompatibilityTest(unittest.TestCase):
             legacy_delay = self.run_script(MEASURE_DELAY, legacy_path)
 
             self.assertNotIn("NOTE: old log format", exchange_analyze)
+            self.assertNotIn("outside conservative input sphere", exchange_analyze)
             self.assertIn("NOTE: old log format", legacy_analyze)
             self.assertRegex(exchange_analyze, r"RMS position error \(raw\):\s+4\.21 mm")
             self.assertRegex(legacy_analyze, r"RMS position error \(raw\):\s+9\.14 mm")
             self.assertRegex(exchange_delay, r"delay \(command sent -> first motion\): 10\.0 ms")
             self.assertRegex(legacy_delay, r"delay \(command sent -> first motion\): 500\.0 ms")
+
+    def test_legacy_reach_column_is_ignored(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "legacy_reach.csv"
+            self.write_log(log_path, 6, include_timestamps=True,
+                           include_legacy_reach=True)
+            output = self.run_script(ANALYZE_RUN, log_path, "--force")
+            self.assertNotIn("outside conservative input sphere", output)
+
+    def test_takeover_hold_rows_do_not_contaminate_cartesian_tracking(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "takeover_hold.csv"
+            self.write_takeover_hold_log(log_path)
+            cols = analyze_run.load(log_path)
+            mask = analyze_run.tracking_mask(cols)
+            t_meas_all = analyze_run.measurement_times(cols, True)
+
+            self.assertEqual(mask.tolist(), [False, False, True, True, True, True])
+            self.assertEqual(t_meas_all[mask][0], cols["t_recv_s"][1])
+
+            output = self.run_script(ANALYZE_RUN, log_path, "--force")
+            self.assertIn("tracking: ignoring 2 takeover-hold row(s) (cycle == 0)",
+                          output)
+            self.assertRegex(output, r"max position error \(raw\):\s+0\.00 mm")
 
 
 if __name__ == "__main__":

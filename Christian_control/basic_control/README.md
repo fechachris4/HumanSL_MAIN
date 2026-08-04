@@ -27,7 +27,7 @@ from the simulation (msc_project) and cross-validated against it
     e_pos = p_desired − p(q);   e_rot = log3(R_desired · R(q)ᵀ)
     ẋ = Kp·e_pose + Kd·e_twist
     q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, currently off]
-    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (45 deg/s, temporary bring-up clip)
+    q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (45 deg/s)
     q_command += q̇_clipped · dt              (persistent integrator)
 
 All laws use the same clamp and integrator, with q_command streamed as
@@ -55,7 +55,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   | `Kinematics.h/.cpp` | Pinocchio FK/Jacobians + the `DualArmKinematics` adapter | `pin_fk.py` |
   | `Safety.h/.cpp` | stop classification, readiness gate, fault decoding, `ServoingGuard` | (hardware-only) |
   | `Hardware.h/.cpp` | `Connect`, `CyclicSession`, the run log + CSV writer | (hardware-only) |
-  | `Runner.h/.cpp` | **the loop — moves the arm**: takeover T1-T5, cycle order, teardown D1-D2 | `runner.py` |
+  | `Runner.h/.cpp` | **the loop — moves the arm**: takeover T1-T6, cycle order, teardown D1-D2 | `runner.py` |
   | `Main.cpp` | the program: wiring, config echo, reports | `main.py` |
 
   Everything above `Kinematics` is pure Eigen — no Kortex, no Pinocchio —
@@ -83,9 +83,13 @@ ctest            # hardware-free control-logic tests
 > e-stop in hand, authorization required for every session.
 
 ```bash
-./controller                       # fixed target, then optional stdin positions
+./controller                       # current-pose takeover, then terminal target
 ./controller --log my_run.csv      # name the CSV; the only runtime argument
 ```
+
+The process acquires exclusive host-side ownership of `192.168.1.10` before
+opening any robot connection. A concurrent second `basic_control` process exits
+without contacting the arm; this guard does not cover other Kortex programs.
 
 **There is no runtime configuration.** `--log` is the only flag; every
 gain, term switch, and limit is a compiled constant in `src/Config.h`.
@@ -96,8 +100,7 @@ so each data file stays self-describing.
 
 **Read `Config.h` before every session** — with no runtime override, the
 compiled values are the only thing standing between you and the arm. In
-particular check `kFixedTargetM`, `kMaxFixedTargetDistanceM`,
-`kQdotLimitDegS`, and `kStopOnFault`.
+particular check `kFixedTargetM`, `kQdotLimitDegS`, and `kStopOnFault`.
 
 What a run does, in order:
 
@@ -115,27 +118,22 @@ What a run does, in order:
    measured state (q_command = q_measured) and captures the current pose as
    the hold pose, then sends one unchanged holding frame — the arm holds.
    Actuators stay in their default POSITION mode.
-4. The arm drives to the compiled `kFixedTargetM` **immediately** after
-   takeover and preserves the captured takeover orientation. The stdin
+4. The arm holds its measured takeover pose first, then follows a bounded
+   Cartesian profile from that pose to the compiled terminal target
+   `kFixedTargetM`, preserving the captured takeover orientation. The stdin
    thread accepts one `x y z` target per line in metres, `base_link` only.
-   It rejects malformed, trailing, non-finite, or out-of-reach input. The
-   conservative reach test is `||p|| ≤ 0.852 m`; the compiled fixed target
-   itself is allowed as the initial target. At most eight live targets are
-   queued in FIFO order. They cannot bypass the fixed target: each target
-   activates only after the previous target emits its arrival edge, and the
-   final target holds. A freshness gate refuses the run if the compiled
-   target is farther than `kMaxFixedTargetDistanceM` from the measured
-   end-effector position at startup. Check the target against the printed
-   current position before you start.
+   It rejects malformed, trailing, or non-finite input. The parser does not
+   perform reachability, collision, or path validation. At most eight live targets
+   are queued in FIFO order. They cannot bypass the terminal target: each
+   target activates only after the previous target emits its arrival edge,
+   and the final target holds.
 
-   The arrival notice is position-based; judge orientation convergence from
-   the CSV's `rot_error_rad` column.
-
-   The end-effector moves toward a pose target at `Kp × distance`, with
-   `kKpCartesian = 10.0 /s` — so a 10 cm error commands **1.0 m/s** at the
-   start, decaying exponentially as it converges, subject to the per-joint
-   velocity clamp. This gain is aggressive; a target a long way from the
-   current pose pins the clamp for the whole transit.
+   Arrival requires both position error ≤ 1 mm and orientation error
+   ≤ 1 mrad. After arrival the source holds for two seconds, then advances
+   exactly one queued target. Each terminal-to-terminal Cartesian reference
+   follows the compiled seventh-order rest-to-rest profile (currently
+   0.025 m/s, 0.05 m/s², and 0.25 m/s³ limits). The reactive law tracks that
+   shaped reference; the independent 45 deg/s joint-rate clip remains active.
 5. Ctrl+C stops cleanly: the integrator stops updating (the position servo
    holds the last setpoint), single-level servoing is restored, and the
    last unwritten telemetry is flushed. Exit 0 only on a clean operator
@@ -203,21 +201,18 @@ rules above apply):
 
 - **The controller's explicit motion limit is a per-joint velocity clamp** —
   currently **45 deg/s on every joint** (`kQdotLimitDegS`, equal to
-  `kModelVelocityLimitsDegS` in `Config.h`). That is a temporary bring-up
-  value well below the rated Table 40 limits of 79.64 deg/s (joints 1–4) and
+  `kModelVelocityLimitsDegS` in `Config.h`). This is below the rated Table 40
+  limits of 79.64 deg/s (joints 1–4) and
   69.91 deg/s (joints 5–7), which this clamp held until 2026-08-03. This is a
   client-side limit; the actuator firmware safeties are separate, and a
   stream that outruns them can fault mid-move.
-  There is NO Cartesian velocity,
-  acceleration, or workspace limiting (explicit design choice — see the
-  decision record). Speed is `Kp × error` up to the clamp. A far target
-  pins the clamp for the whole transit (allowed — the saturation stop was
-  removed 2026-07-23), and a saturated joint distorts the motion
-  direction: the arm drifts toward the target but NOT in a straight line.
-- **Input reach check is spherical only**: stdin rejects a target outside
-  `||p|| ≤ 0.852 m` in `base_link`, but this does not prove inverse-
-  kinematics feasibility, collision clearance, joint-limit clearance, or a
-  safe path.
+  The target source shapes Cartesian reference speed, acceleration, and jerk;
+  these are trajectory-generation limits, not independent measured-motion
+  safety guards. The reactive error correction and per-joint clip can still
+  change the executed speed and path, so the CSV remains the evidence.
+- **Input validation is deliberately narrow**: stdin validates only the target
+  syntax and finiteness. It does not prove inverse-kinematics feasibility,
+  collision clearance, joint-limit clearance, or a safe path.
 - **Low-level servoing bypasses the robot's motion supervisor** — no
   onboard planning, obstacle avoidance or self-collision avoidance. The
   end effector travels the straight line to the target and the DLS solution
@@ -243,12 +238,8 @@ rules above apply):
   Table 39 and the model tests are their source. `./read_safety_limits`
   runs the same no-motion gate for a pre-session check, without making a
   second ControlConfig client.
-- **A live fault does NOT currently stop the run.** `kStopOnFault` is
-  `false` in `Config.h` — the 2026-07-20 fault-ignoring experiment, still
-  switched on. Faults are decoded, printed on their edges and logged, but
-  the loop keeps commanding. The run prints a `FAULT-STOP DISABLED` warning
-  at takeover for exactly this reason. **ATTENDED USE ONLY: you are the
-  stop.** Set `kStopOnFault = true` to restore the fault stop.
+- **A live base or actuator fault stops the run.** `kStopOnFault` is `true`
+  in `Config.h`; faults are decoded, logged, and terminate command streaming.
 - What still ends the run unconditionally: a following error above
   `kFollowingErrorLimitDeg` (3°), a live fault when `kStopOnFault` is true,
   loss of low-level servoing, exchange failure, then the software

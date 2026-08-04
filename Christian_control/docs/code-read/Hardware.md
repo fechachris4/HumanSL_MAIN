@@ -1,7 +1,7 @@
 # Hardware.cpp / Hardware.h — line-by-line read
 
-*(Updated for commit f64325c0, "remove trajectory playback": log_format is
-now 6 with 121 columns; the nine playback columns and fields are gone.)*
+*(Updated for the current CSV contract: log_format is now 7 with 120 columns;
+the reach-screen telemetry column and the nine playback columns are gone.)*
 
 Hardware is everything that touches the robot's network link plus everything
 that records what happened: four unrelated-looking jobs in one file pair —
@@ -20,14 +20,16 @@ Execution order (what Main/Runner actually call, in the order they call it):
 
 1. `Connect connection(ip)` — Main.cpp:236
 2. `read_feedback(...)` — Main.cpp:255
-3. `connection.EnsureJointLimits(std::cout)` — Main.cpp:274
-4. `LoopLog log(capacity)` — Main.cpp:283-284
-5. `dated_run_dir(...)` / `timestamped_csv_name(...)` — Main.cpp:297/305
-6. `LoopLogWriter log_writer(log, csv, interval)` — Main.cpp:319 (starts a thread)
-7. Inside the Runner: `CyclicSession cyclic(...)` (Runner.cpp:117),
+3. `RobotReadyForTakeover(...)` — mandatory live-state/fault gate
+4. `connection.VerifyKinematicHardLimits(...)` — mandatory read-only hard-speed gate
+5. `connection.EnsureJointLimits(...)` — bounded-joint threshold restore/verify
+6. `LoopLog log(capacity)`
+7. `dated_run_dir(...)` / `timestamped_csv_name(...)`
+8. `LoopLogWriter log_writer(log, csv, interval)` (starts a thread)
+9. Inside the Runner: `CyclicSession cyclic(...)`,
    `cyclic.Seed()` (Runner.cpp:126), `cyclic.Send(...)` every cycle
    (Runner.cpp:155/165/263), `log.push(sample)` every cycle
-8. After the loop: `log_writer.Stop()` (Main.cpp:407), `log.dropped()`,
+10. After the loop: `log_writer.Stop()`, `log.dropped()`,
    destructors.
 
 ---
@@ -103,9 +105,9 @@ with a UDP transport. This is the real entry into the Kortex stack.
 ### `Connect::Connect` (Hardware.cpp:77-86) — the whole connection in an initializer list
 
 - **Lines 78-83** — everything happens in the member initializer list, in
-  declaration order: TCP channel, UDP channel, then three service clients
-  (`BaseClient` and `DeviceConfigClient` on the TCP router,
-  `BaseCyclicClient` on the UDP router). If the UDP channel fails, the
+  declaration order: TCP channel, UDP channel, then four service clients
+  (`BaseClient`, `DeviceConfigClient`, and `ControlConfigClient` on the TCP
+  router; `BaseCyclicClient` on the UDP router). If the UDP channel fails, the
   already-built TCP channel is destroyed properly on the way out — no
   session leaks on the robot.
 - **Line 85** — one console line confirming the connection. The body does
@@ -132,6 +134,23 @@ with a UDP transport. This is the real entry into the Kortex stack.
   That is why the client is shared instead of rebuilt. **FLAG
   `Hardware.h:65-94` | edit-hazard** — "just build your own client" is the
   natural refactor and it fails at runtime with a cryptic router error.
+
+`ControlConfigClient` is likewise owned once by `Connect`; the controller
+uses it internally through `VerifyKinematicHardLimits` rather than exposing
+a second client/accessor.
+
+### `Connect::VerifyKinematicHardLimits` — mandatory read-only speed gate
+
+Called after `RobotReadyForTakeover` and before `EnsureJointLimits`, on every
+run even when `kSkipStartupGates` skips configuration writes. It requires
+exactly seven finite positive `joint_speed_limits` from
+`GetKinematicHardLimits` and refuses takeover if any configured
+`kQdotLimitDegS` exceeds its corresponding reported hard speed.
+
+The bundled Kortex 2.7.0 `KinematicLimits` schema exposes twist, joint-speed,
+and joint-acceleration fields, but no live joint-position fields. This RPC
+therefore cannot validate measured joint positions or replace the published
+Table 39 position concepts used by the software boundary checks.
 
 ### `Connect::EnsureJointLimits` (Hardware.cpp:88-171) — the joint-limit gate
 
@@ -264,17 +283,16 @@ checkable by grep — leave it.
 
 ### `LoopLogSample` (Hardware.h:256-304)
 
-A plain struct: one control cycle, 121 CSV columns' worth of values. The
+A plain struct: one control cycle, 120 CSV columns' worth of values. The
 long comment block (Hardware.h:199-255) is the log-format contract —
-column order (log_format = 6; the "(121 columns)" count is at
+column order (log_format = 7; the "(120 columns)" count is at
 Hardware.h:213), the requested/sent/measured distinction, timestamp
 semantics, and the warning that a row mixes *two* exchanges (controller
 inputs from last cycle's reply, measurements from this cycle's). The
-format history (Hardware.h:214-223) records that format 6 (2026-08-04)
-removed the nine trajectory-playback columns (ref_j1..7, playback_t_s,
-playback_state) with the playback feature: tooling that read them by name
-no longer finds them, and every column index after pd_beyond_reach
-shifted. Field notes:
+format history (Hardware.h:214-223) records that format 7 (2026-08-04)
+removed the reach-screen telemetry column after the nine trajectory-playback
+columns had already been removed in format 6. Use column names rather than
+indexes when reading logs. Field notes:
 
 - `measured_deg` vs `measured_raw_deg` (h:265-269) — the raw feedback is
   wrapped to [0,360); `measured_deg` is shifted by whole turns to sit
@@ -337,12 +355,12 @@ traffic is synchronized around the atomic operation.
 
 ### `WriteCsvHeader` / `WriteCsvRow` (Hardware.cpp:316-398)
 
-The authority for log_format 6: the header's (316-352) column order and
+The authority for log_format 7: the header's (316-352) column order and
 the row's (354-398) field order must match each other and the comment in
 Hardware.h. Straight streaming of every field, booleans as 0/1. The
-frame-id columns now follow pd_beyond_reach directly (header line 335, row
-line 381 — the nine playback columns that used to sit between them are
-gone). Relies on the stream's default six-significant-digit formatting —
+frame-id columns now follow the quaternion columns directly (the nine
+playback columns that used to sit between them are gone). Relies on the
+stream's default six-significant-digit formatting —
 the comment (Hardware.h:341-343) says every parser assumes that, so adding
 `std::setprecision` here would change every future log's resolution.
 **FLAG `Hardware.cpp:316-398` | edit-hazard** — the two functions are

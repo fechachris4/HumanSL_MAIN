@@ -27,6 +27,7 @@
 #include "Controller.h"
 #include "Hardware.h"
 #include "Kinematics.h"
+#include "ProcessLock.h"
 #include "Runner.h"
 #include "Safety.h"
 #include "State.h"
@@ -74,6 +75,11 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("fixed_target_m", FormatDouble(config::kFixedTargetM[0]) + " " +
                                FormatDouble(config::kFixedTargetM[1]) + " " +
                                FormatDouble(config::kFixedTargetM[2]));
+    line("profile_max_speed_m_s", FormatDouble(config::kProfileMaxSpeedMps));
+    line("profile_max_acceleration_m_s2",
+         FormatDouble(config::kProfileMaxAccelerationMps2));
+    line("profile_max_jerk_m_s3", FormatDouble(config::kProfileMaxJerkMps3));
+    line("target_hold_s", FormatDouble(config::kTargetHoldS));
     line("fixed_target_use_rpy", config::kFixedTargetUseRpy ? "true" : "false");
     if (config::kFixedTargetUseRpy)
         line("fixed_target_rpy_rad",
@@ -90,11 +96,14 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("disable_following_error_stop",
          config::kDisableFollowingErrorStop ? "true" : "false");
     line("arrival_tolerance_m", FormatDouble(config::kArrivalToleranceM));
+    line("arrival_orientation_tolerance_rad",
+         FormatDouble(config::kArrivalOrientationToleranceRad));
     line("nonfinite_stop_cycles", std::to_string(config::kNonFiniteStopCycles));
     line("overrun_stop_cycles", std::to_string(config::kOverrunStopCycles));
     line("stale_feedback_stop_cycles",
          std::to_string(config::kStaleFeedbackStopCycles));
     line("overrun_factor", FormatDouble(config::kOverrunFactor));
+    line("takeover_hold_s", FormatDouble(config::kTakeoverHoldS));
     out << prefix << "log_file = " << (log_file.empty() ? "<timestamped>" : log_file)
         << (log_file.empty() ? " (default)\n" : " (--log)\n");
     line("control_dt_s", FormatDouble(config::kControlDtS));
@@ -112,7 +121,7 @@ std::string ParseLogFileArg(int argc, char** argv) {
 
 void WriteCsvPreamble(const std::string& log_file, std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 6 (compiled)\n";
+    csv << "# log_format = 7 (compiled)\n";
     WriteConfigLines(log_file, csv, "# ");
 }
 } // namespace
@@ -128,7 +137,7 @@ void WriteCsvPreamble(const std::string& log_file, std::ostream& csv) {
  *     -> readiness check on one feedback frame (before any takeover)
  *     -> print the current joint state and end-effector position
  *     -> run the control loop (RunControlLoop above — MOVES THE ARM:
- *        takeover sequence T1-T5, the fixed-target reference source feeding
+ *        takeover sequence T1-T6, the current-start reference source feeding
  *        the TrackingController + PositionIntegration actuation,
  *        single-level servoing restored on every exit path)
  *     -> drain the last of the loop log (the rest
@@ -248,6 +257,13 @@ int main(int argc, char** argv)
     const std::string log_file_arg = ParseLogFileArg(argc, argv);
 
     try {
+        // Acquire sole ownership before even loading the model, and before
+        // Connect or any other operation can contact the right arm. The
+        // descriptor remains alive until every later object has torn down.
+        ProcessLock controller_lock(
+            "/tmp/basic_control-192.168.1.10.lock",
+            "another basic_control process is already controlling 192.168.1.10");
+
         // The full configuration is embedded in the CSV preamble
         // (WriteConfigLines below) — the log stays self-describing
         // without printing thirty lines at every start.
@@ -357,42 +373,27 @@ int main(int argc, char** argv)
         // frame name must fail here, before any takeover.
         TrackingController controller(controlled_model);
 
-        // Freshness gate on the COMPILED target: the arm can have
-        // been moved (dashboard jog, physical push) any time after
-        // this binary was built, and the controller would otherwise
-        // drive the full gap at clip speed from the first cycle.
-        // 2026-08-04: the arm was jogged 37 cm between compile and
-        // run; only an unrelated failure stopped the takeover.
-        {
-            Eigen::Matrix<double, 7, 1> q_now_rad;
-            for (int j = 0; j < 7; ++j)
-                q_now_rad[j] =
-                    initial.actuators(j).position() * M_PI / 180.0;
-            KinematicsWorkspace gate_workspace(
-                controlled_model.dynamics());
-            const Eigen::Vector3d ee_now =
-                controlled_model
-                    .RightPoseAndJacobian(q_now_rad, gate_workspace)
-                    .position;
-            const Eigen::Vector3d target_m(config::kFixedTargetM[0],
-                                           config::kFixedTargetM[1],
-                                           config::kFixedTargetM[2]);
-            const double gap_m = (target_m - ee_now).norm();
-            if (gap_m > config::kMaxFixedTargetDistanceM) {
-                std::cout
-                    << "robot NOT ready: the compiled fixed target is "
-                    << gap_m << " m from the CURRENT end-effector "
-                    << "position (limit "
-                    << config::kMaxFixedTargetDistanceM
-                    << " m, kMaxFixedTargetDistanceM).\n"
-                    << "  The arm has likely been moved since this "
-                    << "target was chosen. Recompile with a target "
-                    << "near the pose printed above.\n";
-                return 1;
-            }
-            std::cout << "fixed-target distance gate: PASS ("
-                      << gap_m << " m to travel)\n";
+        Eigen::Matrix<double, 7, 1> q_now_rad;
+        for (int j = 0; j < 7; ++j)
+            q_now_rad[j] = initial.actuators(j).position() * M_PI / 180.0;
+        KinematicsWorkspace startup_workspace(controlled_model.dynamics());
+        const PoseJacobian ee_now = controlled_model.RightPoseAndJacobian(
+            q_now_rad, startup_workspace);
+        if (!ee_now.position.allFinite() || !ee_now.rotation.allFinite()) {
+            std::cerr << "Error: current FK pose is non-finite — not starting\n";
+            return 1;
         }
+        csv << "# startup_position_m = " << ee_now.position.x() << " "
+            << ee_now.position.y() << " " << ee_now.position.z()
+            << " (measured FK, " << config::kRightBaseFrame << ")\n";
+        csv << "# startup_joint_deg =";
+        for (int j = 0; j < 7; ++j)
+            csv << " " << initial.actuators(j).position();
+        csv << " (measured Kortex actuator order)\n";
+        std::cout << "current startup pose: " << ee_now.position.x() << " "
+                  << ee_now.position.y() << " " << ee_now.position.z()
+                  << " m in " << config::kRightBaseFrame
+                  << "; takeover will hold it before moving to the terminal target\n";
         PoseTarget target;
         target.p_desired = Eigen::Vector3d(config::kFixedTargetM[0],
                                            config::kFixedTargetM[1],
@@ -401,19 +402,22 @@ int main(int argc, char** argv)
         // only in base_link and preserve the orientation captured at
         // takeover.
         PoseTargetMailbox pose_targets;
-        PoseTargetSource reference(target, pose_targets);
+        PoseTargetSource reference(ee_now.position, target, pose_targets);
         PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
-        // The arm drives to the fixed target first. Stdin targets may queue
-        // immediately, but each waits for an arrival edge before activation.
-        std::cout << "FIXED TARGET (Config.h kFixedTargetM): "
+        // The arm holds the measured startup pose during takeover, then
+        // follows the bounded profile to the terminal target. Stdin targets
+        // may queue immediately, but each waits for an arrival edge before
+        // activation.
+        std::cout << "TERMINAL TARGET (Config.h kFixedTargetM): "
                   << config::kFixedTargetM[0] << " "
                   << config::kFixedTargetM[1] << " "
                   << config::kFixedTargetM[2]
-                  << " m — THE ARM MOVES THERE IMMEDIATELY after the "
-                     "takeover; Ctrl+C to stop\n";
+                  << " m — after holding the measured startup pose, "
+                     "the arm profiles there; Ctrl+C to stop\n";
         std::cout << "  type x y z (metres, base_link) to queue up to eight "
-                     "position-only targets; the takeover orientation holds\n";
+                     "position-only targets; each uses the compiled Cartesian "
+                     "profile, then holds for 2 s; the takeover orientation holds\n";
 
         std::thread input_thread(RunPoseTargetInput, std::ref(pose_targets),
                                  std::cref(g_stop));
