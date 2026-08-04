@@ -136,6 +136,79 @@ namespace
               "small step leaves the lead limiter inactive");
         Check(std::abs(free_status.requested_deg[0] - setpoints[0]) < 1e-12,
               "requested equals sent when no constraint is active");
+
+        // A discontinuous feedback step must not make the lead projection
+        // overwrite the clamped per-cycle velocity. This recreates joint 6
+        // from the P2 log: the previous command was 43.1163 deg, feedback
+        // suddenly read 41.1788 deg, and the Runner had already clipped the
+        // requested velocity to +14.0916 deg/s for this 2 ms cycle.
+        constexpr int kJoint6 = 5;
+        constexpr double kPreviousDeg = 43.1163;
+        constexpr double kFeedbackDeg = 41.1788;
+        constexpr double kClampedDegS = 14.0916;
+        constexpr double kDtS = 0.002;
+        constexpr double kMaxStepDeg = kClampedDegS * kDtS;
+        RobotState discontinuous_seed;
+        discontinuous_seed.q_rad.setZero();
+        discontinuous_seed.qdot_rad_s.setZero();
+        discontinuous_seed.q_rad[kJoint6] = kPreviousDeg * kDegToRad;
+        RobotState discontinuous_feedback = discontinuous_seed;
+        discontinuous_feedback.q_rad[kJoint6] = kFeedbackDeg * kDegToRad;
+        Eigen::Matrix<double, 7, 1> discontinuous_qdot =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        discontinuous_qdot[kJoint6] = kClampedDegS * kDegToRad;
+        PositionIntegration discontinuous(1.0);
+        discontinuous.Prepare(discontinuous_seed);
+        const auto discontinuous_status = discontinuous.Apply(
+            discontinuous_qdot, discontinuous_feedback, kDtS, setpoints, velocity);
+        Check(discontinuous_status.lead_limited[kJoint6],
+              "a discontinuous feedback step reports the active lead constraint");
+        Check(std::abs(discontinuous_status.requested_deg[kJoint6] -
+                       (kPreviousDeg + kMaxStepDeg)) < 1e-12,
+              "requested setpoint remains before all constraints");
+        Check(std::abs(setpoints[kJoint6] - kPreviousDeg) <= kMaxStepDeg + 1e-12,
+              "a discontinuous feedback step cannot snap the setpoint by 0.94 deg");
+        Check(std::abs(velocity[kJoint6]) <= kClampedDegS + 1e-12,
+              "applied setpoint velocity cannot exceed the clamped velocity magnitude");
+        Check(std::abs(velocity[kJoint6] -
+                       (setpoints[kJoint6] - kPreviousDeg) / kDtS) < 1e-9,
+              "applied velocity reports the final constrained setpoint step");
+
+        // With no permitted step, lead recovery must wait for a later cycle
+        // rather than snapping the command toward the discontinuous feedback.
+        PositionIntegration zero_step(1.0);
+        zero_step.Prepare(discontinuous_seed);
+        const auto zero_step_status = zero_step.Apply(
+            Eigen::Matrix<double, 7, 1>::Zero(), discontinuous_feedback, kDtS,
+            setpoints, velocity);
+        Check(zero_step_status.lead_limited[kJoint6],
+              "zero qdot still reports an active lead constraint");
+        Check(std::abs(setpoints[kJoint6] - kPreviousDeg) < 1e-12,
+              "zero qdot cannot snap toward discontinuous feedback");
+        Check(velocity[kJoint6] == 0.0,
+              "zero qdot reports zero applied velocity after both constraints");
+
+        // Wrapped feedback still uses the nearest turn and follows the same
+        // final rate envelope, rather than treating 359 to 1 deg as a jump.
+        RobotState wrap_seed;
+        wrap_seed.q_rad.setZero();
+        wrap_seed.qdot_rad_s.setZero();
+        wrap_seed.q_rad[0] = 359.0 * kDegToRad;
+        RobotState wrap_feedback = wrap_seed;
+        wrap_feedback.q_rad[0] = 1.0 * kDegToRad;
+        Eigen::Matrix<double, 7, 1> wrap_qdot =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        wrap_qdot[0] = 1.0 * kDegToRad;
+        PositionIntegration wrapped(1.0);
+        wrapped.Prepare(wrap_seed);
+        const auto wrap_status = wrapped.Apply(wrap_qdot, wrap_feedback, 0.1,
+                                               setpoints, velocity);
+        Check(wrap_status.lead_limited[0],
+              "wrapped feedback still detects an excessive command lead");
+        Check(std::abs(setpoints[0] - 359.1) < 1e-12,
+              "wrapped feedback respects the final positive rate envelope");
+        Check(std::abs(velocity[0] - 1.0) < 1e-12,
+              "wrapped feedback reports the final applied velocity");
     }
 
 } // namespace

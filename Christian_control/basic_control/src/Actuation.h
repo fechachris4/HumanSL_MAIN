@@ -39,8 +39,10 @@ public:
     // What this cycle's Apply did, for the run record. `requested_deg` is
     // the setpoint the controller's velocity alone would have produced,
     // BEFORE any constraint here; `lead_limited` marks the joints where the
-    // written setpoint differs from it. With the setpoints themselves they
-    // give requested-vs-sent per joint.
+    // lead bound was active. A final rate envelope can defer lead recovery
+    // after discontinuous feedback, so this flag may be true even when the
+    // written setpoint stays at the requested value. With the setpoints
+    // themselves they give requested-vs-sent per joint.
     struct ApplyStatus {
         JointVector requested_deg{};
         std::array<bool, 7> lead_limited{};
@@ -58,9 +60,12 @@ public:
 
     // Per cycle, PURE — no I/O, no blocking, no allocation. Proposes
     // q_command += q̇_clamped · dt from the ALREADY-CLAMPED desired velocity,
-    // then bounds its lead over the wrapped measurement when configured.
-    // setpoint_velocity_deg_s reports the applied step, not the requested
-    // qdot, because lead limiting may shorten it.
+    // then bounds its lead over the wrapped measurement when configured. A
+    // final per-cycle rate envelope always wins: after discontinuous feedback
+    // lead recovery may temporarily remain beyond the configured lead bound,
+    // leaving the existing following-error guard as the backstop.
+    // setpoint_velocity_deg_s reports the applied step after both constraints,
+    // not the requested qdot.
     ApplyStatus Apply(const Eigen::Matrix<double, 7, 1>& qdot_clamped_rad_s,
                       const RobotState& measured_state, double dt_s,
                       JointVector& setpoints_deg,

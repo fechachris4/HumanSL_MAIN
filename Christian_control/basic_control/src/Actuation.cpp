@@ -52,25 +52,31 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
             proposed + std::remainder(measured_state.q_rad[i] - proposed,
                                       2.0 * M_PI);
         const double lead = proposed - measured_near;
+        double lead_bounded_candidate = proposed;
         if (std::isfinite(command_lead_limit_rad_) &&
             std::abs(lead) > command_lead_limit_rad_)
         {
             // Keep the command on the same angular turn as this feedback,
             // then move only as far as the permitted command lead.
-            q_command_rad_[i] = measured_near +
+            lead_bounded_candidate = measured_near +
                 std::copysign(command_lead_limit_rad_, lead);
             status.lead_limited[i] = true;
         }
-        else
-            // Feedback is close enough, so accept the requested small step.
-            q_command_rad_[i] = proposed;
 
-        // Derive log velocity from the command actually applied above. It can
-        // be smaller than qdot_clamped_rad_s when the lead limiter intervenes.
+        // A feedback discontinuity can make the lead-bound candidate jump in
+        // the opposite direction. The final command must still move no more
+        // than this cycle's already-clamped integration step, so recovery of
+        // the configured lead may take later cycles.
+        const double max_step_rad = std::abs(qdot_clamped_rad_s[i] * dt_s);
+        q_command_rad_[i] = std::clamp(lead_bounded_candidate,
+                                       previous - max_step_rad,
+                                       previous + max_step_rad);
+
+        // Derive log velocity from the command actually applied above, after
+        // both the lead candidate and the final rate envelope.
         setpoint_velocity_deg_s[i] =
             dt_s > 0.0 ? (q_command_rad_[i] - previous) * kRadToDeg / dt_s : 0.0;
         setpoints_deg[i] = q_command_rad_[i] * kRadToDeg;
     }
     return status;
 }
-

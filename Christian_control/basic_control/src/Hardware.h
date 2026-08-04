@@ -297,9 +297,9 @@ struct LoopLogSample {
 
     // Requested-vs-sent telemetry (log_format 5). See the column note above.
     long cycle = 0; // 1.. per control cycle (0 = before control began)
-    JointVector requested_deg{};            // before the command-lead limiter
+    JointVector requested_deg{};            // before lead/rate constraints
     JointVector requested_velocity_deg_s{}; // before the per-joint speed clamp
-    std::array<bool, 7> lead_limited{};     // limiter changed this setpoint
+    std::array<bool, 7> lead_limited{};     // lead constraint was active
     std::array<int, 7> ack_unchanged_cycles{}; // consecutive repeated ack IDs
 };
 
