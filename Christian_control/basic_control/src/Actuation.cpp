@@ -74,23 +74,3 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
     return status;
 }
 
-std::optional<JointVector> PositionIntegration::TrackingErrorDeg(const RobotState& state) const
-{
-    JointVector error_deg{};
-    // This is the safety-check number: how far is our command ahead of what
-    // the robot says it has actually reached?
-    for (int i = 0; i < NUM_JOINTS; ++i)
-    {
-        const double command_deg = q_command_rad_[i] * kRadToDeg;
-        const double measured_deg = state.q_rad[i] * kRadToDeg;
-        // `remainder` makes the same wrap-around correction as Apply, then
-        // abs turns the signed difference into a distance in degrees.
-        error_deg[i] = std::abs(std::remainder(measured_deg - command_deg, 360.0));
-    }
-    return error_deg;
-}
-
-void PositionIntegration::Restore()
-{
-    // Nothing to undo: the position servo holds the last commanded setpoint.
-}

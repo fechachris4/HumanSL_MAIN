@@ -154,11 +154,6 @@ int main()
     Check(freshness.unchanged_cycles()[2] == 0,
           "the counter clears when the acknowledgement advances again");
 
-    freshness.Reset();
-    for (int i = 0; i < 7; ++i)
-        Check(freshness.unchanged_cycles()[i] == 0,
-              "Reset clears every counter");
-
     // RobotReadyForTakeover: the pre-takeover gate.
     {
         std::ostringstream sink;

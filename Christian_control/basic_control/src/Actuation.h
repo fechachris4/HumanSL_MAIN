@@ -66,17 +66,6 @@ public:
                       JointVector& setpoints_deg,
                       JointVector& setpoint_velocity_deg_s);
 
-    // The tracking-guard signal the stop classifier compares against the
-    // following-error limit: |q_command − q_measured| per joint, the
-    // measurement shifted by whole turns to within ±180° of the command.
-    // nullopt means no guard is available, and the Runner refuses to start.
-    std::optional<JointVector> TrackingErrorDeg(const RobotState& state) const;
-
-    // At teardown, on every exit path, BEFORE the ServoingGuard restores
-    // SINGLE_LEVEL. MAY do hardware I/O; must not throw. Currently a no-op:
-    // in POSITION mode the arm holds the last commanded setpoint.
-    void Restore();
-
 private:
     double command_lead_limit_rad_;
     Eigen::Matrix<double, 7, 1> q_command_rad_ =

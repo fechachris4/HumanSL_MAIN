@@ -102,25 +102,6 @@ namespace
         Check(std::abs(velocity[0] - 0.5 * kRadToDeg) < 1e-12,
               "Apply reports the applied velocity in deg/s");
 
-        // Tracking error: measurement still at the seed, command has moved.
-        auto error = act.TrackingErrorDeg(seed);
-        Check(error.has_value(), "PositionIntegration provides a tracking guard");
-        Check(std::abs((*error)[0] - 0.5 * 0.02 * kRadToDeg) < 1e-9,
-              "tracking error = |command - measured|");
-
-        // Wrap: measured 359 deg vs command 1 deg is 2 deg apart, not 358.
-        PositionIntegration act_wrap;
-        RobotState near_zero;
-        near_zero.qdot_rad_s.setZero();
-        near_zero.q_rad.setZero();
-        near_zero.q_rad[0] = 1.0 * kDegToRad;
-        act_wrap.Prepare(near_zero);
-        RobotState wrapped = near_zero;
-        wrapped.q_rad[0] = 359.0 * kDegToRad;
-        auto wrap_error = act_wrap.TrackingErrorDeg(wrapped);
-        Check(std::abs((*wrap_error)[0] - 2.0) < 1e-9,
-              "tracking error shifts the measurement to within ±180 deg");
-
         // Runtime lead limiter: a stationary plant can never accumulate an
         // unbounded command gap. The returned status is telemetry — it
         // records what was requested and which joints the limiter changed.

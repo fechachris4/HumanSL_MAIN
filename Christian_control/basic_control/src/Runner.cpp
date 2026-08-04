@@ -2,7 +2,6 @@
 // Runner — implementation of the loop declared in Runner.h.
 //
 
-#include <cassert>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -72,7 +71,7 @@ namespace
 
 LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                          ReferenceSource& reference,
+                          PoseTargetSource& reference,
                           TrackingController& controller,
                           PositionIntegration& actuation,
                           LoopLog& log, const std::atomic<bool>& stop,
@@ -82,7 +81,6 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
 {
     // T1: the readiness gate is a hard precondition (unreachable from main,
     // which returns before calling us when the gate fails).
-    assert(robot_ready);
     if (!robot_ready)
         throw std::logic_error("RunControlLoop called without a passed readiness gate");
 
@@ -161,7 +159,6 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         }
         actuation.Prepare(state);
         controller.Reset(state);
-        reference.Reset(state);
         feedback = cyclic.Send(commanded_deg);
 
         using clock = std::chrono::steady_clock;
@@ -383,8 +380,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         std::cout << "internal error: unknown exception type\n";
     }
 
-    // D1 -> D2 (with destructor retry if D2 fails) -> D3.
-    actuation.Restore();
+    // D1 (with destructor retry if D1 fails) -> D2.
     // TrajectoryExecution restores explicitly immediately after its cyclic
     // loop. Do the same here (with RAII retry still retained) so any Kortex
     // sub-error is visible and the base gets its documented settling time.

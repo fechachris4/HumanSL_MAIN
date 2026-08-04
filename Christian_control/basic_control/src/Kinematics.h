@@ -54,18 +54,14 @@ struct KinematicsWorkspace {
 };
 
 // Cartesian pose and translational Jacobian result. Position, rotation, and
-// Jacobian rows must use the same declared frame. The generic producer below
-// uses model-root axes; DualArmKinematics transforms this result to base_link.
-// Pose and Jacobian must describe the same configuration q_pin.
+// Jacobian rows must use the same declared frame; DualArmKinematics fills
+// this in base_link axes. Pose and Jacobian must describe the same
+// configuration q_pin.
 struct PositionJacobian {
     Eigen::Vector3d position;                 // meters, declared Cartesian frame
     Eigen::Matrix3d rotation;                 // orientation in that frame
     Eigen::Matrix<double, 3, 7> jacobian_p;   // rows: x,y,z; cols: joints 1-7
 };
-
-PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
-                                       pinocchio::FrameIndex frame_id,
-                                       KinematicsWorkspace& workspace);
 
 // Full-pose counterpart of PositionJacobian. All six Jacobian rows
 // ([linear; angular]) use the same declared axes as position and rotation.
@@ -74,10 +70,6 @@ struct PoseJacobian {
     Eigen::Matrix3d rotation;                // orientation in that frame
     Eigen::Matrix<double, 6, 7> jacobian;    // [linear; angular] x joints 1-7
 };
-
-PoseJacobian pose_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
-                               pinocchio::FrameIndex frame_id,
-                               KinematicsWorkspace& workspace);
 
 // ---------------------------------------------------------------
 // DualArmKinematics — the 14-model/7-controller adapter

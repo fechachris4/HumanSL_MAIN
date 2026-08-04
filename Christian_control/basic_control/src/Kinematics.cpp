@@ -42,45 +42,6 @@ Pose forward_kinematics(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
     return Pose{oMf.translation(), oMf.rotation()};
 }
 
-PositionJacobian position_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
-                                       pinocchio::FrameIndex frame_id,
-                                       KinematicsWorkspace& workspace)
-{
-    // One tree walk computes the joint Jacobians AND the joint placements;
-    // updateFramePlacements then positions the frames. Position and
-    // Jacobian therefore describe the same configuration q_pin.
-    pinocchio::computeJointJacobians(dynamics.model_, dynamics.data_, q_pin);
-    pinocchio::updateFramePlacements(dynamics.model_, dynamics.data_);
-    pinocchio::getFrameJacobian(dynamics.model_, dynamics.data_, frame_id,
-                                pinocchio::LOCAL_WORLD_ALIGNED, workspace.jacobian_full);
-
-    PositionJacobian result;
-    result.position = dynamics.data_.oMf[frame_id].translation();
-    result.rotation = dynamics.data_.oMf[frame_id].rotation();
-    // Rows 0-2 of the 6D frame Jacobian are the translational part; in
-    // LOCAL_WORLD_ALIGNED they are expressed in model-root axes.
-    result.jacobian_p = workspace.jacobian_full.topRows<3>();
-    return result;
-}
-
-PoseJacobian pose_and_jacobian(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
-                               pinocchio::FrameIndex frame_id,
-                               KinematicsWorkspace& workspace)
-{
-    // Same one-tree-walk pattern as position_and_jacobian: pose and Jacobian
-    // describe the same configuration q_pin.
-    pinocchio::computeJointJacobians(dynamics.model_, dynamics.data_, q_pin);
-    pinocchio::updateFramePlacements(dynamics.model_, dynamics.data_);
-    pinocchio::getFrameJacobian(dynamics.model_, dynamics.data_, frame_id,
-                                pinocchio::LOCAL_WORLD_ALIGNED, workspace.jacobian_full);
-
-    PoseJacobian result;
-    result.position = dynamics.data_.oMf[frame_id].translation();
-    result.rotation = dynamics.data_.oMf[frame_id].rotation();
-    result.jacobian = workspace.jacobian_full;
-    return result;
-}
-
 // ---------------------------------------------------------------
 // DualArmKinematics — the 14-model/7-controller adapter
 // ---------------------------------------------------------------

@@ -26,24 +26,21 @@ struct PoseTarget {
 Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw);
 
 //
-// The fixed target as a ReferenceSource. `initial_target` (Config.h
-// kFixedTargetM), which Main passes
-// deliberately, applies from the first cycle. That target is a
-// full PoseTarget: its rotation commands an orientation, and leaving the
-// rotation empty keeps the takeover orientation. Until any target exists
-// the source returns an empty reference and the controller holds where
-// takeover happened.
+// The fixed target's reference source: hands the compiled target (Config.h
+// kFixedTargetM) to the controller every cycle, from the first cycle after
+// takeover. The target is a full PoseTarget: its rotation commands an
+// orientation, and leaving the rotation empty keeps the takeover
+// orientation. One Get per cycle — pure computation: no I/O, no
+// allocation, no blocking.
 //
-class PoseTargetSource : public ReferenceSource
+class PoseTargetSource
 {
 public:
-    explicit PoseTargetSource(
-        std::optional<PoseTarget> initial_target = std::nullopt);
+    explicit PoseTargetSource(PoseTarget target);
 
-    void Reset(const RobotState& state) override;
     Reference Get(const RobotState& state, double dt_s,
-                  ControllerStatus& status) override;
+                  ControllerStatus& status);
 
 private:
-    std::optional<PoseTarget> initial_target_;
+    PoseTarget target_;
 };

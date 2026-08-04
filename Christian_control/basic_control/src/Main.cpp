@@ -11,8 +11,6 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <memory>
-#include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -41,9 +39,9 @@ namespace k_api = Kinova::Api;
 // ---------------------------------------------------------------
 
 // --log is the only runtime-selectable value; every controller setting is
-// compiled in Config.h. The same key = value lines serve as the startup
-// echo and, '#'-prefixed, as the CSV preamble that makes every data file
-// self-describing (parsers skip '#' lines).
+// compiled in Config.h. The key = value lines below become the
+// '#'-prefixed CSV preamble that makes every data file self-describing
+// (parsers skip '#' lines).
 
 namespace {
 [[noreturn]] void UsageAndExit(const std::string& error) {
@@ -322,10 +320,6 @@ int main(int argc, char** argv)
         // frame name must fail here, before any takeover.
         TrackingController controller(controlled_model);
 
-        std::unique_ptr<ReferenceSource> reference;
-        // The compiled target is handed to the source NOW and applies from
-        // the first cycle after takeover (with the takeover orientation).
-        std::optional<PoseTarget> fixed_target;
         // Freshness gate on the COMPILED target: the arm can have
         // been moved (dashboard jog, physical push) any time after
         // this binary was built, and the controller would otherwise
@@ -372,8 +366,9 @@ int main(int argc, char** argv)
                 RotationFromRpy(config::kFixedTargetRpyRad[0],
                                 config::kFixedTargetRpyRad[1],
                                 config::kFixedTargetRpyRad[2]);
-        fixed_target = target;
-        reference = std::make_unique<PoseTargetSource>(fixed_target);
+        // The source holds the compiled target from here on; it applies
+        // from the first cycle after takeover.
+        PoseTargetSource reference(target);
         PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
         // The arm drives to the fixed target as soon as the takeover
@@ -398,7 +393,7 @@ int main(int argc, char** argv)
         // MOVES THE ARM (toward the fixed target): servoing mode is entered
         // and restored inside the Runner, on every exit path (T2/D3).
         const LoopResult result = RunControlLoop(
-            connection.base(), connection.base_cyclic(), *reference,
+            connection.base(), connection.base_cyclic(), reference,
             controller, actuation,
             log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
             config::kFollowingErrorLimitDeg, robot_ready);

@@ -27,10 +27,6 @@
 // the safety policy, separate from the controller it supervises.
 //
 
-
-
-
-
 namespace k_api = Kinova::Api;
 
 // Why the loop ended. kUserStop (Ctrl+C) is the only successful outcome —
@@ -85,7 +81,6 @@ class FeedbackFreshnessMonitor
 {
 public:
     void Update(const std::array<std::uint32_t, 7>& command_ack);
-    void Reset();
 
     const std::array<int, 7>& unchanged_cycles() const { return unchanged_cycles_; }
 
@@ -174,9 +169,6 @@ void PrintFaultChange(const LoopLogSample& s, long cycle,
 //
 
 
-
-
-namespace k_api = Kinova::Api;
 
 class ServoingGuard
 {

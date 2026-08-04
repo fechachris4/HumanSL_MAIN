@@ -161,7 +161,6 @@ namespace
         PoseTarget target;
         target.p_desired = Eigen::Vector3d(0.4, 0.1, 0.3);
         PoseTargetSource source(target);
-        source.Reset(state);
         const auto served = source.Get(state, 0.001, status);
         Check(served.pose && served.pose->twist.linear_m_s.norm() == 0.0 &&
                   served.pose->twist.angular_rad_s.norm() == 0.0,
@@ -304,23 +303,17 @@ namespace
         state.qdot_rad_s.setZero();
         ControllerStatus status;
 
-        PoseTargetSource plain;
-        plain.Reset(state);
-        Check(!plain.Get(state, 0.001, status).pose.has_value(),
-              "a source with no target serves an empty reference");
-
-        // The initial (fixed) target applies from the first cycle.
+        // The fixed target applies from the first cycle.
         // Position-only form: an empty rotation leaves the takeover
         // orientation to the controller.
         PoseTarget position_only;
         position_only.p_desired = Eigen::Vector3d(0.1, 0.2, 0.3);
         PoseTargetSource fixed(position_only);
-        fixed.Reset(state);
         auto initial = fixed.Get(state, 0.001, status);
         Check(initial.pose &&
                   (initial.pose->p_desired - Eigen::Vector3d(0.1, 0.2, 0.3))
                           .norm() == 0.0,
-              "initial fixed target is served after Reset");
+              "the fixed target is served from the first Get");
         Check(initial.pose && !initial.pose->rotation.has_value(),
               "position-only fixed target commands no orientation");
 
@@ -330,7 +323,6 @@ namespace
         with_rpy.p_desired = Eigen::Vector3d(0.1, 0.2, 0.3);
         with_rpy.rotation = RotationFromRpy(0.0, 1.6, 0.8);
         PoseTargetSource oriented(with_rpy);
-        oriented.Reset(state);
         auto initial_rpy = oriented.Get(state, 0.001, status);
         Check(initial_rpy.pose && initial_rpy.pose->rotation.has_value(),
               "fixed target with rpy commands an orientation");

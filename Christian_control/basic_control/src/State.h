@@ -84,20 +84,3 @@ struct PoseReference {
 struct Reference {
     std::optional<PoseReference> pose;
 };
-
-// One Reset at takeover, then one Get per cycle. Pure computation: no I/O,
-// no allocation, no blocking.
-class ReferenceSource
-{
-public:
-    virtual ~ReferenceSource() = default;
-
-    // T5 of takeover: after PositionIntegration::Prepare, before the first Get.
-    // Captures the source's baseline.
-    virtual void Reset(const RobotState& state) = 0;
-
-    // This cycle's reference. May fill the telemetry fields of `status` that
-    // describe the reference itself.
-    virtual Reference Get(const RobotState& state, double dt_s,
-                          ControllerStatus& status) = 0;
-};

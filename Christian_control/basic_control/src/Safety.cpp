@@ -29,12 +29,6 @@ namespace
     constexpr int NUM_JOINTS = std::tuple_size_v<JointVector>;
 } // namespace
 
-void FeedbackFreshnessMonitor::Reset()
-{
-    initialized_ = false;
-    unchanged_cycles_.fill(0);
-}
-
 void FeedbackFreshnessMonitor::Update(
     const std::array<std::uint32_t, 7>& command_ack)
 {
@@ -142,15 +136,8 @@ bool RobotReadyForTakeover(const k_api::BaseCyclic::Feedback& feedback, std::ost
 }
 
 // ---------------------------------------------------------------
-// FaultReport — fault-bank decoding and reports
+// FaultReport — fault-bank decoding and the post-loop reports
 // ---------------------------------------------------------------
-
-//
-// FaultReport: fault-bank decoding and the post-loop reports.
-//
-
-
-
 
 namespace
 {
