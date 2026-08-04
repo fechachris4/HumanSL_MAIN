@@ -88,7 +88,6 @@ The clamp itself still limits speed.
   `qdot-limit-raise.md`.
 - Startup fault clearing, reversed from the 2026-07-20 decision —
   `fault-handling-hardening.md`.
-- Playback gain and start-gate sizing evidence — `trajectory-playback.md`.
 - Reactive-pose gains and the staged term switches —
   `reactive-pose-port.md`.
 - Why there is no Cartesian velocity/acceleration/workspace limiting —

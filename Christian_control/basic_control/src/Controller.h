@@ -2,15 +2,14 @@
 // Controller — THE controller: it drives the arm toward this cycle's
 // Reference, whichever channel the source filled.
 //
-//   joint channel  -> the joint law (Trajectory.h) — the planner's exact path
 //   pose channel   -> the reactive law (ReactiveLaw.h) — FK + 6×7 Jacobian
 //   no reference   -> the reactive law toward the pose captured at Reset,
 //                     i.e. "hold here": a silent source never causes motion
 //
 // This file contains composition only. It does no frame conversion, command
 // integration, timing, hardware access, printing, or allocation. The
-// equations live in ReactiveLaw.h and Trajectory.h; the reference sources
-// in Targets.h and Trajectory.h; gains in Config.h.
+// equations live in ReactiveLaw.h; the reference sources
+// in Targets.h; gains in Config.h.
 //
 // Implementation in Controller.cpp — the one place the laws meet the
 // Pinocchio model, so this header stays Pinocchio-free.

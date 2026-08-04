@@ -11,18 +11,17 @@ combines:
 
 It does **not** use the HumanSL planning stack (GTSAM / GPMP2 / Vicon).
 
-The program has ONE controller and pluggable **reference sources**
-(selected by `kReferenceSource` in `Config.h`; architecture diagram at the
-top of `src/Controller.h`). A source says WHERE the end-effector or joints
-should be each cycle; the `TrackingController` says HOW to move toward it.
-It takes over the arm in low-level servoing (actuators in their default
-POSITION mode) and tracks whichever reference channel the source provides
-— a pose (typed targets) or a joint configuration (trajectory files). New
-research inputs (Vicon, a Python bridge) are new sources, never new
-controllers. (Historical modes: position-only `resolved-rate` removed
-2026-08-03, superseded; the welded per-mode controller classes
-(`ReactivePose`, `TrajectoryPlayback`) were decomposed into
-source + controller the same day; git history has both.)
+The program has ONE controller and one **reference source** (architecture
+diagram at the top of `src/Controller.h`). The source says WHERE the
+end-effector should be each cycle; the `TrackingController` says HOW to
+move toward it. It takes over the arm in low-level servoing (actuators in
+their default POSITION mode) and tracks the compiled fixed pose target
+(`kFixedTargetM` in `Config.h`). New research inputs (Vicon, a Python
+bridge) are new sources, never new controllers. (Historical modes:
+position-only `resolved-rate` removed 2026-08-03, superseded; the welded
+per-mode controller classes were decomposed into source + controller the
+same day; trajectory playback and the stdin operator input removed
+2026-08-04; git history has all of them.)
 
 Pose references run the reactive law — full 6-DoF pose, ported
 from the simulation (msc_project) and cross-validated against it
@@ -33,20 +32,6 @@ from the simulation (msc_project) and cross-validated against it
     q̇_raw = Jᵀ (J Jᵀ + λ² I₆)⁻¹ ẋ  [+ null-space centering, currently off]
     q̇_i   = clamp(q̇_raw_i, ±kQdotLimit_i)      (45 deg/s, temporary bring-up clip)
     q_command += q̇_clipped · dt              (persistent integrator)
-
-`kReferenceSource = "trajectory"` executes one
-GPMP2-planned joint trajectory (produced offline by
-`TrajectoryGeneration/tools/plan_move`; contract and gates in
-`src/Trajectory.h`, design in
-`../docs/decisions/trajectory-playback.md`):
-
-    q̇_d = Δq_ref(t, t+dt)/dt  +  kp · wrap(q_ref(t) − q_measured)
-
-The file is validated before any hardware session (velocity ≤ 90% of the
-clip, Table 43 acceleration, position ranges, consistency, rest at both
-ends) and the measured position must match the trajectory start within
-0.2°/joint — otherwise the run refuses before, or holds at, the takeover.
-Completion holds the final point until Ctrl+C.
 
 All laws use the same clamp and integrator, with q_command streamed as
 position setpoints at 500 Hz (`kControlDtS`, the single timing source).
@@ -68,8 +53,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   | `State.h` | the records that cross boundaries: `RobotState`, `ControllerStatus`, `Reference`, `ReferenceSource` | `state.py` + `backend.py` |
   | `ReactiveLaw.h` | the pose equations 1-6, header-only, no robot | `reactive_controller.py` |
   | `Controller.h/.cpp` | **THE controller** — tracks whichever reference channel is set | `servo.py` |
-  | `Targets.h/.cpp` | operator targets: parse, store, stdin/file threads, `PoseTargetSource` | `desired_pos.py` |
-  | `Trajectory.h/.cpp` | the file contract, the joint-tracking law, `TrajectorySource` | `trajectory.py` |
+  | `Targets.h/.cpp` | the pose target types, `RotationFromRpy`, `PoseTargetSource` | `desired_pos.py` |
   | `Actuation.h/.cpp` | `PositionIntegration`: q_command integrator + lead limiter | `position_actuation.py` |
   | `Kinematics.h/.cpp` | Pinocchio FK/Jacobians + the `DualArmKinematics` adapter | `pin_fk.py` |
   | `Safety.h/.cpp` | stop classification, readiness gate, fault decoding, `ServoingGuard` | (hardware-only) |
@@ -117,8 +101,8 @@ as `#` lines in the CSV, so each data file stays self-describing.
 
 **Read `Config.h` before every session** — with no runtime override, the
 compiled values are the only thing standing between you and the arm. In
-particular check `kReferenceSource`, `kUseFixedTarget`, `kQdotLimitDegS`,
-and `kStopOnFault`.
+particular check `kFixedTargetM`, `kMaxFixedTargetDistanceM`,
+`kQdotLimitDegS`, and `kStopOnFault`.
 
 What a run does, in order:
 
@@ -136,27 +120,13 @@ What a run does, in order:
    measured state (q_command = q_measured) and captures the current pose as
    the hold pose, then sends one unchanged holding frame — the arm holds.
    Actuators stay in their default POSITION mode.
-4. Where it goes next depends on `kReferenceSource`:
-
-   - **`"operator"` with `kUseFixedTarget = true`** (the current default):
-     there is **no stdin thread**. The arm drives to the compiled
-     `kFixedTargetM` **immediately** after the takeover, keeping the
-     takeover orientation. Check that target against the printed current
-     position before you start.
-   - **`"operator"` with `kUseFixedTarget = false`**: type a target —
-     **x y z in meters, right-arm `base_link` frame** — on stdin:
-
-     ```
-     0.45 0.10 0.30
-     ```
-
-     A 3-number line moves the position target and keeps the current
-     orientation target; a 6-number line `x y z roll pitch yaw` (radians,
-     R = Rz(yaw)·Ry(pitch)·Rx(roll)) sets both. A new line replaces the
-     target immediately; mid-motion retargeting is normal. Invalid lines
-     are rejected with a reason.
-   - **`"trajectory"`**: replays `kTrajectoryFile` as soon as the takeover
-     completes, then holds the final point. No operator input.
+4. The arm drives to the compiled `kFixedTargetM` **immediately** after
+   the takeover, keeping the takeover orientation unless
+   `kFixedTargetUseRpy` also commands one. There is **no stdin thread**
+   and no other target source. A freshness gate refuses the run if the
+   compiled target is farther than `kMaxFixedTargetDistanceM` from the
+   measured end-effector position at startup. Check the target against
+   the printed current position before you start.
 
    The arrival notice is position-based; judge orientation convergence from
    the CSV's `rot_error_rad` column.

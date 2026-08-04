@@ -66,7 +66,6 @@ add_executable(controller
         src/Runner.cpp
         src/Controller.cpp
         src/Targets.cpp
-        src/Trajectory.cpp
         src/Actuation.cpp
         src/Kinematics.cpp
         src/Hardware.cpp
@@ -75,7 +74,7 @@ add_executable(controller
 )
 
 # src/ is the include root. One file per job, named for that job:
-# State/ReactiveLaw/Controller/Targets/Trajectory/Actuation are pure Eigen,
+# State/ReactiveLaw/Controller/Targets/Actuation are pure Eigen,
 # Kinematics adds Pinocchio, Hardware adds Kortex, Runner is the loop,
 # Main the program, Config the settings.
 target_include_directories(controller PRIVATE
@@ -180,7 +179,7 @@ target_link_libraries(read_safety_limits
         pthread
 )
 
-# --- make_synthetic_log: writes a SYNTHETIC log_format 5 CSV through the
+# --- make_synthetic_log: writes a SYNTHETIC log_format 6 CSV through the
 #     real run-log writer, so the telemetry schema and scripts/plot_run.py
 #     can be exercised with no robot. The writer now lives in Hardware.cpp,
 #     which links Kortex — link-time only; this tool never connects. ---
@@ -227,34 +226,6 @@ target_include_directories(test_reactive_law PRIVATE
 )
 target_link_libraries(test_reactive_law pthread)
 add_test(NAME reactive_law COMMAND test_reactive_law)
-
-# --- test_trajectory_file: hardware-free tests for the trajectory-file
-#     contract (loading, validation, sampling). Pure Eigen — safe anywhere. ---
-add_executable(test_trajectory_file
-        tests/test_trajectory_file.cpp
-        src/Trajectory.cpp
-)
-target_include_directories(test_trajectory_file PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
-target_link_libraries(test_trajectory_file pthread)
-add_test(NAME trajectory_file COMMAND test_trajectory_file)
-
-# --- test_playback: hardware-free tests for the playback law, including a
-#     closed-loop simulated-plant replay of the full playback -> clamp ->
-#     integration pipeline. Pure Eigen — safe anywhere. ---
-add_executable(test_playback
-        tests/test_playback.cpp
-        src/Actuation.cpp
-        src/Trajectory.cpp
-)
-target_include_directories(test_playback PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
-target_link_libraries(test_playback pthread)
-add_test(NAME playback COMMAND test_playback)
 
 # --- hardware-machine test battery: the bundled Kortex/Pinocchio binaries
 #     are Linux x86-64 ELF, so these link only there. ctest elsewhere runs

@@ -25,7 +25,6 @@ Two consequences worth stating, because they are not obvious:
 - Anything that gates on a fraction of the clip tightens with it. The
   trajectory validator's velocity gate is 90% of the clip, so planned
   trajectories are now checked against 40.5 deg/s rather than 71.6.
-  `plan_move` reads the same constant, so the two cannot drift.
 
 Raising it back toward Table 40 is a deliberate decision, not a cleanup:
 re-read this record first.

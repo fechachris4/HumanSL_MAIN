@@ -332,9 +332,7 @@ void WriteCsvHeader(std::ostream& csv)
         csv << ",fault_j" << i;
     csv << ",arm_state,base_fault,refresh_ok,sigma_min,rot_error_rad"
         << ",t_send_s,t_recv_s,quat_x,quat_y,quat_z,quat_w,pd_beyond_reach";
-    for (int i = 1; i <= 7; ++i)
-        csv << ",ref_j" << i;
-    csv << ",playback_t_s,playback_state,command_frame_id,feedback_frame_id";
+    csv << ",command_frame_id,feedback_frame_id";
     for (int i = 1; i <= 7; ++i)
         csv << ",command_ack_j" << i;
     for (int i = 1; i <= 7; ++i)
@@ -380,10 +378,7 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
     for (double v : s.tool_quat_xyzw)
         csv << "," << v;
     csv << "," << (s.pd_beyond_reach ? 1 : 0);
-    for (double v : s.ref_deg)
-        csv << "," << v;
-    csv << "," << s.playback_t_s << "," << s.playback_state
-        << "," << s.command_frame_id << "," << s.feedback_frame_id;
+    csv << "," << s.command_frame_id << "," << s.feedback_frame_id;
     for (std::uint32_t v : s.actuator_command_ack)
         csv << "," << v;
     for (std::uint32_t v : s.actuator_status_flags)

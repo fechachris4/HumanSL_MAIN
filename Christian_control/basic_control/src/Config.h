@@ -27,13 +27,6 @@ using JointVector = std::array<double, 7>;
 
 namespace config
 {
-    // WHERE the arm should be. One TrackingController, pluggable sources
-    // (Controller.h):
-    //   "operator"   — pose targets (Targets.h PoseTargetSource)
-    //   "trajectory" — one pre-validated joint trajectory (Trajectory.h)
-    inline constexpr const char* kReferenceSource = "operator";
-    inline constexpr const char* kTrajectoryFile = "trajectories/hold_home_10s.csv";
-
     // Right-only by design: the URDF models both mounted arms, but only
     // this IP gets a connection and only its 7 joints reach the loop.
     inline constexpr const char* kRightRobotIp = "192.168.1.10";
@@ -66,15 +59,6 @@ namespace config
     inline constexpr std::chrono::microseconds kCyclePeriod{
         static_cast<long>(kControlDtS * 1e6)
     };
-
-    // false = the interactive prompt: the arm HOLDS at takeover and moves
-    // only when a target is typed (x y z, or x y z roll pitch yaw). This is
-    // the usable default — a typed target is always relative to the pose
-    // printed at startup, so it cannot go stale the way a compiled one can.
-    // true = no stdin thread; THE ARM DRIVES TO THE FIXED TARGET BELOW
-    // IMMEDIATELY after the takeover (freshness-gated by
-    // kMaxFixedTargetDistanceM).
-    inline constexpr bool kUseFixedTarget = false;
 
     // Freshness gate: refuse the run if the compiled fixed target is
     // farther than this from the measured end-effector position at
@@ -226,26 +210,6 @@ namespace config
     // comes within this distance of a new target, m. Informational only.
     // 1 mm is tight — raise toward 5 mm if the notice comes late or never.
     inline constexpr double kArrivalToleranceM = 0.001;
-
-    // Trajectory playback (Trajectory.h; sizing evidence in
-    // trajectory-playback.md). kPlaybackKp corrects the wrapped
-    // reference-minus-measured error, 1/s; kStartMismatchLimitDeg gates
-    // measured-vs-first-row per joint, before the takeover and again at
-    // Reset — failing the second is a permanent hold.
-    inline constexpr double kPlaybackKp = 0.5;
-    inline constexpr double kStartMismatchLimitDeg = 0.2;
-
-    // Gates a trajectory file must pass before a run: this fraction of the
-    // command clip (so the Runner's clamp can never engage on a validated
-    // file), Kinova Table 43 acceleration, Table 39 wrapped position ranges
-    // for bounded joints 2/4/6 with 0 = continuous.
-    inline constexpr double kTrajectoryVelGateFactor = 0.9;
-    inline constexpr JointVector kTrajectoryAccelLimitDegS2 = {
-        57.3, 57.3, 57.3, 57.3, 572.95, 572.95, 572.95
-    };
-    inline constexpr JointVector kTrajectoryPosLimitDeg = {
-        0.0, 128.9, 0.0, 147.8, 0.0, 120.3, 0.0
-    };
 
     // Loop log, written DURING the run by a writer thread (Hardware.h).
     // kLogBufferSeconds sizes only the handoff queue — slack for a disk

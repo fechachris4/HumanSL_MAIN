@@ -202,23 +202,25 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 5; WriteCsvRow is the authority):
+// CSV column order (log_format = 6; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
 //   quat_x, quat_y, quat_z, quat_w, pd_beyond_reach,
-//   ref_j1..7, playback_t_s, playback_state,
 //   command_frame_id, feedback_frame_id, command_ack_j1..7,
 //   status_flags_j1..7, jitter_us_j1..7,
 //   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
-//   ack_unchanged_j1..7                                   (130 columns)
+//   ack_unchanged_j1..7                                   (121 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
 // (stale_feedback_joint, no_response_joint) and appends the
 // requested-vs-sent telemetry below. Every format-3 name and index is still
 // valid; format-4 tooling that read the two dropped columns by NAME keeps
-// working, by index does not.
+// working, by index does not. Format 6 (2026-08-04) removes the nine
+// trajectory-playback columns (ref_j1..7, playback_t_s, playback_state)
+// with the trajectory playback feature; tooling that read them by NAME
+// no longer finds them, and every index after pd_beyond_reach shifts.
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -282,14 +284,6 @@ struct LoopLogSample {
         std::numeric_limits<double>::quiet_NaN(), //  tool_quat; NaN when the
         std::numeric_limits<double>::quiet_NaN()}; // law has no tool frame)
     bool pd_beyond_reach = false; // target outside right-base-relative sphere
-
-    // Trajectory playback (log_format 3): the per-cycle reference the
-    // integrated command should land on, the playback clock, and the
-    // playback state (0 none, 1 playing, 2 done, 3 refused). NaN/0 for
-    // non-playback controllers.
-    JointVector ref_deg{};
-    double playback_t_s = std::numeric_limits<double>::quiet_NaN();
-    int playback_state = 0;
 
     // Cyclic freshness evidence (log_format 4). command_frame_id is what
     // this process sent; feedback_frame_id and actuator_command_ack are what

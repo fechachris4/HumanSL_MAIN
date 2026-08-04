@@ -7,7 +7,6 @@
 
 #include "Config.h"
 #include "Kinematics.h"
-#include "Trajectory.h" // JointTrackVelocity
 
 namespace
 {
@@ -59,12 +58,6 @@ TrackingController::DesiredVelocity(const RobotState& state,
                                     const Reference& reference, double dt_s,
                                     ControllerStatus& status)
 {
-    // Joint channel: the planner's exact joint path — no FK, no Jacobian,
-    // no re-solving (the reference telemetry was filled by the source).
-    if (reference.joints)
-        return JointTrackVelocity(*reference.joints, state, dt_s,
-                                  config::kPlaybackKp);
-
     // Pose channel, or the hold pose when the source gave no reference.
     const Eigen::Vector3d p_desired =
         reference.pose ? reference.pose->p_desired : hold_position_;

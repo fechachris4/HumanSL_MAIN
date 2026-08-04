@@ -7,8 +7,7 @@
 //   reference sources          THE controller
 //   ┌──────────────────┐      ┌────────────────────────┐
 //   │ Targets.h        │──Reference──▶ Controller.h    │──q̇──▶ clamp → Actuation.h
-//   │ Trajectory.h     │ {pose|joints}│ tracks whichever │
-//   │ (future: Vicon)  │              │ channel is set   │
+//   │ (future: Vicon)  │    {pose}    │ tracks the pose  │
 //   └──────────────────┘              └────────────────┘
 //
 // A source says WHERE to be; the controller says HOW to move there. New
@@ -52,17 +51,6 @@ struct ControllerStatus {
         std::numeric_limits<double>::quiet_NaN(),  // x
         std::numeric_limits<double>::quiet_NaN(),  // y
         std::numeric_limits<double>::quiet_NaN()}; // z
-
-    // Trajectory telemetry: the reference this cycle's command should land
-    // on, logged beside commanded and measured so planned/commanded/measured
-    // stay comparable. Other sources leave the defaults.
-    Eigen::Matrix<double, 7, 1> q_ref_deg =
-        Eigen::Matrix<double, 7, 1>::Constant(
-            std::numeric_limits<double>::quiet_NaN());
-    double playback_t_s = std::numeric_limits<double>::quiet_NaN();
-    int playback_state = 0;   // 0 none, 1 playing, 2 done-holding, 3 refused
-    bool playback_done_edge = false;    // first cycle past the last sample
-    bool playback_refused_edge = false; // first cycle after a Reset refusal
 };
 
 // A Cartesian velocity — the reference twist a source commands, or a
@@ -91,33 +79,21 @@ struct PoseReference {
     std::uint64_t sequence = 0;
 };
 
-// Where the joints should be now and at t + dt. The pair encodes the
-// feed-forward velocity exactly, so the integrator telescopes with zero
-// discretization drift.
-struct JointReference {
-    Eigen::Matrix<double, 7, 1> q_ref_deg;
-    Eigen::Matrix<double, 7, 1> q_ref_next_deg;
-};
-
-// What a source hands the controller each cycle; at most one channel set.
-// Joint references win when present — they carry the planner's exact joint
-// path, and re-solving them through the pose law would let damped least
-// squares pick different joint motions and undo its collision avoidance.
-// NEITHER set means "no reference": the controller holds the takeover pose.
+// What a source hands the controller each cycle: an optional pose target.
+// Unset means "no reference": the controller holds the takeover pose.
 struct Reference {
     std::optional<PoseReference> pose;
-    std::optional<JointReference> joints;
 };
 
 // One Reset at takeover, then one Get per cycle. Pure computation: no I/O,
-// no allocation, no blocking beyond a bounded store lock.
+// no allocation, no blocking.
 class ReferenceSource
 {
 public:
     virtual ~ReferenceSource() = default;
 
     // T5 of takeover: after PositionIntegration::Prepare, before the first Get.
-    // Captures the source's baseline (store sequence, trajectory start gate).
+    // Captures the source's baseline.
     virtual void Reset(const RobotState& state) = 0;
 
     // This cycle's reference. May fill the telemetry fields of `status` that
