@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <limits>
 #include <optional>
 
@@ -23,8 +24,13 @@
 // The dt Apply may integrate over: the measured elapsed cycle time, but
 // never more than twice the nominal period — a scheduler stall must not
 // integrate into one large position jump (the base faults on those).
+// Non-positive or non-finite inputs fail safe to zero rather than reversing
+// or poisoning an integration step.
 inline double ClampedCycleDt(double measured_dt_s, double nominal_dt_s)
 {
+    if (!std::isfinite(measured_dt_s) || !std::isfinite(nominal_dt_s) ||
+        measured_dt_s <= 0.0 || nominal_dt_s <= 0.0)
+        return 0.0;
     return std::min(measured_dt_s, 2.0 * nominal_dt_s);
 }
 
@@ -63,7 +69,8 @@ public:
     // then bounds its lead over the wrapped measurement when configured. A
     // final per-cycle rate envelope always wins: after discontinuous feedback
     // lead recovery may temporarily remain beyond the configured lead bound,
-    // leaving the existing following-error guard as the backstop.
+    // leaving the existing following-error guard as the backstop. A direct
+    // non-positive or non-finite dt is treated as zero for every result.
     // setpoint_velocity_deg_s reports the applied step after both constraints,
     // not the requested qdot.
     ApplyStatus Apply(const Eigen::Matrix<double, 7, 1>& qdot_clamped_rad_s,

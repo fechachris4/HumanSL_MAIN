@@ -225,12 +225,14 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
 //   cmdvel_j*  deg/s  velocity actually realised by the integrated command
-//   req_j*     deg    integrated position command BEFORE the lead limiter
+//   req_j*     deg    integrated position command BEFORE lead/rate constraints
 //   cmd_j*     deg    position actually written into the cyclic message
 //   meas_j*    deg    position returned by the robot in the Send reply
-// So req_j* - cmd_j* is exactly what the lead limiter removed this cycle
-// (nonzero only where lead_limited_j* is 1), and cmd_j* - meas_j* is the
-// same-unit tracking error the following-error guard tests.
+// So req_j* - cmd_j* is the combined effect of the lead projection and final
+// rate envelope this cycle. lead_limited_j* records that the lead projection
+// was active, even if the rate envelope deferred recovery and req_j* equals
+// cmd_j*. cmd_j* - meas_j* is the same-unit tracking error the
+// following-error guard tests.
 //
 // ack_unchanged_j* is a COUNT OF CONSECUTIVE CYCLES this joint's
 // command-acknowledgement ID repeated (0 = advanced this cycle). It is
@@ -297,7 +299,7 @@ struct LoopLogSample {
 
     // Requested-vs-sent telemetry (log_format 5). See the column note above.
     long cycle = 0; // 1.. per control cycle (0 = before control began)
-    JointVector requested_deg{};            // before lead/rate constraints
+    JointVector requested_deg{};            // pre lead/rate candidate
     JointVector requested_velocity_deg_s{}; // before the per-joint speed clamp
     std::array<bool, 7> lead_limited{};     // lead constraint was active
     std::array<int, 7> ack_unchanged_cycles{}; // consecutive repeated ack IDs

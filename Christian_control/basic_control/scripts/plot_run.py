@@ -13,7 +13,7 @@ With no CSV it picks the newest run under runs/ (scripts/runlog.py).
 Definitions, all straight from the CSV columns (see Record.h):
 
     requested  reqvel_j*  deg/s   controller output, before the speed clamp
-               req_j*     deg     integrated setpoint, before the lead limiter
+               req_j*     deg     integrated setpoint, before lead/rate constraints
     sent       cmdvel_j*  deg/s   velocity the written command realised
                cmd_j*     deg     position written into the cyclic message
     measured   meas_j*    deg     position returned in the Send reply
@@ -213,7 +213,7 @@ def fig_focus(rows, t, path, preamble, synthetic, exit_note):
         top = axes[0][column]
         top.set_facecolor(C_FOCUS_BG)
         top.plot(t, req, color=C_REQUESTED, lw=2.4, ls=(0, (5, 2)),
-                 label="requested (before lead limiter)")
+                 label="requested (pre lead/rate constraints)")
         top.plot(t, cmd, color=C_SENT, lw=2.0, label="sent (into cyclic msg)")
         top.plot(t, meas, color=C_MEASURED, lw=2.0, ls=(0, (1, 1.6)),
                  label="measured (robot reply)")
@@ -230,7 +230,7 @@ def fig_focus(rows, t, path, preamble, synthetic, exit_note):
                     label="tracking error  cmd - meas")
         limiter = [r - c for r, c in zip(req, cmd)]
         bottom.plot(t, limiter, color=C_REQUESTED, lw=1.4, ls=(0, (5, 2)),
-                    label="removed by lead limiter  req - cmd")
+                    label="combined lead/rate effect  req - cmd")
         bottom.set_ylabel("degrees")
         bottom.set_xlabel("time (s)")
         bottom.legend(fontsize=7.5, loc="best")

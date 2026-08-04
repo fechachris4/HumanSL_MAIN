@@ -192,11 +192,11 @@ namespace config
     inline constexpr double kFollowingErrorLimitDeg = 3.0;
 
     // Command shaping, not stops. Null centering ramps in over
-    // kNullRampDurationS; integrated setpoints may lead feedback by at most
-    // kCommandLeadLimitDeg, bounding how far the setpoint runs away from a
-    // joint that is not following. Because 1 deg is well below the 3 deg
-    // following-error guard, that guard cannot fire while the limiter is
-    // active — so nothing stops a frozen plant by itself (compiled-config.md).
+    // kNullRampDurationS; the lead projection targets at most
+    // kCommandLeadLimitDeg from wrapped feedback. On discontinuous feedback,
+    // the final per-cycle rate envelope wins, so actual lead can temporarily
+    // exceed 1 deg while it recovers. The unchanged 3 deg following-error
+    // guard is then the backstop (compiled-config.md).
     inline constexpr double kNullRampDurationS = 1.0;
     inline constexpr double kCommandLeadLimitDeg = 1.0;
 

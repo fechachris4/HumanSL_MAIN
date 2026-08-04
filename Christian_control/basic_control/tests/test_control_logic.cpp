@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <string>
 
 #include "Actuation.h"
@@ -69,6 +70,10 @@ namespace
         Check(ClampedCycleDt(0.010, 0.010) == 0.010, "nominal dt passes through");
         Check(ClampedCycleDt(0.012, 0.010) == 0.012, "small jitter passes through");
         Check(ClampedCycleDt(0.250, 0.010) == 0.020, "a stall clamps to 2x nominal");
+        Check(ClampedCycleDt(-0.001, 0.010) == 0.0,
+              "a negative measured dt fails safe to zero");
+        Check(ClampedCycleDt(std::numeric_limits<double>::quiet_NaN(), 0.010) == 0.0,
+              "a non-finite measured dt fails safe to zero");
     }
 
     void TestPositionIntegration()
@@ -174,6 +179,26 @@ namespace
                        (setpoints[kJoint6] - kPreviousDeg) / kDtS) < 1e-9,
               "applied velocity reports the final constrained setpoint step");
 
+        // Sign-mirror the discontinuity fixture: a negative clamped qdot
+        // must get the same final rate envelope and never produce a snap.
+        RobotState negative_seed = discontinuous_seed;
+        negative_seed.q_rad[kJoint6] = -kPreviousDeg * kDegToRad;
+        RobotState negative_feedback = negative_seed;
+        negative_feedback.q_rad[kJoint6] = -kFeedbackDeg * kDegToRad;
+        Eigen::Matrix<double, 7, 1> negative_qdot =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        negative_qdot[kJoint6] = -kClampedDegS * kDegToRad;
+        PositionIntegration negative_discontinuous(1.0);
+        negative_discontinuous.Prepare(negative_seed);
+        const auto negative_status = negative_discontinuous.Apply(
+            negative_qdot, negative_feedback, kDtS, setpoints, velocity);
+        Check(negative_status.lead_limited[kJoint6],
+              "negative qdot reports the active lead constraint");
+        Check(std::abs(setpoints[kJoint6] + kPreviousDeg) <= kMaxStepDeg + 1e-12,
+              "negative qdot cannot snap the setpoint across a discontinuity");
+        Check(std::abs(velocity[kJoint6]) <= kClampedDegS + 1e-12,
+              "negative qdot respects the clamped velocity magnitude");
+
         // With no permitted step, lead recovery must wait for a later cycle
         // rather than snapping the command toward the discontinuous feedback.
         PositionIntegration zero_step(1.0);
@@ -187,6 +212,29 @@ namespace
               "zero qdot cannot snap toward discontinuous feedback");
         Check(velocity[kJoint6] == 0.0,
               "zero qdot reports zero applied velocity after both constraints");
+
+        // Apply is also fail-safe when called directly: invalid dt must not
+        // move the persistent command, reverse a positive qdot, or emit a
+        // nonzero applied velocity even with discontinuous feedback.
+        for (const double invalid_dt_s : {
+                 0.0,
+                 -kDtS,
+                 std::numeric_limits<double>::quiet_NaN(),
+                 std::numeric_limits<double>::infinity(),
+             })
+        {
+            PositionIntegration invalid_dt(1.0);
+            invalid_dt.Prepare(discontinuous_seed);
+            const auto invalid_status = invalid_dt.Apply(
+                discontinuous_qdot, discontinuous_feedback, invalid_dt_s,
+                setpoints, velocity);
+            Check(std::abs(invalid_status.requested_deg[kJoint6] - kPreviousDeg) < 1e-12,
+                  "invalid dt records an exact hold as the requested setpoint");
+            Check(std::abs(setpoints[kJoint6] - kPreviousDeg) < 1e-12,
+                  "invalid dt holds the command despite discontinuous feedback");
+            Check(velocity[kJoint6] == 0.0,
+                  "invalid dt reports zero applied velocity");
+        }
 
         // Wrapped feedback still uses the nearest turn and follows the same
         // final rate envelope, rather than treating 359 to 1 deg as a jump.
