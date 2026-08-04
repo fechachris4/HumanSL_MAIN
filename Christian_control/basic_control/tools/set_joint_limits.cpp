@@ -7,14 +7,17 @@
 // power-cycle-volatile configuration risk. Joints 1/3/5/7 are continuous
 // and are deliberately NOT touched.
 //
-// The values below are a BACKSTOP that sits just OUTSIDE the rated model
-// range, so the software limits stay the primary constraint:
+// Firmware JOINT_LIMIT is the actual joint-position enforcement; the
+// controller has no separate client-side joint-position clamp. Its velocity
+// clip, reach screen, and following-error stop are separate protections.
+// Warnings: joint 2's established +/-130.0, joint 4 +/-145.0 (inside its
+// documented +/-147.8), and joint 6 +/-118.0 (inside +/-120.3). Errors
+// +/-140.0 / +/-150.0 / +/-123.0 are outside the documented respective
+// +/-128.9 / +/-147.8 / +/-120.3 ranges:
 //
 //   joint 2  warning +/-130.0, error +/-140.0
-//   joint 4  rated +/-147.8 deg (Kinova spec; URDF +/-147.25)
-//            -> warning +/-145.0, error +/-150.0
-//   joint 6  rated +/-120.3 deg (Kinova spec; URDF +/-119.75)
-//            -> warning +/-118.0, error +/-123.0
+//   joint 4  warning +/-145.0, error +/-150.0
+//   joint 6  warning +/-118.0, error +/-123.0
 //
 // The values match Config.h, which the controller re-applies and verifies on
 // every connection. DeviceConfig writes are not durable across a power cycle.

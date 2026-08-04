@@ -50,9 +50,13 @@ Re-applying per connection is therefore a stopgap, not the solution. What
 it buys is that the arm can never run with a degenerate empty band: joints
 2, 4, and 6 are bounded, and a 0/0 threshold band faults outward motion.
 
-The written magnitudes are j2 ±130 warn / ±140 error, j4 ±145 / ±150, and
-j6 ±118 / ±123. The software limits stay primary and the firmware is a
-backstop.
+Firmware `JOINT_LIMIT` is the actual joint-position enforcement; the
+controller has no separate client-side joint-position clamp. Its velocity
+clip, spherical input reach screen, and following-error stop are separate
+protections. The written warnings are j2's established ±130, j4 ±145
+(inside its documented ±147.8 range), and j6 ±118 (inside ±120.3). The
+errors ±140 / ±150 / ±123 lie outside the documented respective
+±128.9 / ±147.8 / ±120.3 ranges.
 
 Joints 1/3/5/7 are left at 0 — they are continuous, so no position limit
 applies.

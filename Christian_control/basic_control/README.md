@@ -222,10 +222,13 @@ rules above apply):
   onboard planning, obstacle avoidance or self-collision avoidance. The
   end effector travels the straight line to the target and the DLS solution
   moves all 7 joints, so check the links and surroundings too.
-- This arm has **configured position limits far inside the factory range**
-  (joint 4 near −19.6°, joint 6 near +36° — both found by faulting into
-  them; check/adjust via the Kinova web dashboard). The controller does not
-  know them; the arm faults if a solution path crosses one.
+- Firmware `JOINT_LIMIT` thresholds are the actual joint-position
+  enforcement. At startup the controller owns these thresholds: on every
+  connection it re-applies as needed and verifies the bounded joints 2/4/6;
+  continuous joints 1/3/5/7 remain unset. There is no separate client-side
+  joint-position clamp. The controller's velocity clip, spherical input
+  reach screen, and following-error stop are separate protections, not
+  joint-position enforcement.
 - **A live fault does NOT currently stop the run.** `kStopOnFault` is
   `false` in `Config.h` — the 2026-07-20 fault-ignoring experiment, still
   switched on. Faults are decoded, printed on their edges and logged, but

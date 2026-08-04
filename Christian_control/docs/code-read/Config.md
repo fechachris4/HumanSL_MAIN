@@ -168,18 +168,23 @@ duplication — resist "simplifying" it away *and* resist splitting it
 casually.
 
 ### Lines 130–142 — JOINT_LIMIT thresholds
-The firmware backstop bands, re-applied on EVERY connection because SDK
-writes do not survive a power cycle.
+The firmware-enforced joint-position bands, re-applied on EVERY connection
+because SDK writes do not survive a power cycle. There is no separate
+client-side joint-position clamp; the velocity clip, reach screen, and
+following-error stop are distinct protections.
 **FLAG edit-hazard + hides-work (lines 141–142):** the arrays encode three
 things in one place: (a) magnitude in degrees, sign applied per HIGH/LOW by
 `EnsureJointLimits`; (b) **0 means "leave that joint alone"** — a sentinel,
 not a limit of zero degrees (an actual 0/0 band is the degenerate state
 that faults all outward motion!); (c) non-zero values deliberately cover
 every bounded joint: joint 2 (130/140), joint 4 (145/150), and joint 6
-(118/123), all warning/error magnitudes in degrees. A live read found j2's
-thresholds back at 0/0, so it is now re-applied and verified on every
-connection alongside j4/j6. Someone filling in "the missing limits" for
-continuous joints 1/3/5/7 changes startup behaviour on real hardware.
+(118/123), all warning/error magnitudes in degrees. Warnings are j2's
+established 130 deg and j4/j6 145/118 deg (inside their documented
+147.8/120.3 deg ranges); errors 140/150/123 deg are outside the documented
+128.9/147.8/120.3 deg ranges. A live read found j2's thresholds back at
+0/0, so it is now re-applied and verified on every connection alongside
+j4/j6. Someone filling in "the missing limits" for continuous joints
+1/3/5/7 changes startup behaviour on real hardware.
 
 ### Line 148 — `kStopOnFault = false`
 **FLAG edit-hazard:** in caps in the source for a reason: A LIVE FAULT

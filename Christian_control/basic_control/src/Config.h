@@ -133,11 +133,14 @@ namespace config
     // writes do not survive a power cycle (compiled-config.md). Before
     // takeover, EnsureJointLimits reads each HIGH/LOW setting, corrects it
     // if needed, then requires both warning and error values on read-back.
-    // Magnitudes in deg, sign applied per HIGH/LOW; 0 = leave that joint
-    // alone. These sit just outside the rated range, so software stays
-    // primary and firmware is the backstop.
-    // The controller owns every bounded-joint backstop: joints 2, 4, and 6.
-    // Continuous joints 1/3/5/7 have no position thresholds here.
+    // Firmware-enforced joint-position thresholds: magnitude in deg, sign
+    // applied per HIGH/LOW; 0 = leave that joint alone. The controller owns
+    // every bounded joint's 2/4/6 threshold; continuous 1/3/5/7 have none.
+    // Warnings are j2's established 130 deg and j4/j6 145/118 deg, inside
+    // their documented 147.8/120.3 deg ranges. Errors 140/150/123 deg are
+    // outside the documented 128.9/147.8/120.3 deg ranges. There is no
+    // client-side joint-position clamp: qdot clip, reach screen, and
+    // following-error stop are separate protections.
     inline constexpr JointVector kJointLimitWarnDeg = {0, 130.0, 0, 145.0, 0, 118.0, 0};
     inline constexpr JointVector kJointLimitErrorDeg = {0, 140.0, 0, 150.0, 0, 123.0, 0};
 
