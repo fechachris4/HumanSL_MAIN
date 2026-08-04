@@ -369,6 +369,13 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     << " mm — holding\n";
                 NotifyPoseTargetSourceOnArrivalEdge(reference, status);
             }
+            else if (status.not_reached_edge)
+            {
+                std::cout << "target NOT reached: "
+                    << status.arrival_error_m * 1000.0 << " mm short after "
+                    << config::kTargetHoldS
+                    << " s (holding; Ctrl+C to abort)\n";
+            }
 
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
