@@ -16,7 +16,7 @@
 #include <string>
 #include <thread>
 #include <vector>
-#include <ActuatorConfigClientRpc.h>
+#include <ActuatorConfig.pb.h> // SafetyIdentifierBankA, used by EnsureJointLimits
 #include <BaseClientRpc.h>
 #include <BaseCyclicClientRpc.h>
 #include <DeviceConfigClientRpc.h>
@@ -84,16 +84,13 @@ public:
         return device_config_.get();
     }
 
-    // Read, set if necessary, and re-read all seven actuator control modes.
-    // Must pass before the low-level takeover begins.
-    bool EnsurePositionControlModes(std::ostream& out);
-
-    // Same shape, for the configured JOINT_LIMIT safety thresholds
+    // The configured JOINT_LIMIT safety thresholds
     // (config::kJointLimitWarnDeg / kJointLimitErrorDeg): read, correct if
     // they do not match, re-read to verify. Writes no motion. Exists
     // because these thresholds do not survive a robot power cycle and a
     // degenerate 0/0 band makes the firmware fault any outward motion —
-    // see the Config.h comment for the full history.
+    // see the Config.h comment for the full history. Only joints with a
+    // non-zero config entry are touched.
     bool EnsureJointLimits(std::ostream& out);
 
 private:
@@ -117,7 +114,6 @@ private:
     Channel udp_; // port 10001: real-time cyclic channel
 
     std::unique_ptr<k_api::Base::BaseClient> base_;
-    std::unique_ptr<k_api::ActuatorConfig::ActuatorConfigClient> actuator_config_;
     std::unique_ptr<k_api::DeviceConfig::DeviceConfigClient> device_config_;
     std::unique_ptr<k_api::BaseCyclic::BaseCyclicClient> base_cyclic_;
 };

@@ -78,8 +78,6 @@ Connect::Connect(const std::string& ip_address)
     : tcp_(std::make_unique<k_api::TransportClientTcp>(), ip_address, kTcpPort, "TCP"),
       udp_(std::make_unique<k_api::TransportClientUdp>(), ip_address, kUdpPort, "UDP"),
       base_(std::make_unique<k_api::Base::BaseClient>(tcp_.router.get())),
-      actuator_config_(std::make_unique<k_api::ActuatorConfig::ActuatorConfigClient>(
-          tcp_.router.get())),
       device_config_(std::make_unique<k_api::DeviceConfig::DeviceConfigClient>(
           tcp_.router.get())),
       base_cyclic_(std::make_unique<k_api::BaseCyclic::BaseCyclicClient>(udp_.router.get()))
@@ -172,62 +170,10 @@ bool Connect::EnsureJointLimits(std::ostream& out)
     return true;
 }
 
-bool Connect::EnsurePositionControlModes(std::ostream& out)
-{
-    auto desired = k_api::ActuatorConfig::ControlModeInformation();
-    desired.set_control_mode(k_api::ActuatorConfig::ControlMode::POSITION);
-    bool changed = false;
-    for (std::uint32_t id = 1; id <= 7; ++id)
-    {
-        // Name the joint before every RPC. These calls are routed to one
-        // actuator, and a single actuator whose CONFIGURATION service has
-        // stopped answering makes them time out while the cyclic path keeps
-        // reporting that joint normally (2026-08-04: joint 6). Without the
-        // joint in the message the failure reads as a whole-arm timeout,
-        // which sends you looking at the network instead of one device.
-        try
-        {
-            const auto before = actuator_config_->GetControlMode(id);
-            if (before.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
-            {
-                out << "joint " << id << " control mode was "
-                    << k_api::ActuatorConfig::ControlMode_Name(before.control_mode())
-                    << "; setting POSITION\n";
-                actuator_config_->SetControlMode(desired, id);
-                changed = true;
-            }
-            const auto verified = actuator_config_->GetControlMode(id);
-            if (verified.control_mode() != k_api::ActuatorConfig::ControlMode::POSITION)
-            {
-                out << "robot NOT ready: joint " << id
-                    << " did not enter POSITION control mode\n";
-                return false;
-            }
-        }
-        catch (std::exception& ex)
-        {
-            out << "joint " << id << " did not answer its control-mode service ("
-                << ex.what() << ").\n"
-                   "  The joint may still report position on the cyclic path;"
-                   " this is its CONFIGURATION channel.\n";
-            if (!config::kAllowUnverifiedActuators)
-            {
-                out << "  robot NOT ready: its control mode cannot be verified,"
-                       " so the takeover is refused. Power-cycle the arm and"
-                       " re-check with tools/read_safety_limits, or set"
-                       " config::kAllowUnverifiedActuators.\n";
-                return false;
-            }
-            out << "  WARNING: continuing with joint " << id
-                << " UNVERIFIED (config::kAllowUnverifiedActuators). If it is"
-                   " not in POSITION mode, its response to a position setpoint"
-                   " is undefined.\n";
-        }
-    }
-    out << "actuator control-mode gate: PASS (all joints POSITION"
-        << (changed ? ", corrections verified" : "") << ")\n";
-    return true;
-}
+// The per-joint control-mode verification gate was removed 2026-08-04:
+// actuators boot in POSITION mode, nothing in this program ever commands
+// another mode, the gate never once found a deviation — and probing cost a
+// full RPC timeout per unreachable actuator (joint 6) on every start.
 
 // ---------------------------------------------------------------
 // CyclicSession — the per-cycle command frame

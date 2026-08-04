@@ -333,31 +333,6 @@ namespace
         Check(!ParsePoseTarget("0 0 0 inf 0 0", error).has_value(), "inf rejected");
     }
 
-    void TestFirstTargetLine()
-    {
-        const std::string path = "test_target_line_tmp.txt";
-
-        Check(!FirstTargetLine("no_such_file_anywhere.txt").has_value(),
-              "missing file -> nullopt");
-
-        {
-            std::ofstream file(path);
-            file << "\n# a comment\n   \t\n  0.4 0.1 0.3\nsecond line\n";
-        }
-        auto line = FirstTargetLine(path);
-        Check(line.has_value(), "target line found");
-        Check(line && line->find("0.4 0.1 0.3") != std::string::npos,
-              "comments and blank lines are skipped");
-
-        {
-            std::ofstream file(path);
-            file << "# only comments\n\n";
-        }
-        Check(!FirstTargetLine(path).has_value(), "comments-only file -> nullopt");
-
-        std::remove(path.c_str());
-    }
-
     void TestPoseTargetStore()
     {
         PoseTargetStore store;
@@ -487,7 +462,6 @@ int main()
     TestAgainstSimulationFixtures();
     TestParsePoseTarget();
     TestRotationFromRpy();
-    TestFirstTargetLine();
     TestPoseTargetStore();
     TestPoseTargetSource();
 

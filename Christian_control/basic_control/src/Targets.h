@@ -67,18 +67,6 @@ private:
 // terminal output is fine here.
 void RunPoseTargetInput(PoseTargetStore& store, const std::atomic<bool>& stop);
 
-// First non-empty, non-comment line of `path`, or nullopt. Split out of the
-// watcher so the file-reading rule is testable without hardware.
-std::optional<std::string> FirstTargetLine(const std::string& path);
-
-// Thread body: watch `path` and store its first target line whenever the
-// file CHANGES (mtime/size/inode, same 100 ms cadence as stdin) — edit and
-// save to retarget from any editor. Content present at startup is
-// deliberately ignored: a stale file must never start a motion. Runs
-// alongside the stdin thread; latest store wins.
-void RunPoseTargetFileInput(PoseTargetStore& store, const std::string& path,
-                            const std::atomic<bool>& stop);
-
 //
 // The operator's targets as a ReferenceSource. Reset snapshots the store's
 // sequence, so anything stored BEFORE takeover is discarded — except

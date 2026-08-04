@@ -66,7 +66,6 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
         out << prefix << key << " = " << value << " (Config.h)\n";
     };
     line("reference_source", config::kReferenceSource);
-    line("target_file", config::kTargetFile[0] ? config::kTargetFile : "<none>");
     line("trajectory_file", config::kTrajectoryFile[0] ? config::kTrajectoryFile : "<none>");
     line("playback_kp", FormatDouble(config::kPlaybackKp));
     line("start_mismatch_limit_deg", FormatDouble(config::kStartMismatchLimitDeg));
@@ -245,14 +244,13 @@ int main(int argc, char** argv)
     const std::string log_file_arg = ParseLogFileArg(argc, argv);
 
     try {
-        std::cout << "controller config (Config.h):\n";
-        WriteConfigLines(log_file_arg, std::cout, "  ");
+        // The full configuration is embedded in the CSV preamble
+        // (WriteConfigLines below) — the log stays self-describing
+        // without printing thirty lines at every start.
         const bool playback = std::string(config::kReferenceSource) == "trajectory";
         const bool operator_targets = std::string(config::kReferenceSource) == "operator";
         if (!playback && !operator_targets)
             throw std::runtime_error("Config.h kReferenceSource must be operator or trajectory");
-        if (config::kTargetFile[0] != '\0' && !operator_targets)
-            throw std::runtime_error("Config.h kTargetFile requires the operator source");
         if (playback && config::kTrajectoryFile[0] == '\0')
             throw std::runtime_error("Config.h kTrajectoryFile is required for the trajectory source");
 
@@ -330,23 +328,21 @@ int main(int argc, char** argv)
         const bool robot_ready = RobotReadyForTakeover(initial, std::cout); // T1
         if (!robot_ready)
             return 1;
-        // Joint limits FIRST. They do not survive a robot power cycle, and a
-        // degenerate 0/0 band makes the firmware fault any motion away from
-        // zero (Config.h). Restoring them is the more important of the two
-        // gates and must not be blocked by the other: until 2026-08-04 the
-        // control-mode probe ran first, so a single actuator whose
-        // configuration service had stopped answering exited the program
-        // before any limit was ever re-applied.
+        // Re-assert the configured JOINT_LIMIT thresholds: they do not
+        // survive a robot power cycle, and a degenerate 0/0 band makes the
+        // firmware fault any motion away from zero (Config.h). Only joints
+        // with non-zero config entries are touched, so this is a handful of
+        // fast RPCs. (The separate control-mode verification gate was
+        // removed 2026-08-04: actuators boot in POSITION, nothing in this
+        // program ever sets another mode, and probing the mode cost a long
+        // RPC timeout per unreachable actuator on every start.)
         if (config::kSkipStartupGates)
             std::cout
-                << "WARNING: STARTUP GATES SKIPPED (config::kSkipStartupGates)"
-                   " — no control mode verified, and the joint 4/6 JOINT_LIMIT\n"
-                   "         bands are NOT restored. A band left at 0/0 faults"
-                   " outward motion at the firmware level.\n";
+                << "WARNING: STARTUP GATE SKIPPED (config::kSkipStartupGates)"
+                   " — the JOINT_LIMIT bands are NOT restored. A band left at"
+                   " 0/0 faults outward motion at the firmware level.\n";
         else {
             if (!connection.EnsureJointLimits(std::cout))
-                return 1;
-            if (!connection.EnsurePositionControlModes(std::cout))
                 return 1;
         }
         PrintRobotState(initial, controlled_model);
@@ -435,7 +431,7 @@ int main(int argc, char** argv)
                              "  x y z roll pitch yaw   (meters + radians, R = Rz·Ry·Rx, "
                              "right-arm base frame)\n";
             std::cout << "reactive-pose position integration at " << config::kControlFrequencyHz
-                      << " Hz (full settings echoed above and in the CSV preamble)\n";
+                      << " Hz (full settings in the CSV preamble)\n";
         }
         // Open the run's CSV BEFORE the takeover: a hardware run must never
         // end with zero evidence because the file could not be created. The
@@ -574,19 +570,6 @@ int main(int argc, char** argv)
         }
         InputThreadJoiner input_thread_joiner{input_thread};
 
-        // Optional second target input (operator source only, target_file
-        // in the config): edit+save the watched file to retarget. Its
-        // content at startup is ignored — only in-session edits become
-        // targets.
-        std::thread target_file_thread;
-        if (!playback && config::kTargetFile[0] != '\0') {
-            std::cout << "watching target file: " << config::kTargetFile
-                      << " (current content ignored; edit and save to retarget)\n";
-            target_file_thread = std::thread(RunPoseTargetFileInput, std::ref(pose_targets),
-                                             config::kTargetFile, std::cref(g_stop));
-        }
-        InputThreadJoiner target_file_thread_joiner{target_file_thread};
-
         // MOVES THE ARM (toward typed positions): servoing mode is entered
         // and restored inside the Runner, on every exit path (T2/D3).
         const LoopResult result = RunControlLoop(
@@ -598,8 +581,6 @@ int main(int argc, char** argv)
         g_stop = true; // loop may have exited on a fault, not Ctrl+C
         if (input_thread.joinable())
             input_thread.join();
-        if (target_file_thread.joinable())
-            target_file_thread.join();
 
         // Final drain — everything before this was already on disk.
         log_writer.Stop();

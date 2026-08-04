@@ -32,7 +32,6 @@ namespace config
     //   "operator"   — pose targets (Targets.h PoseTargetSource)
     //   "trajectory" — one pre-validated joint trajectory (Trajectory.h)
     inline constexpr const char* kReferenceSource = "operator";
-    inline constexpr const char* kTargetFile = "";
     inline constexpr const char* kTrajectoryFile = "trajectories/hold_home_10s.csv";
 
     // Right-only by design: the URDF models both mounted arms, but only
@@ -68,10 +67,14 @@ namespace config
         static_cast<long>(kControlDtS * 1e6)
     };
 
+    // false = the interactive prompt: the arm HOLDS at takeover and moves
+    // only when a target is typed (x y z, or x y z roll pitch yaw). This is
+    // the usable default — a typed target is always relative to the pose
+    // printed at startup, so it cannot go stale the way a compiled one can.
     // true = no stdin thread; THE ARM DRIVES TO THE FIXED TARGET BELOW
-    // IMMEDIATELY after the takeover. Check both lines against the pose the
-    // program prints at startup. false restores the interactive prompt.
-    inline constexpr bool kUseFixedTarget = true;
+    // IMMEDIATELY after the takeover (freshness-gated by
+    // kMaxFixedTargetDistanceM).
+    inline constexpr bool kUseFixedTarget = false;
 
     // Freshness gate: refuse the run if the compiled fixed target is
     // farther than this from the measured end-effector position at
@@ -145,8 +148,14 @@ namespace config
     // Magnitudes in deg, sign applied per HIGH/LOW; 0 = leave that joint
     // alone. These sit just outside the rated range, so software stays
     // primary and firmware is the backstop.
-    inline constexpr JointVector kJointLimitWarnDeg = {0, 0, 0, 145.0, 0, 118.0, 0};
-    inline constexpr JointVector kJointLimitErrorDeg = {0, 0, 0, 150.0, 0, 123.0, 0};
+    // Joint 6 is set to 0 (leave alone) since 2026-08-04: its config
+    // service is wedged, so the gate's RPCs to it can only time out —
+    // ~15-20 s of dead wait per run buying nothing. Its band therefore
+    // stays whatever it is (presumed degenerate 0/0): ONLY j6-INWARD
+    // MOVES ARE SAFE until the service recovers; run probe_direction
+    // before choosing targets. Restore 118/123 here when j6 answers again.
+    inline constexpr JointVector kJointLimitWarnDeg = {0, 0, 0, 145.0, 0, 0, 0};
+    inline constexpr JointVector kJointLimitErrorDeg = {0, 0, 0, 150.0, 0, 0, 0};
 
     // false = A LIVE FAULT DOES NOT END THE RUN. Faults are still decoded,
     // printed and logged, and they taint the exit code, but the loop keeps
@@ -168,7 +177,11 @@ namespace config
     // not in POSITION mode, what it does with a position setpoint is
     // undefined. (2026-08-04: joint 6's config service stopped answering
     // while it still reported position normally.)
-    inline constexpr bool kAllowUnverifiedActuators = true; // 2026-08-04: joint 6 config channel dead, see above
+    // Back to false 2026-08-04 (later the same night): joint 6 is now
+    // excluded from the limits gate via its zero config entry, so nothing
+    // in the startup path probes the wedged service any more and the
+    // override has nothing to excuse.
+    inline constexpr bool kAllowUnverifiedActuators = false;
 
     // true = skip BOTH startup gates for every joint. Nothing is verified
     // and, critically, the j4/j6 JOINT_LIMIT thresholds are NEVER
