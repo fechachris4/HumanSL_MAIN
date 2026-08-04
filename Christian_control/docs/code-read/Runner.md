@@ -383,20 +383,16 @@ teardown report — and, as the comment notes, the servoing restore no longer
 depends on being caught at all, because the `ServoingGuard` destructor runs
 during unwinding regardless.
 
-### Lines 386–399 — teardown D1→D2→D3 and the return
-- **387** — D1: `actuation.Restore()` (currently a no-op — POSITION mode
-  holds the last setpoint — but the hook point is contractual).
-- **391** — D2: `servoing_guard.Restore(std::cout)` — the *explicit* restore
-  to SINGLE_LEVEL, done here rather than left to the destructor so any
-  Kortex error is printed to stdout with its sub-code and the base gets its
-  documented settling wait; the destructor remains the retry backstop.
-  **[edit-hazard, lines 386–391]** D1 before D2 is the contract (Actuation.h
-  says Restore runs BEFORE the servoing guard restores); and this teardown
-  is *outside* the try, so it runs on every path — moving it inside the try
-  would skip it on the exception paths.
-- **392–397** — D3: the decoded stop report (`PrintStopReport`, Safety.md),
-  the overrun tally, and the stale-JOINT_FAULT note if the summary bit was
-  ever seen.
-- **399** — the `LoopResult` aggregate: reason, taint flag, and the last
+### Lines 386–398 — teardown and the return
+- **386–390** — after the catch ladder, `servoing_guard.Restore(std::cout)`
+  explicitly restores SINGLE_LEVEL. It is outside the try, so every normal
+  and caught-exception path reaches it; the `ServoingGuard` destructor is the
+  retry backstop if that call fails. There is no actuation restore stage.
+  **[edit-hazard, lines 386–390]** moving this call inside the try would skip
+  the explicit restore on exception paths.
+- **391–396** — the decoded stop report (`PrintStopReport`, Safety.md), the
+  overrun tally, and the stale-JOINT_FAULT note if the summary bit was ever
+  seen.
+- **398** — the `LoopResult` aggregate: reason, taint flag, and the last
   sample's time/cycle (so they line up with the CSV's final row). Main turns
   this into the exit code: 0 only for `kUserStop` with no observed faults.

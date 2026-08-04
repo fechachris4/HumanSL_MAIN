@@ -1,8 +1,6 @@
 # Actuation.cpp / Actuation.h — line-by-line read
 
-*(Updated for commit f64325c0: the source files are unchanged by the
-trajectory-playback removal; only the Main/Runner call-site line numbers
-below have moved.)*
+*(Current source map: line references below are checked against HEAD.)*
 
 Actuation is the last software stage before the robot: it turns the
 already-clamped joint velocity q̇ into this cycle's absolute position
@@ -10,37 +8,42 @@ setpoints by integration, and it owns the persistent command state that
 requires (`q_command_rad_`). One class, `PositionIntegration`, plus one
 free helper, `ClampedCycleDt`.
 
-The header's lifecycle contract (Actuation.h:5-8) is the thing to
-internalize before touching anything: `Prepare` and `Restore` MAY do
-hardware I/O; `Apply` must be **pure** — no I/O, no blocking, no
-allocation — because it runs inside every 2 ms cycle.
+`PositionIntegration` owns no hardware lifecycle at HEAD: `Prepare` seeds
+its persistent command state outside the loop and `Apply` is **pure** — no
+I/O, no blocking, no allocation — because it runs inside every 2 ms cycle.
 
 Execution order (who calls what):
 
-1. `PositionIntegration actuation(config::kCommandLeadLimitDeg)` — Main.cpp:377
-2. `ClampedCycleDt(...)` — Runner.cpp:187, every cycle after the first
-3. `actuation.Prepare(state)` — Runner.cpp:162, at takeover (T4)
-4. `actuation.Apply(...)` — Runner.cpp:256, every cycle
-5. `actuation.Restore()` — Runner.cpp:387, on every exit path (D1)
+1. `PositionIntegration actuation(config::kCommandLeadLimitDeg)` — Main.cpp:397
+2. `ClampedCycleDt(...)` — Runner.cpp:184–186, every cycle after the first
+3. `actuation.Prepare(state)` — Runner.cpp:160, at takeover (T4)
+4. `actuation.Apply(...)` — Runner.cpp:255–257, every cycle
+5. `servoing_guard.Restore(std::cout)` — Runner.cpp:390, after the loop
 
-(`TrackingErrorDeg` is declared here too but nothing in the run calls it —
-see below.)
+There is no `PositionIntegration::TrackingErrorDeg()` or
+`PositionIntegration::Restore()` at HEAD. Following-error classification is
+performed by `Safety::ClassifyStop` on the command and feedback recorded by
+the Runner; servoing teardown belongs to `ServoingGuard`.
 
 ---
 
-## `ClampedCycleDt` (Actuation.h:26-29)
+## `ClampedCycleDt` (Actuation.h:24-35)
 
 ```cpp
 inline double ClampedCycleDt(double measured_dt_s, double nominal_dt_s)
 {
+    if (!std::isfinite(measured_dt_s) || !std::isfinite(nominal_dt_s) ||
+        measured_dt_s <= 0.0 || nominal_dt_s <= 0.0)
+        return 0.0;
     return std::min(measured_dt_s, 2.0 * nominal_dt_s);
 }
 ```
 
 - **What**: the dt the integrator may use — the *measured* elapsed cycle
-  time, capped at twice the nominal 2 ms period. `inline` in a header
-  means every .cpp may include this definition without a
-  "multiple definition" link error.
+  time, capped at twice the nominal 2 ms period; non-positive or non-finite
+  measured or nominal values fail safe to zero. `inline` in a header means
+  every .cpp may include this definition without a "multiple definition"
+  link error.
 - **Why**: if the scheduler stalls the loop for, say, 80 ms, integrating
   `q̇ · 0.080` in one step would command a large position jump — and the
   base ejects low-level servoing on jumps (~5°). Capping dt turns a stall
@@ -48,7 +51,8 @@ inline double ClampedCycleDt(double measured_dt_s, double nominal_dt_s)
 - **If changed**: raising the cap re-opens the position-jump ejection;
   removing the cap entirely makes any OS hiccup a potential fault. Note the
   *overrun stop counter* in the Runner uses the un-clamped dt — clamping
-  here hides the stall from the integrator, not from the record.
+  here hides the stall from the integrator, not from the record. A direct
+  invalid input cannot reverse or poison an integration step.
 
 ## Constructor (Actuation.cpp:18-22)
 
@@ -59,7 +63,7 @@ PositionIntegration::PositionIntegration(double command_lead_limit_deg)
 ```
 
 - **What**: store the command-lead limit, converted to radians once, so all
-  internal math is single-unit. The default argument (Actuation.h:49-50)
+  internal math is single-unit. The default argument (Actuation.h:57-58)
   is `std::numeric_limits<double>::infinity()` — "no limit" — which is why
   `Apply` tests `std::isfinite` before limiting. Main passes
   `config::kCommandLeadLimitDeg` = 1.0°.
@@ -83,7 +87,7 @@ q_command_rad_ = state.q_rad;
   is. The ONLY time command state is seeded from measurement.
 - **Why**: the first streamed position command must equal the current
   position or the servo would jump at takeover. The header
-  (Actuation.h:53-57) is emphatic that the zero-initialized member is not a
+  (Actuation.h:60-65) is emphatic that the zero-initialized member is not a
   safe substitute — commanding "all joints to 0°" from an arbitrary pose
   would be a violent full-speed move.
 - **If removed/reordered**: the Runner calls Prepare at T4 after the seed
@@ -95,7 +99,7 @@ q_command_rad_ = state.q_rad;
 Signature (Actuation.h:76-79): takes the clamped q̇ (rad/s), the measured
 state, dt, and *writes into* two caller-owned `JointVector`s —
 `setpoints_deg` (what gets sent) and `setpoint_velocity_deg_s` (what the
-log records). Returns an `ApplyStatus` (Actuation.h:44-47): the
+log records). Returns an `ApplyStatus` (Actuation.h:45-54): the
 unconstrained "requested" setpoint per joint plus a `lead_limited` flag —
 the requested-vs-sent half of the run record.
 
@@ -144,37 +148,6 @@ performs five jobs per joint: integration, turn-alignment of the feedback,
 lead projection, final rate limiting, and derivation of the logged velocity.
 `req_j - cmd_j` therefore shows the combined effect of the two command
 constraints, not only lead recovery.
-
-## `TrackingErrorDeg` (Actuation.cpp:77-91)
-
-- **What**: per joint, `|command − measured|` with the same
-  whole-turn correction (`remainder(..., 360)` on degrees), returned as
-  `std::optional<JointVector>`. First-time note: `std::optional<T>` is a
-  box that either holds a `T` or holds nothing (`std::nullopt`) — a typed
-  replacement for "return a special value to mean N/A". The header
-  (Actuation.h:69-73) says nullopt would mean "no guard available".
-- **Reality check**: this implementation always returns a value, and *no
-  production code calls it* — the Runner's following-error stop works from
-  the logged sample (`cmd_j*` vs `meas_j*`) inside `ClassifyStop`
-  (Safety), and the only callers are tests
-  (tests/test_control_logic.cpp:106,120 — still true at HEAD). **FLAG
-  `Actuation.cpp:77-91` | unnecessary** — dead in the run path; kept alive
-  by tests. If the fixed-target simplification wants a smaller surface,
-  this method and its optional-based contract can go once the tests assert
-  on the Safety-side computation instead.
-
-## `Restore` (Actuation.cpp:93-96)
-
-- **What**: nothing. In POSITION mode the arm simply holds the last
-  commanded setpoint, so there is nothing to undo before the
-  ServoingGuard restores SINGLE_LEVEL.
-- **Why it exists anyway**: the teardown contract (D1 before D2/D3 in the
-  Runner) gives actuation a slot to undo hardware state, because *other*
-  actuation strategies (the removed resolved-rate one commanded
-  velocities) genuinely needed one. **FLAG `Actuation.cpp:93-96` |
-  unnecessary** — a documented no-op kept for lifecycle symmetry; harmless,
-  but with exactly one actuation left it is interface generality nothing
-  uses.
 
 ## The private state (Actuation.h:80-84)
 

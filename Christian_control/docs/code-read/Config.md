@@ -212,10 +212,10 @@ preamble so a run recorded with one enabled is identifiable forever after.
   for you: combined with `kStopOnFault = false` and the no-motion stops
   removed 2026-08-03, the ONLY remaining automatic stop would be loss of
   low-level servoing — operator plus firmware limits become the entire
-  safety margin. The limit value itself (line 198) keeps feeding telemetry
+  safety margin. The limit value itself (line 192) keeps feeding telemetry
   either way.
 
-### Lines 188–193 — consecutive-cycle stop counters
+### Lines 184–187 — consecutive-cycle stop counters
 `kNonFiniteStopCycles = 3`: three consecutive cycles of non-finite (NaN/inf)
 controller output stop the run — and a non-finite cycle is never
 integrated, the setpoint just holds. `kOverrunStopCycles = 10` /
@@ -223,15 +223,15 @@ integrated, the setpoint just holds. `kOverrunStopCycles = 10` /
 (1.5 × 2 ms) stop the run — a persistently late loop is a controller whose
 timing assumptions are false. N ≤ 0 disables a counter.
 
-### Line 198 — `kFollowingErrorLimitDeg = 3.0`
+### Line 192 — `kFollowingErrorLimitDeg = 3.0`
 Stop when any joint's |commanded − measured| exceeds 3°, chosen to fire
 before the base's own ~5° ejection (which would end servoing abruptly).
-Passed into `RunControlLoop` at Main.cpp:404. But read the next flag —
+Passed into `RunControlLoop` at Main.cpp:420. But read the next flag —
 
-### Lines 200–207 — command shaping
+### Lines 194–201 — command shaping
 **FLAG edit-hazard (lines 200–201):** `kCommandLeadLimitDeg = 1.0` is the
 lead-projection target from wrapped measured position (constructor arg of
-`PositionIntegration`, Main.cpp:377); `kNullRampDurationS` fades centering
+`PositionIntegration`, Main.cpp:397); `kNullRampDurationS` fades centering
 in over 1 s. Each already-clamped qdot first forms a proposed command; when
 its lead exceeds the threshold, the lead projection targets exactly 1° from
 wrapped measurement. A final envelope limits the sent delta to
@@ -242,12 +242,12 @@ backstop. These constants and line 192 are one coupled system: tuning
 either changes how quickly lead recovery can occur and when that backstop
 can matter.
 
-### Line 212 — `kArrivalToleranceM = 0.001`
+### Lines 203–206 — `kArrivalToleranceM = 0.001`
 Purely informational: one printed line the first time the EE comes within
 1 mm of a new target. The comment pre-authorises raising it toward 5 mm if
 the notice comes late or never. No control effect.
 
-### Lines 214–219 — logging
+### Lines 208–213 — logging
 `kLogBufferSeconds = 30` sizes only the handoff queue between loop and
 writer thread — slack for a disk hiccup, not a retention limit (the CSV on
 disk is unbounded; ~175 KB/s at 500 Hz, prune `runs/` yourself).
@@ -267,4 +267,4 @@ default CSV files.
 | 128 | edit-hazard | alias equality is a design invariant, not duplication |
 | 141–142 | edit-hazard, hides-work | 0 = "skip joint" sentinel; current values encode the wedged-j6 workaround |
 | 148 | edit-hazard | faults do not stop the run; attended use only |
-| 206–207 | edit-hazard | 1° lead limit makes the 3° following-error stop unreachable |
+| 200–201 | edit-hazard | 1° lead projection target; the final rate envelope can defer recovery above 1°, leaving the 3° following-error stop reachable as backstop |
