@@ -11,6 +11,7 @@
 #include <string>
 
 #include "Actuation.h"
+#include "Arrival.h"
 #include "Freshness.h"
 #include "ReactiveLaw.h"
 #include "StopPriority.h"
@@ -583,6 +584,79 @@ namespace
               "stale feedback becomes the next stop after live-state and joint-boundary priority");
     }
 
+    void TestArrivalSettling()
+    {
+        // 2 ms cycles at 500 Hz; the gate requires 100 ms inside tolerance.
+        constexpr double kDt = 0.002;
+        constexpr double kHold = 0.1;
+
+        // A single in-tolerance cycle is the defect this gate exists to
+        // reject: one noisy sample must not report arrival.
+        ArrivalSettlingMonitor single(kHold);
+        Check(!single.Update(true, kDt),
+              "one in-tolerance cycle does not report arrival");
+
+        // Arrival is reported once the accumulated in-tolerance time reaches
+        // the threshold, and stays reported while it remains in tolerance.
+        ArrivalSettlingMonitor settling(kHold);
+        int cycles_to_settle = 0;
+        for (int i = 0; i < 100; ++i) {
+            if (settling.Update(true, kDt)) {
+                cycles_to_settle = i + 1;
+                break;
+            }
+        }
+        Check(cycles_to_settle == 50,
+              "100 ms of in-tolerance cycles at 2 ms settles on cycle 50");
+        Check(settling.Update(true, kDt),
+              "arrival stays reported while the error remains in tolerance");
+
+        // One excursion outside tolerance discards the accumulated time: the
+        // full window must be re-earned.
+        ArrivalSettlingMonitor excursion(kHold);
+        for (int i = 0; i < 40; ++i)
+            excursion.Update(true, kDt);
+        Check(!excursion.Update(false, kDt),
+              "leaving tolerance clears the settled time");
+        Check(excursion.settled_s() == 0.0,
+              "an excursion resets the accumulator to zero");
+        for (int i = 0; i < 49; ++i)
+            Check(!excursion.Update(true, kDt),
+                  "the settling window is re-earned in full after an excursion");
+        Check(excursion.Update(true, kDt),
+              "arrival is reported once the re-earned window completes");
+
+        // A new target re-arms the gate.
+        ArrivalSettlingMonitor rearmed(kHold);
+        for (int i = 0; i < 60; ++i)
+            rearmed.Update(true, kDt);
+        rearmed.Rearm();
+        Check(rearmed.settled_s() == 0.0, "Rearm clears the settled time");
+        Check(!rearmed.Update(true, kDt),
+              "a re-armed monitor does not report arrival on its first cycle");
+
+        // Broken timing must not manufacture arrival, and must not destroy
+        // genuine settling either: a bad dt neither accumulates nor resets.
+        ArrivalSettlingMonitor bad_dt(kHold);
+        for (int i = 0; i < 40; ++i)
+            bad_dt.Update(true, kDt);
+        const double settled_before = bad_dt.settled_s();
+        bad_dt.Update(true, 0.0);
+        bad_dt.Update(true, -kDt);
+        bad_dt.Update(true, std::numeric_limits<double>::quiet_NaN());
+        bad_dt.Update(true, std::numeric_limits<double>::infinity());
+        Check(bad_dt.settled_s() == settled_before,
+              "non-finite and non-positive dt neither accumulate nor reset");
+
+        // A non-positive window disables the gate, matching the freshness
+        // guard's convention, so the instantaneous behaviour stays reachable.
+        ArrivalSettlingMonitor disabled(0.0);
+        Check(disabled.Update(true, kDt),
+              "a non-positive window reports arrival on the first in-tolerance cycle");
+        Check(!disabled.Update(false, kDt),
+              "a disabled gate still tracks the tolerance state itself");
+    }
+
 } // namespace
 
 int main()
@@ -595,6 +669,7 @@ int main()
     TestJointPositionConfiguration();
     TestStopPriority();
     TestStaleAcknowledgementGuard();
+    TestArrivalSettling();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;
