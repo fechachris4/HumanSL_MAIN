@@ -55,7 +55,7 @@ private:
 void RunPoseTargetInput(PoseTargetMailbox& mailbox,
                         const std::atomic<bool>& stop);
 
-// Same input loop over an owned POSIX file descriptor. Kept separate so the
+// Same input loop over a borrowed POSIX file descriptor. Kept separate so the
 // stdin entry point stays simple and the partial-pipe teardown contract is
 // testable without robot dependencies.
 void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
