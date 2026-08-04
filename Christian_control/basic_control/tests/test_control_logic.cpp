@@ -657,6 +657,76 @@ namespace
               "a disabled gate still tracks the tolerance state itself");
     }
 
+    void TestArrivalTimeout()
+    {
+        // 2 ms cycles at 500 Hz; a 0.1 s timeout is 50 cycles. The production
+        // wiring uses kTargetHoldS (2.0 s); 0.1 s here is only test arithmetic.
+        constexpr double kDt = 0.002;
+        constexpr double kTimeout = 0.1;
+
+        // Below the threshold, the non-arrival edge must not fire.
+        ArrivalTimeoutMonitor early(kTimeout);
+        for (int i = 0; i < 49; ++i)
+            Check(!early.Update(true, kDt),
+                  "no non-arrival edge before the timeout elapses");
+
+        // A single one-shot edge exactly when the wait reaches the threshold,
+        // and no re-fire while still waiting.
+        ArrivalTimeoutMonitor fire(kTimeout);
+        int fired_cycle = 0;
+        for (int i = 0; i < 100; ++i) {
+            if (fire.Update(true, kDt)) {
+                fired_cycle = i + 1;
+                break;
+            }
+        }
+        Check(fired_cycle == 50,
+              "100 ms of waiting at 2 ms fires the non-arrival edge on cycle 50");
+        Check(!fire.Update(true, kDt),
+              "the non-arrival edge does not re-fire while still waiting");
+
+        // Reaching the target before the timeout (waiting goes false) cancels
+        // the alarm and resets the accumulator.
+        ArrivalTimeoutMonitor arrived(kTimeout);
+        for (int i = 0; i < 40; ++i)
+            arrived.Update(true, kDt);
+        Check(!arrived.Update(false, kDt),
+              "reaching the target before the timeout cancels the alarm");
+        Check(arrived.waited_s() == 0.0,
+              "leaving the waiting state resets the timeout accumulator");
+
+        // Rearm clears both the accumulator and the fired latch for a new
+        // target, and the full timeout must then be re-earned.
+        ArrivalTimeoutMonitor rearmed(kTimeout);
+        for (int i = 0; i < 60; ++i)
+            rearmed.Update(true, kDt);
+        rearmed.Rearm();
+        Check(rearmed.waited_s() == 0.0, "Rearm clears the timeout accumulator");
+        for (int i = 0; i < 49; ++i)
+            Check(!rearmed.Update(true, kDt),
+                  "the full timeout is re-earned after Rearm");
+        Check(rearmed.Update(true, kDt),
+              "the non-arrival edge fires again once the re-earned timeout elapses");
+
+        // Broken timing neither accumulates nor resets.
+        ArrivalTimeoutMonitor bad_dt(kTimeout);
+        for (int i = 0; i < 40; ++i)
+            bad_dt.Update(true, kDt);
+        const double waited_before = bad_dt.waited_s();
+        bad_dt.Update(true, 0.0);
+        bad_dt.Update(true, -kDt);
+        bad_dt.Update(true, std::numeric_limits<double>::quiet_NaN());
+        bad_dt.Update(true, std::numeric_limits<double>::infinity());
+        Check(bad_dt.waited_s() == waited_before,
+              "non-finite and non-positive dt neither accumulate nor reset the timeout");
+
+        // A non-positive timeout disables the gate entirely.
+        ArrivalTimeoutMonitor disabled(0.0);
+        for (int i = 0; i < 100; ++i)
+            Check(!disabled.Update(true, kDt),
+                  "a non-positive timeout never fires");
+    }
+
 } // namespace
 
 int main()
@@ -670,6 +740,7 @@ int main()
     TestStopPriority();
     TestStaleAcknowledgementGuard();
     TestArrivalSettling();
+    TestArrivalTimeout();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

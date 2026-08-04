@@ -44,3 +44,45 @@ private:
     double hold_s_;
     double settled_s_ = 0.0;
 };
+
+// Negative signal. While the arm is parked at a target and waiting to arrive,
+// accumulates time and fires a one-shot edge once the wait reaches timeout_s.
+// It drives no motion — the caller only reports it. A non-positive timeout_s
+// disables the gate.
+class ArrivalTimeoutMonitor
+{
+public:
+    explicit ArrivalTimeoutMonitor(double timeout_s) : timeout_s_(timeout_s) {}
+
+    // waiting: arrival-eligible AND not yet arrived this cycle. dt_s: measured
+    // cycle time (s). Returns true only on the single cycle the wait first
+    // reaches timeout_s.
+    bool Update(bool waiting, double dt_s)
+    {
+        if (!waiting) {
+            waited_s_ = 0.0;
+            return false;
+        }
+        if (timeout_s_ <= 0.0)
+            return false;
+        if (std::isfinite(dt_s) && dt_s > 0.0)
+            waited_s_ += dt_s;
+        if (!fired_ && waited_s_ >= timeout_s_) {
+            fired_ = true;
+            return true;
+        }
+        return false;
+    }
+
+    double waited_s() const { return waited_s_; }
+    void Rearm()
+    {
+        waited_s_ = 0.0;
+        fired_ = false;
+    }
+
+private:
+    double timeout_s_;
+    double waited_s_ = 0.0;
+    bool fired_ = false;
+};
