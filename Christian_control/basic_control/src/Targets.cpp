@@ -33,7 +33,7 @@ Reference PoseTargetSource::Get(const RobotState& /*state*/, double /*dt_s*/,
                                 ControllerStatus& /*status*/)
 {
     Reference reference;
-    // Operator targets are STATIONARY: a typed or compiled pose is a place
+    // The fixed target is STATIONARY: a compiled pose is a place
     // to be, not a motion, so the reference twist stays zero and the Kd
     // term stays pure damping. A source that moves its target (an
     // orientation policy, a Cartesian path) fills the twist instead.

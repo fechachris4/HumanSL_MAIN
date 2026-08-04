@@ -338,7 +338,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 5. Both
+// Column header and one data row — the authority for log_format = 6. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);
