@@ -302,12 +302,53 @@ void PrintFaultChange(const LoopLogSample& s, long cycle,
 
 
 
-ServoingGuard::ServoingGuard(k_api::Base::BaseClient* base)
-    : base_(base)
+std::optional<k_api::Common::ArmState>
+ServoingGuard::ObservedArmState(
+    k_api::BaseCyclic::BaseCyclicClient* base_cyclic) noexcept
+{
+    if (base_cyclic == nullptr)
+        return std::nullopt;
+    try
+    {
+        return static_cast<k_api::Common::ArmState>(
+            base_cyclic->RefreshFeedback().base().active_state());
+    }
+    catch (...)
+    {
+        return std::nullopt;
+    }
+}
+
+ServoingGuard::ServoingGuard(k_api::Base::BaseClient* base,
+                             k_api::BaseCyclic::BaseCyclicClient* base_cyclic)
+    : base_(base), base_cyclic_(base_cyclic)
 {
     auto servoing_mode = k_api::Base::ServoingModeInformation();
     servoing_mode.set_servoing_mode(k_api::Base::ServoingMode::LOW_LEVEL_SERVOING);
-    base_->SetServoingMode(servoing_mode);
+    try
+    {
+        base_->SetServoingMode(servoing_mode);
+    }
+    catch (std::exception& ex)
+    {
+        // The reply was lost. That says nothing about whether the mode
+        // changed, so ask the arm instead of guessing.
+        const auto observed = ObservedArmState(base_cyclic_);
+        if (observed &&
+            *observed == k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL)
+        {
+            std::cout << "note: SetServoingMode did not acknowledge (" << ex.what()
+                      << "),\n      but the arm reports ARMSTATE_SERVOING_LOW_LEVEL"
+                         " — the mode change took effect; continuing, and this\n"
+                         "      guard now owns the restore.\n";
+            return;
+        }
+        std::cerr << "SetServoingMode failed and the arm is "
+                  << (observed ? k_api::Common::ArmState_Name(*observed)
+                               : std::string("unreadable"))
+                  << ", not LOW_LEVEL — not taking over.\n";
+        throw;
+    }
 }
 
 ServoingGuard::~ServoingGuard()
@@ -321,6 +362,7 @@ ServoingGuard::~ServoingGuard()
 
 bool ServoingGuard::Restore(std::ostream& out) noexcept
 {
+    std::string failure;
     try
     {
         auto servoing_mode = k_api::Base::ServoingModeInformation();
@@ -334,19 +376,36 @@ bool ServoingGuard::Restore(std::ostream& out) noexcept
     }
     catch (k_api::KDetailedException& ex)
     {
-        out << "SINGLE_LEVEL restore Kortex error: " << ex.what()
-            << " (sub-code "
-            << k_api::SubErrorCodes_Name(static_cast<k_api::SubErrorCodes>(
-                   ex.getErrorInfo().getError().error_sub_code()))
-            << ")\n";
+        failure = std::string(ex.what()) + " (sub-code " +
+                  k_api::SubErrorCodes_Name(static_cast<k_api::SubErrorCodes>(
+                      ex.getErrorInfo().getError().error_sub_code())) + ")";
     }
     catch (std::exception& ex)
     {
-        out << "SINGLE_LEVEL restore error: " << ex.what() << "\n";
+        failure = ex.what();
     }
     catch (...)
     {
-        out << "SINGLE_LEVEL restore error: unknown exception type\n";
+        failure = "unknown exception type";
     }
+
+    // The call did not acknowledge. That says nothing about whether the mode
+    // changed, and here the distinction decides whether the operator walks
+    // away believing the arm is free when it is not. Ask the arm.
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    const auto observed = ObservedArmState(base_cyclic_);
+    if (observed &&
+        *observed != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL)
+    {
+        out << "note: SINGLE_LEVEL restore did not acknowledge (" << failure
+            << "), but the arm reports " << k_api::Common::ArmState_Name(*observed)
+            << " — it is out of low-level mode.\n";
+        restored_ = true;
+        return true;
+    }
+    out << "SINGLE_LEVEL restore error: " << failure << " (arm still "
+        << (observed ? k_api::Common::ArmState_Name(*observed)
+                     : std::string("unreadable"))
+        << ")\n";
     return false;
 }

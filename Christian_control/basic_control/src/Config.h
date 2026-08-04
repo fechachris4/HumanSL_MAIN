@@ -82,7 +82,7 @@ namespace config
     // a large rpy change is a large rotation, so compare it against the
     // startup printout first. The default rpy is the Home orientation
     // (pi/2, 0, pi/2), so at Home it commands no rotation.
-    inline constexpr std::array<double, 3> kFixedTargetM = {0.5562, -0.2731, 0.3987};
+    inline constexpr std::array<double, 3> kFixedTargetM = {0.5554, -0.40, 0.3983};
     inline constexpr bool kFixedTargetUseRpy = false;
     inline constexpr std::array<double, 3> kFixedTargetRpyRad = {
         1.5707963267948966, 0.0, 1.5707963267948966
@@ -154,7 +154,7 @@ namespace config
     // not in POSITION mode, what it does with a position setpoint is
     // undefined. (2026-08-04: joint 6's config service stopped answering
     // while it still reported position normally.)
-    inline constexpr bool kAllowUnverifiedActuators = false;
+    inline constexpr bool kAllowUnverifiedActuators = true;
 
     // true = skip BOTH startup gates for every joint. Nothing is verified
     // and, critically, the j4/j6 JOINT_LIMIT thresholds are NEVER

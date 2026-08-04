@@ -121,7 +121,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     CyclicSession cyclic(base_cyclic);
 
     // T2: from here until the guard's destructor runs, WE are the controller.
-    ServoingGuard servoing_guard(base);
+    ServoingGuard servoing_guard(base, base_cyclic);
 
     try
     {
