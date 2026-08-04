@@ -285,14 +285,19 @@ edge-triggered runs blocking terminal I/O at 500 Hz and will cause overruns.
   factor of 57. A clamp pinned at its limit is *allowed indefinitely*: far
   targets transit at clip speed by design (the comment records that the old
   saturation stop was removed).
-- **255–257** — `actuation.Apply(...)` integrates
-  `q_command += q̇·dt`, applies the command-lead bound (≤1° ahead of the
-  measurement), and writes the result into `commanded_deg` /
-  `commanded_velocity_deg_s` **through the reference parameters** —
-  **[hides-work, lines 255–257]** the call *mutates* `commanded_deg`
-  in place; nothing at the call site says "output parameter" except the
-  Actuation.h signature. The returned `ApplyStatus` carries the pre-limiter
-  setpoint and the per-joint "limiter engaged" flags for the log.
+- **255–257** — `actuation.Apply(...)` uses the already-clamped qdot to
+  integrate `q_command += q̇·dt` into a proposed command. It then projects
+  excessive lead to a candidate exactly 1° from the wrapped measurement and
+  limits the final sent delta to `abs(qdot_clamped * dt)`. The final envelope wins on a
+  discontinuous feedback step, so recovery can temporarily remain above 1°;
+  the unchanged 3° following-error stop is the backstop. The call writes the
+  result into `commanded_deg` / `commanded_velocity_deg_s` **through the
+  reference parameters** — **[hides-work, lines 255–257]** the call
+  *mutates* `commanded_deg` in place; nothing at the call site says "output
+  parameter" except the Actuation.h signature. The returned `ApplyStatus`
+  carries the pre-constraint requested setpoint and whether the lead
+  projection was active; `req_j - cmd_j` records the combined lead/rate
+  constraint effect for the log.
 
 ### Lines 259–265 — the one exchange
 `cyclic.Send(commanded_deg)` writes the setpoints into the command frame,

@@ -72,11 +72,14 @@ is still recorded every cycle, but none of it ends a run.
   `lead_limited_j*` and `ack_unchanged_j*` columns.
 
 **Consequence, stated plainly: a completely unresponsive arm no longer
-stops the program by itself.** The command-lead limiter (1 deg) sits well
-below the following-error guard (3 deg), so while the limiter is active the
-following-error guard *cannot* fire — the setpoint is prevented from
-running far enough ahead to trip it. For a frozen plant the backstops are
-the operator and the robot's own firmware limits. Attended use only.
+stops the program by itself.** The already-clamped joint velocity first
+forms a proposed command; the lead projection targets a 1 deg gap from the
+wrapped measurement. A final envelope then limits the sent command delta to
+`abs(qdot_clamped * dt)`. On discontinuous feedback that envelope wins, so
+lead recovery can temporarily remain above 1 deg and the unchanged 3 deg
+following-error stop is reachable as the backstop. For a frozen plant the
+backstops remain the operator and the robot's own firmware limits. Attended
+use only.
 
 The saturation stop went earlier, on 2026-07-23, for a different reason: a
 pinned velocity clamp is normal transit toward a far target, not a fault.

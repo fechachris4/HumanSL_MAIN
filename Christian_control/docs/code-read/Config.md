@@ -229,17 +229,18 @@ before the base's own ~5° ejection (which would end servoing abruptly).
 Passed into `RunControlLoop` at Main.cpp:404. But read the next flag —
 
 ### Lines 200–207 — command shaping
-**FLAG edit-hazard (lines 206–207):** `kCommandLeadLimitDeg = 1.0` caps how
-far the integrated setpoint may lead measured position (constructor arg of
+**FLAG edit-hazard (lines 200–201):** `kCommandLeadLimitDeg = 1.0` is the
+lead-projection target from wrapped measured position (constructor arg of
 `PositionIntegration`, Main.cpp:377); `kNullRampDurationS` fades centering
-in over 1 s. The trap is the *interaction* the comment documents: because
-1° < the 3° following-error guard, the lead limiter always engages first
-and **the following-error guard can never fire while the limiter is
-active** — nothing stops a frozen joint by itself. Tuning either number
-independently silently changes which mechanism is in charge: raise the lead
-limit above 3° and the following-error stop suddenly becomes reachable —
-new behaviour nobody asked for. These two constants and line 198 are one
-coupled system wearing three names.
+in over 1 s. Each already-clamped qdot first forms a proposed command; when
+its lead exceeds the threshold, the lead projection targets exactly 1° from
+wrapped measurement. A final envelope limits the sent delta to
+`abs(qdot_clamped * dt)`, so it wins when discontinuous feedback would
+require a larger recovery jump. Actual lead can therefore temporarily exceed
+1°, and the unchanged 3° following-error stop remains reachable as the
+backstop. These constants and line 192 are one coupled system: tuning
+either changes how quickly lead recovery can occur and when that backstop
+can matter.
 
 ### Line 212 — `kArrivalToleranceM = 0.001`
 Purely informational: one printed line the first time the EE comes within
