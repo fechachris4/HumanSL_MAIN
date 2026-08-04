@@ -13,13 +13,17 @@
 #include <cmath>
 #include <cstdio>
 #include <fstream>
+#include <iomanip>
 #include <iostream>
+#include <limits>
+#include <sstream>
 #include <string>
 #include <thread>
 
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include "Config.h"
 #include "ReactiveLaw.h"
 #include "Targets.h"
 #include "reactive_fixtures.h"
@@ -327,8 +331,19 @@ namespace
               "target outside the conservative reach sphere is rejected");
         Check(ParsePoseTarget("0.852 0 0", error).has_value(),
               "target on the conservative reach boundary is accepted");
-        Check(ParsePoseTarget("0.3834 -0.4051 0.7225", error).has_value(),
+        std::ostringstream compiled_target_line;
+        compiled_target_line << std::setprecision(std::numeric_limits<double>::max_digits10)
+                             << config::kFixedTargetM[0] << ' '
+                             << config::kFixedTargetM[1] << ' '
+                             << config::kFixedTargetM[2];
+        Check(ParsePoseTarget(compiled_target_line.str(), error).has_value(),
               "the compiled fixed target remains accepted outside the sphere");
+        Check(ParsePoseTarget("-0.3834 -0.2051 0.7225", error).has_value(),
+              "live validation target T1 is within the conservative sphere");
+        Check(ParsePoseTarget("0.3000 -0.4000 0.5500", error).has_value(),
+              "live validation target T2 is within the conservative sphere");
+        Check(ParsePoseTarget("0.4500 -0.4000 0.5500", error).has_value(),
+              "live validation target T3 is within the conservative sphere");
     }
 
     PoseTarget PositionTarget(double x, double y, double z)
