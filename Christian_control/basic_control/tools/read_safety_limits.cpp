@@ -97,17 +97,12 @@ int main()
             // actuator is alive on the real-time bus (its position printed
             // above) but its config service is not answering — so report it
             // and carry on down the chain.
-            // Temporary diagnostic probe: retain the default synchronous,
-            // no-delay behavior but allow this read-only DeviceConfig request
-            // up to 10 s before declaring the actuator unresponsive.
-            const k_api::RouterClientSendOptions config_read_options{
-                false, 0, 10000};
             std::map<unsigned, std::pair<float, float>> configured; // id -> (warn, err)
             k_api::DeviceConfig::SafetyInformationList infos;
             try
             {
                 const auto configs = device_config.GetAllSafetyConfiguration(
-                    handle.device_identifier(), config_read_options);
+                    handle.device_identifier());
                 for (int c = 0; c < configs.configuration_size(); ++c)
                 {
                     const auto& sc = configs.configuration(c);
@@ -115,7 +110,7 @@ int main()
                         sc.warning_threshold(), sc.error_threshold()};
                 }
                 infos = device_config.GetAllSafetyInformation(
-                    handle.device_identifier(), config_read_options);
+                    handle.device_identifier());
             }
             catch (std::exception& ex)
             {
