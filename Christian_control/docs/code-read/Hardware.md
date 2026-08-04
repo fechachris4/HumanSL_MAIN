@@ -1,5 +1,8 @@
 # Hardware.cpp / Hardware.h — line-by-line read
 
+*(Updated for commit f64325c0, "remove trajectory playback": log_format is
+now 6 with 121 columns; the nine playback columns and fields are gone.)*
+
 Hardware is everything that touches the robot's network link plus everything
 that records what happened: four unrelated-looking jobs in one file pair —
 (1) the two Kortex sessions (`Connect`), (2) the per-cycle command exchange
@@ -7,7 +10,7 @@ that records what happened: four unrelated-looking jobs in one file pair —
 and (4) the run log (`LoopLogSample`, `LoopLog`, `LoopLogWriter`, CSV
 helpers, filename helpers).
 
-**FLAG `Hardware.h:177-399` + `Hardware.cpp:253-486` | mixed-jobs** — the
+**FLAG `Hardware.h:177-393` + `Hardware.cpp:253-481` | mixed-jobs** — the
 Recording section (log sample, queue, CSV writer, filename helpers) shares a
 file with robot I/O only because "records what the hardware did" was judged
 close enough to "hardware". It never touches the robot and could be its own
@@ -15,15 +18,17 @@ file pair without changing a line of behaviour.
 
 Execution order (what Main/Runner actually call, in the order they call it):
 
-1. `Connect connection(ip)` — Main.cpp:307
-2. `read_feedback(...)` — Main.cpp:326
-3. `connection.EnsureJointLimits(std::cout)` — Main.cpp:345
-4. `dated_run_dir(...)` / `timestamped_csv_name(...)` — Main.cpp:445/453
-5. `LoopLog log(capacity)` — Main.cpp:413
-6. `LoopLogWriter log_writer(log, csv, interval)` — Main.cpp:467 (starts a thread)
-7. Inside the Runner: `CyclicSession cyclic(...)`, `cyclic.Seed()`,
-   `cyclic.Send(...)` every cycle, `log.push(sample)` every cycle
-8. After the loop: `log_writer.Stop()`, `log.dropped()`, destructors.
+1. `Connect connection(ip)` — Main.cpp:236
+2. `read_feedback(...)` — Main.cpp:255
+3. `connection.EnsureJointLimits(std::cout)` — Main.cpp:274
+4. `LoopLog log(capacity)` — Main.cpp:283-284
+5. `dated_run_dir(...)` / `timestamped_csv_name(...)` — Main.cpp:297/305
+6. `LoopLogWriter log_writer(log, csv, interval)` — Main.cpp:319 (starts a thread)
+7. Inside the Runner: `CyclicSession cyclic(...)` (Runner.cpp:117),
+   `cyclic.Seed()` (Runner.cpp:126), `cyclic.Send(...)` every cycle
+   (Runner.cpp:155/165/263), `log.push(sample)` every cycle
+8. After the loop: `log_writer.Stop()` (Main.cpp:407), `log.dropped()`,
+   destructors.
 
 ---
 
@@ -88,7 +93,7 @@ with a UDP transport. This is the real entry into the Kortex stack.
   the `try/catch(...)` swallows it and prints a warning instead.
   `catch (...)` means "catch anything, of any type".
 - **Line 73-74** — deactivate the router, then close the socket. The header
-  (Hardware.h:96-99) explains the member declaration order
+  (Hardware.h:97-99) explains the member declaration order
   socket → router → session exists *so that* destruction (always reverse
   order in C++) logs out first and closes the socket last. **FLAG
   `Hardware.h:100-111` | edit-hazard** — reordering the three `Channel`
@@ -114,9 +119,9 @@ with a UDP transport. This is the real entry into the Kortex stack.
 
 - `base()` / `base_cyclic()` — plain getters returning raw pointers; the
   `Connect` object keeps ownership (unique_ptr members), callers just borrow.
-- `tcp_router()` (Hardware.h:74-78) — exposes the raw router so *external
+- `tcp_router()` (Hardware.h:74-77) — exposes the raw router so *external
   tools* can build additional service clients. Nothing in the controller
-  binary calls it. **FLAG `Hardware.h:74-78` | unnecessary** — in the
+  binary calls it. **FLAG `Hardware.h:74-77` | unnecessary** — in the
   control path this accessor is dead; it exists for the read-only
   diagnostics tools that share this header. Safe to keep, but know it is
   not part of the run.
@@ -125,12 +130,12 @@ with a UDP transport. This is the real entry into the Kortex stack.
   router refuses a second notification-callback registration for the same
   service, so building a *second* DeviceConfigClient on this router throws.
   That is why the client is shared instead of rebuilt. **FLAG
-  `Hardware.h:74-94` | edit-hazard** — "just build your own client" is the
+  `Hardware.h:65-94` | edit-hazard** — "just build your own client" is the
   natural refactor and it fails at runtime with a cryptic router error.
 
 ### `Connect::EnsureJointLimits` (Hardware.cpp:88-171) — the joint-limit gate
 
-Called from Main.cpp:345, before any takeover, unless
+Called from Main.cpp:274, before any takeover, unless
 `config::kSkipStartupGates`. **FLAG `Hardware.cpp:88-171` | hides-work** —
 the name says "ensure", which sounds like a check; this function *writes
 safety configuration into the robot's firmware* (SetSafetyConfiguration)
@@ -180,8 +185,8 @@ cycle; a 0/0 band makes the firmware fault any motion away from zero).
 
 ## 2. CyclicSession — the per-cycle exchange (Hardware.cpp:178-236)
 
-Constructed inside `RunControlLoop` (Runner.cpp:121), *before* the
-`ServoingGuard` switches the arm to LOW_LEVEL_SERVOING.
+Constructed inside `RunControlLoop` (Runner.cpp:117), *before* the
+`ServoingGuard` (Runner.cpp:120) switches the arm to LOW_LEVEL_SERVOING.
 
 ### helpers (Hardware.cpp:192-203)
 
@@ -198,7 +203,7 @@ Constructed inside `RunControlLoop` (Runner.cpp:121), *before* the
 Stores the client pointer. The `command_` protobuf member starts empty —
 `Seed()` populates it.
 
-### `CyclicSession::Seed` (Hardware.cpp:210-219) — Runner.cpp:130, T3 of takeover
+### `CyclicSession::Seed` (Hardware.cpp:210-219) — Runner.cpp:126, T3 of takeover
 
 - **Line 213** — one `read_feedback` (see below): the only standalone read
   inside a command loop; its round trip also gives the base time to finish
@@ -213,7 +218,7 @@ Stores the client pointer. The `command_` protobuf member starts empty —
 
 ### `CyclicSession::Send` (Hardware.cpp:221-236) — the one exchange per cycle
 
-Called from Runner.cpp:159/169 (takeover holding frames) and Runner.cpp:277
+Called from Runner.cpp:155/165 (takeover holding frames) and Runner.cpp:263
 (every control cycle). SENDS COMMANDS TO THE ARM.
 
 **FLAG `Hardware.cpp:221-236` | hides-work** — the name says "send", but
@@ -239,7 +244,8 @@ the log analysis depends on (`measured_raw_deg` vs continuous commands;
   return value is the same cycle's feedback. `0` is the device id
   (the base).
 - `last_command_frame_id()` (Hardware.h:153) — read by the Runner's
-  `FillSample` so each log row records what id was just sent.
+  `FillSample` (Runner.cpp:272) so each log row records what id was just
+  sent.
 
 ---
 
@@ -248,7 +254,7 @@ the log analysis depends on (`measured_raw_deg` vs continuous commands;
 One line: `return base_cyclic->RefreshFeedback();` — a feedback-only
 exchange, no command. Deliberately THE only `RefreshFeedback` call in the
 program ("single reader" decision): everywhere else, feedback arrives as
-the reply to `Send`. Called from Main.cpp:326 (the pre-takeover readiness
+the reply to `Send`. Called from Main.cpp:255 (the pre-takeover readiness
 read) and from `Seed()`. Wrapping one SDK call in a named function looks
 redundant, but it is what makes "there is exactly one standalone read"
 checkable by grep — leave it.
@@ -257,33 +263,34 @@ checkable by grep — leave it.
 
 ## 4. Recording — sample, queue, writer
 
-### `LoopLogSample` (Hardware.h:254-310)
+### `LoopLogSample` (Hardware.h:256-304)
 
-A plain struct: one control cycle, ~130 CSV columns' worth of values. The
-long comment block (Hardware.h:199-253) is the log-format contract —
-column order, the requested/sent/measured distinction, timestamp semantics,
-and the warning that a row mixes *two* exchanges (controller inputs from
-last cycle's reply, measurements from this cycle's). Field notes:
+A plain struct: one control cycle, 121 CSV columns' worth of values. The
+long comment block (Hardware.h:199-255) is the log-format contract —
+column order (log_format = 6; the "(121 columns)" count is at
+Hardware.h:213), the requested/sent/measured distinction, timestamp
+semantics, and the warning that a row mixes *two* exchanges (controller
+inputs from last cycle's reply, measurements from this cycle's). The
+format history (Hardware.h:214-223) records that format 6 (2026-08-04)
+removed the nine trajectory-playback columns (ref_j1..7, playback_t_s,
+playback_state) with the playback feature: tooling that read them by name
+no longer finds them, and every column index after pd_beyond_reach
+shifted. Field notes:
 
-- `measured_deg` vs `measured_raw_deg` (h:263-267) — the raw feedback is
+- `measured_deg` vs `measured_raw_deg` (h:265-269) — the raw feedback is
   wrapped to [0,360); `measured_deg` is shifted by whole turns to sit
   within ±180° of the command so plots share an axis. The comment flags the
   ambiguity: once command and measurement drift more than half a turn
-  apart, the shift picks the wrong turn. **FLAG `Hardware.h:261-267` |
+  apart, the shift picks the wrong turn. **FLAG `Hardware.h:263-269` |
   edit-hazard** — two fields that look like duplicates are not; analysis
   scripts rely on each one's exact convention.
-- `ref_deg`, `playback_t_s`, `playback_state` (h:290-292) — **FLAG
-  `Hardware.h:288-292` | trajectory-only** — filled only by
-  TrajectorySource; NaN/0 for the operator source. Their CSV columns
-  (written at Hardware.cpp:336-337 and 383-385) exist in every run's file
-  regardless.
-- The format-4 freshness fields (h:294-302) and format-5 requested-vs-sent
-  fields (h:304-309) are diagnostics for the joint-6 investigation; all are
+- The format-4 freshness fields (h:288-296) and format-5 requested-vs-sent
+  fields (h:298-303) are diagnostics for the joint-6 investigation; all are
   filled every cycle by the Runner.
 
 ### `LoopLog` — the single-producer/single-consumer ring (Hardware.cpp:265-314)
 
-Why this exists at all: the header comment (Hardware.h:186-194) records
+Why this exists at all: the header comment (Hardware.h:186-193) records
 that 16 of the first 60 runs left *zero-byte* CSVs because the old design
 wrote the log once at the end and any hard kill skipped it. Now rows reach
 the kernel every 100 ms while the run happens.
@@ -296,8 +303,8 @@ traffic is synchronized around the atomic operation.
 
 - **Constructor (265-268)** — `samples_.resize(capacity)` allocates every
   slot up front; nothing in `push` ever allocates. Capacity comes from
-  Main.cpp:413: `kLogBufferSeconds * cycles-per-second` = 30 s × 500 Hz =
-  15 000 slots.
+  Main.cpp:283-284: `kLogBufferSeconds * cycles-per-second` = 30 s ×
+  500 Hz = 15 000 slots.
 - **`push` (270-285)** — producer side, called once per cycle from the
   loop.
   - Line 275: `head_` loaded *relaxed* — only this thread writes it, so no
@@ -329,22 +336,28 @@ traffic is synchronized around the atomic operation.
   the loop has stopped, so no race. Reading it *during* the run from
   another thread would be a bug.
 
-### `WriteCsvHeader` / `WriteCsvRow` (Hardware.cpp:316-403)
+### `WriteCsvHeader` / `WriteCsvRow` (Hardware.cpp:316-398)
 
-The authority for log_format 5: the header's column order and the row's
-field order must match each other and the comment in the header file.
-Straight streaming of every field, booleans as 0/1. Relies on the stream's
-default six-significant-digit formatting — the comment (Hardware.h:347-349)
-says every parser assumes that, so adding `std::setprecision` here would
-change every future log's resolution. **FLAG `Hardware.cpp:316-403` |
-edit-hazard** — the two functions are position-coupled to each other and to
-external analysis scripts; any reorder/insert must bump the log_format
-number in Main's preamble. (The playback columns written at 336-337 and
-383-385 are the trajectory-only fields noted above.)
+The authority for log_format 6: the header's (316-352) column order and
+the row's (354-398) field order must match each other and the comment in
+Hardware.h. Straight streaming of every field, booleans as 0/1. The
+frame-id columns now follow pd_beyond_reach directly (header line 335, row
+line 381 — the nine playback columns that used to sit between them are
+gone). Relies on the stream's default six-significant-digit formatting —
+the comment (Hardware.h:341-343) says every parser assumes that, so adding
+`std::setprecision` here would change every future log's resolution.
+**FLAG `Hardware.cpp:316-398` | edit-hazard** — the two functions are
+position-coupled to each other and to external analysis scripts; any
+reorder/insert must bump the log_format number in Main's preamble
+(Main.cpp:115, currently 6). One leftover from the removal: the
+declaration comment at **Hardware.h:341** still says "the authority for
+log_format = 5" while the struct comment (h:205) and Main's preamble say
+6 — a stale comment, not a behaviour bug, but worth fixing before it
+misleads a parser author.
 
-### `LoopLogWriter` (Hardware.cpp:405-465)
+### `LoopLogWriter` (Hardware.cpp:400-461)
 
-- **Constructor (405-415)** — writes the CSV header and flushes
+- **Constructor (400-410)** — writes the CSV header and flushes
   immediately (a run killed while connecting still leaves a
   self-describing file), reserves the staging vector to full capacity (so
   drains never allocate), then starts the writer thread:
@@ -352,37 +365,38 @@ number in Main's preamble. (The playback columns written at 336-337 and
   `std::thread` starts running its function immediately on construction;
   you must `join()` (wait for it) before destroying the `std::thread`
   object, or the program aborts.
-- **`Run` (427-433)** — sleep `interval_` (100 ms), drain, repeat until
+- **`Run` (422-428)** — sleep `interval_` (100 ms), drain, repeat until
   `stop_` is set. Worst case a hard kill costs the last 100 ms of rows.
-- **`DrainOnce` (435-450)** — pulls everything new out of the ring, formats
+- **`DrainOnce` (430-445)** — pulls everything new out of the ring, formats
   the whole batch into one `std::ostringstream` in memory, then writes it
   with a single `csv_.write(...)` and flushes. The single-write-per-batch
   is what guarantees a kill can only cut the file *between* rows, and the
   flush is what moves the bytes from the process's buffer into the
   kernel's (so they survive the process dying, though not a power cut).
-- **`Stop` (452-461)** — idempotent via the `joinable()` check: set the
+- **`Stop` (447-456)** — idempotent via the `joinable()` check: set the
   flag, join the thread, then one final `DrainOnce`. The comment order
   matters: this final drain is only "final" because the producer
-  (the loop) has already stopped pushing — Main calls `Stop()` after
-  `RunControlLoop` returns. **FLAG `Hardware.cpp:452-461` | edit-hazard**
-  — calling `Stop()` while the loop still pushes would silently lose
-  whatever is pushed after the final drain; the safety is an ordering
-  convention in Main, not something this class enforces.
-- **Destructor (417-425)** — `Stop()` inside try/catch so an unwinding
+  (the loop) has already stopped pushing — Main calls `Stop()`
+  (Main.cpp:407) after `RunControlLoop` returns. **FLAG
+  `Hardware.cpp:447-456` | edit-hazard** — calling `Stop()` while the loop
+  still pushes would silently lose whatever is pushed after the final
+  drain; the safety is an ordering convention in Main, not something this
+  class enforces.
+- **Destructor (412-420)** — `Stop()` inside try/catch so an unwinding
   path (exception in Main) still drains, and a failing drain cannot
   terminate the program. Main declares the writer *after* the `csv` stream
   and *before* the loop runs, so on any exception the writer is destroyed
   (final drain) before the stream it writes to.
-- **`rows_written` (463-466)** — valid only after `Stop()`; before that the
+- **`rows_written` (458-461)** — valid only after `Stop()`; before that the
   writer thread is still incrementing it unsynchronized.
 
-### Filename helpers (Hardware.cpp:468-486)
+### Filename helpers (Hardware.cpp:463-481)
 
-- `timestamped_csv_name` (468-476) — `<prefix>_YYYYMMDD_HHMMSS.csv` in
+- `timestamped_csv_name` (463-471) — `<prefix>_YYYYMMDD_HHMMSS.csv` in
   local time via `localtime_r` (the thread-safe variant of `localtime`) and
   `std::put_time`. One file per run so a failed run's evidence is never
   overwritten.
-- `dated_run_dir` (478-486) — `<runs_root>/YYYY-MM-DD`; Main creates the
+- `dated_run_dir` (473-481) — `<runs_root>/YYYY-MM-DD`; Main creates the
   directory and the plot scripts search this layout. Two functions instead
   of one because Main also honours an explicit `--log` path that bypasses
   the directory scheme.

@@ -1,5 +1,9 @@
 # Actuation.cpp / Actuation.h — line-by-line read
 
+*(Updated for commit f64325c0: the source files are unchanged by the
+trajectory-playback removal; only the Main/Runner call-site line numbers
+below have moved.)*
+
 Actuation is the last software stage before the robot: it turns the
 already-clamped joint velocity q̇ into this cycle's absolute position
 setpoints by integration, and it owns the persistent command state that
@@ -13,11 +17,11 @@ allocation — because it runs inside every 2 ms cycle.
 
 Execution order (who calls what):
 
-1. `PositionIntegration actuation(config::kCommandLeadLimitDeg)` — Main.cpp:543
-2. `ClampedCycleDt(...)` — Runner.cpp:191, every cycle after the first
-3. `actuation.Prepare(state)` — Runner.cpp:166, at takeover (T4)
-4. `actuation.Apply(...)` — Runner.cpp:270, every cycle
-5. `actuation.Restore()` — Runner.cpp:401, on every exit path (D1)
+1. `PositionIntegration actuation(config::kCommandLeadLimitDeg)` — Main.cpp:377
+2. `ClampedCycleDt(...)` — Runner.cpp:187, every cycle after the first
+3. `actuation.Prepare(state)` — Runner.cpp:162, at takeover (T4)
+4. `actuation.Apply(...)` — Runner.cpp:256, every cycle
+5. `actuation.Restore()` — Runner.cpp:387, on every exit path (D1)
 
 (`TrackingErrorDeg` is declared here too but nothing in the run calls it —
 see below.)
@@ -148,11 +152,11 @@ to feedback pace when leading) hiding inside what reads as bookkeeping.
   production code calls it* — the Runner's following-error stop works from
   the logged sample (`cmd_j*` vs `meas_j*`) inside `ClassifyStop`
   (Safety), and the only callers are tests
-  (tests/test_control_logic.cpp:106,120). **FLAG `Actuation.cpp:77-91` |
-  unnecessary** — dead in the run path; kept alive by tests. If the
-  fixed-target simplification wants a smaller surface, this method and its
-  optional-based contract can go once the tests assert on the Safety-side
-  computation instead.
+  (tests/test_control_logic.cpp:106,120 — still true at HEAD). **FLAG
+  `Actuation.cpp:77-91` | unnecessary** — dead in the run path; kept alive
+  by tests. If the fixed-target simplification wants a smaller surface,
+  this method and its optional-based contract can go once the tests assert
+  on the Safety-side computation instead.
 
 ## `Restore` (Actuation.cpp:93-96)
 

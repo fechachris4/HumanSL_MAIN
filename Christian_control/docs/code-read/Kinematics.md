@@ -1,5 +1,9 @@
 # Kinematics.cpp / Kinematics.h — line-by-line read
 
+*(Updated for commit f64325c0: the source files are unchanged by the
+trajectory-playback removal; the Main/Controller call-site line numbers
+below have moved, and Main's playback FK cross-check caller is gone.)*
+
 Kinematics is the Pinocchio robot-model layer: given joint angles, where is
 the tool and how does it move per unit joint velocity (the Jacobian). Two
 halves:
@@ -13,16 +17,17 @@ halves:
 
 Execution order in a real run:
 
-1. `Dynamics dynamics(GEN3_DUAL_URDF_PATH)` — Main.cpp:299 (Dynamics is
+1. `Dynamics dynamics(GEN3_DUAL_URDF_PATH)` — Main.cpp:228 (Dynamics is
    TrajectoryExecution's URDF loader, not part of this file — it parses the
    URDF into `model_` and allocates the scratch `data_`).
-2. `DualArmKinematics controlled_model(...)` — Main.cpp:300 (constructor
-   validates everything).
-3. `KinematicsWorkspace workspace(model.dynamics())` — Main.cpp:195 and
-   Controller.cpp:34 (preallocation).
-4. `RightPoseAndJacobian(q, workspace)` — Main.cpp:196 (startup print),
-   Main.cpp:387/391 (playback FK cross-check), Main.cpp:507 (fixed-target
-   freshness gate), and Controller.cpp:48/90 — **every control cycle**.
+2. `DualArmKinematics controlled_model(...)` — Main.cpp:229-232
+   (constructor validates everything).
+3. `KinematicsWorkspace workspace(model.dynamics())` — Main.cpp:185,
+   Main.cpp:340-341 (fixed-target gate), and Controller.cpp:33
+   (preallocation).
+4. `RightPoseAndJacobian(q, workspace)` — Main.cpp:186 (startup print),
+   Main.cpp:344 (fixed-target freshness gate), and Controller.cpp:47/83 —
+   **every control cycle**.
 
 The generic free functions are *not* called by the controller binary at
 all: `forward_kinematics` is used by tests, `RightPositionAndJacobian` by
@@ -180,8 +185,9 @@ structural tests"; in the run it is only called through
 
 ### `UpdateFullKinematics` (Kinematics.cpp:242-269) — the per-cycle core
 
-Runs on **every control cycle** (via Controller.cpp:48/90) plus the startup
-prints/gates. Everything in it must stay allocation-free.
+Runs on **every control cycle** (via Controller.cpp:47/83) plus the
+startup print and the fixed-target freshness gate. Everything in it must
+stay allocation-free.
 
 - **Lines 246-252** — assemble q_full, then the same one-walk pattern as
   the free functions: `computeJointJacobians` →
@@ -211,7 +217,7 @@ transform; the inverse-times product is "tool as seen from base") — then
 7-wide/14-wide boundary in one place.
 
 - `RightPoseAndJacobian` returns all six rows — the controller's per-cycle
-  call and Main's prints use this.
+  call and Main's startup print / freshness gate use this.
 - `RightPositionAndJacobian` returns only the translational 3×7 — used by
   the probe_direction tool, not by the run. Not flagged unnecessary: it is
   live tooling for the joint-6 situation, and it is the honest "position

@@ -2,16 +2,16 @@
 
 **Entry points, in the order the program hits them:**
 
-1. `RobotReadyForTakeover(initial, std::cout)` — Main.cpp:328, on a
+1. `RobotReadyForTakeover(initial, std::cout)` — Main.cpp:257, on a
    standalone read, BEFORE any mode switch (gate T1).
-2. `ServoingGuard servoing_guard(base)` — Runner.cpp:124 (T2, enters
+2. `ServoingGuard servoing_guard(base)` — Runner.cpp:120 (T2, enters
    low-level servoing); `servoing_guard.Restore(std::cout)` —
-   Runner.cpp:405 (D2); the destructor as the retry backstop.
-3. `ClassifyStop(sample, limit, reason)` — Runner.cpp:319, every cycle.
-4. `FeedbackFreshnessMonitor::Update` — Runner.cpp:334, every cycle.
+   Runner.cpp:391 (D2); the destructor as the retry backstop.
+3. `ClassifyStop(sample, limit, reason)` — Runner.cpp:305, every cycle.
+4. `FeedbackFreshnessMonitor::Update` — Runner.cpp:320, every cycle.
 5. `PrintFaultChange` / `PrintStopReport` / decode helpers — edge-triggered
-   and post-loop printing (Runner.cpp:303, 406).
-6. `StopReasonName(result.reason)` — Main.cpp:590, the CSV exit trailer.
+   and post-loop printing (Runner.cpp:289, 392).
+6. `StopReasonName(result.reason)` — Main.cpp:411, the CSV exit trailer.
 
 The file is three modules merged into one (the section banners are the seams
 of that merge): the **Supervisor** (policy: when to stop, when to refuse the
@@ -122,7 +122,7 @@ reports zeros; every later call, per joint: same ID as last cycle →
 increment the counter, new ID → reset it to 0, then remember the ID. Zero
 therefore means "advanced this cycle". Pure bookkeeping, no I/O, loop-safe.
 
-### Lines 59–96 — `ClassifyStop` (every cycle, Runner.cpp:319)
+### Lines 59–96 — `ClassifyStop` (every cycle, Runner.cpp:305)
 Reads only the just-filled `LoopLogSample` — the classifier judges exactly
 what was logged, so the CSV always contains the evidence for the stop. The
 checks, in deliberate priority order (first match returns):
@@ -153,7 +153,7 @@ the policy: reordering these checks changes which reason wins when several
 are true at once, and the comments record that the current order was chosen
 on purpose (guard before faults, faults before mode).
 
-### Lines 98–142 — `RobotReadyForTakeover` (T1, Main.cpp:328)
+### Lines 98–142 — `RobotReadyForTakeover` (T1, Main.cpp:257)
 Runs on one standalone feedback frame, before the mode switch — a live
 fault means the program never takes over at all.
 
@@ -195,13 +195,13 @@ reference is safe here (the referenced string outlives the call). A
 capture-free lambda converts to a plain function pointer, which is why this
 compiles against the function-pointer parameter.
 
-### Lines 193–207 — `StopReasonName` (Main.cpp:590)
+### Lines 193–207 — `StopReasonName` (Main.cpp:411)
 The enum→token switch for the CSV exit trailer. No `default:` case — on
 purpose: with all eight enumerators handled, a newly added `LoopStop` value
 makes the compiler warn about the switch, pointing you here. The trailing
 `return "unknown"` silences the "control reaches end" warning.
 
-### Lines 209–277 — `PrintStopReport` (D3, Runner.cpp:406)
+### Lines 209–277 — `PrintStopReport` (D3, Runner.cpp:392)
 One human-readable explanation per stop reason, printed once, after the
 loop:
 
@@ -216,7 +216,7 @@ loop:
   positions — everything needed to reason about the stop without opening
   the CSV.
 
-### Lines 279–292 — `PrintFaultChange` (edge-triggered, Runner.cpp:303)
+### Lines 279–292 — `PrintFaultChange` (edge-triggered, Runner.cpp:289)
 Prints only what CHANGED: base bank old → new if it differs, and each joint
 whose bank differs. Called at most `kMaxFaultChangePrints` times per run
 (the cap lives in the Runner). Printing inside the cycle is tolerated here

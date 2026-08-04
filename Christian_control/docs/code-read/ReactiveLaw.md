@@ -2,11 +2,11 @@
 
 **Entry point:** header-only — there is no .cpp. In the running program the
 only caller is `TrackingController::DesiredVelocity`
-(Controller.cpp:127–134), which calls `UnitRamp` and then
+(Controller.cpp:120–127), which calls `UnitRamp` and then
 `SolveReactiveVelocity` once per pose-channel cycle; `SolveReactiveVelocity`
 in turn calls `TaskTwist`, `DampedLeastSquares6` and (when enabled)
 `NullSpaceVelocity`. `RotationLog` and `TwistError` are called directly by
-the controller (Controller.cpp:95, 104). Execution order per cycle is
+the controller (Controller.cpp:87–88, 97). Execution order per cycle is
 therefore: equations 1–2 in the controller, then 3–6 in here — the same
 order the file's banner lists them.
 
@@ -47,7 +47,7 @@ must touch both files.
 A clamped linear ramp 0→1 over `duration_s`; `duration_s <= 0` means "no
 ramp, full strength immediately". `std::clamp(x, lo, hi)` returns x limited
 to [lo, hi]. Used only to fade the null-space gain in over the first second
-after takeover (Controller.cpp:129–130), so takeover cannot begin with a
+after takeover (Controller.cpp:122–123), so takeover cannot begin with a
 full projected joint transient — the *task* law is never ramped. All the
 functions here are `inline`: required for functions *defined* in a header
 (otherwise every .cpp including it would define a duplicate symbol and the
@@ -73,7 +73,7 @@ second paragraph of the comment is the behavioural insight: with the
 default-zero reference `Twist{}` this reduces to −measured, i.e. the Kd term
 becomes pure damping toward standstill (what every current source produces);
 a *moving* target must supply its own twist here or the damping term will
-fight the very motion the target asked for (State.h:82–86 repeats this
+fight the very motion the target asked for (State.h:68–73 repeats this
 warning at the `PoseReference` definition).
 
 ### Lines 87–104 — `TaskTwist` (equation 3)
