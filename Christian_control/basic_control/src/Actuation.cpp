@@ -39,7 +39,8 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
     // the persistent command. Use this one effective value everywhere below.
     const double effective_dt_s = std::isfinite(dt_s) && dt_s > 0.0 ? dt_s : 0.0;
     // Calculate all candidates before committing any of them: one bounded
-    // joint crossing its firmware warning must hold the whole command frame.
+    // joint crossing its software position boundary must hold the whole
+    // command frame.
     Eigen::Matrix<double, 7, 1> next_q_command_rad;
     for (int i = 0; i < NUM_JOINTS; ++i)
     {
@@ -83,9 +84,9 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
 
     for (int i = 0; i < NUM_JOINTS; ++i)
     {
-        const double warning_deg = config::kJointLimitWarnDeg[i];
-        if (warning_deg <= 0.0)
-            continue; // continuous joint: no bounded position warning
+        const double software_limit_deg = config::kJointSoftwareLimitDeg[i];
+        if (software_limit_deg <= 0.0)
+            continue; // continuous joint: no bounded position boundary
 
         // Kortex reports bounded positions in [0, 360), while the firmware
         // thresholds are signed. Keep the candidate on the nearest turn to
@@ -96,8 +97,8 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
             (next_q_command_rad[i] - q_command_rad_[i]) * kRadToDeg, 360.0);
         const double candidate_signed_deg = previous_signed_deg + step_signed_deg;
         const bool farther_outward =
-            (candidate_signed_deg > warning_deg && step_signed_deg > 0.0) ||
-            (candidate_signed_deg < -warning_deg && step_signed_deg < 0.0);
+            (candidate_signed_deg > software_limit_deg && step_signed_deg > 0.0) ||
+            (candidate_signed_deg < -software_limit_deg && step_signed_deg < 0.0);
         if (!farther_outward)
             continue;
 

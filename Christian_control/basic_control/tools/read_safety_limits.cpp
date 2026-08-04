@@ -30,6 +30,14 @@ int main()
     {
         Connect connection(config::kRightRobotIp);
 
+        // This is the same owned ControlConfig client and read-only
+        // hard-speed verification used before controller takeover. It sends
+        // no motion or servoing command, and also makes this diagnostic a
+        // pre-session way to test the GetKinematicHardLimits RPC.
+        if (!connection.VerifyKinematicHardLimits(std::cout))
+            return 1;
+        std::cout << "\n";
+
         // Live joint positions for side-by-side comparison.
         const k_api::BaseCyclic::Feedback fb =
             connection.base_cyclic()->RefreshFeedback();

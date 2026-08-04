@@ -80,6 +80,8 @@ Connect::Connect(const std::string& ip_address)
       base_(std::make_unique<k_api::Base::BaseClient>(tcp_.router.get())),
       device_config_(std::make_unique<k_api::DeviceConfig::DeviceConfigClient>(
           tcp_.router.get())),
+      control_config_(std::make_unique<k_api::ControlConfig::ControlConfigClient>(
+          tcp_.router.get())),
       base_cyclic_(std::make_unique<k_api::BaseCyclic::BaseCyclicClient>(udp_.router.get()))
 {
     std::cout << "Connected to arm at " << ip_address << " (TCP + real-time UDP).\n";
@@ -169,6 +171,47 @@ bool Connect::EnsureJointLimits(std::ostream& out)
     }
     out << "joint-limit gate: PASS (configured thresholds verified"
         << (changed ? ", corrections applied" : "") << ")\n";
+    return true;
+}
+
+bool Connect::VerifyKinematicHardLimits(std::ostream& out)
+{
+    // The generated bundled Kortex 2.7.0 KinematicLimits message contains
+    // twist_linear, twist_angular, joint_speed_limits, and
+    // joint_acceleration_limits only. Do not claim this RPC verifies live
+    // joint positions: Table 39 constants and model tests remain that source.
+    const auto limits = control_config_->GetKinematicHardLimits();
+    constexpr int kJointCount = static_cast<int>(std::tuple_size_v<JointVector>);
+    const int returned = limits.joint_speed_limits_size();
+    if (returned != kJointCount)
+    {
+        out << "robot NOT ready: GetKinematicHardLimits returned " << returned
+            << " joint speed limits, expected " << kJointCount << "\n";
+        return false;
+    }
+
+    for (int i = 0; i < kJointCount; ++i)
+    {
+        const double live_deg_s = limits.joint_speed_limits(i);
+        out << "joint " << (i + 1) << " hard speed limit " << live_deg_s
+            << " deg/s; configured qdot clip " << config::kQdotLimitDegS[i]
+            << " deg/s\n";
+        if (!std::isfinite(live_deg_s) || live_deg_s <= 0.0)
+        {
+            out << "robot NOT ready: joint " << (i + 1)
+                << " hard speed limit is not finite and positive\n";
+            return false;
+        }
+        if (config::kQdotLimitDegS[i] > live_deg_s)
+        {
+            out << "robot NOT ready: joint " << (i + 1)
+                << " qdot clip exceeds its live hard speed limit\n";
+            return false;
+        }
+    }
+    out << "kinematic hard-limit gate: PASS (seven live joint speed limits"
+           " verify configured qdot clips; bundled schema has no live"
+           " joint-position limits)\n";
     return true;
 }
 

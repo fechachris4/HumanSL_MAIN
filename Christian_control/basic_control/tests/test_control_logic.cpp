@@ -12,6 +12,7 @@
 
 #include "Actuation.h"
 #include "ReactiveLaw.h"
+#include "StopPriority.h"
 
 namespace
 {
@@ -304,6 +305,7 @@ namespace
         constexpr double kDegToRad = M_PI / 180.0;
         constexpr double kDtS = 0.1;
         constexpr int kJoint1 = 0;
+        constexpr int kJoint2 = 1;
         constexpr int kJoint4 = 3;
         constexpr int kJoint6 = 5;
 
@@ -343,6 +345,23 @@ namespace
               "high warning crossing holds every other joint in the frame");
         for (double v : velocity)
             Check(v == 0.0, "high warning crossing reports zero applied velocity");
+
+        // Joint 2 must stop at the conservative software guard of 126.9
+        // deg, before the independently configured 130 deg firmware
+        // warning. This is deliberately a crossing that the firmware
+        // threshold alone would still admit.
+        const RobotState joint2_seed = state_at_deg(kJoint2, 126.8);
+        PositionIntegration joint2_guard;
+        joint2_guard.Prepare(joint2_seed);
+        const auto joint2_status = joint2_guard.Apply(qdot_deg_s(kJoint2, 2.0),
+                                                       joint2_seed, kDtS,
+                                                       setpoints, velocity);
+        Check(config::kJointLimitWarnDeg[kJoint2] == 130.0,
+              "joint 2 firmware warning remains its independently configured 130 deg");
+        Check(joint2_status.joint_limit_warning_joint == kJoint2,
+              "joint 2 blocks at its 126.9 deg software bound before firmware warning");
+        Check(std::abs(setpoints[kJoint2] - 126.8) < 1e-12,
+              "joint 2 software-bound crossing holds the last safe command");
 
         // The symmetric low-side crossing uses Kortex's raw 215 deg form of
         // signed -145 deg for joint 4 and must be blocked too.
@@ -423,6 +442,64 @@ namespace
               "inward recovery remains allowed beyond the warning threshold");
     }
 
+    void TestJointPositionConfiguration()
+    {
+        Check(config::kJointLowerDeg ==
+                  JointVector{0, -128.9, 0, -147.8, 0, -120.3, 0},
+              "Table 39 lower position concepts match the Gen3 7-DoF values");
+        Check(config::kJointUpperDeg ==
+                  JointVector{0, 128.9, 0, 147.8, 0, 120.3, 0},
+              "Table 39 upper position concepts match the Gen3 7-DoF values");
+        Check(config::kJointBoundedMask == JointVector{0, 1, 0, 1, 0, 1, 0},
+              "only joints 2, 4, and 6 are position-bounded");
+        Check(config::kNullMidpointDeg == JointVector{0, 0, 0, 0, 0, 0, 0},
+              "null midpoint is derived from the bounded position concepts");
+        Check(config::kNullCenteringMask == config::kJointBoundedMask,
+              "null centering mask aliases the bounded-joint mask");
+        Check(config::kJointSoftwareLimitDeg ==
+                  JointVector{0, 126.9, 0, 145.0, 0, 118.0, 0},
+              "software position bounds apply the 2 deg margin without widening firmware warnings");
+    }
+
+    void TestStopPriority()
+    {
+        const auto warning_following = ResolveStopPriority(
+            true, false, false, true, false);
+        Check(warning_following.reason == StopPriorityReason::kFollowingError,
+              "following error wins over a simultaneous held-frame warning");
+        Check(!warning_following.live_fault_observed,
+              "warning plus following error does not invent a live fault");
+
+        const auto warning_left_low = ResolveStopPriority(
+            false, false, true, true, false);
+        Check(warning_left_low.reason == StopPriorityReason::kLeftLowLevel,
+              "leaving low-level servoing wins over a simultaneous held-frame warning");
+
+        const auto warning_ignored_fault = ResolveStopPriority(
+            false, true, false, true, false);
+        Check(warning_ignored_fault.reason == StopPriorityReason::kJointLimitWarning &&
+                  warning_ignored_fault.live_fault_observed,
+              "ignored live fault taints but does not mask a simultaneous warning");
+
+        const auto warning_stopping_fault = ResolveStopPriority(
+            false, true, false, true, true);
+        Check(warning_stopping_fault.reason == StopPriorityReason::kRobotFault &&
+                  warning_stopping_fault.live_fault_observed,
+              "enabled live-fault stop wins over a simultaneous warning");
+
+        const auto warning_fault_left_low = ResolveStopPriority(
+            false, true, true, true, false);
+        Check(warning_fault_left_low.reason == StopPriorityReason::kLeftLowLevel &&
+                  warning_fault_left_low.live_fault_observed,
+              "unconditional servo loss wins over an ignored fault and warning");
+
+        const auto following_fault = ResolveStopPriority(
+            true, true, false, false, false);
+        Check(following_fault.reason == StopPriorityReason::kFollowingError &&
+                  following_fault.live_fault_observed,
+              "following error wins while a simultaneous live fault still taints");
+    }
+
 } // namespace
 
 int main()
@@ -432,6 +509,8 @@ int main()
     TestInvalidNominalDtHoldsPositionIntegration();
     TestPositionIntegration();
     TestJointLimitWarningGuard();
+    TestJointPositionConfiguration();
+    TestStopPriority();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

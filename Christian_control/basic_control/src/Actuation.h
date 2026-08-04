@@ -48,7 +48,8 @@ public:
     // after discontinuous feedback, so this flag may be true even when the
     // written setpoint stays at the requested value. With the setpoints
     // themselves they give requested-vs-sent per joint. If a bounded joint
-    // would move farther outward past its configured warning threshold,
+    // would move farther outward past its configured software position
+    // boundary,
     // `joint_limit_warning_joint` names it and every setpoint holds the
     // prior command for the Runner to transmit and stop on.
     struct ApplyStatus {
@@ -73,8 +74,8 @@ public:
     // final per-cycle rate envelope always wins: after discontinuous feedback
     // lead recovery may temporarily remain beyond the configured lead bound,
     // leaving the existing following-error guard as the backstop. Before any
-    // state commits, a bounded joint moving farther outward past its firmware
-    // warning threshold holds the complete command frame. A direct
+    // state commits, a bounded joint moving farther outward past its software
+    // position boundary holds the complete command frame. A direct
     // non-positive or non-finite dt is treated as zero for every result.
     // setpoint_velocity_deg_s reports the applied step after both constraints,
     // not the requested qdot.

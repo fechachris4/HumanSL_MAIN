@@ -108,9 +108,15 @@ struct CycleCounters {
 inline constexpr std::uint32_t kJointFaultBit =
     k_api::Base::SafetyIdentifier::JOINT_FAULT;
 
-// Live-fault stop policy (no printing — loop-safe). The base's latched
-// JOINT_FAULT summary bit alone does NOT stop the loop. The following-error
-// guard is checked FIRST so no fault-ignoring policy can mask it.
+// Pure facts from one completed feedback sample (no printing — loop-safe).
+// The base's latched JOINT_FAULT summary bit alone is not a live fault.
+bool FollowingErrorExceeded(const LoopLogSample& s,
+                            double following_error_limit_deg);
+bool HasLiveFault(const LoopLogSample& s);
+
+// Compatibility classification for callers that need no held-frame warning:
+// following error and leaving low-level servoing outrank a fault so an
+// ignored fault policy cannot hide an unconditional stop.
 bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
                   LoopStop& reason);
 

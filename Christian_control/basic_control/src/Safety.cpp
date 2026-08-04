@@ -50,8 +50,8 @@ void FeedbackFreshnessMonitor::Update(
     }
 }
 
-bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
-                  LoopStop& reason)
+bool FollowingErrorExceeded(const LoopLogSample& s,
+                            double following_error_limit_deg)
 {
     // Checked FIRST so the guard cannot be masked by the experiment
     // policy that ignores fault bits (ClassifyStop returns on the
@@ -60,30 +60,40 @@ bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
     // cycle, so at a small limit the comparison is unambiguous.
     //
     // config::kDisableFollowingErrorStop removes this stop entirely. With
-    // kStopOnFault also false, the only automatic stop left below is
-    // "the arm left low-level servoing".
+    // kStopOnFault also false, the joint warning and consecutive-cycle
+    // guards remain automatic stops in the Runner as well.
     if (!config::kDisableFollowingErrorStop)
         for (int i = 0; i < NUM_JOINTS; ++i)
             if (std::abs(s.measured_deg[i] - s.commanded_deg[i]) >
                 following_error_limit_deg)
-            {
-                reason = LoopStop::kFollowingError;
                 return true;
-            }
+    return false;
+}
+
+bool HasLiveFault(const LoopLogSample& s)
+{
     for (int i = 0; i < NUM_JOINTS; ++i)
         if (s.fault_bank[i] != 0)
-        {
-            reason = LoopStop::kRobotFault;
             return true;
-        }
-    if ((s.base_fault_bank & ~kJointFaultBit) != 0)
+    return (s.base_fault_bank & ~kJointFaultBit) != 0;
+}
+
+bool ClassifyStop(const LoopLogSample& s, double following_error_limit_deg,
+                  LoopStop& reason)
+{
+    if (FollowingErrorExceeded(s, following_error_limit_deg))
     {
-        reason = LoopStop::kRobotFault;
+        reason = LoopStop::kFollowingError;
         return true;
     }
     if (s.arm_state != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL)
     {
         reason = LoopStop::kLeftLowLevel;
+        return true;
+    }
+    if (HasLiveFault(s))
+    {
+        reason = LoopStop::kRobotFault;
         return true;
     }
     return false;
@@ -245,7 +255,7 @@ void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
         std::cout << "loop stopped: joint-limit warning at t=" << s.t_s
             << " s (cycle " << cycle << "): held the last safe command before joint "
             << (joint_limit_warning_joint + 1)
-            << " crossed its outward warning threshold\n";
+            << " crossed its outward software position boundary\n";
         break;
     case LoopStop::kNonFiniteCommand:
         std::cout << "loop stopped: non-finite controller output (consecutive-cycle "

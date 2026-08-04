@@ -110,13 +110,34 @@ namespace config
     inline constexpr bool kVelocityTermEnabled = true; // Kd term
     inline constexpr bool kNullSpaceEnabled = false;
 
-    // Null-space centering targets, deg. Bounded joints 2/4/6 have URDF
-    // ranges symmetric about 0; continuous joints 1/3/5/7 are masked out.
-    // CAUTION before enabling kNullSpaceEnabled: this arm's CONFIGURED soft
-    // limits sit far inside the URDF range, so centering toward 0 can push
-    // joint 4 into its limit. Confirm them in the web dashboard first.
-    inline constexpr JointVector kNullMidpointDeg = {0, 0, 0, 0, 0, 0, 0};
-    inline constexpr JointVector kNullCenteringMask = {0, 1, 0, 1, 0, 1, 0};
+    // Published Gen3 7-DoF position concepts, degrees, in Kortex actuator
+    // order. Kinova's User Guide, Table 39:
+    // https://www.kinovarobotics.com/uploads/User-Guide-Gen3-R07.pdf
+    // Joints 1/3/5/7 are continuous (zero mask and zero limits); the
+    // bounded joints are 2/4/6. These model values remain the source for
+    // client-side position reasoning because bundled Kortex 2.7.0's
+    // KinematicLimits schema has no joint_position_limits field.
+    inline constexpr JointVector kJointLowerDeg = {
+        0, -128.9, 0, -147.8, 0, -120.3, 0
+    };
+    inline constexpr JointVector kJointUpperDeg = {
+        0, 128.9, 0, 147.8, 0, 120.3, 0
+    };
+    inline constexpr JointVector kJointBoundedMask = {0, 1, 0, 1, 0, 1, 0};
+
+    // Null-space centering targets, derived from the same published ranges
+    // and masked out for continuous joints. Keep centering disabled: it is
+    // not a position-limit mechanism.
+    inline constexpr JointVector kNullMidpointDeg = {
+        0,
+        (kJointLowerDeg[1] + kJointUpperDeg[1]) / 2.0,
+        0,
+        (kJointLowerDeg[3] + kJointUpperDeg[3]) / 2.0,
+        0,
+        (kJointLowerDeg[5] + kJointUpperDeg[5]) / 2.0,
+        0
+    };
+    inline constexpr JointVector kNullCenteringMask = kJointBoundedMask;
 
     // Base-link reach boundary. Stdin target parsing rejects positions beyond
     // this conservative sphere; telemetry also flags any desired position
@@ -138,11 +159,31 @@ namespace config
     // every bounded joint's 2/4/6 threshold; continuous 1/3/5/7 have none.
     // Warnings are j2's established 130 deg and j4/j6 145/118 deg, inside
     // their documented 147.8/120.3 deg ranges. Errors 140/150/123 deg are
-    // outside the documented 128.9/147.8/120.3 deg ranges. There is no
-    // client-side joint-position clamp: qdot clip, reach screen, and
-    // following-error stop are separate protections.
+    // outside the documented 128.9/147.8/120.3 deg ranges. Do not widen
+    // either firmware threshold; they remain robot-side enforcement.
     inline constexpr JointVector kJointLimitWarnDeg = {0, 130.0, 0, 145.0, 0, 118.0, 0};
     inline constexpr JointVector kJointLimitErrorDeg = {0, 140.0, 0, 150.0, 0, 123.0, 0};
+
+    // Software stops before a bounded joint moves outward across this
+    // conservative boundary. It is Table 39's upper magnitude less 2 deg,
+    // capped by (never wider than) the configured firmware warning. The
+    // zero entries preserve the continuous-joint sentinel.
+    inline constexpr double kJointSoftwareLimitMarginDeg = 2.0;
+    inline constexpr JointVector kJointSoftwareLimitDeg = {
+        0,
+        (kJointUpperDeg[1] - kJointSoftwareLimitMarginDeg < kJointLimitWarnDeg[1]
+             ? kJointUpperDeg[1] - kJointSoftwareLimitMarginDeg
+             : kJointLimitWarnDeg[1]),
+        0,
+        (kJointUpperDeg[3] - kJointSoftwareLimitMarginDeg < kJointLimitWarnDeg[3]
+             ? kJointUpperDeg[3] - kJointSoftwareLimitMarginDeg
+             : kJointLimitWarnDeg[3]),
+        0,
+        (kJointUpperDeg[5] - kJointSoftwareLimitMarginDeg < kJointLimitWarnDeg[5]
+             ? kJointUpperDeg[5] - kJointSoftwareLimitMarginDeg
+             : kJointLimitWarnDeg[5]),
+        0
+    };
 
     // false = A LIVE FAULT DOES NOT END THE RUN. Faults are still decoded,
     // printed and logged, and they taint the exit code, but the loop keeps
@@ -172,13 +213,13 @@ namespace config
     inline constexpr bool kSkipStartupGates = false;
 
     // true = the loop NEVER stops on following error. Read this next to
-    // kStopOnFault above, which is already false: with both set, and the
-    // no-motion stops removed on 2026-08-03, the ONLY remaining automatic
-    // stop is loss of low-level servoing. Nothing else ends a run — not a
-    // fault, not a joint that has stopped following its setpoint. The
-    // operator and the robot's own firmware limits are the entire safety
-    // margin. kFollowingErrorLimitDeg keeps its value for the telemetry
-    // and the stop report; this only removes the stop.
+    // kStopOnFault above, which is already false: with both set, a live
+    // fault and a joint that stops following its setpoint do not end the
+    // run. Loss of low-level servoing, the software joint-boundary guard,
+    // and enabled non-finite/overrun counters remain automatic stops. The
+    // operator and the robot's own firmware limits are still essential.
+    // kFollowingErrorLimitDeg keeps its value for telemetry and the stop
+    // report; this only removes the following-error stop.
     inline constexpr bool kDisableFollowingErrorStop = false;
 
     // Consecutive-cycle stop counters; N <= 0 disables one. Non-finite

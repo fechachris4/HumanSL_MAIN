@@ -11,6 +11,7 @@
 #include <KDetailedException.h>
 
 #include "Runner.h"
+#include "StopPriority.h"
 
 namespace k_api = Kinova::Api;
 
@@ -91,16 +92,17 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     // banks are logged, observed faults still force a nonzero exit).
     if (!config::kStopOnFault)
         std::cout << "WARNING: FAULT-STOP DISABLED (config::kStopOnFault = false) — live "
-            "fault bits will NOT stop the loop; the following-error guard and the "
-            "operator are the backstops. Attended use only.\n";
+            "fault bits will NOT stop the loop; following-error, low-level-servoing, "
+            "joint-boundary, non-finite, and overrun guards still can. Attended use only.\n";
     if (config::kDisableFollowingErrorStop)
         std::cout << "WARNING: FOLLOWING-ERROR STOP DISABLED "
             "(config::kDisableFollowingErrorStop) — a joint that stops following "
             "its setpoint will NOT stop the loop.\n";
-    if (!config::kStopOnFault && config::kDisableFollowingErrorStop)
-        std::cout << "WARNING: BOTH the fault stop and the following-error stop are "
-            "off. The ONLY automatic stop left is loss of low-level servoing. "
-            "YOU are the safety system — hand on the e-stop for this run.\n";
+    if (!config::kStopOnFault)
+        if (config::kDisableFollowingErrorStop)
+            std::cout << "WARNING: BOTH the fault stop and the following-error stop are "
+                "off. Low-level-servoing, joint-boundary, non-finite, and overrun "
+                "guards remain; YOU are the safety system — hand on the e-stop for this run.\n";
 
     const double nominal_dt_s = std::chrono::duration<double>(period).count();
 
@@ -281,7 +283,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
 
             // Every fault-bank change prints as it happens (edge-triggered,
             // capped — see PrintFaultChange). This is live visibility, not
-            // policy: whether the loop stops is still ClassifyStop's call.
+            // policy: whether the loop stops is resolved from independent
+            // sample facts below.
             if (sample.base_fault_bank != prev_base_bank ||
                 sample.fault_bank != prev_joint_banks)
             {
@@ -297,47 +300,49 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 prev_joint_banks = sample.fault_bank;
             }
 
-            // Apply held the exact last safe command for every joint. Send
-            // that holding frame above, record its reply, then stop before
-            // any outward warning-crossing setpoint can reach the robot.
-            if (actuation_status.joint_limit_warning_joint)
+            // Resolve every fact independently: an ignored fault must still
+            // taint the exit and must never mask following error or loss of
+            // low-level servoing. Communication exits in the Send catch
+            // remain unconditional before this completed feedback sample.
+            const StopPriorityDecision priority = ResolveStopPriority(
+                FollowingErrorExceeded(sample, following_error_limit_deg),
+                HasLiveFault(sample),
+                sample.arm_state != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL,
+                actuation_status.joint_limit_warning_joint.has_value(),
+                config::kStopOnFault);
+            faults_observed = faults_observed || priority.live_fault_observed;
+            switch (priority.reason)
             {
-                joint_limit_warning_joint = *actuation_status.joint_limit_warning_joint;
-                reason = LoopStop::kJointLimitWarning;
-                for (const std::uint32_t bank : sample.fault_bank)
-                    if (bank != 0)
-                        faults_observed = true;
-                if ((sample.base_fault_bank & ~kJointFaultBit) != 0)
-                    faults_observed = true;
+            case StopPriorityReason::kFollowingError:
+                reason = LoopStop::kFollowingError;
                 log.push(sample);
                 break;
+            case StopPriorityReason::kLeftLowLevel:
+                reason = LoopStop::kLeftLowLevel;
+                log.push(sample);
+                break;
+            case StopPriorityReason::kRobotFault:
+                reason = LoopStop::kRobotFault;
+                log.push(sample);
+                break;
+            case StopPriorityReason::kJointLimitWarning:
+                joint_limit_warning_joint = *actuation_status.joint_limit_warning_joint;
+                reason = LoopStop::kJointLimitWarning;
+                log.push(sample);
+                break;
+            case StopPriorityReason::kNone:
+                break;
             }
-
-            // Stop policy: the following-error, arm-state and communication
-            // exits are unconditional; fault stops obey config::kStopOnFault
-            // (compile-time only — F2). With fault-stop disabled (the
-            // 2026-07-20 experiment), bank changes still print above, every
-            // cycle's banks stay in the CSV, and observed faults still
-            // taint the exit code (decision 3).
-            if (ClassifyStop(sample, following_error_limit_deg, reason))
-            {
-                if (reason == LoopStop::kRobotFault)
-                    faults_observed = true;
-                if (reason != LoopStop::kRobotFault || config::kStopOnFault)
-                {
-                    log.push(sample);
-                    break;
-                }
-                reason = LoopStop::kUserStop; // ignored fault: not a stop reason
-            }
+            if (priority.reason != StopPriorityReason::kNone)
+                break;
             // Feedback-freshness evidence is RECORDED, never acted on: a
             // repeated acknowledgement ID and a stationary joint are logged
             // (ack_unchanged_j*, req/cmd/meas) and left for offline review.
             // Neither ends the run — see Config.h kCommandLeadLimitDeg.
             freshness_monitor.Update(sample.actuator_command_ack);
             sample.ack_unchanged_cycles = freshness_monitor.unchanged_cycles();
-            // Decision-12 counters, checked AFTER ClassifyStop so the guard
-            // and live faults keep priority; N <= 0 disables one. There is
+            // Decision-12 counters, checked after the independent live-state
+            // priority so those guards keep priority; N <= 0 disables one. There is
             // deliberately NO saturation stop: a pinned velocity clamp is
             // normal transit toward a far target (removed 2026-07-23).
             if (config::kNonFiniteStopCycles > 0 &&

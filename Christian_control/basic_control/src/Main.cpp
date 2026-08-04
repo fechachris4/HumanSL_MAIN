@@ -284,6 +284,12 @@ int main(int argc, char** argv)
         const bool robot_ready = RobotReadyForTakeover(initial, std::cout); // T1
         if (!robot_ready)
             return 1;
+        // READ-ONLY hard-speed gate before any servoing takeover. This is
+        // intentionally independent of kSkipStartupGates: skipping
+        // configuration writes does not authorize a qdot clip above the
+        // robot's reported hard speed limit.
+        if (!connection.VerifyKinematicHardLimits(std::cout))
+            return 1;
         // Re-assert the configured JOINT_LIMIT thresholds: they do not
         // survive a robot power cycle, and a degenerate 0/0 band makes the
         // firmware fault any motion away from zero (Config.h). Only joints

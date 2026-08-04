@@ -228,20 +228,34 @@ rules above apply):
   continuous joints 1/3/5/7 remain unset. There is no separate client-side
   joint-position *clamp*: before sending, the software stops and holds the
   last safe seven-joint frame when a bounded joint would move farther
-  outward past its warning threshold (while allowing inward recovery).
+  outward past its conservative software boundary (while allowing inward
+  recovery). The boundary is the smaller of the configured firmware warning
+  and the [Gen3 User Guide Table 39](https://www.kinovarobotics.com/uploads/User-Guide-Gen3-R07.pdf)
+  position magnitude less 2°: J2/J4/J6 are 126.9°/145°/118°; continuous
+  joints remain unbounded. It never widens a firmware threshold.
   The controller's velocity clip, spherical input reach screen, and
   following-error stop are separate protections, not joint-position
   enforcement.
+- Before takeover, a read-only `GetKinematicHardLimits` gate prints all
+  seven live hard joint-speed limits and refuses a configured qdot clip that
+  exceeds one. The bundled Kortex 2.7.0 `KinematicLimits` schema has no
+  `joint_position_limits` field, so this RPC does **not** verify positions;
+  Table 39 and the model tests are their source. `./read_safety_limits`
+  runs the same no-motion gate for a pre-session check, without making a
+  second ControlConfig client.
 - **A live fault does NOT currently stop the run.** `kStopOnFault` is
   `false` in `Config.h` — the 2026-07-20 fault-ignoring experiment, still
   switched on. Faults are decoded, printed on their edges and logged, but
   the loop keeps commanding. The run prints a `FAULT-STOP DISABLED` warning
   at takeover for exactly this reason. **ATTENDED USE ONLY: you are the
   stop.** Set `kStopOnFault = true` to restore the fault stop.
-- What still ends the run unconditionally: the software joint-limit warning
-  guard, a following error above `kFollowingErrorLimitDeg` (3°, checked
-  before the fault bits so the experiment policy cannot mask it), loss of
-  low-level servoing, and exchange failure. On any of these the loop stops
-  streaming (the position servo holds the last setpoint) and restores
-  SINGLE_LEVEL servoing — guarded, with a warning if it fails. If you see
-  such a warning, check the arm (web dashboard) before running anything else.
+- What still ends the run unconditionally: a following error above
+  `kFollowingErrorLimitDeg` (3°), a live fault when `kStopOnFault` is true,
+  loss of low-level servoing, exchange failure, then the software
+  joint-limit warning guard, plus enabled consecutive non-finite-command and
+  overrun guards. That ordering means a simultaneous live state cannot be
+  hidden by the held-frame warning; an ignored live fault still taints the
+  exit result. On any of these the loop stops streaming (the position servo
+  holds the last setpoint) and restores SINGLE_LEVEL servoing — guarded, with
+  a warning if it fails. If you see such a warning, check the arm (web
+  dashboard) before running anything else.

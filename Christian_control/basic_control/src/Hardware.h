@@ -19,6 +19,7 @@
 #include <ActuatorConfig.pb.h> // SafetyIdentifierBankA, used by EnsureJointLimits
 #include <BaseClientRpc.h>
 #include <BaseCyclicClientRpc.h>
+#include <ControlConfigClientRpc.h>
 #include <DeviceConfigClientRpc.h>
 #include <ITransportClient.h>
 #include <RouterClient.h>
@@ -68,9 +69,9 @@ public:
     // CAUTION: each Kortex service client registers a notification callback
     // on its router, and the router rejects a SECOND registration for the
     // same service ("notification callback is already registered in the
-    // client router"). Connect already owns a DeviceConfigClient, so build
-    // only services it does NOT own here (DeviceManager, ControlConfig) and
-    // reach the owned one through device_config() below.
+    // client router"). Connect already owns DeviceConfig and ControlConfig,
+    // so build only services it does NOT own here (for example,
+    // DeviceManager) and reach the owned one through its gate methods.
     k_api::RouterClient* tcp_router()
     {
         return tcp_.router.get();
@@ -92,6 +93,12 @@ public:
     // see the Config.h comment for the full history. Only joints with a
     // non-zero config entry are touched.
     bool EnsureJointLimits(std::ostream& out);
+
+    // READ-ONLY pre-takeover gate. KinematicLimits in the bundled Kortex
+    // 2.7.0 schema exposes only speed/acceleration/twist fields, not live
+    // joint positions. Require exactly seven finite positive live hard joint
+    // speeds and require config::kQdotLimitDegS not to exceed them.
+    bool VerifyKinematicHardLimits(std::ostream& out);
 
 private:
     // One connected transport + router + logged-in session. Members are
@@ -115,6 +122,7 @@ private:
 
     std::unique_ptr<k_api::Base::BaseClient> base_;
     std::unique_ptr<k_api::DeviceConfig::DeviceConfigClient> device_config_;
+    std::unique_ptr<k_api::ControlConfig::ControlConfigClient> control_config_;
     std::unique_ptr<k_api::BaseCyclic::BaseCyclicClient> base_cyclic_;
 };
 

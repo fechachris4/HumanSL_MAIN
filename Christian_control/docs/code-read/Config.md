@@ -210,12 +210,11 @@ preamble so a run recorded with one enabled is identifiable forever after.
   comment steers you to the narrower override above instead. The loud
   warning it triggers is at Main.cpp:268–272.
 - **Line 186 — `kDisableFollowingErrorStop = false`.** true = the loop
-  never stops on following error. The comment does the safety arithmetic
-  for you: combined with `kStopOnFault = false` and the no-motion stops
-  removed 2026-08-03, the ONLY remaining automatic stop would be loss of
-  low-level servoing — operator plus firmware limits become the entire
-  safety margin. The limit value itself (line 192) keeps feeding telemetry
-  either way.
+  never stops on following error. Combined with `kStopOnFault = false`, live
+  faults and following error no longer end a run, but loss of low-level
+  servoing, the software joint-boundary guard, and enabled non-finite and
+  overrun counters still do. The limit value itself (line 192) keeps feeding
+  telemetry either way.
 
 ### Lines 184–187 — consecutive-cycle stop counters
 `kNonFiniteStopCycles = 3`: three consecutive cycles of non-finite (NaN/inf)
