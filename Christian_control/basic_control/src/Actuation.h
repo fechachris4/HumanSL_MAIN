@@ -2,10 +2,9 @@
 // Actuation — turning a clamped joint velocity into this cycle's position
 // setpoints, and owning the persistent command state that requires.
 //
-// Lifecycle asymmetry, which the Runner relies on: Prepare and Restore MAY
-// do hardware I/O (mode changes, so an actuation may hold hardware
-// handles); Apply must be pure — no I/O, no blocking, no allocation,
-// because it runs inside the cycle.
+// PositionIntegration owns only persistent command state: Prepare seeds it
+// outside the cycle, and Apply must be pure — no I/O, no blocking, no
+// allocation — because it runs inside the cycle.
 //
 
 #pragma once
@@ -61,7 +60,7 @@ public:
     // the first Apply: q_command = q_measured — the ONLY time command state
     // is seeded from measurement. The Runner must call this before the first
     // Apply; the initial member value is zero and is not a safe substitute.
-    // MAY do hardware I/O.
+    // This state seed performs no hardware I/O.
     void Prepare(const RobotState& state);
 
     // Per cycle, PURE — no I/O, no blocking, no allocation. Proposes

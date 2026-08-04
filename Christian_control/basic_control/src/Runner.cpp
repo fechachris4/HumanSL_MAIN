@@ -366,8 +366,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         std::cout << "communication error: " << ex.what() << "\n";
     }
     // Catch-alls: an exception of any other type (Pinocchio logic_error,
-    // bad_alloc, ...) must not skip the report — and the servoing restore
-    // no longer even depends on being caught (D3 runs by unwinding).
+    // bad_alloc, ...) must not skip the report — the ServoingGuard destructor
+    // retries its restore during unwinding if needed.
     catch (std::exception& ex)
     {
         reason = LoopStop::kInternalError;

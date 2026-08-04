@@ -55,7 +55,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   | `Kinematics.h/.cpp` | Pinocchio FK/Jacobians + the `DualArmKinematics` adapter | `pin_fk.py` |
   | `Safety.h/.cpp` | stop classification, readiness gate, fault decoding, `ServoingGuard` | (hardware-only) |
   | `Hardware.h/.cpp` | `Connect`, `CyclicSession`, the run log + CSV writer | (hardware-only) |
-  | `Runner.h/.cpp` | **the loop — moves the arm**: takeover T1-T5, cycle order, teardown D1-D3 | `runner.py` |
+  | `Runner.h/.cpp` | **the loop — moves the arm**: takeover T1-T5, cycle order, teardown D1-D2 | `runner.py` |
   | `Main.cpp` | the program: wiring, config echo, reports | `main.py` |
 
   Everything above `Kinematics` is pure Eigen — no Kortex, no Pinocchio —

@@ -76,6 +76,46 @@ namespace
               "a non-finite measured dt fails safe to zero");
     }
 
+    void TestInvalidNominalDtHoldsPositionIntegration()
+    {
+        constexpr double kDegToRad = M_PI / 180.0;
+        constexpr double kPreviousDeg = 43.1163;
+        RobotState seed;
+        seed.q_rad.setZero();
+        seed.qdot_rad_s.setZero();
+        seed.q_rad[0] = kPreviousDeg * kDegToRad;
+        RobotState discontinuous_feedback = seed;
+        discontinuous_feedback.q_rad[0] = 41.1788 * kDegToRad;
+        Eigen::Matrix<double, 7, 1> qdot =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        qdot[0] = 14.0916 * kDegToRad;
+
+        for (const double invalid_nominal_dt_s : {
+                 0.0,
+                 -0.002,
+                 std::numeric_limits<double>::quiet_NaN(),
+                 -std::numeric_limits<double>::infinity(),
+                 std::numeric_limits<double>::infinity(),
+             })
+        {
+            const double dt_s = ClampedCycleDt(0.002, invalid_nominal_dt_s);
+            Check(dt_s == 0.0, "an invalid nominal dt fails safe to zero");
+
+            PositionIntegration actuation(1.0);
+            actuation.Prepare(seed);
+            JointVector setpoints{};
+            JointVector velocity{};
+            const auto status = actuation.Apply(qdot, discontinuous_feedback, dt_s,
+                                                setpoints, velocity);
+            Check(std::abs(status.requested_deg[0] - kPreviousDeg) < 1e-12,
+                  "invalid nominal dt records an exact requested hold");
+            Check(std::abs(setpoints[0] - kPreviousDeg) < 1e-12,
+                  "invalid nominal dt holds the sent position command");
+            Check(velocity[0] == 0.0,
+                  "invalid nominal dt reports zero applied velocity");
+        }
+    }
+
     void TestPositionIntegration()
     {
         constexpr double kDegToRad = M_PI / 180.0;
@@ -265,6 +305,7 @@ int main()
 {
     TestDampedLeastSquares();
     TestClampedCycleDt();
+    TestInvalidNominalDtHoldsPositionIntegration();
     TestPositionIntegration();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";

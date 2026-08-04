@@ -4,7 +4,7 @@
 the readiness gate, the CSV setup and the reference-source construction. This
 is the function that MOVES THE ARM. Everything in this file exists to run the
 takeover sequence T1–T5 (documented in the Runner.h banner, lines 6–24), the
-500 Hz cycle, and the teardown D1–D3 on every possible exit path.
+500 Hz cycle, and the teardown D1–D2 on every possible exit path.
 
 This doc follows real execution order: the header contract first, then
 `RunControlLoop` top to bottom (which is also its execution order), with the
@@ -16,7 +16,7 @@ helper `FillSample` explained where the loop first calls it.
 
 ### Lines 1–34 — the banner comment
 Plain-English spec of the whole file: the takeover order (T1–T5), the per-cycle
-order, and the teardown order (D1–D3). Not code, but treat it as normative —
+order, and the teardown order (D1–D2). Not code, but treat it as normative —
 the .cpp is written to match it step for step, and several past bugs were
 order bugs. If you edit the loop, update this comment or the two will drift.
 

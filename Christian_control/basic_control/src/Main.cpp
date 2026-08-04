@@ -412,7 +412,7 @@ int main(int argc, char** argv)
         InputThreadStopJoiner input_thread_joiner(input_thread, g_stop);
 
         // MOVES THE ARM: servoing mode is entered and restored inside the
-        // Runner on every exit path (T2/D3).
+        // Runner on every exit path (T2/D1).
         const LoopResult result = RunControlLoop(
             connection.base(), connection.base_cyclic(), reference,
             controller, actuation,
