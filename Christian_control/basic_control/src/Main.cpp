@@ -407,7 +407,7 @@ int main(int argc, char** argv)
         PoseTargetSource reference(ee_now.position, target, pose_targets);
         PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
-        // The arm holds the measured startup pose. Stdin targets may queue
+        // The arm holds the measured startup pose. Pipe targets may queue
         // immediately, but each waits for an arrival edge before activation.
         std::cout << "HOLD AT START: the arm holds the measured startup "
                      "pose until the first pipe waypoint; Ctrl+C to stop\n";

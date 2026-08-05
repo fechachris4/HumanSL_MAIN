@@ -54,6 +54,17 @@ chosen for the interface. The bridge always loads
 
 ## Waypoint transport: stdin FIFO, and its Stage 1 limitation
 
+**Superseded 2026-08-05 by `stage15-bridge-workflow.md`.** Everything in
+this section describes the Stage 1 transport as originally shipped:
+interactive stdin, held open by an operator-managed FIFO
+(`exec 3>fifo`), position-only lines. Stage 1.5 deletes interactive
+stdin entirely, replaces the operator-held FIFO with a controller-owned,
+self-reopening named pipe (`config::kTargetPipePath`), and extends the
+line grammar to optionally carry orientation (parsed, not yet consumed).
+The waypoint cap, exit-code contract, and validation-before-write
+guarantee described below are unchanged. See
+`stage15-bridge-workflow.md` for the current design.
+
 The bridge writes plain `%.6f %.6f %.6f` lines to `targets`
 (`Waypoints.cpp` `FormatTargetLine`) — the exact grammar
 `Targets.cpp`'s `ParsePoseTarget` already accepts (position-only, no

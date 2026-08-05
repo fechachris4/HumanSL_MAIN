@@ -353,10 +353,13 @@ before any takeover.
   non-finite result, records the measured startup pose in the CSV, and prints
   it for operator visibility. There is no comparison to a compiled joint
   configuration or Cartesian pose.
-- **Lines 398–404 — build the PoseTargetSource.** Position from `kFixedTargetM`;
-  the constructor also receives the measured FK position as the profile start.
-  rotation only if `kFixedTargetUseRpy` — an unset rotation means "keep the
-  takeover orientation.
+- **Build the PoseTargetSource (Stage 1.5).** `kFixedTargetM` is deleted;
+  the terminal target's position is the measured FK position itself
+  (`target.p_desired = ee_now.position`), so the constructor's profile
+  start and terminal target are the same point — the arm's first profile
+  is zero-distance. Rotation is left unset, meaning "keep the takeover
+  orientation," unconditionally (`kFixedTargetUseRpy` no longer gates
+  this — see `../decisions/stage15-bridge-workflow.md`).
 
 ### Line 377 — `PositionIntegration actuation(kCommandLeadLimitDeg);`
 The actuation stage: integrates commanded velocities into position

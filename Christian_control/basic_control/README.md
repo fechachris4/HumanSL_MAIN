@@ -15,10 +15,11 @@ The program has ONE controller and one **reference source** (architecture
 diagram at the top of `src/Controller.h`). The source says WHERE the
 end-effector should be each cycle; the `TrackingController` says HOW to
 move toward it. It takes over the arm in low-level servoing (actuators in
-their default POSITION mode) and starts at the compiled fixed position
-target (`kFixedTargetM` in `Config.h`). It then accepts queued stdin
-positions. New research inputs (Vicon, a Python bridge) are new sources,
-never new controllers.
+their default POSITION mode) and holds its measured startup pose — there
+is no compiled terminal target. It then accepts queued pose targets
+written over a named pipe (`config::kTargetPipePath`, Stage 1.5's
+`planner_bridge`; see below). New research inputs (Vicon, a Python
+bridge) are new sources, never new controllers.
 
 Pose references run the reactive law — full 6-DoF pose, ported
 from the simulation (msc_project) and cross-validated against it
@@ -93,14 +94,16 @@ without contacting the arm; this guard does not cover other Kortex programs.
 
 **There is no runtime configuration.** `--log` is the only flag; every
 gain, term switch, and limit is a compiled constant in `src/Config.h`.
-During a run, stdin accepts exactly `x y z` as three finite values in metres
-in `base_link`; this is target input, not configuration. Every run still
+During a run, the controller reads targets from a named pipe
+(`config::kTargetPipePath`, `/tmp/humansl_bridge_targets`), which it
+creates itself at startup; a target line is `x y z` (metres, `base_link`)
+— this is target input, not configuration. Every run still
 echoes its effective configuration and embeds it as `#` lines in the CSV,
 so each data file stays self-describing.
 
 **Read `Config.h` before every session** — with no runtime override, the
 compiled values are the only thing standing between you and the arm. In
-particular check `kFixedTargetM`, `kQdotLimitDegS`, and `kStopOnFault`.
+particular check `kQdotLimitDegS` and `kStopOnFault`.
 
 What a run does, in order:
 
@@ -118,14 +121,17 @@ What a run does, in order:
    measured state (q_command = q_measured) and captures the current pose as
    the hold pose, then sends one unchanged holding frame — the arm holds.
    Actuators stay in their default POSITION mode.
-4. The arm holds its measured takeover pose first, then follows a bounded
-   Cartesian profile from that pose to the compiled terminal target
-   `kFixedTargetM`, preserving the captured takeover orientation. The stdin
-   thread accepts one `x y z` target per line in metres, `base_link` only.
-   It rejects malformed, trailing, or non-finite input. The parser does not
-   perform reachability, collision, or path validation. At most eight live targets
-   are queued in FIFO order. They cannot bypass the terminal target: each
-   target activates only after the previous target emits its arrival edge,
+4. The arm holds its measured takeover pose — there is no compiled
+   terminal target; the terminal target IS the measured startup pose, so
+   the arm's first profile is zero-distance and it simply stays put. The
+   pipe-reading thread accepts one `x y z` target per line in metres,
+   `base_link` only, preserving the captured takeover orientation. It
+   rejects malformed, trailing, or non-finite input. The parser does not
+   perform reachability, collision, or path validation — that validation
+   happens bridge-side, before a target is ever written to the pipe. At
+   most eight live targets are queued in FIFO order. They cannot bypass
+   the startup hold: each target activates only after the previous
+   target (the startup hold, for the first one) emits its arrival edge,
    and the final target holds.
 
    Arrival requires both position error ≤ 1 mm and orientation error
@@ -160,14 +166,15 @@ First hardware runs: start from the printed current position and change
 The common-frame model and hardware-free tests do not prove physical
 mount calibration, collision safety, or safe robot behavior.
 
-## Planner bridge (Stage 1) — supervised runs only
+## Planner bridge (Stage 1.5) — supervised runs only
 
 `Christian_control/planner_bridge/` (`planner_bridge` binary, own build
 directory) is a separate, hardware-free process: one GPMP2 solve per
-invocation, emitted as `x y z` lines on this controller's existing stdin
-target grammar (design: `../docs/decisions/stage1-planner-bridge.md`).
-It is a new **source**, not a new controller — the controller code above
-is unchanged.
+invocation, emitted as pose-target lines onto the controller's named
+pipe (design: `../docs/decisions/stage1-planner-bridge.md`, updated by
+`../docs/decisions/stage15-bridge-workflow.md`). It is a new
+**source**, not a new controller — the controller code above is
+unchanged.
 
 Offline check (no robot, safe anytime; zero-config tool sits at
 `(0.0, -0.0246, 1.3073)` in `base_link`, so this goal is reachable from a
@@ -177,50 +184,56 @@ single solve):
 ./planner_bridge --start-deg 0 0 0 0 0 0 0 --goal 0.15 0.075 1.207
 ```
 
-Hardware run (requires explicit authorization, operator present, e-stop
-in reach; the controller consumes bridge waypoints only after reaching
-its compiled terminal target):
+### Supervised hardware run: `run_session.sh`
 
-**Hold a persistent write end open on the FIFO for the whole session,
-before starting the controller — do not let each `planner_bridge` run be
-the FIFO's only writer.** A named FIFO delivers EOF to its reader once
-every writer has closed. The controller's stdin reader,
-`RunPoseTargetInputFromFd` (`src/Targets.cpp`), treats EOF as final: on
-read, if `read_count == 0` it processes any trailing partial line and then
-`break`s out of its poll loop for good (`src/Targets.cpp` — the loop that
-calls `poll`/`read` on `input_fd`). There is no re-open or retry — once
-that loop exits, the controller silently never reads another target for
-the rest of the run. If each bridge invocation opens and closes
-`/tmp/bridge_targets` for its own `>` redirect, the *first* run's exit
-closes the only writer, stdin reader hits EOF and exits, and **every
-subsequent bridge run writes into a pipe nobody is reading, exits 0, and
-the operator has no indication the new goal was never delivered.**
+Preconditions, every session, no exceptions:
 
-Open the persistent writer in the *operator's own shell* — a shell
-builtin FD, not the controller process — so it survives every
-`planner_bridge` run:
+- **Explicit authorization from Christian for this specific run**
+  (project `CLAUDE.md` — the standing hardware-safety rule).
+- Christian present, workspace clear, emergency stop immediately
+  available.
+- The Kinova web dashboard closed (it blocks `SetServoingMode`).
+
+With those satisfied, one terminal runs the whole session:
 
 ```bash
-mkfifo /tmp/bridge_targets
-./controller --log < /tmp/bridge_targets        # terminal 1
-exec 3>/tmp/bridge_targets                      # terminal 2, ONCE, before any bridge run —
-                                                 # keeps a writer open so the
-                                                 # controller's stdin reader never sees EOF
-./planner_bridge --state-csv <today's run csv> \
-    --goal <x y z> >&3                          # terminal 2, repeat per replan — write to FD 3, not >
-exec 3>&-                                       # terminal 2, ONCE, at the end of the session
+Christian_control/planner_bridge/scripts/run_session.sh
 ```
 
-Stop-and-replan: wait for hold (arrival messages in terminal 1), then
-re-run the bridge with a new goal (`>&3`, not `>`); each run reads the
-fresh CSV state. Do not close FD 3 between runs — only at the very end of
-the session.
+It: (1) refuses to start if `controller` or `planner_bridge` is older
+than its own sources — pass `--allow-stale` only for a deliberate
+rebuild-skip; (2) prints the checklist above and requires typing `GO`
+before touching the arm — this is a pause the script enforces, not an
+authorization it grants; (3) starts `./controller` (output visible in
+this terminal) and waits for its run log to appear under `runs/`; (4)
+drops into a `bridge>` prompt.
+
+At the prompt:
+
+```
+bridge> goal X Y Z
+bridge> goal X Y Z box CX CY CZ HX HY HZ   # optional SDF obstacle
+bridge> quit                                # stops the controller, tears down
+```
+
+Each `goal` line runs `planner_bridge` with auto-discovered start state
+(the controller's own run log) and writes its validated waypoints
+straight onto the pipe; a non-zero bridge exit writes nothing and the
+prompt reports it. `--dry-run` performs the freshness check and the
+`GO` prompt, then stops before starting the controller — use it to
+exercise the gates with no hardware involved.
+
+**Known limitation:** a `goal` write can block if the controller has
+died after creating the pipe but before this session's teardown runs
+(nothing is reading the far end). If a `goal` command appears to hang,
+check terminal 1 for a controller crash/exit and restart the session —
+do not wait indefinitely with the arm in an unknown state.
 
 Exit codes (`RunBridge`): 0 targets emitted (also returned by `--help`),
 1 bad arguments, 2 start state unavailable, 3 solve failed, 4 validation
-rejected the plan. A non-zero exit writes nothing to the FIFO. At most 8
+rejected the plan. A non-zero exit writes nothing to the pipe. At most 8
 waypoints are ever emitted per solve (`PoseTargetMailbox::kCapacity`,
-`Targets.h`) — the same queue this section's stdin target input already
+`Targets.h`) — the same queue the controller's pipe target input already
 fills.
 
 An optional `--box CX CY CZ HX HY HZ` obstacle must lie fully inside the
@@ -230,10 +243,11 @@ the run is rejected (exit 1) before solving. Outside that volume gpmp2
 reports zero obstacle cost with no warning, so an unchecked box would be
 silently ignored rather than avoided.
 
-**Stage 1 limitation**: the controller tracks the reactive law's own
-path between bridge waypoints, not GPMP2's planned joint path — only the
-sampled waypoints are guaranteed to lie on the planned path. See the
-decision record for the full argument.
+**Stage 1 limitation, still true under Stage 1.5**: the controller
+tracks the reactive law's own path between bridge waypoints, not
+GPMP2's planned joint path — only the sampled waypoints are guaranteed
+to lie on the planned path. See the decision records for the full
+argument.
 
 ## Offline analysis
 

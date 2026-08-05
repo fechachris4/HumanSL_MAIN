@@ -95,9 +95,12 @@ and the log-buffer sizing (where Main.cpp:283–284's integer division is the
 edit-hazard — see Main.md).
 
 ### The terminal target
-- `kFixedTargetM` is the terminal position in the right-arm `base_link` frame,
-  in metres. The startup pose is measured at runtime, so this value is no
-  longer a startup freshness gate or a registered IK-branch requirement.
+- **Stage 1.5 (2026-08-05): `kFixedTargetM` is deleted.** There is no
+  compiled terminal position anywhere in `Config.h` any more — the
+  terminal target IS the measured startup FK position
+  (`Main.cpp`), so the arm's first held pose is always wherever it woke
+  up, never a hardcoded coordinate. See
+  `../decisions/stage15-bridge-workflow.md`.
 - The target remains safety-relevant: the low-level controller follows a
   bounded Cartesian profile, while the independent joint-rate, following-error,
   reach telemetry, and joint-boundary guards remain active.

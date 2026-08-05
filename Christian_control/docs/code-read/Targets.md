@@ -12,7 +12,9 @@ the boundary: never talks to the robot, does no control math.
 Execution order in a run:
 
 1. Main measures the current FK position from the fresh actuator feedback.
-2. Main builds the terminal target from `kFixedTargetM` and constructs
+2. Main builds the terminal target from the measured startup pose itself
+   (Stage 1.5: `kFixedTargetM` is deleted, no compiled terminal target
+   remains) and constructs
    `PoseTargetSource(start_position, terminal_target, mailbox)`.
 3. Inside the loop: `Reset(state)` once at takeover (Runner.cpp:164), then
    `Get(state, dt, status)` every cycle (Runner.cpp:214).
@@ -95,9 +97,18 @@ gone, `Get` is now trivially lock-free.
 ## What was removed (for orientation when reading old logs/commits)
 
 Gone in f64325c0 and earlier 2026-08-04 work, recoverable from git
-history: `ParsePoseTarget` (typed-line parsing), `PoseTargetStore` (the
-mutex-guarded shared mailbox), `RunPoseTargetInput` (the stdin poll/getline
-thread), the store plumbing inside `PoseTargetSource` (baseline sequence,
-store snapshot branch), and — earlier — the watched-target-file input.
-Runs recorded before the removal may reference these in their console
-transcripts.
+history: the original `ParsePoseTarget` (typed-line parsing),
+`PoseTargetStore` (the mutex-guarded shared mailbox), `RunPoseTargetInput`
+(the stdin poll/getline thread), the store plumbing inside
+`PoseTargetSource` (baseline sequence, store snapshot branch), and —
+earlier — the watched-target-file input. Runs recorded before the
+removal may reference these in their console transcripts.
+
+**Current (Stage 1.5, 2026-08-05):** `ParsePoseTarget`, the
+`PoseTargetMailbox` SPSC queue, and a stdin-style reader are all back,
+in a different shape — `RunPoseTargetInputFromFd` (unchanged tested
+core) plus a new `RunPoseTargetInputFromPipe` wrapper that reopens the
+named pipe `config::kTargetPipePath` on writer EOF instead of exiting.
+There is no bare `RunPoseTargetInput` (stdin-only, no-reopen) in the
+current source — see
+`../decisions/stage15-bridge-workflow.md`.
