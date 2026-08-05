@@ -229,7 +229,8 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
 //   ack_unchanged_j1..7, taskvel_j1..7, nullvel_j1..7,
 //   null_leak_mps, traj_activated, traj_rejected, traj_complete,
-//   traj_start_error_deg                                  (139 columns)
+//   traj_start_error_deg, joint_follow_stop,
+//   joint_follow_error_deg                                (141 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -249,7 +250,11 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // cancelling terms. Format 9 (2026-08-05) appends the joint-trajectory edges
 // — traj_activated/traj_rejected/traj_complete are 1 only on the single cycle
 // that accepted, refused, or finished a trajectory, and traj_start_error_deg
-// is the worst-joint splice distance carried by a rejection row.
+// is the worst-joint splice distance carried by a rejection row. It also
+// appends the joint tracking law's own following-error evidence:
+// joint_follow_error_deg is the worst joint's WRAPPED reference error every
+// tracking cycle, and joint_follow_stop is 1 on a row whose error passed
+// config::kTrajFollowingErrorStopDeg — the row that stopped the loop.
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -355,6 +360,9 @@ struct LoopLogSample {
     bool joint_traj_rejected = false;
     bool joint_traj_complete_edge = false;
     double joint_traj_start_error_deg = 0.0;
+    bool joint_following_error_stop = false;
+    double joint_following_error_deg = // NaN: this cycle ran no joint tracking
+        std::numeric_limits<double>::quiet_NaN();
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully

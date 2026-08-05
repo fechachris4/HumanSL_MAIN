@@ -83,6 +83,13 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
                                  : "pose_target");
     line("startup_hold",
          config::kUseJointTrajectorySource ? "measured_q" : "measured");
+    // The joint path's three settings: tracking gain, the activation splice
+    // guard, and the joint-space following-error stop.
+    line("kp_joint_tracking", FormatDouble(config::kKpJointTracking));
+    line("traj_start_tolerance_deg",
+         FormatDouble(config::kTrajStartToleranceDeg));
+    line("traj_following_error_stop_deg",
+         FormatDouble(config::kTrajFollowingErrorStopDeg));
     line("profile_max_speed_m_s", FormatDouble(config::kProfileMaxSpeedMps));
     line("profile_max_acceleration_m_s2",
          FormatDouble(config::kProfileMaxAccelerationMps2));

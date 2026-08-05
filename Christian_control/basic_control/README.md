@@ -132,10 +132,20 @@ What a run does, in order:
    measured state (q_command = q_measured) and captures the current pose as
    the hold pose, then sends one unchanged holding frame — the arm holds.
    Actuators stay in their default POSITION mode.
-4. (Cartesian fallback path, `kUseJointTrajectorySource = false`.) The
-   joint-trajectory default instead holds the measured takeover joint
-   position and follows each accepted trajectory to its final point.
+4. **Default path (`kUseJointTrajectorySource = true`).** The arm holds its
+   measured takeover joint position. Each `TRAJ_BEGIN … TRAJ_END` block on
+   the pipe is validated by the reading thread, and the follower activates
+   it only if its first point is within `kTrajStartToleranceDeg` of the
+   measured position on every joint — a plan that fails that splice guard is
+   dropped whole, never followed in part, and the rejection is printed and
+   logged. An activated trajectory is sampled with cubic Hermite
+   interpolation and tracked by the joint law; past its end the arm holds
+   the final point. A newer block replaces the running one, which is how
+   replanning works. The joint-space following-error stop
+   (`kTrajFollowingErrorStopDeg`) and the 45 deg/s joint-rate clip both
+   remain active throughout.
 
+   **Cartesian fallback path (`kUseJointTrajectorySource = false`).**
    The arm holds its measured takeover pose — there is no compiled
    terminal target; the terminal target IS the measured startup pose, so
    the arm's first profile is zero-distance and it simply stays put. The

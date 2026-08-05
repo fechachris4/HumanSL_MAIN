@@ -72,6 +72,8 @@ namespace
         s.joint_traj_rejected = status.joint_traj_rejected;
         s.joint_traj_complete_edge = status.joint_traj_complete_edge;
         s.joint_traj_start_error_deg = status.joint_traj_start_error_deg;
+        s.joint_following_error_stop = status.joint_following_error_stop;
+        s.joint_following_error_deg = status.joint_following_error_deg;
         s.command_frame_id = command_frame_id;
         s.feedback_frame_id = fb.frame_id();
         s.arm_state = fb.base().active_state();
@@ -399,22 +401,6 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     << " s (holding; Ctrl+C to abort)\n";
             }
 
-            // Joint-trajectory edges, on the same once-per-edge print path as
-            // the arrival notice above. A rejected plan is the failure the
-            // replanning loop must never suffer silently, so it prints the
-            // splice distance that failed the guard.
-            if (status.joint_traj_activated)
-                std::cout << "trajectory activated: " << status.joint_traj_points
-                    << " points, " << status.joint_traj_duration_s << " s\n";
-            if (status.joint_traj_rejected)
-                std::cout << "trajectory REJECTED: first point "
-                    << status.joint_traj_start_error_deg
-                    << " deg from the measured position (limit "
-                    << config::kTrajStartToleranceDeg
-                    << " deg); the previous reference keeps running\n";
-            if (status.joint_traj_complete_edge)
-                std::cout << "trajectory complete: holding the final point\n";
-
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
             // A pinned clamp is allowed indefinitely (no saturation stop):
@@ -523,6 +509,25 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 break;
             }
             log.push(sample);
+
+            // Joint-trajectory edges: one bounded line each, edge-triggered
+            // by the source. Printed here, in the slack after the exchange
+            // and the log push, for the same reason as the status line below
+            // — a print must never sit between this cycle's compute and its
+            // Send. A rejected plan is the failure the replanning loop must
+            // never suffer silently, so it names the splice distance that
+            // failed the guard.
+            if (status.joint_traj_activated)
+                std::cout << "trajectory activated: " << status.joint_traj_points
+                    << " points, " << status.joint_traj_duration_s << " s\n";
+            if (status.joint_traj_rejected)
+                std::cout << "trajectory REJECTED: first point "
+                    << status.joint_traj_start_error_deg
+                    << " deg from the measured position (limit "
+                    << config::kTrajStartToleranceDeg
+                    << " deg); the previous reference keeps running\n";
+            if (status.joint_traj_complete_edge)
+                std::cout << "trajectory complete: holding the final point\n";
 
             // Status line, in the slack after the exchange and the log push
             // so it never delays a Send. Same thread as the arrival notice;

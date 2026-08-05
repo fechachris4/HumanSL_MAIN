@@ -76,7 +76,11 @@ struct ControllerStatus {
     // following-error input the Cartesian command-vs-measured rule uses, so a
     // trip stops the loop with LoopStop::kFollowingError.
     bool joint_following_error_stop = false;
-    double joint_following_error_deg = 0.0;
+    // NaN on a cycle that ran no joint tracking (the NaN convention above):
+    // a pose cycle has no reference joint error, and logging 0.0 there would
+    // read as perfect tracking.
+    double joint_following_error_deg =
+        std::numeric_limits<double>::quiet_NaN();
 
     // MEASURED tool orientation, flange frame in the right-arm base frame.
     // Hamilton convention, hemisphere-fixed to w >= 0 so logs never jump

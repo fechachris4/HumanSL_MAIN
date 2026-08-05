@@ -200,6 +200,21 @@ void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
         break;
     case LoopStop::kFollowingError:
         {
+            // Two rules share this reason (StopPriority.h). The joint
+            // tracking gate compares the REFERENCE against the measured
+            // position, so the Cartesian command-vs-measured text below would
+            // name the wrong quantity and the wrong limit for it.
+            if (s.joint_following_error_stop)
+            {
+                std::cout << "loop stopped: joint following error at t=" << s.t_s
+                    << " s (cycle " << cycle << "): the worst joint is "
+                    << s.joint_following_error_deg
+                    << " deg from its trajectory reference (limit "
+                    << config::kTrajFollowingErrorStopDeg
+                    << ") — the arm stopped following the commanded"
+                       " trajectory\n";
+                break;
+            }
             int worst = 0;
             double worst_gap = 0.0;
             for (int i = 0; i < NUM_JOINTS; ++i)

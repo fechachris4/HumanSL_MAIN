@@ -423,6 +423,22 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     )
     add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
 
+    # The run-log CSV schema: header and row pinned to each other. Kortex is
+    # a link-time dependency of Hardware.cpp only; no robot is contacted.
+    add_executable(test_log_schema
+            tests/test_log_schema.cpp
+            src/Hardware.cpp
+    )
+    target_include_directories(test_log_schema PRIVATE
+            src
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+    )
+    target_link_libraries(test_log_schema
+            ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+            pthread
+    )
+    add_test(NAME log_schema COMMAND test_log_schema)
+
     # TrackingController's channel handling — needs the real model for the
     # hold pose's forward kinematics, but no robot.
     add_executable(test_controller

@@ -232,12 +232,16 @@ namespace config
     // healthy joint.
     inline constexpr bool kSkipStartupGates = false;
 
-    // true = the loop NEVER stops on following error. Read this next to
-    // kStopOnFault above: disabling either removes an independent automatic
-    // stop. Loss of low-level servoing, the software joint-boundary guard,
-    // and enabled non-finite/overrun counters remain automatic stops.
+    // true = the loop never stops on the CARTESIAN following-error rule
+    // (|command - measured| against kFollowingErrorLimitDeg). Read this next
+    // to kStopOnFault above: disabling either removes an independent
+    // automatic stop. Loss of low-level servoing, the software joint-boundary
+    // guard, and enabled non-finite/overrun counters remain automatic stops —
+    // and so does the joint tracking law's own gate on the wrapped reference
+    // error, kTrajFollowingErrorStopDeg, which this switch does NOT touch.
+    // Setting that threshold non-positive is the only way to disable it.
     // kFollowingErrorLimitDeg keeps its value for telemetry and the stop
-    // report; this switch removes only the following-error stop.
+    // report; this switch removes only the Cartesian stop.
     inline constexpr bool kDisableFollowingErrorStop = false;
 
     // Consecutive-cycle stop counters; N <= 0 disables one. Non-finite
