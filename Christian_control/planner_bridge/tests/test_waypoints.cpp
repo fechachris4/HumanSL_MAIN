@@ -1,10 +1,23 @@
+// Test assertions must never no-op under a Release (NDEBUG) configure.
+#undef NDEBUG
+
 #include <cassert>
 #include "Waypoints.h"
 #include "Targets.h"  // basic_control — ParsePoseTarget round-trip
+#include "Config.h"   // basic_control — pin ValidationLimitsDeg() against it
 
 int main(int argc, char** argv) {
     assert(argc == 2);
     const PlannerModel model = LoadPlannerModel(argv[1]);
+
+    // The bridge's validation table must never drift from the controller's
+    // real software stop (Config.h kJointSoftwareLimitDeg) — that stop, not
+    // the wider firmware warn limit, is what the controller actually
+    // enforces per-joint.
+    const auto& validation_limits = ValidationLimitsDeg();
+    for (int j = 0; j < 7; ++j)
+        assert(validation_limits[static_cast<std::size_t>(j)] ==
+               config::kJointSoftwareLimitDeg[static_cast<std::size_t>(j)]);
 
     // Straight-line joint path: q2 sweeps 0 -> 1 rad over 21 support states.
     std::vector<gtsam::Vector> path;
@@ -22,10 +35,17 @@ int main(int argc, char** argv) {
     Eigen::Matrix<double, 7, 1> q_last(path.back());
     assert((waypoints.back() - ToolPositionInBaseLink(model, q_last)).norm() < 1e-9);
 
-    // Limit violation: q4 at 150 deg exceeds the 145 deg warn limit.
+    // Limit violation: q4 at 150 deg exceeds the 145 deg software limit.
     auto bad = path;
     bad.back()(3) = 150.0 * M_PI / 180.0;
     assert(ValidateJointPath(bad).has_value());
+
+    // Limit violation: q2 at 127 deg exceeds the tighter 126.9 deg software
+    // stop (Table 39's 128.9 deg upper limit minus the 2 deg margin — the
+    // bound that actually binds for j2, below its 130 deg warn limit).
+    auto bad_j2 = path;
+    bad_j2.back()(1) = 127.0 * M_PI / 180.0;
+    assert(ValidateJointPath(bad_j2).has_value());
 
     // Every emitted line must be accepted verbatim by the controller parser.
     for (const auto& waypoint : waypoints) {
