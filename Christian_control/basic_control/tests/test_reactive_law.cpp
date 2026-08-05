@@ -21,6 +21,7 @@
 #include <thread>
 
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "Config.h"
@@ -564,6 +565,43 @@ namespace
         }
     }
 
+    void TestPipeInputSurvivesWriterReconnect()
+    {
+        const std::string pipe_path = "./test_target_pipe_tmp";
+        unlink(pipe_path.c_str());
+        Check(mkfifo(pipe_path.c_str(), 0600) == 0, "mkfifo succeeds");
+
+        PoseTargetMailbox mailbox;
+        std::atomic<bool> stop{false};
+        std::thread reader([&] {
+            RunPoseTargetInputFromPipe(mailbox, stop, pipe_path);
+        });
+
+        // Two independent writer sessions — the Stage 1 EOF failure mode.
+        for (int session = 0; session < 2; ++session) {
+            std::ofstream writer(pipe_path);   // blocks until reader has the pipe open
+            Check(static_cast<bool>(writer), "writer opens pipe");
+            writer << "0.1 0.2 0.3\n";
+        }                                       // close = EOF for the reader
+
+        // Both targets must arrive despite the intervening EOF.
+        Eigen::Vector3d seen[2];
+        int received = 0;
+        for (int attempt = 0; attempt < 200 && received < 2; ++attempt) {
+            if (const auto target = mailbox.TryDequeue())
+                seen[received++] = target->p_desired;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        Check(received == 2, "targets from both writer sessions arrive");
+
+        stop.store(true);
+        const auto join_start = std::chrono::steady_clock::now();
+        reader.join();
+        Check(std::chrono::steady_clock::now() - join_start
+                  < std::chrono::seconds(1), "reader joins promptly on stop");
+        unlink(pipe_path.c_str());
+    }
+
     void TestPoseTargetSource()
     {
         RobotState state;
@@ -739,6 +777,7 @@ int main()
     TestPoseTargetMailbox();
     TestPoseTargetMailboxConcurrentHandoff();
     TestPoseTargetInputHandlesPartialAndCompletePipeLines();
+    TestPipeInputSurvivesWriterReconnect();
     TestRotationFromRpy();
     TestPoseTargetSource();
     TestPoseTargetSourceStartsAtMeasuredPose();

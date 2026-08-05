@@ -77,6 +77,11 @@ namespace config
     static_assert(kTakeoverHoldDuration == kCyclePeriod * kTakeoverHoldCycles,
                   "takeover hold must be an exact number of cyclic periods");
 
+    // The named pipe the controller reads targets from. Created by Main at
+    // startup if missing. Writers (planner_bridge, echo) open/write/close per
+    // plan; the reader reopens after every EOF.
+    inline constexpr const char* kTargetPipePath = "/tmp/humansl_bridge_targets";
+
     // The terminal target in right-arm base_link, in METRES. This
     // controller's target contract is position-only: every target preserves
     // the orientation captured at takeover. The startup pose is measured at

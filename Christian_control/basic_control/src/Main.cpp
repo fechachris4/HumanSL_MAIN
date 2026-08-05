@@ -20,6 +20,9 @@
 #include <tuple>
 #include <vector>
 
+#include <sys/stat.h>
+#include <sys/types.h>
+
 #include <KDetailedException.h>
 
 #include "Actuation.h"
@@ -417,12 +420,26 @@ int main(int argc, char** argv)
                   << config::kFixedTargetM[2]
                   << " m — after holding the measured startup pose, "
                      "the arm profiles there; Ctrl+C to stop\n";
-        std::cout << "  type x y z (metres, base_link) to queue up to eight "
-                     "position-only targets; each uses the compiled Cartesian "
-                     "profile, then holds for 2 s; the takeover orientation holds\n";
+        std::cout << "  targets: write \"x y z\" lines to "
+                  << config::kTargetPipePath
+                  << " (planner_bridge does this; validation happens "
+                     "bridge-side)\n";
 
-        std::thread input_thread(RunPoseTargetInput, std::ref(pose_targets),
-                                 std::cref(g_stop));
+        struct stat pipe_stat{};
+        if (stat(config::kTargetPipePath, &pipe_stat) == 0) {
+            if (!S_ISFIFO(pipe_stat.st_mode)) {
+                std::cerr << "Error: " << config::kTargetPipePath
+                          << " exists and is not a FIFO — not starting\n";
+                return 1;
+            }
+        } else if (mkfifo(config::kTargetPipePath, 0600) != 0) {
+            std::cerr << "Error: cannot create target pipe "
+                      << config::kTargetPipePath << " — not starting\n";
+            return 1;
+        }
+        std::thread input_thread(RunPoseTargetInputFromPipe,
+                                 std::ref(pose_targets), std::cref(g_stop),
+                                 std::string(config::kTargetPipePath));
         InputThreadStopJoiner input_thread_joiner(input_thread, g_stop);
 
         // MOVES THE ARM: servoing mode is entered and restored inside the

@@ -51,13 +51,16 @@ private:
     alignas(64) std::atomic<std::uint64_t> write_index_{0};
 };
 
-// Thread body: reads stdin lines, validates and enqueues them. Terminal I/O
-// remains outside the control loop; polling lets teardown join promptly.
-void RunPoseTargetInput(PoseTargetMailbox& mailbox,
-                        const std::atomic<bool>& stop);
+// Reads target lines from a named pipe, surviving writer disconnects:
+// on EOF the pipe is reopened, so each bridge invocation may open, write,
+// and close independently. `stop` is the only exit. The fd-level loop is
+// the tested RunPoseTargetInputFromFd, unchanged.
+void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
+                                const std::atomic<bool>& stop,
+                                const std::string& pipe_path);
 
 // Same input loop over a borrowed POSIX file descriptor. Kept separate so the
-// stdin entry point stays simple and the partial-pipe teardown contract is
+// pipe entry point stays simple and the partial-pipe teardown contract is
 // testable without robot dependencies.
 void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
                               const std::atomic<bool>& stop, int input_fd);

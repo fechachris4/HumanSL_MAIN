@@ -9,8 +9,11 @@
 #include <poll.h>
 #include <stdexcept>
 #include <sstream>
+#include <thread>
 #include <utility>
 
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "Config.h"
@@ -125,9 +128,27 @@ std::optional<PoseTarget> PoseTargetMailbox::TryDequeue()
     return target;
 }
 
-void RunPoseTargetInput(PoseTargetMailbox& mailbox, const std::atomic<bool>& stop)
+void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
+                                const std::atomic<bool>& stop,
+                                const std::string& pipe_path)
 {
-    RunPoseTargetInputFromFd(mailbox, stop, STDIN_FILENO);
+    while (!stop.load(std::memory_order_relaxed)) {
+        // Non-blocking open: a blocking O_RDONLY open would wedge teardown
+        // until a writer appears. With no writer yet, poll below sees
+        // nothing and the FromFd loop idles at its own poll cadence.
+        const int fd = open(pipe_path.c_str(), O_RDONLY | O_NONBLOCK);
+        if (fd < 0) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(kInputPollTimeoutMs));
+            continue;
+        }
+        RunPoseTargetInputFromFd(mailbox, stop, fd);
+        close(fd);
+        // FromFd returned: stop (outer loop exits) or EOF (writer left) —
+        // brief pause so a vanished writer cannot spin this loop hot.
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(kInputPollTimeoutMs));
+    }
 }
 
 void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
