@@ -82,13 +82,10 @@ namespace config
     // plan; the reader reopens after every EOF.
     inline constexpr const char* kTargetPipePath = "/tmp/humansl_bridge_targets";
 
-    // The terminal target in right-arm base_link, in METRES. This
-    // controller's target contract is position-only: every target preserves
-    // the orientation captured at takeover. The startup pose is measured at
-    // runtime and is not compiled here.
-    inline constexpr std::array<double, 3> kFixedTargetM = {
-        0.083, -0.02, 0.7225
-    };
+    // This controller's target contract is position-only: every target
+    // preserves the orientation captured at takeover. The startup pose is
+    // measured at runtime; the arm holds it until the first validated pipe
+    // waypoint arrives — there is no compiled terminal target.
     // Retained for the existing CSV key. It is a compile-time invariant, not
     // an operator-selectable orientation mode.
     inline constexpr bool kFixedTargetUseRpy = false;

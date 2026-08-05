@@ -76,9 +76,7 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("orientation_enabled", config::kOrientationEnabled ? "true" : "false");
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");
-    line("fixed_target_m", FormatDouble(config::kFixedTargetM[0]) + " " +
-                               FormatDouble(config::kFixedTargetM[1]) + " " +
-                               FormatDouble(config::kFixedTargetM[2]));
+    line("startup_hold", "measured");
     line("profile_max_speed_m_s", FormatDouble(config::kProfileMaxSpeedMps));
     line("profile_max_acceleration_m_s2",
          FormatDouble(config::kProfileMaxAccelerationMps2));
@@ -398,28 +396,21 @@ int main(int argc, char** argv)
         std::cout << "current startup pose: " << ee_now.position.x() << " "
                   << ee_now.position.y() << " " << ee_now.position.z()
                   << " m in " << config::kRightBaseFrame
-                  << "; takeover will hold it before moving to the terminal target\n";
+                  << "; the arm will hold here\n";
+        // The terminal target IS the measured startup pose: the arm holds
+        // where it woke up until the first validated pipe waypoint arrives.
         PoseTarget target;
-        target.p_desired = Eigen::Vector3d(config::kFixedTargetM[0],
-                                           config::kFixedTargetM[1],
-                                           config::kFixedTargetM[2]);
-        // All targets, including the compiled first target, are position
-        // only in base_link and preserve the orientation captured at
-        // takeover.
+        target.p_desired = ee_now.position;
+        // All targets, including this startup hold, are position only in
+        // base_link and preserve the orientation captured at takeover.
         PoseTargetMailbox pose_targets;
         PoseTargetSource reference(ee_now.position, target, pose_targets);
         PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
-        // The arm holds the measured startup pose during takeover, then
-        // follows the bounded profile to the terminal target. Stdin targets
-        // may queue immediately, but each waits for an arrival edge before
-        // activation.
-        std::cout << "TERMINAL TARGET (Config.h kFixedTargetM): "
-                  << config::kFixedTargetM[0] << " "
-                  << config::kFixedTargetM[1] << " "
-                  << config::kFixedTargetM[2]
-                  << " m — after holding the measured startup pose, "
-                     "the arm profiles there; Ctrl+C to stop\n";
+        // The arm holds the measured startup pose. Stdin targets may queue
+        // immediately, but each waits for an arrival edge before activation.
+        std::cout << "HOLD AT START: the arm holds the measured startup "
+                     "pose until the first pipe waypoint; Ctrl+C to stop\n";
         std::cout << "  targets: write \"x y z\" lines to "
                   << config::kTargetPipePath
                   << " (planner_bridge does this; validation happens "

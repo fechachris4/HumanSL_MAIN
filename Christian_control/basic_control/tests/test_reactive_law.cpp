@@ -418,13 +418,6 @@ namespace
               "any finite target is accepted without a reach sphere");
         Check(!ParsePoseTarget("inf 0.1 0.3", error).has_value(),
               "infinite coordinate is rejected");
-        std::ostringstream compiled_target_line;
-        compiled_target_line << std::setprecision(std::numeric_limits<double>::max_digits10)
-                             << config::kFixedTargetM[0] << ' '
-                             << config::kFixedTargetM[1] << ' '
-                             << config::kFixedTargetM[2];
-        Check(ParsePoseTarget(compiled_target_line.str(), error).has_value(),
-              "the compiled terminal target remains accepted");
     }
 
     PoseTarget PositionTarget(double x, double y, double z)
