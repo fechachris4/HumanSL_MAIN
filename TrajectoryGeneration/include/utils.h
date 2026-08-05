@@ -180,11 +180,7 @@ DHParameters createDHParams(const std::string& yaml_path);
 
 std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_path);
 
-gtsam::Matrix4 createDHTransform(double a, double alpha, double d, double theta);
-
-gtsam::Pose3 computeBaseToEE(const DHParameters& dh, const gtsam::Vector& joint_angles);
-
-gtsam::Pose3 forwardKinematics(const DHParameters& dh, 
+gtsam::Pose3 forwardKinematics(const DHParameters& dh,
                                const gtsam::Vector& joint_angles, 
                                const gtsam::Pose3& base_pose_in_world);
                                

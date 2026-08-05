@@ -233,7 +233,6 @@ target_link_options(print_end_effector_pose PRIVATE
 #     feedback snapshot. Kortex + Pinocchio, no motion. ---
 add_executable(compare_end_effector_pose
         tools/compare_end_effector_pose.cpp
-        tools/AnalyticalKinematics.cpp
         src/Kinematics.cpp
         src/Hardware.cpp
         ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
@@ -466,36 +465,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             -Wl,-z,lazy
     )
     add_test(NAME controller COMMAND test_controller)
-
-    # Closed-form FK cross-check against the Pinocchio path above. Links
-    # Pinocchio too (needed for the reference side of the comparison), but
-    # AnalyticalKinematics.cpp itself has no such dependency.
-    add_executable(test_analytical_kinematics
-            tests/test_analytical_kinematics.cpp
-            tools/AnalyticalKinematics.cpp
-            src/Kinematics.cpp
-            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
-    )
-    target_include_directories(test_analytical_kinematics PRIVATE
-            src
-            tools
-            ${HUMANSL_ROOT}/third_party/include
-            ${HUMANSL_ROOT}/third_party/include/eigen3
-            ${HUMANSL_ROOT}/TrajectoryExecution/include
-    )
-    target_link_libraries(test_analytical_kinematics
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-            pthread
-    )
-    set_target_properties(test_analytical_kinematics PROPERTIES
-            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-    )
-    target_link_options(test_analytical_kinematics PRIVATE
-            -Wl,--allow-shlib-undefined
-            -Wl,-z,lazy
-    )
-    add_test(NAME analytical_kinematics COMMAND test_analytical_kinematics)
 
 endif ()
 

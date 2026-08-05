@@ -52,6 +52,15 @@ chosen for the interface. The bridge always loads
 `config/dh_params_tool.yaml` by default (`BridgeMain.cpp`
 `DefaultDhPath()`), never the untouched planner original.
 
+> **Superseded (2026-08-05, later the same day):** the hand-authored DH
+> YAMLs described above no longer exist. `dh_params_tool.yaml` is now
+> GENERATED from `GEN3_dual_mounted.urdf` at build time
+> (`planner_bridge/tools/generate_dh_params.cpp`), and the flange-targeted
+> planner original plus root `config/dh_params.yaml` were deleted. See
+> `generated-dh-params.md`. The tool-frame *decision* recorded here still
+> stands — the generator derives d7 to the same `ConfiguredTool_Link`
+> frame; only the maintenance mechanism changed.
+
 ## Waypoint transport: stdin FIFO, and its Stage 1 limitation
 
 **Superseded 2026-08-05 by `stage15-bridge-workflow.md`.** Everything in

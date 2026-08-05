@@ -1,28 +1,24 @@
 //
 // compare_end_effector_pose — READ-ONLY diagnostic: on one cyclic feedback
-// snapshot, print the end-effector pose three ways side by side —
+// snapshot, print the end-effector pose two ways side by side —
 //
 //   1. firmware   : fb.base().tool_pose_* — the same pose the Kinova web app
 //                   displays, computed on-device from its own configured
 //                   Tool Frame (Kortex ControlConfig ToolConfiguration).
 //   2. Pinocchio  : this repo's URDF forward kinematics to
 //                   "EndEffector_Link", via DualArmKinematics.
-//   3. analytical : AnalyticalKinematics's closed-form chain — same URDF
-//                   numbers, independent code path, no Pinocchio.
 //
-// (2) and (3) agree with each other by test_analytical_kinematics
-// (hardware-free). So if this tool shows them agreeing with each other but
-// NOT with (1), the discrepancy is not a coding bug in either FK — it is
-// something the static URDF cannot know about (most likely a configured
-// Tool Frame offset on the physical robot). If they disagree with each
-// other too, that points at a genuine bug in one of the two FK paths.
+// These are two independent implementations — firmware computes its pose
+// on-device from its own Tool Frame config, unrelated to this codebase's
+// Pinocchio/URDF path. If they disagree, the discrepancy is something the
+// static URDF cannot know about (most likely a configured Tool Frame offset
+// on the physical robot), not necessarily a coding bug.
 //
 // No motion, no writes, no servoing change.
 //
 //   ./compare_end_effector_pose
 //
 
-#include "AnalyticalKinematics.h"
 #include "Config.h"
 #include "Dynamics.h"
 #include "Hardware.h"
@@ -58,10 +54,6 @@ int main()
         const PoseJacobian ee = model.RightPoseAndJacobian(q_rad, workspace);
         const Eigen::Vector3d zyx = ee.rotation.eulerAngles(2, 1, 0);
 
-        const Eigen::Isometry3d analytical = AnalyticalForwardKinematics(q_rad);
-        const Eigen::Vector3d analytical_zyx =
-            analytical.rotation().eulerAngles(2, 1, 0);
-
         const double fw_x = fb.base().tool_pose_x();
         const double fw_y = fb.base().tool_pose_y();
         const double fw_z = fb.base().tool_pose_z();
@@ -84,33 +76,12 @@ int main()
                   << "  orientation rpy (Z*Y*X, rad): " << zyx.z() << " "
                   << zyx.y() << " " << zyx.x() << "\n\n";
 
-        std::cout << "analytical FK (AnalyticalKinematics.cpp), "
-                  << config::kRightBaseFrame << " frame:\n"
-                  << "  position xyz: " << analytical.translation().x() << " "
-                  << analytical.translation().y() << " "
-                  << analytical.translation().z() << " (m)\n"
-                  << "  orientation rpy (Z*Y*X, rad): " << analytical_zyx.z()
-                  << " " << analytical_zyx.y() << " " << analytical_zyx.x()
-                  << "\n\n";
-
         const Eigen::Vector3d delta_pinocchio(fw_x - ee.position.x(),
                                               fw_y - ee.position.y(),
                                               fw_z - ee.position.z());
-        const Eigen::Vector3d delta_analytical(
-            fw_x - analytical.translation().x(),
-            fw_y - analytical.translation().y(),
-            fw_z - analytical.translation().z());
-        const Eigen::Vector3d delta_fk_paths(
-            ee.position - analytical.translation());
         std::cout << "position delta firmware - Pinocchio:  "
                   << delta_pinocchio.transpose()
                   << "  magnitude " << delta_pinocchio.norm() << " m\n"
-                  << "position delta firmware - analytical: "
-                  << delta_analytical.transpose()
-                  << "  magnitude " << delta_analytical.norm() << " m\n"
-                  << "position delta Pinocchio - analytical: "
-                  << delta_fk_paths.transpose()
-                  << "  magnitude " << delta_fk_paths.norm() << " m\n"
                   << std::defaultfloat;
         return 0;
     }

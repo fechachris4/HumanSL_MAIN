@@ -31,7 +31,6 @@ HumanSL_MAIN-master/
 |
 ├── config/
 │   ├── GEN3_With_GRIPPER_DYNAMICS.urdf   # Kinova Gen3 + gripper URDF for Pinocchio dynamics
-│   ├── dh_params.yaml                    # DH parameters for FK/IK
 │   ├── joint_limits.yaml                 # Position & velocity limits per joint
 │   ├── parameters.yaml                   # High-level trajectory planning parameters
 |   └── task_parameters.conf  # All tunable task parameters

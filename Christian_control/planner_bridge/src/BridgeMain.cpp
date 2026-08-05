@@ -55,9 +55,10 @@ constexpr char kUsageText[] =
     "                         when neither --state-csv nor --start-deg is\n"
     "                         given. Default: <repo>/runs resolved\n"
     "                         relative to the executable's directory.\n"
-    "  --dh PATH               DH/tool parameters YAML. Default:\n"
-    "                         config/dh_params_tool.yaml resolved\n"
-    "                         relative to the executable's directory.\n"
+    "  --dh PATH               DH/tool parameters YAML. Default: the\n"
+    "                         build-generated config/dh_params_tool.yaml\n"
+    "                         beside the executable (derived from the URDF\n"
+    "                         at build time — do not hand-edit).\n"
     "  --joint-limits PATH    Joint limits YAML. Default:\n"
     "                         TrajectoryGeneration/config/joint_limits.yaml\n"
     "                         resolved relative to the executable's\n"
@@ -121,10 +122,10 @@ std::string DefaultGoalPath() {
 }
 
 std::string DefaultDhPath() {
-    // config/ lives beside the CMakeLists.txt in planner_bridge/, one
-    // level above the build/ directory the executable runs from — not
-    // beside the executable itself.
-    return ExecutableDirectory() + "/../config/dh_params_tool.yaml";
+    // The DH YAML is GENERATED from the URDF at build time into the build
+    // tree's config/ directory, beside the executable (see
+    // generate_dh_params in CMakeLists.txt). There is no committed copy.
+    return ExecutableDirectory() + "/config/dh_params_tool.yaml";
 }
 
 std::string DefaultJointLimitsPath() {

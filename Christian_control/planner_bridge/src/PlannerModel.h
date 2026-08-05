@@ -16,7 +16,8 @@ struct PlannerModel {
     std::unique_ptr<gpmp2::ArmModel> arm_model;  // collision-sphere model
 };
 
-// yaml_path: config/dh_params_tool.yaml (d7 tool-matched, -0.2874).
+// yaml_path: the build-generated dh_params_tool.yaml (derived from the
+// URDF by generate_dh_params; d7 carries the configured-tool offset).
 PlannerModel LoadPlannerModel(const std::string& yaml_path);
 
 // Tool position in base_link, metres. q_rad: Kortex actuator order.

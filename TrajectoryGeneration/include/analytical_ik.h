@@ -9,22 +9,17 @@
 #include <random>
 #include <chrono>
 
+#include "Config.h"
+#include "PinocchioKinematicsAdapter.h"
+
 namespace analytical_ik {
 
 
-// Kinova Gen3 DH parameters and geometry
+// Kinova Gen3 joint limits. FK/Jacobian used to come from the DH table that
+// lived here too; that's gone now — forwardKinematics()/computeJacobian()
+// evaluate Pinocchio against the canonical URDF instead (see
+// PinocchioKinematicsAdapter.h).
 struct KinovaGen3Params {
-    // DH parameters: [a, alpha, d, theta_offset]
-    static constexpr double DH_PARAMS[7][4] = {
-        {0.0,       M_PI/2,  -0.2848,      0},      // Joint 0
-        {0.0,       M_PI/2,  -0.0118,      M_PI},   // Joint 1
-        {0.0,       M_PI/2,  -0.4208,      M_PI},   // Joint 2
-        {0.0,       M_PI/2,  -0.0128,      M_PI},   // Joint 3
-        {0.0,       M_PI/2,  -0.3143,      M_PI},   // Joint 4
-        {0.0,       M_PI/2,   0.0,         M_PI},   // Joint 5
-        {0.0,       M_PI,    -0.2574,      M_PI}    // Joint 6
-    };
-    
     // Joint limits (radians) - using original limits to avoid issues
     static constexpr double JOINT_LIMITS_LOWER[7] = {-1e20, -2.2515, -1e20, -2.5807, -1e20, -2.0996, -1e20};
     static constexpr double JOINT_LIMITS_UPPER[7] = {1e20, 2.2515, 1e20, 2.5807, 1e20, 2.0996, 1e20};
@@ -62,9 +57,10 @@ private:
     static double computeQualityScore(const Eigen::Vector<double, 7>& joints, 
                                     const Eigen::Vector<double, 7>& seed);
     
-    // Forward kinematics and Jacobian
-    static Eigen::Matrix4d dhTransform(double a, double alpha, double d, double theta);
-    static Eigen::Matrix4d forwardKinematics(const Eigen::Vector<double, 7>& joints, 
+    // Forward kinematics and Jacobian — Pinocchio against the canonical
+    // URDF (config::kRightEndEffectorFrame), composed with base_transform
+    // exactly as the DH chain used to be (see PinocchioKinematicsAdapter.h).
+    static Eigen::Matrix4d forwardKinematics(const Eigen::Vector<double, 7>& joints,
                                            const Eigen::Matrix4d& base_transform);
     static Eigen::Matrix<double, 6, 7> computeJacobian(const Eigen::Vector<double, 7>& joints,
                                                       const Eigen::Matrix4d& base_transform);
@@ -146,70 +142,44 @@ inline double AnalyticalIKSolver::computeQualityScore(const Eigen::Vector<double
     return distance + 10.0 * penalty;
 }
 
-inline Eigen::Matrix4d AnalyticalIKSolver::dhTransform(double a, double alpha, double d, double theta) {
-    double ct = cos(theta), st = sin(theta);
-    double ca = cos(alpha), sa = sin(alpha);
-    
-    Eigen::Matrix4d T;
-    T << ct,    -st*ca,  st*sa,   a*ct,
-         st,     ct*ca, -ct*sa,   a*st,
-         0,      sa,     ca,      d,
-         0,      0,      0,       1;
-    return T;
+namespace detail {
+
+// base_transform * DhRootInBaseLink()^-1 * base_link_M_tool(joints) — the
+// same frame-composition identity utils.cpp's forwardKinematics uses, so
+// this reduces to exactly what the DH chain used to compute for any
+// base_transform, not just the live call site's DhBaseInBaseLink().
+inline Eigen::Isometry3d ToolPoseInBaseTransform(const Eigen::Vector<double, 7>& joints,
+                                                 const Eigen::Matrix4d& base_transform) {
+    const auto pose_jacobian = pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+        joints, config::kRightEndEffectorFrame);
+    Eigen::Isometry3d base_link_M_tool = Eigen::Isometry3d::Identity();
+    base_link_M_tool.linear() = pose_jacobian.rotation;
+    base_link_M_tool.translation() = pose_jacobian.position;
+    return Eigen::Isometry3d(base_transform) *
+           pinocchio_kinematics_adapter::DhRootInBaseLink().inverse() * base_link_M_tool;
 }
 
-inline Eigen::Matrix4d AnalyticalIKSolver::forwardKinematics(const Eigen::Vector<double, 7>& joints, 
+} // namespace detail
+
+inline Eigen::Matrix4d AnalyticalIKSolver::forwardKinematics(const Eigen::Vector<double, 7>& joints,
                                                            const Eigen::Matrix4d& base_transform) {
-    Eigen::Matrix4d T = base_transform;
-    
-    for (int i = 0; i < 7; i++) {
-        double theta = joints(i) + KinovaGen3Params::DH_PARAMS[i][3];
-        T *= dhTransform(KinovaGen3Params::DH_PARAMS[i][0],  // a
-                        KinovaGen3Params::DH_PARAMS[i][1],   // alpha
-                        KinovaGen3Params::DH_PARAMS[i][2],   // d
-                        theta);                              // theta
-    }
-    
-    return T;
+    return detail::ToolPoseInBaseTransform(joints, base_transform).matrix();
 }
 
 inline Eigen::Matrix<double, 6, 7> AnalyticalIKSolver::computeJacobian(const Eigen::Vector<double, 7>& joints,
                                                                       const Eigen::Matrix4d& base_transform) {
+    const auto pose_jacobian = pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+        joints, config::kRightEndEffectorFrame);
+    // Rotate base_link-axes columns into base_transform's axes. Both frames
+    // are rigidly fixed to each other (compile-time-constant relative
+    // orientation), so a point's linear/angular velocity transforms by pure
+    // rotation — no translational (adjoint) term applies.
+    const Eigen::Matrix3d base_transform_R_base_link =
+        base_transform.block<3, 3>(0, 0) *
+        pinocchio_kinematics_adapter::DhRootInBaseLink().rotation().transpose();
     Eigen::Matrix<double, 6, 7> J;
-    
-    // Compute forward kinematics for each joint to get joint positions and axes
-    std::vector<Eigen::Matrix4d> transforms(8); // Base + 7 joints
-    transforms[0] = base_transform;
-    
-    for (int i = 0; i < 7; i++) {
-        double theta = joints(i) + KinovaGen3Params::DH_PARAMS[i][3];
-        transforms[i+1] = transforms[i] * dhTransform(KinovaGen3Params::DH_PARAMS[i][0],
-                                                     KinovaGen3Params::DH_PARAMS[i][1],
-                                                     KinovaGen3Params::DH_PARAMS[i][2],
-                                                     theta);
-    }
-    
-    // End-effector position
-    Eigen::Vector3d pe = transforms[7].block<3,1>(0,3);
-    
-    // Compute Jacobian columns
-    for (int i = 0; i < 7; i++) {
-        // Joint axis (z-axis of joint i frame)
-        Eigen::Vector3d zi = transforms[i].block<3,1>(0,2);
-        
-        // Joint position
-        Eigen::Vector3d pi = transforms[i].block<3,1>(0,3);
-        
-        // Linear velocity contribution (for revolute joints)
-        Eigen::Vector3d linear_vel = zi.cross(pe - pi);
-        
-        // Angular velocity contribution
-        Eigen::Vector3d angular_vel = zi;
-        
-        // Fill Jacobian column
-        J.col(i) << linear_vel, angular_vel;
-    }
-    
+    J.topRows<3>() = base_transform_R_base_link * pose_jacobian.jacobian.topRows<3>();
+    J.bottomRows<3>() = base_transform_R_base_link * pose_jacobian.jacobian.bottomRows<3>();
     return J;
 }
 

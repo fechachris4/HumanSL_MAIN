@@ -164,10 +164,13 @@ argument built through the 2026-08-04 hardening commits.
 
 Before Stage 1 was planned, the planner's kinematic model
 (`TrajectoryGeneration/config/dh_params.yaml`, standard DH per
-`utils.cpp` `createDHTransform`) was compared against the controller's
-model (URDF chain, verbatim from `tools/AnalyticalKinematics.cpp`, itself
-verified against the controller's Pinocchio FK) over 501 joint
-configurations (zero + 500 uniform random within limits, seed 42):
+`utils.cpp` `createDHTransform` — both since removed: the DH YAML is now
+generated from the URDF at build time and all FK goes through Pinocchio;
+see `docs/decisions/generated-dh-params.md`) was compared against the
+controller's model (URDF chain, verbatim from the since-removed
+`tools/AnalyticalKinematics.cpp`, itself verified against the controller's
+Pinocchio FK) over 501 joint configurations (zero + 500 uniform random
+within limits, seed 42):
 
 - **Flange to flange: 0.36 mm mean / 0.49 mm max** position disagreement
   after removing one fixed base-frame rotation. The residual is URDF

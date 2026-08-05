@@ -7,9 +7,9 @@
 // (e.g. for a mounted gripper or a manually calibrated TCP).
 //
 // Purpose: find out directly whether a nonzero Tool Frame explains the gap
-// between the dashboard's tool_pose and this repo's FK (Pinocchio and
-// AnalyticalKinematics), which both compute the pose at the URDF's default
-// flange offset instead. No motion, no writes, no servoing change.
+// between the dashboard's tool_pose and this repo's Pinocchio FK, which
+// computes the pose at the URDF's modeled tool offset instead. No motion,
+// no writes, no servoing change.
 //
 //   ./print_tool_configuration
 //

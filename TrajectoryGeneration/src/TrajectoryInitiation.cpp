@@ -49,18 +49,19 @@ bool InitializeTrajectory::solveQuik(const gtsam::Pose3& target_pose,
                     int max_attempts,
                     double guess_range) {
     // === QUIK SOLVER  ===
-    // Define manipulator (same as in quik_solveIK.h)
+    // Define manipulator — DH parameters read from dh_params_ (the same
+    // config/dh_params_tool.yaml PlanSolver.cpp loads), not a second
+    // hand-typed copy.
+    Eigen::Matrix<double, 7, 4> dh_matrix;
+    for (int i = 0; i < 7; ++i) {
+        dh_matrix(i, 0) = dh_params_.a(i);
+        dh_matrix(i, 1) = dh_params_.alpha(i);
+        dh_matrix(i, 2) = dh_params_.d(i);
+        dh_matrix(i, 3) = dh_params_.theta(i);
+    }
     auto Kinova_Gen3 = std::make_shared<quik::Robot<7>>(
-        (Eigen::Matrix<double, 7, 4>() << 
-            0.0,       M_PI/2,  -0.2848,      0,
-            0.0,       M_PI/2,  -0.0118,      M_PI,
-            0.0,       M_PI/2,  -0.4208,      M_PI,
-            0.0,       M_PI/2,  -0.0128,      M_PI,
-            0.0,       M_PI/2,  -0.3143,      M_PI,
-            0.0,       M_PI/2,   0.0,         M_PI,
-            0.0,       M_PI,    -0.2574,      M_PI).finished(),
-                        
-        (Eigen::Vector<quik::JOINTTYPE_t,7>() << 
+        dh_matrix,
+        (Eigen::Vector<quik::JOINTTYPE_t,7>() <<
             quik::JOINT_REVOLUTE, quik::JOINT_REVOLUTE, quik::JOINT_REVOLUTE, 
             quik::JOINT_REVOLUTE, quik::JOINT_REVOLUTE, quik::JOINT_REVOLUTE, 
             quik::JOINT_REVOLUTE

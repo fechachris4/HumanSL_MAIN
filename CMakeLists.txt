@@ -161,15 +161,8 @@ configure_file(
     COPYONLY
 )
 
-configure_file(
-    ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params.yaml
-    ${CMAKE_CURRENT_BINARY_DIR}/config/dh_params.yaml
-    COPYONLY
-)
-
 # add executables using function macro
 add_project_executable(main main.cpp)
 
-# add_project_executable(BaseFrameStandAlone BaseFrameStandAlone.cpp)
 add_project_executable(test_vicon test_vicon.cpp)
 

@@ -1,6 +1,7 @@
 #include "utils.h"
 #include <tuple>
-#include "Jacobian.h"
+#include "Config.h"
+#include "PinocchioKinematicsAdapter.h"
 
 std::tuple<Eigen::VectorXd, Eigen::VectorXd, Eigen::VectorXd> pop_front(JointTrajectory& trajectory) {
     if (trajectory.pos.empty() || trajectory.vel.empty() || trajectory.acc.empty()) {
@@ -281,85 +282,55 @@ DHParameters createDHParams(const std::string& yaml_path) {
     return dh_params;
 }
 
-// Helper function to create DH transformation matrix
-gtsam::Matrix4 createDHTransform(double a, double alpha, double d, double theta) {
-    gtsam::Matrix4 T = gtsam::Matrix4::Identity();
-    
-    double cos_theta = cos(theta);
-    double sin_theta = sin(theta);
-    double cos_alpha = cos(alpha);
-    double sin_alpha = sin(alpha);
-    
-    // Standard DH transformation: Rot_z(theta) * Trans_z(d) * Trans_x(a) * Rot_x(alpha)
-    T(0, 0) = cos_theta;
-    T(0, 1) = -sin_theta * cos_alpha;
-    T(0, 2) = sin_theta * sin_alpha;
-    T(0, 3) = a * cos_theta;
-    
-    T(1, 0) = sin_theta;
-    T(1, 1) = cos_theta * cos_alpha;
-    T(1, 2) = -cos_theta * sin_alpha;
-    T(1, 3) = a * sin_theta;
-    
-    T(2, 0) = 0;
-    T(2, 1) = sin_alpha;
-    T(2, 2) = cos_alpha;
-    T(2, 3) = d;
-    
-    T(3, 0) = 0;
-    T(3, 1) = 0;
-    T(3, 2) = 0;
-    T(3, 3) = 1;
-    
-    return T;
+namespace {
+
+Eigen::Isometry3d ToEigenIsometry(const gtsam::Pose3& pose) {
+    Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
+    transform.linear() = pose.rotation().matrix();
+    transform.translation() = pose.translation();
+    return transform;
 }
 
-// Helper function to compute forward kinematics from base to end effector
-gtsam::Pose3 computeBaseToEE(const DHParameters& dh, const gtsam::Vector& joint_angles) {
-    // Start with identity transformation
-    gtsam::Pose3 T_base_to_ee = gtsam::Pose3::Identity();
-    
-    // Chain all DH transformations from base to end effector
-    for (int i = 0; i < 7; i++) {
-        // Actual theta = theta_offset + joint_angle
-        double theta_i = dh.theta(i) + joint_angles(i);
-        
-        // Create DH transformation for joint i
-        gtsam::Matrix4 T_i = createDHTransform(dh.a(i), dh.alpha(i), dh.d(i), theta_i);
-        gtsam::Pose3 pose_i(T_i);
-        
-        // Compose with previous transformations
-        T_base_to_ee = T_base_to_ee * pose_i;
-    }
-    
-    return T_base_to_ee;
+gtsam::Pose3 ToGtsamPose(const Eigen::Isometry3d& transform) {
+    return gtsam::Pose3(gtsam::Rot3(transform.rotation()), gtsam::Point3(transform.translation()));
 }
 
+// DH-root frame to tool: DhRootInBaseLink()^-1 * base_link_M_tool(joints),
+// via Pinocchio/URDF. The DH-root-to-tool transform every DH chain in this
+// file used to compute directly; now computed through the canonical URDF
+// instead (see PinocchioKinematicsAdapter.h for why base_link_M_tool has
+// to be composed with DhRootInBaseLink() rather than used directly).
+Eigen::Isometry3d DhRootToTool(const gtsam::Vector& joint_angles) {
+    Eigen::Matrix<double, 7, 1> q;
+    for (int i = 0; i < 7; ++i) q(i) = joint_angles(i);
+    const auto pose_jacobian = pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+        q, config::kRightEndEffectorFrame);
+    Eigen::Isometry3d base_link_M_tool = Eigen::Isometry3d::Identity();
+    base_link_M_tool.linear() = pose_jacobian.rotation;
+    base_link_M_tool.translation() = pose_jacobian.position;
+    return pinocchio_kinematics_adapter::DhRootInBaseLink().inverse() * base_link_M_tool;
+}
 
+} // namespace
 
-// Forward kinematics: base_pose_in_world * T_base_to_ee -> ee_pose_in_world
-gtsam::Pose3 forwardKinematics(const DHParameters& dh, 
-                               const gtsam::Vector& joint_angles, 
+// Forward kinematics: base_pose_in_world * T_base_to_ee -> ee_pose_in_world.
+// T_base_to_ee now comes from Pinocchio against the canonical URDF
+// (config::kRightEndEffectorFrame) instead of a hand-rolled DH chain; dh is
+// unused but kept in the signature so every existing caller (PlannerModel.cpp,
+// TrajectoryInitiation.cpp) needs no changes.
+gtsam::Pose3 forwardKinematics(const DHParameters& dh,
+                               const gtsam::Vector& joint_angles,
                                const gtsam::Pose3& base_pose_in_world) {
-    // Compute transformation from base to end effector
-    gtsam::Pose3 T_base_to_ee = computeBaseToEE(dh, joint_angles);
-    
-    // Transform to world frame: T_world_to_ee = T_world_to_base * T_base_to_ee
-    return base_pose_in_world * T_base_to_ee;
+    (void)dh;
+    return ToGtsamPose(ToEigenIsometry(base_pose_in_world) * DhRootToTool(joint_angles));
 }
 
-// Inverse kinematics: ee_pose_in_world * inverse(T_base_to_ee) -> base_pose_in_world
-gtsam::Pose3 inverseForwardKinematics(const DHParameters& dh, 
-                              const gtsam::Vector& joint_angles, 
+// Inverse kinematics: ee_pose_in_world * inverse(T_base_to_ee) -> base_pose_in_world.
+gtsam::Pose3 inverseForwardKinematics(const DHParameters& dh,
+                              const gtsam::Vector& joint_angles,
                               const gtsam::Pose3& ee_pose_in_world) {
-    // Compute transformation from base to end effector
-    gtsam::Pose3 T_base_to_ee = computeBaseToEE(dh, joint_angles);
-    
-    // Solve for base pose: T_world_to_base = T_world_to_ee * T_ee_to_base
-    // where T_ee_to_base = inverse(T_base_to_ee)
-    gtsam::Pose3 result = ee_pose_in_world * T_base_to_ee.inverse();
-    
-    return result;
+    (void)dh;
+    return ToGtsamPose(ToEigenIsometry(ee_pose_in_world) * DhRootToTool(joint_angles).inverse());
 }
 
 std::vector<double> shiftAngle(std::vector<double>& q_cur) {
@@ -459,23 +430,25 @@ std::tuple<Eigen::VectorXd, Eigen::VectorXd, Eigen::VectorXd> world2base(
 
 
 ManipulabilityEllipsoid computeManipulabilityEllipsoid(const Eigen::Vector<double,7>& config, const gtsam::Pose3& base_pose_world) {
-    // Convert Eigen::Vector<double,7> to VectorXd for jaco_m function
-    Eigen::VectorXd q(7);
-    for(int i = 0; i < 7; i++) {
-        q(i) = config(i);
-    }
+    // Jacobian in base_link axes, via Pinocchio/URDF (::config:: — qualified
+    // because this function's own parameter is named "config").
+    const auto pose_jacobian = pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+        config, ::config::kRightEndEffectorFrame);
 
-    // Compute Jacobian matrix using the jaco_m function (in base frame)
-    Eigen::MatrixXd J = Jacobian::jaco_m(q);
-
-    // Extract linear velocity part (top 3 rows)
-    Eigen::Matrix3d J_linear = J.topRows(3).cast<double>();
+    // Extract linear velocity part (top 3 rows, one column per joint), then
+    // rotate base_link axes -> DH-root axes: base_pose_world is the DH-root
+    // pose in world (PlannerModel.base_pose convention), so the world
+    // rotation below expects DH-root-axes columns — same composition as
+    // analytical_ik.h's computeJacobian.
+    Eigen::Matrix<double, 3, 7> J_linear =
+        pinocchio_kinematics_adapter::DhRootInBaseLink().rotation().transpose() *
+        pose_jacobian.jacobian.topRows<3>();
 
     // Get rotation matrix from base frame to world frame
     Eigen::Matrix3d R_world_base = base_pose_world.rotation().matrix();
 
     // Transform Jacobian to world frame: J_world = R_world_base * J_base
-    Eigen::Matrix3d J_linear_world = R_world_base * J_linear;
+    Eigen::Matrix<double, 3, 7> J_linear_world = R_world_base * J_linear;
 
     // Compute manipulability matrix in world frame: A = J_world * J_world^T
     Eigen::Matrix3d A_world = J_linear_world * J_linear_world.transpose();
@@ -508,8 +481,8 @@ ManipulabilityEllipsoid computeManipulabilityEllipsoid(const Eigen::Vector<doubl
 }
 
 double computeDM(const gtsam::Vector& config, const gtsam::Pose3& current_ee_pose_world, const gtsam::Pose3& base_pose_world, double angle) {
-    // Convert gtsam::Vector to Eigen::VectorXd for jaco_m function
-    Eigen::VectorXd q(7);
+    // Convert gtsam::Vector to a fixed-size Eigen vector for the adapter.
+    Eigen::Matrix<double, 7, 1> q;
     for(int i = 0; i < 7; i++) {
         q(i) = config(i);
     }
@@ -528,9 +501,15 @@ double computeDM(const gtsam::Vector& config, const gtsam::Pose3& current_ee_pos
 
     Eigen::Vector3d unit_direction = direction_vector.normalized();
 
-    // Compute Jacobian matrix in base frame
-    Eigen::MatrixXd J = Jacobian::jaco_m(q);
-    Eigen::Matrix<double, 3, 7> J_linear = J.topRows(3).cast<double>();
+    // Jacobian in base_link axes, via Pinocchio/URDF (::config:: — qualified
+    // because this function's own parameter is named "config"), rotated
+    // base_link -> DH-root axes to match base_pose_world's convention (see
+    // computeManipulabilityEllipsoid above).
+    const auto result = pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+        q, ::config::kRightEndEffectorFrame);
+    Eigen::Matrix<double, 3, 7> J_linear =
+        pinocchio_kinematics_adapter::DhRootInBaseLink().rotation().transpose() *
+        result.jacobian.topRows<3>();
 
     // Get rotation matrix from base frame to world frame
     Eigen::Matrix3d R_world_base = base_pose_world.rotation().matrix();

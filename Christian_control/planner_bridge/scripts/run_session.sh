@@ -26,6 +26,17 @@ fresh_or_die() { # $1 binary, $2 source dir
 fresh_or_die "$CONTROLLER" "$REPO/Christian_control/basic_control/src"
 fresh_or_die "$BRIDGE"     "$REPO/Christian_control/planner_bridge/src"
 
+# The bridge's DH YAML is generated from the URDF at build time. If the URDF
+# was edited and the build not rerun (or it failed at the generator), the
+# stale generated file must not reach a session.
+URDF="$REPO/Christian_control/basic_control/config/GEN3_dual_mounted.urdf"
+DH_YAML="$REPO/Christian_control/planner_bridge/build/config/dh_params_tool.yaml"
+[[ -f "$DH_YAML" ]] || { echo "missing generated $DH_YAML — build planner_bridge first"; exit 1; }
+if [[ "$URDF" -nt "$DH_YAML" ]]; then
+    echo "STALE: $DH_YAML is older than the URDF — rebuild planner_bridge"
+    [[ $ALLOW_STALE = 1 ]] || { echo "rebuild, or pass --allow-stale"; exit 1; }
+fi
+
 echo "== Supervised session checklist (project CLAUDE.md) =="
 echo "  - Christian present, workspace clear, e-stop in reach"
 echo "  - Kinova web dashboard CLOSED (it blocks SetServoingMode)"
