@@ -224,9 +224,10 @@ void on_stop_signal(int)
 
 namespace
 {
-    // The input thread only polls stdin, but it must never outlive the
-    // mailbox it writes. This guard covers normal loop exit and exceptions
-    // from RunControlLoop alike.
+    // The pipe input thread only polls the target pipe; it never touches
+    // the robot connection. But it must never outlive the mailbox it
+    // writes. This guard covers normal loop exit and exceptions from
+    // RunControlLoop alike.
     class InputThreadStopJoiner
     {
     public:
