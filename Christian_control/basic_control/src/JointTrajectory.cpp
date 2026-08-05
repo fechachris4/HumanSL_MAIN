@@ -217,6 +217,17 @@ JointTrajectorySample SampleJointTrajectory(const JointTrajectory& traj,
     const JointTrajectoryPoint& p1 = traj.points[upper];
 
     const double dt_s = p1.t_s - p0.t_s;
+    // Degenerate-input fallback, unreachable for a validated trajectory: hold
+    // the segment's start rather than divide by a width that is zero, negative
+    // or NaN. Written as !(dt_s > 0) so a NaN width is caught too, which
+    // dt_s <= 0 would let through. Not an assert: the production build may
+    // define NDEBUG, and this must degrade safely exactly there.
+    if (!(dt_s > 0.0)) {
+        sample.q_rad = p0.q_rad;
+        sample.complete = false;
+        return sample;
+    }
+
     const double s = (t_s - p0.t_s) / dt_s;
     const double s2 = s * s;
     const double s3 = s2 * s;

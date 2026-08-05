@@ -102,5 +102,26 @@ int main()
         const auto b = SampleJointTrajectory(traj, 1.0 + h);
         assert(std::abs((b.q_rad(0) - a.q_rad(0)) / (2 * h) - s1.qdot_rad_s(0)) < 1e-3);
     }
+
+    // Degenerate segments, hand-built past the accumulator and the validator:
+    // a sample is one hop from a joint command, so it must stay finite even for
+    // a trajectory that should never have reached the loop.
+    {
+        // Duplicated support time. The bracket search always lands strictly
+        // inside a segment, so this one is already safe; asserted to keep it so.
+        auto dup = traj;
+        dup.points.insert(dup.points.begin() + 2, dup.points[1]);
+        const auto sd = SampleJointTrajectory(dup, 1.0);
+        assert(sd.q_rad.allFinite() && sd.qdot_rad_s.allFinite());
+
+        // Non-finite support time: the segment width is NaN, which no ordered
+        // comparison rejects. Hold the segment start instead of interpolating.
+        auto bad_time = traj;
+        bad_time.points[1].t_s = std::nan("");
+        const auto sn = SampleJointTrajectory(bad_time, 0.5);
+        assert(sn.q_rad.allFinite() && sn.qdot_rad_s.allFinite());
+        assert((sn.q_rad - bad_time.points[0].q_rad).norm() == 0.0);
+        assert(sn.qdot_rad_s.norm() == 0.0 && !sn.complete);
+    }
     return 0;
 }
