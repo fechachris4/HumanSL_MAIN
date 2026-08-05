@@ -90,3 +90,11 @@ set_target_properties(test_waypoints PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME waypoints COMMAND test_waypoints
          ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml)
 set_tests_properties(waypoints PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
+
+target_sources(bridge_core PRIVATE src/StartState.cpp)
+add_executable(test_start_state tests/test_start_state.cpp)
+target_include_directories(test_start_state PRIVATE src)
+target_link_libraries(test_start_state PRIVATE bridge_core)
+set_target_properties(test_start_state PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME start_state COMMAND test_start_state)
+set_tests_properties(start_state PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
