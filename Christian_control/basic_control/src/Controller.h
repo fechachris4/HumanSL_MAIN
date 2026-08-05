@@ -19,6 +19,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <memory>
 
 #include <Eigen/Dense>
@@ -59,7 +60,12 @@ SolveJointTracking(const JointReference& reference,
         WrappedJointError(reference.q_rad, q_meas);
     JointTrackingCommand command;
     command.qdot_rad_s = reference.qdot_rad_s + kp_s_inv * error;
-    command.max_abs_error_rad = error.cwiseAbs().maxCoeff();
+    // Eigen's maxCoeff SKIPS a NaN, so a non-finite error on any joint would
+    // otherwise report 0.0 and leave the stop unrequested while the command
+    // itself is NaN. A safety flag fails toward stopping.
+    command.max_abs_error_rad = error.allFinite()
+                                    ? error.cwiseAbs().maxCoeff()
+                                    : std::numeric_limits<double>::infinity();
     command.following_error_stop =
         following_error_stop_rad > 0.0 &&
         !(command.max_abs_error_rad <= following_error_stop_rad);

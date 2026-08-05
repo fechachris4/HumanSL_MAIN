@@ -459,8 +459,17 @@ Reference JointTrajectorySource::Get(const RobotState& state, double dt_s,
     if (std::unique_ptr<JointTrajectory> incoming = mailbox_.Take()) {
         const double tolerance_rad =
             config::kTrajStartToleranceDeg * kDegreesToRadians;
+        // Both sides are checked for finiteness before the distance is taken:
+        // Eigen's maxCoeff skips a NaN, so an unchecked non-finite value would
+        // look like a zero distance and splice. Ingest validation already
+        // refuses non-finite trajectories; this is the guard not depending on
+        // that.
+        const bool measurable =
+            !incoming->points.empty() && state.q_rad.allFinite() &&
+            incoming->points.front().q_rad.allFinite() &&
+            incoming->points.front().qdot_rad_s.allFinite();
         const double start_error_rad =
-            (incoming->points.empty() || !state.q_rad.allFinite())
+            !measurable
                 ? std::numeric_limits<double>::infinity()
                 : WrappedJointError(incoming->points.front().q_rad, state.q_rad)
                       .cwiseAbs()

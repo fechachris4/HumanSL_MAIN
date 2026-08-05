@@ -1154,6 +1154,62 @@ namespace
               "the hold reference survives a non-finite measurement");
     }
 
+    // Ingest validation rejects non-finite trajectory values, so this is
+    // defence in depth: the guard must not depend on that being true.
+    void TestJointSourceRejectsNonFiniteTrajectoryStart()
+    {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        const Eigen::Matrix<double, 7, 1> hold =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        const RobotState state = StateAtJointOne(0.0);
+
+        JointTrajectoryMailbox position_mailbox;
+        JointTrajectorySource position_source(hold, position_mailbox);
+        std::unique_ptr<JointTrajectory> bad_position = RampOnJointOne(0.0, 0.1);
+        bad_position->points.front().q_rad(4) = nan;
+        position_mailbox.Publish(std::move(bad_position));
+        ControllerStatus position_status;
+        const Reference position_reference =
+            position_source.Get(state, 0.1, position_status);
+        Check(position_status.joint_traj_rejected &&
+                  !position_status.joint_traj_activated,
+              "a non-finite position in the first point never activates");
+        Check(position_reference.joint &&
+                  (position_reference.joint->q_rad - hold).norm() < 1e-12,
+              "the hold reference survives a non-finite first point");
+
+        JointTrajectoryMailbox velocity_mailbox;
+        JointTrajectorySource velocity_source(hold, velocity_mailbox);
+        std::unique_ptr<JointTrajectory> bad_velocity = RampOnJointOne(0.0, 0.1);
+        bad_velocity->points.front().qdot_rad_s(4) = nan;
+        velocity_mailbox.Publish(std::move(bad_velocity));
+        ControllerStatus velocity_status;
+        velocity_source.Get(state, 0.1, velocity_status);
+        Check(velocity_status.joint_traj_rejected &&
+                  !velocity_status.joint_traj_activated,
+              "a non-finite velocity in the first point never activates");
+    }
+
+    // A non-finite error must fail TOWARD the stop: Eigen's maxCoeff skips
+    // NaN, so the worst-joint error alone would read 0.0 while the command
+    // itself is NaN.
+    void TestJointTrackingStopsOnNonFiniteError()
+    {
+        JointReference reference;
+        reference.q_rad.setZero();
+        reference.qdot_rad_s.setZero();
+        Eigen::Matrix<double, 7, 1> q_meas = Eigen::Matrix<double, 7, 1>::Zero();
+        q_meas(4) = std::numeric_limits<double>::quiet_NaN();
+
+        const JointTrackingCommand command = SolveJointTracking(
+            reference, q_meas, config::kKpJointTracking,
+            config::kTrajFollowingErrorStopDeg * M_PI / 180.0);
+        Check(command.following_error_stop,
+              "a non-finite measurement on any joint requests the stop");
+        Check(!std::isfinite(command.max_abs_error_rad),
+              "a non-finite error is reported as non-finite, not as zero");
+    }
+
     void TestJointSourceIgnoresInvalidDt()
     {
         JointTrajectoryMailbox mailbox;
@@ -1257,6 +1313,8 @@ int main()
     TestJointSourceReplacesActiveTrajectory();
     TestJointSourceRejectionLeavesActiveRunning();
     TestJointSourceRejectsNonFiniteMeasurement();
+    TestJointSourceRejectsNonFiniteTrajectoryStart();
+    TestJointTrackingStopsOnNonFiniteError();
     TestJointSourceIgnoresInvalidDt();
     TestJointTrackingLaw();
     TestJointFollowingErrorStop();
