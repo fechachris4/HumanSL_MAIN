@@ -17,6 +17,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
             (request.goal_position_m - start_pose.translation()).norm();
         const size_t total_time_step = 20;
         const double total_time_sec = std::max(4.0, distance_m / 0.05);
+        outcome.total_time_sec = total_time_sec;
 
         InitializeTrajectory initializer(model.dh);
         const gtsam::Values init_values = initializer.initJointTrajectoryFromTarget(

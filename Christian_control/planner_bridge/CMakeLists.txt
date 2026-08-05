@@ -97,10 +97,11 @@ target_link_libraries(test_start_state PRIVATE bridge_core)
 set_target_properties(test_start_state PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME start_state COMMAND test_start_state)
 
-target_sources(bridge_core PRIVATE src/BridgeMain.cpp)
+target_sources(bridge_core PRIVATE src/TrajectoryEmit.cpp src/BridgeMain.cpp)
 add_executable(test_bridge_main
     tests/test_bridge_main.cpp
     ${HUMANSL_ROOT}/Christian_control/basic_control/src/Targets.cpp
+    ${HUMANSL_ROOT}/Christian_control/basic_control/src/JointTrajectory.cpp
 )
 target_include_directories(test_bridge_main PRIVATE
     src ${HUMANSL_ROOT}/Christian_control/basic_control/src)
