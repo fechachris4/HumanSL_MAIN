@@ -98,3 +98,17 @@ target_link_libraries(test_start_state PRIVATE bridge_core)
 set_target_properties(test_start_state PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME start_state COMMAND test_start_state)
 set_tests_properties(start_state PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
+
+target_sources(bridge_core PRIVATE src/BridgeMain.cpp)
+add_executable(test_bridge_main
+    tests/test_bridge_main.cpp
+    ${HUMANSL_ROOT}/Christian_control/basic_control/src/Targets.cpp
+)
+target_include_directories(test_bridge_main PRIVATE
+    src ${HUMANSL_ROOT}/Christian_control/basic_control/src)
+target_link_libraries(test_bridge_main PRIVATE bridge_core)
+set_target_properties(test_bridge_main PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME bridge_main COMMAND test_bridge_main
+         ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml
+         ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml)
+set_tests_properties(bridge_main PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
