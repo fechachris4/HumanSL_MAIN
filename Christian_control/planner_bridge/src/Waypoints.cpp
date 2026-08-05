@@ -36,7 +36,15 @@ std::vector<Eigen::Vector3d> SampleCartesianWaypoints(
         }
     }
     q = trajectory_pos.back();
-    waypoints.push_back(ToolPositionInBaseLink(model, q));
+    const Eigen::Vector3d goal = ToolPositionInBaseLink(model, q);
+    // The goal always wins: drop any trailing kept intermediates that fall
+    // within min_spacing_m of it (GPMP2 trajectories cluster support states
+    // near the goal), so the final consecutive pair still meets the spacing
+    // guarantee.
+    while (!waypoints.empty() &&
+           (goal - waypoints.back()).norm() < min_spacing_m)
+        waypoints.pop_back();
+    waypoints.push_back(goal);
     return waypoints;
 }
 
