@@ -300,7 +300,7 @@ namespace
     // The detailed solve exposes the task/null decomposition the status
     // line and CSV report; its parts must sum to exactly the legacy total,
     // and its leak twist must be the Jacobian image of the projected
-    // centering velocity — the quantity that competes with the task.
+    // limit-avoidance velocity — the quantity that competes with the task.
     void TestDetailedSolveDecomposition()
     {
         ReactivePoseGains gains = DefaultGains();
@@ -338,9 +338,9 @@ namespace
         const auto null_only =
             LimitAvoidanceVelocity(jacobian, q, limit, zone, gains);
         Check((detailed.qdot_null_rad_s - null_only).norm() < 1e-12,
-              "detailed null part is exactly the projected centering velocity");
+              "detailed null part is exactly the projected limit-avoidance velocity");
         Check((detailed.leak_twist - jacobian * null_only).norm() < 1e-12,
-              "leak twist is the Jacobian image of the projected centering");
+              "leak twist is the Jacobian image of the projected limit avoidance");
         Check(detailed.leak_twist.norm() > 0.0,
               "damped projector leaks: the leak twist is nonzero");
 

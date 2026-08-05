@@ -35,7 +35,7 @@
 #include "State.h" // Twist — the reference velocity equation 2 subtracts
 
 // Gains and term switches. Disabled terms contribute exactly zero, so the
-// staged bring-up (P-only, then Kd, then centering) is configuration.
+// staged bring-up (P-only, then Kd, then limit avoidance) is configuration.
 struct ReactivePoseGains {
     double kp_position_s_inv = 0.0; // 1/s on the position error
     double kp_rotation_s_inv = 0.0; // 1/s on the rotation-log error
@@ -50,8 +50,8 @@ struct ReactivePoseGains {
 };
 
 // Startup multiplier for a secondary objective: the task-space law is
-// available immediately, only centering ramps in, so takeover cannot begin
-// with a full projected joint transient.
+// available immediately, only the limit-avoidance gain ramps in, so
+// takeover cannot begin with a full projected joint transient.
 inline double UnitRamp(double elapsed_s, double duration_s)
 {
     if (duration_s <= 0.0)
@@ -170,10 +170,11 @@ LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
 
 // The solved velocity split into its two objectives, plus the leak the
 // DAMPED projector lets back into task space. The leak twist J·q̇_null is
-// the end-effector velocity the centering term causes despite projection —
-// zero only for an undamped projector. The 2026-08-05 stall parked the arm
-// 218 mm short of its target exactly where Kp·e_pos balanced this leak, so
-// the decomposition is first-class telemetry, not a debug extra.
+// the end-effector velocity the limit-avoidance term causes despite
+// projection — zero only for an undamped projector. The 2026-08-05 stall
+// parked the arm 218 mm short of its target exactly where Kp·e_pos balanced
+// this leak, so the decomposition is first-class telemetry, not a debug
+// extra.
 struct ReactiveSolution {
     Eigen::Matrix<double, 7, 1> qdot_task_rad_s; // equations 3-4
     Eigen::Matrix<double, 7, 1> qdot_null_rad_s; // equations 5-6 (zero when off)
