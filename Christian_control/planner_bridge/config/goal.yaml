@@ -2,7 +2,7 @@
 # This is the one file to edit before a run. The bridge reads it whenever
 # planner_bridge is invoked without --goal/--goal-file, validates the
 # planned path, and only then writes waypoints to the controller.
-goal: [0.15, 0.075, 1.207]
+goal: [ 0.3, -0.4, 0.4 ]
 
 # Optional obstacle for the planner to avoid: axis-aligned box, metres,
 # base_link. Must lie inside the SDF grid volume or the run is rejected.

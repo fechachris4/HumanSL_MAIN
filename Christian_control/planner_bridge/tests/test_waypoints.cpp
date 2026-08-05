@@ -48,6 +48,15 @@ int main(int argc, char** argv) {
     bad_j2.back()(1) = 127.0 * M_PI / 180.0;
     assert(ValidateJointPath(bad_j2).has_value());
 
+    // A continuous joint (j1) drifted a full revolution past straight-up
+    // must be rejected here too, mirroring the controller's own ±360 deg
+    // ingest gate (Targets.cpp's kContinuousJointBoundDeg) — this is the
+    // scenario where GPMP2 seeds from an unwrapped start and settles a
+    // solution a full turn away from the physical pose it planned.
+    auto bad_j1 = path;
+    bad_j1.back()(0) = 365.0 * M_PI / 180.0;
+    assert(ValidateJointPath(bad_j1).has_value());
+
     // Every emitted line must be accepted verbatim by the controller parser.
     for (const auto& waypoint : waypoints) {
         std::string error;

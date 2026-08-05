@@ -38,6 +38,44 @@ int main() {
     assert(!missing.has_value() && !error.empty());
     std::remove(path);
 
+    // Real controller CSVs lead with a '#' config-echo preamble before the
+    // header row; the reader must skip it rather than parsing it as header.
+    const char* preamble_path = "test_start_state_preamble_tmp.csv";
+    {
+        std::ofstream csv(preamble_path);
+        csv << "# controller run config — parsers skip '#' lines\n";
+        csv << "# log_format = 8 (compiled)\n";
+        csv << "time_s,dt_s,meas_j1,meas_j2,meas_j3,meas_j4,meas_j5,meas_j6,meas_j7\n";
+        csv << "0.001,0.002,10,20,30,40,50,60,70\n";
+        csv << "0.003,0.002,11,21,31,41,51,61,71\n";
+    }
+    std::string preamble_error;
+    const auto q_preamble = ReadLatestMeasuredQ(preamble_path, preamble_error);
+    assert(q_preamble.has_value() && preamble_error.empty());
+    assert(std::abs((*q_preamble)[0] - 11.0 * M_PI / 180.0) < 1e-12);
+    assert(std::abs((*q_preamble)[6] - 71.0 * M_PI / 180.0) < 1e-12);
+    std::remove(preamble_path);
+
+    // Continuous joint near the wrap seam (Kortex reports [0, 360)) must
+    // come back as a signed principal-value angle, not the raw firmware
+    // reading: 359.93 deg means "0.07 deg short of zero", not "a plan
+    // seeded a full turn away from zero".
+    const char* wrap_path = "test_start_state_wrap_tmp.csv";
+    {
+        std::ofstream csv(wrap_path);
+        csv << "time_s,dt_s,meas_j1,meas_j2,meas_j3,meas_j4,meas_j5,meas_j6,meas_j7\n";
+        csv << "0.001,0.002,359.93,69.14,221.76,56.86,258.05,72.80,258.22\n";
+    }
+    std::string wrap_error;
+    const auto q_wrap = ReadLatestMeasuredQ(wrap_path, wrap_error);
+    assert(q_wrap.has_value() && wrap_error.empty());
+    assert(std::abs((*q_wrap)[0] - (-0.07 * M_PI / 180.0)) < 1e-9);
+    // A limited joint's already-signed measurement is unaffected by wrap.
+    assert(std::abs((*q_wrap)[1] - 69.14 * M_PI / 180.0) < 1e-9);
+    // 221.76 deg wraps to 221.76 - 360 = -138.24 deg.
+    assert(std::abs((*q_wrap)[2] - (-138.24 * M_PI / 180.0)) < 1e-9);
+    std::remove(wrap_path);
+
     // FindLatestRunCsv: newest dated subdir wins by mtime.
     std::filesystem::create_directories("tsr_tmp/2026-08-04");
     std::filesystem::create_directories("tsr_tmp/2026-08-05");

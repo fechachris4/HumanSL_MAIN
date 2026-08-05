@@ -15,6 +15,20 @@ std::vector<std::string> SplitCsv(const std::string& line) {
     while (std::getline(stream, field, ',')) fields.push_back(field);
     return fields;
 }
+
+// Kortex reports continuous joints in [0, 360) deg; the planner treats
+// configuration space as flat (unwrapped) radians with no revolution
+// tracking. Left as-is, a measurement near the 360 deg seam (e.g. 359.93)
+// seeds the optimizer a full turn away from the signed angle it actually
+// means, and nothing downstream re-anchors it — GPMP2 has no position
+// limit on continuous joints to catch the drift. Wrapping every joint to
+// its principal value here keeps the seed a plain rotation away from the
+// physical pose on every joint, continuous or not.
+double WrapToPrincipalRad(double angle_rad) {
+    double wrapped = std::fmod(angle_rad + M_PI, 2.0 * M_PI);
+    if (wrapped < 0.0) wrapped += 2.0 * M_PI;
+    return wrapped - M_PI;
+}
 }  // namespace
 
 std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
@@ -24,7 +38,9 @@ std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
     if (!csv) { error = "cannot open " + csv_path; return std::nullopt; }
 
     std::string line;
-    if (!std::getline(csv, line)) { error = "empty file"; return std::nullopt; }
+    do {
+        if (!std::getline(csv, line)) { error = "empty file"; return std::nullopt; }
+    } while (!line.empty() && line[0] == '#');
     const auto header = SplitCsv(line);
     std::array<int, 7> column{};
     for (int j = 0; j < 7; ++j) {
@@ -52,7 +68,11 @@ std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
             catch (const std::exception&) { valid = false; }
             if (valid && !std::isfinite(q_deg[j])) valid = false;
         }
-        if (valid) latest = q_deg * (M_PI / 180.0);
+        if (valid) {
+            Eigen::Matrix<double, 7, 1> q_rad = q_deg * (M_PI / 180.0);
+            for (int j = 0; j < 7; ++j) q_rad[j] = WrapToPrincipalRad(q_rad[j]);
+            latest = q_rad;
+        }
     }
     if (!latest) error = "no complete data row";
     return latest;
