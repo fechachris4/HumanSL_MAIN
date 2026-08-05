@@ -2,8 +2,10 @@
 #undef NDEBUG
 
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
 #include <fstream>
 #include "StartState.h"
 
@@ -35,5 +37,22 @@ int main() {
     const auto missing = ReadLatestMeasuredQ("does_not_exist.csv", error);
     assert(!missing.has_value() && !error.empty());
     std::remove(path);
+
+    // FindLatestRunCsv: newest dated subdir wins by mtime.
+    std::filesystem::create_directories("tsr_tmp/2026-08-04");
+    std::filesystem::create_directories("tsr_tmp/2026-08-05");
+    { std::ofstream("tsr_tmp/2026-08-04/loop_log_a.csv") << "x\n"; }
+    { std::ofstream("tsr_tmp/2026-08-05/loop_log_b.csv") << "x\n"; }
+    // Ensure strictly increasing mtimes regardless of filesystem resolution.
+    std::filesystem::last_write_time("tsr_tmp/2026-08-04/loop_log_a.csv",
+        std::filesystem::file_time_type::clock::now() - std::chrono::hours(1));
+    std::string find_error;
+    const auto latest = FindLatestRunCsv("tsr_tmp", find_error);
+    assert(latest.has_value() && find_error.empty());
+    assert(latest->find("loop_log_b.csv") != std::string::npos);
+    { std::ofstream("tsr_tmp/2026-08-05/notes.txt") << "x\n"; }  // non-matching ignored
+    assert(FindLatestRunCsv("tsr_tmp", find_error) == latest);
+    assert(!FindLatestRunCsv("tsr_missing", find_error).has_value() && !find_error.empty());
+    std::filesystem::remove_all("tsr_tmp");
     return 0;
 }

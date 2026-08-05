@@ -14,3 +14,9 @@ struct StartStateResult {
 // missing column, short row, or non-finite value.
 std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
     const std::string& csv_path, std::string& error);
+
+// Newest loop_log*.csv by modification time under <runs_root>/<subdir>/
+// (the controller's dated-directory layout). nullopt + error when the
+// root is missing or holds no matching file.
+std::optional<std::string> FindLatestRunCsv(const std::string& runs_root,
+                                            std::string& error);

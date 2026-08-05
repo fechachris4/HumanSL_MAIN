@@ -19,17 +19,21 @@
 namespace {
 
 constexpr char kUsageText[] =
-    "usage: planner_bridge --goal X Y Z (--state-csv PATH | --start-deg J1..J7)\n"
-    "                       [--dh PATH] [--joint-limits PATH]\n"
+    "usage: planner_bridge --goal X Y Z [--state-csv PATH | --start-deg J1..J7]\n"
+    "                       [--runs-root PATH] [--dh PATH]\n"
+    "                       [--joint-limits PATH]\n"
     "                       [--box CX CY CZ HX HY HZ]\n"
     "\n"
     "  --goal X Y Z           Target tool position, metres, base_link.\n"
     "  --state-csv PATH       Start state: latest measured joint angles\n"
     "                         (meas_j1..meas_j7) read from a controller\n"
     "                         telemetry CSV.\n"
-    "  --start-deg J1..J7     Start state: seven joint angles, degrees,\n"
-    "                         Kortex actuator order. Exactly one of\n"
-    "                         --state-csv or --start-deg is required.\n"
+    "  --start-deg J1..J7     (test-only) Start state: seven joint angles,\n"
+    "                         degrees, Kortex actuator order.\n"
+    "  --runs-root PATH       Root of dated run-log directories to search\n"
+    "                         when neither --state-csv nor --start-deg is\n"
+    "                         given. Default: <repo>/runs resolved\n"
+    "                         relative to the executable's directory.\n"
     "  --dh PATH               DH/tool parameters YAML. Default:\n"
     "                         config/dh_params_tool.yaml resolved\n"
     "                         relative to the executable's directory.\n"
@@ -90,6 +94,10 @@ std::string DefaultJointLimitsPath() {
            "/../../../TrajectoryGeneration/config/joint_limits.yaml";
 }
 
+std::string DefaultRunsRootPath() {
+    return ExecutableDirectory() + "/../../../runs";
+}
+
 // std::stod that rejects trailing garbage and non-finite results, so
 // "not-a-number" or "1.2xyz" fail instead of silently truncating.
 double ParseDouble(const std::string& token) {
@@ -106,6 +114,7 @@ struct ParsedArgs {
     std::optional<std::array<double, 7>> start_deg;
     std::string dh_path = DefaultDhPath();
     std::string joint_limits_path = DefaultJointLimitsPath();
+    std::string runs_root = DefaultRunsRootPath();
     std::optional<AxisAlignedBox> box;
 };
 
@@ -136,6 +145,8 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             parsed.dh_path = next();
         } else if (flag == "--joint-limits") {
             parsed.joint_limits_path = next();
+        } else if (flag == "--runs-root") {
+            parsed.runs_root = next();
         } else if (flag == "--box") {
             AxisAlignedBox box;
             box.center = Eigen::Vector3d(ParseDouble(next()), ParseDouble(next()),
@@ -149,9 +160,9 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
     }
     if (!parsed.goal)
         throw std::invalid_argument("--goal is required");
-    if (parsed.state_csv.has_value() == parsed.start_deg.has_value())
+    if (parsed.state_csv && parsed.start_deg)
         throw std::invalid_argument(
-            "exactly one of --state-csv or --start-deg is required");
+            "at most one of --state-csv or --start-deg may be given");
     return parsed;
 }
 
@@ -208,9 +219,24 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         for (int joint = 0; joint < 7; ++joint)
             q_start_rad(joint) = (*parsed.start_deg)[joint] * kDegToRad;
     } else {
+        std::string state_csv;
+        if (parsed.state_csv) {
+            state_csv = *parsed.state_csv;
+        } else {
+            std::string find_error;
+            const std::optional<std::string> found =
+                FindLatestRunCsv(parsed.runs_root, find_error);
+            if (!found) {
+                diagnostics << "error: no run log found under " << parsed.runs_root
+                            << " — start the controller first (it creates the "
+                            << "log), or pass --state-csv/--start-deg\n";
+                return 2;
+            }
+            state_csv = *found;
+        }
         std::string error;
         const std::optional<Eigen::Matrix<double, 7, 1>> q =
-            ReadLatestMeasuredQ(*parsed.state_csv, error);
+            ReadLatestMeasuredQ(state_csv, error);
         if (!q) {
             diagnostics << "error: start state unavailable: " << error << "\n";
             return 2;

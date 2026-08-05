@@ -2,6 +2,8 @@
 #undef NDEBUG
 
 #include <cassert>
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 #include "BridgeMain.h"
 #include "Targets.h"
@@ -45,5 +47,46 @@ int main(int argc, char** argv) {
         "--box", "0", "0", "5.0", "0.05", "0.05", "0.05"};
     assert(RunBridge(out_of_grid_box_args, box_targets, box_diagnostics) == 1);
     assert(box_targets.str().empty());
+
+    // --runs-root auto-discovery: a fixture dated subdir with one valid
+    // 13-column CSV (same shape as test_start_state's fixture, all joints
+    // at 0 degrees) is found and used as the start state.
+    std::filesystem::create_directories("tbm_tmp/2026-08-05");
+    {
+        std::ofstream csv("tbm_tmp/2026-08-05/loop_log_x.csv");
+        csv << "time_s,dt_s,meas_j1,extra,meas_j2,meas_j3,meas_j4,"
+               "meas_j5,meas_j6,meas_j7,vel_j1,torque_j1,fault_j1\n";
+        csv << "0.001,0.002,0,99,0,0,0,0,0,0,100,200,300\n";
+    }
+    std::ostringstream auto_targets, auto_diagnostics;
+    const std::vector<std::string> auto_args = {
+        "--goal", "0.15", "0.075", "1.207",
+        "--dh", argv[1], "--joint-limits", argv[2],
+        "--runs-root", "tbm_tmp"};
+    assert(RunBridge(auto_args, auto_targets, auto_diagnostics) == 0);
+    {
+        std::istringstream auto_lines(auto_targets.str());
+        std::string auto_line, auto_error;
+        int auto_count = 0;
+        while (std::getline(auto_lines, auto_line)) {
+            assert(ParsePoseTarget(auto_line, auto_error).has_value());
+            ++auto_count;
+        }
+        assert(auto_count >= 1);
+    }
+    std::filesystem::remove_all("tbm_tmp");
+
+    // Empty/missing runs root: exit 2, no target output, diagnostics point
+    // at starting the controller.
+    std::filesystem::create_directories("tbm_empty_tmp");
+    std::ostringstream missing_targets, missing_diagnostics;
+    const std::vector<std::string> missing_args = {
+        "--goal", "0.15", "0.075", "1.207",
+        "--dh", argv[1], "--joint-limits", argv[2],
+        "--runs-root", "tbm_empty_tmp"};
+    assert(RunBridge(missing_args, missing_targets, missing_diagnostics) == 2);
+    assert(missing_targets.str().empty());
+    assert(missing_diagnostics.str().find("start the controller") != std::string::npos);
+    std::filesystem::remove_all("tbm_empty_tmp");
     return 0;
 }

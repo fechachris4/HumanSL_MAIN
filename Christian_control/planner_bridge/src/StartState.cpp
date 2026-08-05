@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -55,4 +56,36 @@ std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
     }
     if (!latest) error = "no complete data row";
     return latest;
+}
+
+std::optional<std::string> FindLatestRunCsv(const std::string& runs_root,
+                                            std::string& error) {
+    error.clear();
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    if (!fs::is_directory(runs_root, ec)) {
+        error = "runs root not found: " + runs_root;
+        return std::nullopt;
+    }
+    std::optional<std::string> newest;
+    fs::file_time_type newest_time{};
+    for (const auto& day : fs::directory_iterator(runs_root, ec)) {
+        if (ec || !day.is_directory()) continue;
+        for (const auto& entry : fs::directory_iterator(day.path(), ec)) {
+            if (ec || !entry.is_regular_file()) continue;
+            const std::string name = entry.path().filename().string();
+            if (name.rfind("loop_log", 0) != 0 ||
+                entry.path().extension() != ".csv")
+                continue;
+            const auto written = entry.last_write_time(ec);
+            if (ec) continue;
+            if (!newest || written > newest_time) {
+                newest = entry.path().string();
+                newest_time = written;
+            }
+        }
+    }
+    if (!newest)
+        error = "no loop_log*.csv under " + runs_root;
+    return newest;
 }
