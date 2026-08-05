@@ -62,8 +62,12 @@ while read -r -p "bridge> " cmd args; do case "$cmd" in
         # into six argv slots for --box; accepted exposure to glob expansion
         # since this is an interactive operator prompt, not untrusted input.
         [[ "${maybe_box:-}" == "box" ]] && extra=(--box $rest)
-        "$BRIDGE" --goal "$gx" "$gy" "$gz" "${extra[@]}" > "$PIPE" \
-            || echo "bridge exited $? — nothing was sent"
+        bridge_err=$(mktemp)
+        if ! "$BRIDGE" --goal "$gx" "$gy" "$gz" "${extra[@]}" > "$PIPE" 2>"$bridge_err"; then
+            rc=$?
+            echo "bridge exited $rc — nothing was sent: $(tail -1 "$bridge_err")"
+        fi
+        rm -f "$bridge_err"
         ;;
     quit|q) break ;;
     *) echo "commands: goal X Y Z [box CX CY CZ HX HY HZ] | quit" ;;
