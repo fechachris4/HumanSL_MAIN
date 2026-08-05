@@ -50,6 +50,21 @@ done
 [[ -n "${LATEST:-}" ]] || { echo "no run log appeared after 60 s"; exit 1; }
 echo "state source: $LATEST"
 
+# The file existing is not enough: the controller's CSV header and first
+# data rows may still be buffered, and the bridge errors on a header-less
+# file. Wait until a meas_j1 header line AND at least one row after it are
+# actually on disk.
+echo "waiting for telemetry data in the run log..."
+TELEMETRY_READY=0
+for _ in $(seq 1 30); do
+    if awk '/meas_j1/{h=NR} END{exit !(h && NR>h)}' "$LATEST"; then
+        TELEMETRY_READY=1; break
+    fi
+    kill -0 "$CONTROLLER_PID" 2>/dev/null || { echo "controller exited before telemetry started"; exit 1; }
+    sleep 1
+done
+[[ $TELEMETRY_READY = 1 ]] || { echo "no telemetry rows appeared in $LATEST after 30 s"; exit 1; }
+
 # The goal comes from config/goal.yaml (edit it before starting a session;
 # the bridge reads it because no --goal is passed here). One bridge run per
 # session — no prompt, no typed coordinates.
