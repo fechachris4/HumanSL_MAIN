@@ -122,7 +122,7 @@ void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
 // reports an arrival edge; the next Get consumes exactly one queued target, if
 // any, and increments the sequence. If empty, it stays ready for a target
 // later enqueued by the producer.
-class PoseTargetSource
+class PoseTargetSource : public ReferenceSource
 {
 public:
     PoseTargetSource(
@@ -135,7 +135,9 @@ public:
         double target_hold_s = config::kTargetHoldS);
 
     Reference Get(const RobotState& state, double dt_s,
-                  ControllerStatus& status);
+                  ControllerStatus& status) override;
+    // The arrival edge is what advances this source's target queue.
+    void OnArrivalEdge(const ControllerStatus& status) override;
     void OnArrived();
 
 private:
@@ -181,17 +183,19 @@ private:
 // a large positive dt is trusted and would jump the sample clock — the loop's
 // single dt clamp is what bounds it, and duplicating that bound here would
 // mean two places deciding what a cycle may last.
-class JointTrajectorySource
+class JointTrajectorySource : public ReferenceSource
 {
 public:
     JointTrajectorySource(Eigen::Matrix<double, 7, 1> hold_q_rad,
                           JointTrajectoryMailbox& mailbox);
-    ~JointTrajectorySource();
+    ~JointTrajectorySource() override;
     JointTrajectorySource(const JointTrajectorySource&) = delete;
     JointTrajectorySource& operator=(const JointTrajectorySource&) = delete;
 
+    // Sequencing is the planner's job, so there is no arrival edge to honour
+    // here: the inherited no-op OnArrivalEdge is deliberate.
     Reference Get(const RobotState& state, double dt_s,
-                  ControllerStatus& status);
+                  ControllerStatus& status) override;
 
 private:
     JointTrajectoryMailbox& mailbox_;

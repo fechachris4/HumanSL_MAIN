@@ -423,6 +423,34 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     )
     add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
 
+    # TrackingController's channel handling — needs the real model for the
+    # hold pose's forward kinematics, but no robot.
+    add_executable(test_controller
+            tests/test_controller.cpp
+            src/Controller.cpp
+            src/Kinematics.cpp
+            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+    )
+    target_include_directories(test_controller PRIVATE
+            src
+            ${HUMANSL_ROOT}/third_party/include
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+            ${HUMANSL_ROOT}/TrajectoryExecution/include
+    )
+    target_link_libraries(test_controller
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+            pthread
+    )
+    set_target_properties(test_controller PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+    )
+    target_link_options(test_controller PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,-z,lazy
+    )
+    add_test(NAME controller COMMAND test_controller)
+
     # Closed-form FK cross-check against the Pinocchio path above. Links
     # Pinocchio too (needed for the reference side of the comparison), but
     # AnalyticalKinematics.cpp itself has no such dependency.

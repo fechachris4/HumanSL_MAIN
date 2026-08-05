@@ -76,7 +76,13 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("orientation_enabled", config::kOrientationEnabled ? "true" : "false");
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");
-    line("startup_hold", "measured");
+    // The measured takeover state the run starts from: the joint path holds
+    // the measured q, the Cartesian fallback holds the measured FK pose.
+    line("reference_source", config::kUseJointTrajectorySource
+                                 ? "joint_trajectory"
+                                 : "pose_target");
+    line("startup_hold",
+         config::kUseJointTrajectorySource ? "measured_q" : "measured");
     line("profile_max_speed_m_s", FormatDouble(config::kProfileMaxSpeedMps));
     line("profile_max_acceleration_m_s2",
          FormatDouble(config::kProfileMaxAccelerationMps2));
@@ -124,7 +130,7 @@ std::string ParseLogFileArg(int argc, char** argv) {
 
 void WriteCsvPreamble(const std::string& log_file, std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 8 (compiled)\n";
+    csv << "# log_format = 9 (compiled)\n";
     WriteConfigLines(log_file, csv, "# ");
 }
 } // namespace
@@ -405,17 +411,39 @@ int main(int argc, char** argv)
         // All targets, including this startup hold, are position only in
         // base_link and preserve the orientation captured at takeover.
         PoseTargetMailbox pose_targets;
-        PoseTargetSource reference(ee_now.position, target, pose_targets);
+        JointTrajectoryMailbox trajectory_targets;
+        // Both sources are constructed; config::kUseJointTrajectorySource
+        // picks the one the Runner is given. The Cartesian path stays
+        // compiled as the documented fallback until task 6b deletes it.
+        PoseTargetSource pose_reference(ee_now.position, target, pose_targets);
+        JointTrajectorySource joint_reference(q_now_rad, trajectory_targets);
+        ReferenceSource& reference =
+            config::kUseJointTrajectorySource
+                ? static_cast<ReferenceSource&>(joint_reference)
+                : static_cast<ReferenceSource&>(pose_reference);
         PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
-        // The arm holds the measured startup pose. Pipe targets may queue
-        // immediately, but each waits for an arrival edge before activation.
-        std::cout << "HOLD AT START: the arm holds the measured startup "
-                     "pose until the first pipe waypoint; Ctrl+C to stop\n";
-        std::cout << "  targets: write \"x y z\" lines to "
-                  << config::kTargetPipePath
-                  << " (planner_bridge does this; validation happens "
-                     "bridge-side)\n";
+        // The arm holds where it woke up. Which kind of input advances it
+        // from there is the compiled source selection above.
+        if (config::kUseJointTrajectorySource)
+        {
+            std::cout << "HOLD AT START: the arm holds the measured startup "
+                         "joint position until the first validated trajectory; "
+                         "Ctrl+C to stop\n";
+            std::cout << "  trajectories: write TRAJ_BEGIN/TRAJ_END blocks to "
+                      << config::kTargetPipePath
+                      << " (planner_bridge does this). Pose \"x y z\" lines are"
+                         " still parsed but this source ignores them.\n";
+        }
+        else
+        {
+            std::cout << "HOLD AT START: the arm holds the measured startup "
+                         "pose until the first pipe waypoint; Ctrl+C to stop\n";
+            std::cout << "  targets: write \"x y z\" lines to "
+                      << config::kTargetPipePath
+                      << " (planner_bridge does this; validation happens "
+                         "bridge-side)\n";
+        }
 
         struct stat pipe_stat{};
         if (stat(config::kTargetPipePath, &pipe_stat) == 0) {
@@ -429,8 +457,10 @@ int main(int argc, char** argv)
                       << config::kTargetPipePath << " — not starting\n";
             return 1;
         }
-        std::thread input_thread(RunPoseTargetInputFromPipe,
-                                 std::ref(pose_targets), std::cref(g_stop),
+        std::thread input_thread(RunTargetInputFromPipe,
+                                 std::ref(pose_targets),
+                                 std::ref(trajectory_targets),
+                                 std::cref(g_stop),
                                  std::string(config::kTargetPipePath));
         InputThreadStopJoiner input_thread_joiner(input_thread, g_stop);
 

@@ -1287,6 +1287,53 @@ namespace
               "a fresh status requests no stop");
     }
 
+    // The Runner feeds both following-error rules through
+    // FollowingErrorStopRequested into the single ResolveStopPriority input,
+    // so a joint-tracking trip stops the loop exactly like the Cartesian
+    // command-vs-measured rule, with the same reason and the same precedence.
+    void TestJointFollowingErrorStopReachesStopPriority()
+    {
+        Check(!FollowingErrorStopRequested(false, false),
+              "neither rule tripping requests no following-error stop");
+        Check(FollowingErrorStopRequested(false, true),
+              "the joint-tracking gate alone requests the stop");
+        Check(FollowingErrorStopRequested(true, false),
+              "the Cartesian rule alone still requests the stop");
+        Check(FollowingErrorStopRequested(true, true),
+              "both rules tripping requests one stop");
+
+        const auto joint_only = ResolveStopPriority(
+            FollowingErrorStopRequested(false, true), false, false, false, true);
+        Check(joint_only.reason == StopPriorityReason::kFollowingError,
+              "a joint-tracking trip stops with LoopStop::kFollowingError");
+
+        // Precedence is unchanged: the joint trip is the same input, so it
+        // still outranks a simultaneous held-frame warning and live fault.
+        const auto joint_with_fault = ResolveStopPriority(
+            FollowingErrorStopRequested(false, true), true, false, true, true);
+        Check(joint_with_fault.reason == StopPriorityReason::kFollowingError &&
+                  joint_with_fault.live_fault_observed,
+              "a joint-tracking trip outranks a warning and taints on a fault");
+    }
+
+    // Activation carries the accepted trajectory's shape, which is what the
+    // Runner's activation line prints and the CSV records.
+    void TestJointSourceReportsActivatedShape()
+    {
+        JointTrajectoryMailbox mailbox;
+        JointTrajectorySource source(Eigen::Matrix<double, 7, 1>::Zero(),
+                                     mailbox);
+        mailbox.Publish(RampOnJointOne(0.0, 0.1)); // two points, 1.0 s long
+
+        ControllerStatus status;
+        source.Get(StateAtJointOne(0.0), 0.002, status);
+        Check(status.joint_traj_activated, "the trajectory activates");
+        Check(status.joint_traj_points == 2,
+              "activation reports the accepted point count");
+        Check(std::abs(status.joint_traj_duration_s - 1.0) < 1e-12,
+              "activation reports the accepted duration");
+    }
+
 } // namespace
 
 int main()
@@ -1318,6 +1365,8 @@ int main()
     TestJointSourceIgnoresInvalidDt();
     TestJointTrackingLaw();
     TestJointFollowingErrorStop();
+    TestJointFollowingErrorStopReachesStopPriority();
+    TestJointSourceReportsActivatedShape();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

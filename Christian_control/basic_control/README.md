@@ -101,6 +101,17 @@ creates itself at startup; a target line is `x y z` (metres, `base_link`)
 echoes its effective configuration and embeds it as `#` lines in the CSV,
 so each data file stays self-describing.
 
+**The default input is a whole joint trajectory** (Stage 2). With
+`config::kUseJointTrajectorySource = true` the Runner is given
+`JointTrajectorySource`: the arm holds its measured takeover joint
+position until a `TRAJ_BEGIN … TRAJ_END` block arrives on the same pipe,
+and then follows it in joint space (Hermite sampling, 2 deg splice guard
+at activation, `kTrajFollowingErrorStopDeg` following-error stop). Pose
+`x y z` lines are still parsed and mailboxed, but this source ignores
+them. Setting the constant to `false` selects the older
+`PoseTargetSource` Cartesian path described below — it stays compiled as
+the documented fallback until the supervised run gates its deletion.
+
 **Read `Config.h` before every session** — with no runtime override, the
 compiled values are the only thing standing between you and the arm. In
 particular check `kQdotLimitDegS` and `kStopOnFault`.
@@ -121,7 +132,11 @@ What a run does, in order:
    measured state (q_command = q_measured) and captures the current pose as
    the hold pose, then sends one unchanged holding frame — the arm holds.
    Actuators stay in their default POSITION mode.
-4. The arm holds its measured takeover pose — there is no compiled
+4. (Cartesian fallback path, `kUseJointTrajectorySource = false`.) The
+   joint-trajectory default instead holds the measured takeover joint
+   position and follows each accepted trajectory to its final point.
+
+   The arm holds its measured takeover pose — there is no compiled
    terminal target; the terminal target IS the measured startup pose, so
    the arm's first profile is zero-distance and it simply stays put. The
    pipe-reading thread accepts one `x y z` target per line in metres,

@@ -429,6 +429,11 @@ Reference PoseTargetSource::Get(const RobotState& /*state*/, double dt_s,
     return reference;
 }
 
+void PoseTargetSource::OnArrivalEdge(const ControllerStatus& status)
+{
+    NotifyPoseTargetSourceOnArrivalEdge(*this, status);
+}
+
 void PoseTargetSource::OnArrived()
 {
     if (phase_ != Phase::kAwaitTerminalArrival)
@@ -484,6 +489,8 @@ Reference JointTrajectorySource::Get(const RobotState& state, double dt_s,
             elapsed_s_ = 0.0;
             complete_reported_ = false;
             status.joint_traj_activated = true;
+            status.joint_traj_points = static_cast<int>(active_->points.size());
+            status.joint_traj_duration_s = active_->points.back().t_s;
         }
     }
 

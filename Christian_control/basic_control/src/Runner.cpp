@@ -68,6 +68,10 @@ namespace
             s.actuator_status_flags[i] = a.status_flags();
             s.actuator_jitter_us[i] = a.jitter_comm();
         }
+        s.joint_traj_activated = status.joint_traj_activated;
+        s.joint_traj_rejected = status.joint_traj_rejected;
+        s.joint_traj_complete_edge = status.joint_traj_complete_edge;
+        s.joint_traj_start_error_deg = status.joint_traj_start_error_deg;
         s.command_frame_id = command_frame_id;
         s.feedback_frame_id = fb.frame_id();
         s.arm_state = fb.base().active_state();
@@ -78,7 +82,7 @@ namespace
 
 LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                          PoseTargetSource& reference,
+                          ReferenceSource& reference,
                           TrackingController& controller,
                           PositionIntegration& actuation,
                           LoopLog& log, const std::atomic<bool>& stop,
@@ -101,8 +105,10 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             "Attended use only.\n";
     if (config::kDisableFollowingErrorStop)
         std::cout << "WARNING: FOLLOWING-ERROR STOP DISABLED "
-            "(config::kDisableFollowingErrorStop) — a joint that stops following "
-            "its setpoint will NOT stop the loop.\n";
+            "(config::kDisableFollowingErrorStop) — a joint whose MEASURED position "
+            "stops following its command will NOT stop the loop. The joint-trajectory "
+            "tracking gate (config::kTrajFollowingErrorStopDeg) is separate and still "
+            "stops it.\n";
     if (!config::kStopOnFault)
         if (config::kDisableFollowingErrorStop)
             std::cout << "WARNING: BOTH the fault stop and the following-error stop are "
@@ -383,7 +389,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     << status.p_desired[1] << " " << status.p_desired[2]
                     << " m, within " << status.arrival_error_m * 1000.0
                     << " mm — holding\n";
-                NotifyPoseTargetSourceOnArrivalEdge(reference, status);
+                reference.OnArrivalEdge(status);
             }
             else if (status.not_reached_edge)
             {
@@ -392,6 +398,22 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     << config::kTargetHoldS
                     << " s (holding; Ctrl+C to abort)\n";
             }
+
+            // Joint-trajectory edges, on the same once-per-edge print path as
+            // the arrival notice above. A rejected plan is the failure the
+            // replanning loop must never suffer silently, so it prints the
+            // splice distance that failed the guard.
+            if (status.joint_traj_activated)
+                std::cout << "trajectory activated: " << status.joint_traj_points
+                    << " points, " << status.joint_traj_duration_s << " s\n";
+            if (status.joint_traj_rejected)
+                std::cout << "trajectory REJECTED: first point "
+                    << status.joint_traj_start_error_deg
+                    << " deg from the measured position (limit "
+                    << config::kTrajStartToleranceDeg
+                    << " deg); the previous reference keeps running\n";
+            if (status.joint_traj_complete_edge)
+                std::cout << "trajectory complete: holding the final point\n";
 
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
@@ -443,7 +465,9 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             // low-level servoing. Communication exits in the Send catch
             // remain unconditional before this completed feedback sample.
             const StopPriorityDecision priority = ResolveStopPriority(
-                FollowingErrorExceeded(sample, following_error_limit_deg),
+                FollowingErrorStopRequested(
+                    FollowingErrorExceeded(sample, following_error_limit_deg),
+                    status.joint_following_error_stop),
                 HasLiveFault(sample),
                 sample.arm_state != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL,
                 actuation_status.joint_limit_warning_joint.has_value(),

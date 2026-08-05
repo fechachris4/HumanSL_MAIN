@@ -22,6 +22,20 @@ struct StopPriorityDecision {
     bool live_fault_observed = false;
 };
 
+// The loop's single following-error input. Two independent rules request the
+// same stop: the Cartesian command-vs-measured rule on the completed feedback
+// sample (Safety.h FollowingErrorExceeded) and the joint-tracking law's gate
+// on the wrapped reference error (ControllerStatus::joint_following_error_stop,
+// config::kTrajFollowingErrorStopDeg). Either one stops the loop, with the
+// same LoopStop::kFollowingError reason. config::kDisableFollowingErrorStop
+// removes only the Cartesian rule — the joint gate is disabled by setting its
+// own threshold non-positive.
+inline constexpr bool FollowingErrorStopRequested(bool cartesian_exceeded,
+                                                  bool joint_tracking_stop)
+{
+    return cartesian_exceeded || joint_tracking_stop;
+}
+
 // Unconditional live state always wins. A live fault is always recorded, but
 // only wins the stop reason when the compile-time policy enables fault stops.
 // A held-frame joint warning and then stale acknowledgement win only when no

@@ -16,7 +16,8 @@
 //   T6  normal control
 //
 // Per cycle: dt (measured, clamped; nominal on cycle 0) -> RobotState from
-// the previous exchange -> PoseTargetSource::Get ->
+// the previous exchange -> ReferenceSource::Get (State.h — the Cartesian pose
+// path or the joint-trajectory path, selected in Main.cpp) ->
 // TrackingController::DesiredVelocity -> per-joint clamp to
 // ±qdot_limit_deg_s -> PositionIntegration::Apply (command lead plus the
 // joint-warning hold) -> CyclicSession::Send -> log sample -> edge-triggered fault prints ->
@@ -55,7 +56,7 @@
 // communication failure; restores single-level servoing on every exit path.
 LoopResult RunControlLoop(Kinova::Api::Base::BaseClient* base,
                           Kinova::Api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                          PoseTargetSource& reference,
+                          ReferenceSource& reference,
                           TrackingController& controller,
                           PositionIntegration& actuation,
                           LoopLog& log, const std::atomic<bool>& stop,

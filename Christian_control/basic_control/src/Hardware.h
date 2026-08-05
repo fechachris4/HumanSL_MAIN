@@ -219,7 +219,7 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 8; WriteCsvRow is the authority):
+// CSV column order (log_format = 9; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -228,7 +228,8 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   status_flags_j1..7, jitter_us_j1..7,
 //   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
 //   ack_unchanged_j1..7, taskvel_j1..7, nullvel_j1..7,
-//   null_leak_mps                                         (135 columns)
+//   null_leak_mps, traj_activated, traj_rejected, traj_complete,
+//   traj_start_error_deg                                  (139 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -245,7 +246,10 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // of J·q̇_null, the end-effector velocity the damped null-space projector
 // leaks into task space; NaN on rows where no law ran). Added after the
 // 2026-08-05 stall, where the summed telemetry could not show two large
-// cancelling terms.
+// cancelling terms. Format 9 (2026-08-05) appends the joint-trajectory edges
+// — traj_activated/traj_rejected/traj_complete are 1 only on the single cycle
+// that accepted, refused, or finished a trajectory, and traj_start_error_deg
+// is the worst-joint splice distance carried by a rejection row.
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -345,6 +349,12 @@ struct LoopLogSample {
         std::numeric_limits<double>::quiet_NaN(),
         std::numeric_limits<double>::quiet_NaN()};
     double null_leak_m_s = std::numeric_limits<double>::quiet_NaN();
+
+    // Joint-trajectory edges (log_format 9). See the column note above.
+    bool joint_traj_activated = false;
+    bool joint_traj_rejected = false;
+    bool joint_traj_complete_edge = false;
+    double joint_traj_start_error_deg = 0.0;
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully
@@ -382,7 +392,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 8. Both
+// Column header and one data row — the authority for log_format = 9. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);

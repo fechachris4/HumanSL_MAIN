@@ -61,19 +61,20 @@ struct ControllerStatus {
     // Joint-trajectory following (JointTrajectorySource). The three edges
     // fire on the single cycle that activates, rejects, or completes a
     // trajectory; joint_traj_start_error_deg carries the worst-joint distance
-    // that failed the activation splice guard.
+    // that failed the activation splice guard. The point count and duration
+    // describe the trajectory the activation edge accepted.
     bool joint_traj_activated = false;
     bool joint_traj_rejected = false;
     bool joint_traj_complete_edge = false;
     double joint_traj_start_error_deg = 0.0;
+    int joint_traj_points = 0;
+    double joint_traj_duration_s = 0.0;
 
     // The controller's joint-space following-error stop request: the wrapped
     // measured-vs-reference error exceeded config::kTrajFollowingErrorStopDeg
-    // on some joint. NOT YET ENFORCED: nothing reads this flag today, so it
-    // is telemetry only. The gated task that wires the joint path into
-    // Main.cpp must also feed it to the same ResolveStopPriority
-    // following-error input the hardware rule uses, keeping the stop reason
-    // LoopStop::kFollowingError rather than adding a stop path.
+    // on some joint. The Runner feeds this to the same ResolveStopPriority
+    // following-error input the Cartesian command-vs-measured rule uses, so a
+    // trip stops the loop with LoopStop::kFollowingError.
     bool joint_following_error_stop = false;
     double joint_following_error_deg = 0.0;
 
@@ -153,4 +154,20 @@ struct JointReference {
 struct Reference {
     std::optional<PoseReference> pose;
     std::optional<JointReference> joint;
+};
+
+// What the Runner requires of a reference source, so the loop is written once
+// for every kind of source (Targets.h has both: the Cartesian pose path and
+// the joint-trajectory path). Get is called exactly once per cycle with the
+// loop's clamped dt; OnArrivalEdge hands back the same cycle's status so a
+// source that sequences targets can advance. Sources that do not sequence
+// anything ignore it.
+class ReferenceSource
+{
+public:
+    virtual ~ReferenceSource() = default;
+
+    virtual Reference Get(const RobotState& state, double dt_s,
+                          ControllerStatus& status) = 0;
+    virtual void OnArrivalEdge(const ControllerStatus&) {}
 };
