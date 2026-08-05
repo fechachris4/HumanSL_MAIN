@@ -77,3 +77,16 @@ add_test(NAME plan_solver COMMAND test_plan_solver
          ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml
          ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml)
 set_tests_properties(plan_solver PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
+
+target_sources(bridge_core PRIVATE src/Waypoints.cpp)
+add_executable(test_waypoints
+    tests/test_waypoints.cpp
+    ${HUMANSL_ROOT}/Christian_control/basic_control/src/Targets.cpp
+)
+target_include_directories(test_waypoints PRIVATE
+    src ${HUMANSL_ROOT}/Christian_control/basic_control/src)
+target_link_libraries(test_waypoints PRIVATE bridge_core)
+set_target_properties(test_waypoints PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME waypoints COMMAND test_waypoints
+         ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml)
+set_tests_properties(waypoints PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
