@@ -8,11 +8,28 @@
 #include <sstream>
 #include "BridgeMain.h"
 #include "JointTrajectory.h"
-#include "Targets.h"
 #include "TrajectoryEmit.h"
 
 static_assert(kMaxTrajectoryBlockPoints == kMaxJointTrajectoryPoints,
               "the bridge's block cap must match what the controller accepts");
+
+// One complete, well-formed trajectory block on `text`, parsed by the
+// controller's own accumulator — the wire contract, checked end to end.
+static int CompleteBlocksIn(const std::string& text) {
+    JointTrajectoryAccumulator accumulator;
+    std::istringstream lines(text);
+    std::string line, error;
+    int complete_blocks = 0;
+    while (std::getline(lines, line)) {
+        const std::optional<JointTrajectory> finished =
+            accumulator.Feed(line, error);
+        assert(error.empty());
+        if (finished)
+            ++complete_blocks;
+    }
+    assert(!accumulator.Collecting());
+    return complete_blocks;
+}
 
 int main(int argc, char** argv) {
     assert(argc == 3 && "usage: test_bridge_main <dh_tool.yaml> <joint_limits.yaml>");
@@ -65,20 +82,6 @@ int main(int argc, char** argv) {
             assert(std::abs(traj.points.front().q_rad(joint)) < 1e-6);
     }
 
-    std::ostringstream targets, diagnostics;
-    std::vector<std::string> waypoint_args = args;
-    waypoint_args.push_back("--emit-waypoints");
-    const int exit_code = RunBridge(waypoint_args, targets, diagnostics);
-    assert(exit_code == 0);
-
-    std::istringstream lines(targets.str());
-    std::string line, error;
-    int count = 0;
-    while (std::getline(lines, line)) {
-        assert(ParsePoseTarget(line, error).has_value());
-        ++count;
-    }
-    assert(count >= 1 && count <= 8);
 
     // Bad arguments produce exit code 1 and NO target output.
     std::ostringstream empty_targets, ignored;
@@ -111,18 +114,9 @@ int main(int argc, char** argv) {
     const std::vector<std::string> auto_args = {
         "--goal", "0.15", "0.075", "1.207",
         "--dh", argv[1], "--joint-limits", argv[2],
-        "--runs-root", "tbm_tmp", "--emit-waypoints"};
+        "--runs-root", "tbm_tmp"};
     assert(RunBridge(auto_args, auto_targets, auto_diagnostics) == 0);
-    {
-        std::istringstream auto_lines(auto_targets.str());
-        std::string auto_line, auto_error;
-        int auto_count = 0;
-        while (std::getline(auto_lines, auto_line)) {
-            assert(ParsePoseTarget(auto_line, auto_error).has_value());
-            ++auto_count;
-        }
-        assert(auto_count >= 1);
-    }
+    assert(CompleteBlocksIn(auto_targets.str()) == 1);
     std::filesystem::remove_all("tbm_tmp");
 
     // Empty/missing runs root: exit 2, no target output, diagnostics point
@@ -148,18 +142,9 @@ int main(int argc, char** argv) {
     const std::vector<std::string> file_args = {
         "--goal-file", "tbm_goal.yaml",
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
-        "--dh", argv[1], "--joint-limits", argv[2], "--emit-waypoints"};
+        "--dh", argv[1], "--joint-limits", argv[2]};
     assert(RunBridge(file_args, file_targets, file_diagnostics) == 0);
-    {
-        std::istringstream file_lines(file_targets.str());
-        std::string file_line, file_error;
-        int file_count = 0;
-        while (std::getline(file_lines, file_line)) {
-            assert(ParsePoseTarget(file_line, file_error).has_value());
-            ++file_count;
-        }
-        assert(file_count >= 1);
-    }
+    assert(CompleteBlocksIn(file_targets.str()) == 1);
     std::filesystem::remove("tbm_goal.yaml");
 
     // A goal file with a box outside the SDF grid is rejected exactly like

@@ -18,62 +18,6 @@
 
 #include "Config.h"
 #include "State.h"
-#include "TrajectoryProfile.h"
-
-// One base_link target — ALWAYS base_link, whichever frame the input line
-// declared: ParsePoseTarget converts WORLD input at ingestion. A parsed
-// 7-field line carries orientation, but it is only reachable while
-// config::kAcceptOrientationTargets is true — see ParsePoseTarget;
-// PoseTargetSource still clears it every activation.
-struct PoseTarget {
-    Eigen::Vector3d p_desired;               // metres, right-arm base frame
-    std::optional<Eigen::Matrix3d> rotation; // set only when the 7-field
-                                              // grammar parses; see above
-};
-
-// Rotation matrix from roll/pitch/yaw RADIANS, composed R = Rz·Ry·Rx.
-Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw);
-
-// Parse public runtime input: either "x y z" (three finite metre
-// coordinates) or "x y z qx qy qz qw" (adds a unit quaternion, xyzw). The
-// 7-field form is rejected with an error naming
-// config::kAcceptOrientationTargets while that gate is false — orientation
-// is never silently dropped.
-//
-// An optional leading frame keyword declares which frame the numbers are in:
-// "WORLD x y z" or "BASE x y z". No keyword means base_link, so every target
-// line written before world-frame targets existed still means what it did.
-// WORLD input is converted to base_link HERE, at ingestion, so PoseTarget is
-// always a base_link target and no consumer downstream changes.
-//
-// world_from_base is T_world_base for the right arm, passed BY VALUE so this
-// parser stays free of Pinocchio and testable without a robot model. When it
-// is empty a WORLD line is rejected, never silently treated as base_link.
-std::optional<PoseTarget> ParsePoseTarget(
-    const std::string& line,
-    const std::optional<Eigen::Isometry3d>& world_from_base,
-    std::string& error);
-
-// Overload for callers with no model to hand: WORLD lines are rejected.
-std::optional<PoseTarget> ParsePoseTarget(const std::string& line,
-                                          std::string& error);
-
-// Exactly eight entries, with the stdin thread as sole producer and the
-// 500 Hz source as sole consumer. Release/acquire publication means the
-// source never locks, allocates, or performs I/O in Get.
-class PoseTargetMailbox
-{
-public:
-    static constexpr std::size_t kCapacity = 8;
-
-    bool Enqueue(const PoseTarget& target);
-    std::optional<PoseTarget> TryDequeue();
-
-private:
-    std::array<PoseTarget, kCapacity> entries_{};
-    alignas(64) std::atomic<std::uint64_t> read_index_{0};
-    alignas(64) std::atomic<std::uint64_t> write_index_{0};
-};
 
 // Declared, not included: TrajectoryGeneration/include/utils.h defines a
 // different global struct of this name, and planner_bridge translation units
@@ -102,16 +46,13 @@ private:
     std::atomic<JointTrajectory*> slot_{nullptr};
 };
 
-// Reads target lines from a named pipe, surviving writer disconnects:
+// Reads trajectory blocks from a named pipe, surviving writer disconnects:
 // on EOF the pipe is reopened, so each bridge invocation may open, write,
 // and close independently. `stop` is the only exit. The fd-level loop is
 // the tested RunTargetInput, unchanged.
-// world_from_base, when supplied, is what lets WORLD-frame target lines be
-// accepted on this stream; see ParsePoseTarget.
-void RunTargetInputFromPipe(
-    PoseTargetMailbox& pose_mailbox, JointTrajectoryMailbox& traj_mailbox,
-    const std::atomic<bool>& stop, const std::string& pipe_path,
-    const std::optional<Eigen::Isometry3d>& world_from_base = std::nullopt);
+void RunTargetInputFromPipe(JointTrajectoryMailbox& traj_mailbox,
+                            const std::atomic<bool>& stop,
+                            const std::string& pipe_path);
 
 // Same input loop over a borrowed POSIX file descriptor. Kept separate so the
 // pipe entry point stays simple and the partial-pipe teardown contract is
@@ -119,70 +60,13 @@ void RunTargetInputFromPipe(
 //
 // Line routing: while the accumulator is collecting, every line is a
 // trajectory line; while it is idle, a TRAJ_* keyword opens a block and
-// anything else is a pose line. A completed block is validated against the
-// compiled joint limits and only then published. Any grammar or validation
-// error goes to stderr with the offending line and resets the accumulator —
-// nothing is silently skipped, and the thread survives.
-void RunTargetInput(
-    PoseTargetMailbox& pose_mailbox, JointTrajectoryMailbox& traj_mailbox,
-    const std::atomic<bool>& stop, int input_fd,
-    const std::optional<Eigen::Isometry3d>& world_from_base = std::nullopt);
-
-// Pose-only entry points, kept for callers that predate joint trajectories.
-// They own a throwaway trajectory mailbox, so a block arriving on such a
-// stream is validated and then dropped rather than reaching any consumer.
-void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
-                                const std::atomic<bool>& stop,
-                                const std::string& pipe_path);
-
-void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
-                              const std::atomic<bool>& stop, int input_fd);
-
-// Begins with a profile from the measured takeover position to the compiled
-// terminal target (sequence 0). It holds the active target until Runner
-// reports an arrival edge; the next Get consumes exactly one queued target, if
-// any, and increments the sequence. If empty, it stays ready for a target
-// later enqueued by the producer.
-class PoseTargetSource : public ReferenceSource
-{
-public:
-    PoseTargetSource(
-        Eigen::Vector3d startup_position_m, PoseTarget terminal_target,
-        PoseTargetMailbox& mailbox,
-        CartesianMotionLimits profile_limits = {
-            config::kProfileMaxSpeedMps,
-            config::kProfileMaxAccelerationMps2,
-            config::kProfileMaxJerkMps3},
-        double target_hold_s = config::kTargetHoldS);
-
-    Reference Get(const RobotState& state, double dt_s,
-                  ControllerStatus& status) override;
-    // The arrival edge is what advances this source's target queue.
-    void OnArrivalEdge(const ControllerStatus& status) override;
-    void OnArrived();
-
-private:
-    enum class Phase {
-        kAwaitTerminalArrival,
-        kDwell,
-        kReadyForNext,
-        kFollowingProfile,
-    };
-
-    bool ValidDt(double dt_s) const;
-    void ActivateOneQueuedTarget();
-    Reference StationaryReference() const;
-
-    PoseTargetMailbox& mailbox_;
-    PoseTarget active_target_;
-    CartesianMotionLimits profile_limits_;
-    double target_hold_s_ = 0.0;
-    std::uint64_t sequence_ = 0;
-    Phase phase_ = Phase::kAwaitTerminalArrival;
-    double dwell_elapsed_s_ = 0.0;
-    double profile_elapsed_s_ = 0.0;
-    std::optional<CartesianSegmentProfile> active_profile_;
-};
+// anything else is rejected — joint trajectories are the only input this
+// controller accepts. A completed block is validated against the compiled
+// joint limits and only then published. Any grammar or validation error goes
+// to stderr with the offending line and resets the accumulator — nothing is
+// silently skipped, and the thread survives.
+void RunTargetInput(JointTrajectoryMailbox& traj_mailbox,
+                    const std::atomic<bool>& stop, int input_fd);
 
 // Follows whole joint trajectories published by the input thread.
 //
@@ -227,9 +111,3 @@ private:
     double elapsed_s_ = 0.0;
     bool complete_reported_ = false;
 };
-
-// The hardware loop calls this bridge with its per-cycle status. Keeping the
-// edge gate in pure target code gives hardware-free coverage of the exact
-// arrival-to-queue handoff contract.
-void NotifyPoseTargetSourceOnArrivalEdge(PoseTargetSource& source,
-                                         const ControllerStatus& status);

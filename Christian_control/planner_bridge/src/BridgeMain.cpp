@@ -18,7 +18,7 @@
 #include "StartState.h"
 #include "TrajectoryEmit.h"
 #include "WorldSdf.h"
-#include "Waypoints.h"
+#include "PathValidation.h"
 
 namespace {
 
@@ -28,9 +28,8 @@ constexpr char kUsageText[] =
     "                       [--runs-root PATH] [--dh PATH]\n"
     "                       [--joint-limits PATH]\n"
     "                       [--box CX CY CZ HX HY HZ]\n"
-    "                       [--emit-waypoints [--emit-orientation]]\n"
     "\n"
-    "Output (stdout): by default one timed joint-trajectory block —\n"
+    "Output (stdout): one timed joint-trajectory block —\n"
     "  TRAJ_BEGIN <count>, then <count> rows of\n"
     "  `<t_s> <q1..q7 deg> <v1..v7 deg/s>`, then TRAJ_END. Times start at\n"
     "  0 and run to the planned duration. The solver densifies to ~1 kHz,\n"
@@ -69,16 +68,6 @@ constexpr char kUsageText[] =
     "                         (WorldSdf.h WorldGridBounds()) or the run is\n"
     "                         rejected — outside that volume gpmp2 silently\n"
     "                         reports no obstacle.\n"
-    "  --emit-waypoints       Emit the legacy Cartesian target lines\n"
-    "                         (at most 8 lines of `x y z`, metres,\n"
-    "                         base_link) instead of the trajectory block.\n"
-    "                         Off by default.\n"
-    "  --emit-orientation     Emit each waypoint as 7 fields\n"
-    "                         (x y z qx qy qz qw) instead of 3. Only\n"
-    "                         meaningful with --emit-waypoints. The\n"
-    "                         controller's parser rejects 7-field lines\n"
-    "                         while config::kAcceptOrientationTargets is\n"
-    "                         false, so this is off by default.\n"
     "\n"
     "Exit codes: 0 targets emitted (also returned by --help), 1 bad\n"
     "arguments, 2 start-state unavailable, 3 solve failed, 4 validation\n"
@@ -156,8 +145,6 @@ struct ParsedArgs {
     std::string joint_limits_path = DefaultJointLimitsPath();
     std::string runs_root = DefaultRunsRootPath();
     std::optional<AxisAlignedBox> box;
-    bool emit_waypoints = false;
-    bool emit_orientation = false;
 };
 
 // Reads a YAML sequence of exactly three finite numbers into a vector,
@@ -238,10 +225,6 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             box.half_extent = Eigen::Vector3d(ParseDouble(next()), ParseDouble(next()),
                                                ParseDouble(next()));
             parsed.box = box;
-        } else if (flag == "--emit-waypoints") {
-            parsed.emit_waypoints = true;
-        } else if (flag == "--emit-orientation") {
-            parsed.emit_orientation = true;
         } else {
             throw std::invalid_argument("unrecognized flag: '" + flag + "'");
         }
@@ -379,36 +362,19 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     // there.
     std::ostringstream buffered_targets;
     std::size_t emitted_count = 0;
-    if (parsed.emit_waypoints) {
-        std::vector<Eigen::Quaterniond> rotations_xyzw;
-        const std::vector<Eigen::Vector3d> waypoints = SampleCartesianWaypoints(
-            model, outcome.result.trajectory_pos, /*max_count=*/8,
-            /*min_spacing_m=*/0.05,
-            parsed.emit_orientation ? &rotations_xyzw : nullptr);
-        for (std::size_t i = 0; i < waypoints.size(); ++i) {
-            if (parsed.emit_orientation)
-                buffered_targets << FormatTargetLine(waypoints[i], rotations_xyzw[i])
-                                 << "\n";
-            else
-                buffered_targets << FormatTargetLine(waypoints[i]) << "\n";
-        }
-        emitted_count = waypoints.size();
-    } else {
-        try {
-            buffered_targets << FormatTrajectoryBlock(outcome.result.trajectory_pos,
-                                                      outcome.result.trajectory_vel,
-                                                      outcome.total_time_sec);
-        } catch (const std::exception& error) {
-            diagnostics << "error: plan rejected: " << error.what() << "\n";
-            return 4;
-        }
-        emitted_count = std::min(outcome.result.trajectory_pos.size(),
-                                 kMaxTrajectoryBlockPoints);
+    try {
+        buffered_targets << FormatTrajectoryBlock(outcome.result.trajectory_pos,
+                                                  outcome.result.trajectory_vel,
+                                                  outcome.total_time_sec);
+    } catch (const std::exception& error) {
+        diagnostics << "error: plan rejected: " << error.what() << "\n";
+        return 4;
     }
+    emitted_count = std::min(outcome.result.trajectory_pos.size(),
+                             kMaxTrajectoryBlockPoints);
     targets << buffered_targets.str();
 
-    diagnostics << (parsed.emit_waypoints ? "waypoints: " : "trajectory points: ")
-                << emitted_count
+    diagnostics << "trajectory points: " << emitted_count
                 << ", solve: " << outcome.result.optimization_duration.count()
                 << " ms, final goal error: " << (outcome.final_goal_error_m * 1000.0)
                 << " mm\n";

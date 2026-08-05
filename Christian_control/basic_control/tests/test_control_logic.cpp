@@ -774,8 +774,7 @@ namespace
 
     // Writes `text`, then closes the writer so the reader sees EOF and the
     // fd loop returns on its own — no timing assumptions in the assertions.
-    bool RunInputThreadOverPipe(PoseTargetMailbox& pose_mailbox,
-                                JointTrajectoryMailbox& traj_mailbox,
+    bool RunInputThreadOverPipe(JointTrajectoryMailbox& traj_mailbox,
                                 const std::string& text)
     {
         int fds[2] = {-1, -1};
@@ -783,7 +782,7 @@ namespace
             return false;
         std::atomic<bool> stop{false};
         std::thread reader(
-            [&] { RunTargetInput(pose_mailbox, traj_mailbox, stop, fds[0]); });
+            [&] { RunTargetInput(traj_mailbox, stop, fds[0]); });
         const bool written = WriteAllBytes(fds[1], text);
         close(fds[1]);
         reader.join();
@@ -793,9 +792,8 @@ namespace
 
     void TestTrajectoryBlockReachesMailbox()
     {
-        PoseTargetMailbox pose_mailbox;
         JointTrajectoryMailbox traj_mailbox;
-        Check(RunInputThreadOverPipe(pose_mailbox, traj_mailbox,
+        Check(RunInputThreadOverPipe(traj_mailbox,
                                      TrajectoryBlock(10.0)),
               "a framed trajectory block is written to the input pipe");
 
@@ -810,15 +808,12 @@ namespace
                   "degrees on the wire become radians in the mailbox");
         }
         Check(!traj_mailbox.Take(), "the single slot empties on the first Take");
-        Check(!pose_mailbox.TryDequeue(),
-              "trajectory lines never reach the pose mailbox");
     }
 
     void TestNewerTrajectoryBlockReplacesOlder()
     {
-        PoseTargetMailbox pose_mailbox;
         JointTrajectoryMailbox traj_mailbox;
-        Check(RunInputThreadOverPipe(pose_mailbox, traj_mailbox,
+        Check(RunInputThreadOverPipe(traj_mailbox,
                                      TrajectoryBlock(10.0) + TrajectoryBlock(20.0)),
               "two consecutive blocks are written to the input pipe");
 
@@ -832,39 +827,34 @@ namespace
 
     void TestInvalidTrajectoryIsNeverPublished()
     {
-        PoseTargetMailbox pose_mailbox;
         JointTrajectoryMailbox traj_mailbox;
         // Declares two rows, supplies one: the accumulator must reject the
-        // block, and the thread must stay alive for the pose line after it.
+        // block, reset itself, and the thread must survive to accept the
+        // valid block that follows.
         const std::string text = "TRAJ_BEGIN 2\n" + TrajectoryRow(0.0, 0.0) +
-                                 "TRAJ_END\n0.1 0.2 0.3\n";
-        Check(RunInputThreadOverPipe(pose_mailbox, traj_mailbox, text),
-              "a short block followed by a pose line is written");
+                                 "TRAJ_END\n" + TrajectoryBlock(10.0);
+        Check(RunInputThreadOverPipe(traj_mailbox, text),
+              "a short block followed by a valid block is written");
 
-        Check(!traj_mailbox.Take(),
-              "a block whose row count mismatches is never published");
-        const std::optional<PoseTarget> pose = pose_mailbox.TryDequeue();
-        Check(pose && pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
-              "a pose line after a grammar error still reaches the pose mailbox");
+        const auto recovered = traj_mailbox.Take();
+        Check(recovered && recovered->points.size() == 2,
+              "the accumulator recovers from a grammar error and accepts the "
+              "next valid block");
     }
 
     void TestOutOfLimitTrajectoryIsNeverPublished()
     {
-        PoseTargetMailbox pose_mailbox;
         JointTrajectoryMailbox traj_mailbox;
         // 200 deg on joint 2 in one second: outside its position limit and
         // far beyond its velocity clip.
         const std::string text = "TRAJ_BEGIN 2\n" + TrajectoryRow(0.0, 0.0) +
                                  "1.0 0 200 0 0 0 0 0 0 0 0 0 0 0 0\n"
-                                 "TRAJ_END\n0.4 0.5 0.6\n";
-        Check(RunInputThreadOverPipe(pose_mailbox, traj_mailbox, text),
-              "an out-of-limit block followed by a pose line is written");
+                                 "TRAJ_END\n";
+        Check(RunInputThreadOverPipe(traj_mailbox, text),
+              "an out-of-limit block is written");
 
         Check(!traj_mailbox.Take(),
               "a block outside the compiled joint limits is never published");
-        const std::optional<PoseTarget> pose = pose_mailbox.TryDequeue();
-        Check(pose && pose->p_desired == Eigen::Vector3d(0.4, 0.5, 0.6),
-              "a pose line after a validation error still reaches the pose mailbox");
     }
 
     // --- JointTrajectorySource: hold, activation splice guard, tracking ---

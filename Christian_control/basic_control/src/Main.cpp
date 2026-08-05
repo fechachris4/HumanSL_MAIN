@@ -77,13 +77,11 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("orientation_enabled", config::kOrientationEnabled ? "true" : "false");
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");
-    // The measured takeover state the run starts from: the joint path holds
-    // the measured q, the Cartesian fallback holds the measured FK pose.
-    line("reference_source", config::kUseJointTrajectorySource
-                                 ? "joint_trajectory"
-                                 : "pose_target");
-    line("startup_hold",
-         config::kUseJointTrajectorySource ? "measured_q" : "measured");
+    // The measured takeover state the run starts from. Kept in the preamble
+    // even though there is now only one source, so every CSV keeps saying
+    // which motion path produced it.
+    line("reference_source", "joint_trajectory");
+    line("startup_hold", "measured_q");
     // The joint path's three settings: tracking gain, the activation splice
     // guard, and the joint-space following-error stop.
     line("kp_joint_tracking", FormatDouble(config::kKpJointTracking));
@@ -91,10 +89,6 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
          FormatDouble(config::kTrajStartToleranceDeg));
     line("traj_following_error_stop_deg",
          FormatDouble(config::kTrajFollowingErrorStopDeg));
-    line("profile_max_speed_m_s", FormatDouble(config::kProfileMaxSpeedMps));
-    line("profile_max_acceleration_m_s2",
-         FormatDouble(config::kProfileMaxAccelerationMps2));
-    line("profile_max_jerk_m_s3", FormatDouble(config::kProfileMaxJerkMps3));
     line("target_hold_s", FormatDouble(config::kTargetHoldS));
     line("fixed_target_use_rpy", config::kFixedTargetUseRpy ? "true" : "false");
     if (config::kFixedTargetUseRpy)
@@ -434,46 +428,20 @@ int main(int argc, char** argv)
                   << ee_now.position.y() << " " << ee_now.position.z()
                   << " m in " << config::kRightBaseFrame
                   << "; the arm will hold here\n";
-        // The terminal target IS the measured startup pose: the arm holds
-        // where it woke up until the first validated pipe waypoint arrives.
-        PoseTarget target;
-        target.p_desired = ee_now.position;
-        // All targets, including this startup hold, are position only in
-        // base_link and preserve the orientation captured at takeover.
-        PoseTargetMailbox pose_targets;
+        // The arm holds the measured takeover q until the first validated
+        // trajectory block arrives. Joint trajectories are the only motion
+        // path: the Cartesian pose source was retired in stage 2.
         JointTrajectoryMailbox trajectory_targets;
-        // Both sources are constructed; config::kUseJointTrajectorySource
-        // picks the one the Runner is given. The Cartesian path stays
-        // compiled as the documented fallback until task 6b deletes it.
-        PoseTargetSource pose_reference(ee_now.position, target, pose_targets);
         JointTrajectorySource joint_reference(q_now_rad, trajectory_targets);
-        ReferenceSource& reference =
-            config::kUseJointTrajectorySource
-                ? static_cast<ReferenceSource&>(joint_reference)
-                : static_cast<ReferenceSource&>(pose_reference);
+        ReferenceSource& reference = joint_reference;
         PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
-        // The arm holds where it woke up. Which kind of input advances it
-        // from there is the compiled source selection above.
-        if (config::kUseJointTrajectorySource)
-        {
-            std::cout << "HOLD AT START: the arm holds the measured startup "
-                         "joint position until the first validated trajectory; "
-                         "Ctrl+C to stop\n";
-            std::cout << "  trajectories: write TRAJ_BEGIN/TRAJ_END blocks to "
-                      << config::kTargetPipePath
-                      << " (planner_bridge does this). Pose \"x y z\" lines are"
-                         " still parsed but this source ignores them.\n";
-        }
-        else
-        {
-            std::cout << "HOLD AT START: the arm holds the measured startup "
-                         "pose until the first pipe waypoint; Ctrl+C to stop\n";
-            std::cout << "  targets: write \"x y z\" lines to "
-                      << config::kTargetPipePath
-                      << " (planner_bridge does this; validation happens "
-                         "bridge-side)\n";
-        }
+        std::cout << "HOLD AT START: the arm holds the measured startup "
+                     "joint position until the first validated trajectory; "
+                     "Ctrl+C to stop\n";
+        std::cout << "  trajectories: write TRAJ_BEGIN/TRAJ_END blocks to "
+                  << config::kTargetPipePath
+                  << " (planner_bridge does this)\n";
 
         struct stat pipe_stat{};
         if (stat(config::kTargetPipePath, &pipe_stat) == 0) {
@@ -487,18 +455,10 @@ int main(int argc, char** argv)
                       << config::kTargetPipePath << " — not starting\n";
             return 1;
         }
-        // Handing the input thread T_world_base is what lets an operator write
-        // "WORLD x y z" on the pipe; the conversion to base_link happens in
-        // the parser, so the control loop below is unchanged either way.
-        const std::optional<Eigen::Isometry3d> world_from_right_base(
-            Eigen::Isometry3d(
-                controlled_model.WorldFromBase(Arm::kRight).toHomogeneousMatrix()));
         std::thread input_thread(RunTargetInputFromPipe,
-                                 std::ref(pose_targets),
                                  std::ref(trajectory_targets),
                                  std::cref(g_stop),
-                                 std::string(config::kTargetPipePath),
-                                 world_from_right_base);
+                                 std::string(config::kTargetPipePath));
         InputThreadStopJoiner input_thread_joiner(input_thread, g_stop);
 
         // MOVES THE ARM: servoing mode is entered and restored inside the

@@ -15,14 +15,16 @@ The program has ONE controller and one **reference source** (architecture
 diagram at the top of `src/Controller.h`). The source says WHERE the
 end-effector should be each cycle; the `TrackingController` says HOW to
 move toward it. It takes over the arm in low-level servoing (actuators in
-their default POSITION mode) and holds its measured startup pose — there
-is no compiled terminal target. It then accepts queued pose targets
-written over a named pipe (`config::kTargetPipePath`, Stage 1.5's
-`planner_bridge`; see below). New research inputs (Vicon, a Python
+their default POSITION mode) and holds its measured startup joint
+position — there is no compiled terminal target. It then follows whole
+timed joint trajectories written over a named pipe
+(`config::kTargetPipePath`, Stage 1.5's `planner_bridge`; see below). New research inputs (Vicon, a Python
 bridge) are new sources, never new controllers.
 
-Pose references run the reactive law — full 6-DoF pose, ported
-from the simulation (msc_project) and cross-validated against it
+Joint references run the joint-space tracking law
+(q̇_cmd = q̇_ref + Kp_j·(q_ref − q_meas)). The Cartesian pose law below is
+retained for the takeover hold — full 6-DoF pose, ported from the
+simulation (msc_project) and cross-validated against it
 (`../docs/decisions/reactive-pose-port.md`):
 
     e_pos = p_desired − p(q);   e_rot = log3(R_desired · R(q)ᵀ)
@@ -51,7 +53,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   | `State.h` | the records that cross boundaries: `RobotState`, `ControllerStatus`, `Reference`, `ReferenceSource` | `state.py` + `backend.py` |
   | `ReactiveLaw.h` | the pose equations 1-6, header-only, no robot | `reactive_controller.py` |
   | `Controller.h/.cpp` | **THE controller** — tracks whichever reference channel is set | `servo.py` |
-  | `Targets.h/.cpp` | position targets, strict pipe-line parsing, eight-entry SPSC mailbox, `PoseTargetSource` | `desired_pos.py` |
+  | `Targets.h/.cpp` | strict pipe-line parsing, single-slot trajectory mailbox, `JointTrajectorySource` | `desired_pos.py` |
   | `Actuation.h/.cpp` | `PositionIntegration`: q_command integrator + lead limiter | `position_actuation.py` |
   | `Kinematics.h/.cpp` | Pinocchio FK/Jacobians + the `DualArmKinematics` adapter | `pin_fk.py` |
   | `Safety.h/.cpp` | stop classification, readiness gate, fault decoding, `ServoingGuard` | (hardware-only) |
@@ -84,7 +86,7 @@ ctest            # hardware-free control-logic tests
 > e-stop in hand, authorization required for every session.
 
 ```bash
-./controller                       # current-pose takeover, then terminal target
+./controller                       # takeover, then hold until a trajectory arrives
 ./controller --log my_run.csv      # name the CSV; the only runtime argument
 ```
 
@@ -96,22 +98,20 @@ without contacting the arm; this guard does not cover other Kortex programs.
 gain, term switch, and limit is a compiled constant in `src/Config.h`.
 During a run, the controller reads targets from a named pipe
 (`config::kTargetPipePath`, `/tmp/humansl_bridge_targets`), which it
-creates itself at startup; a target line is `x y z` (metres), optionally
-prefixed by the frame it is written in — `WORLD x y z` or `BASE x y z`, with
-no prefix meaning `base_link` — this is target input, not configuration. Every run still
+creates itself at startup; the input is a `TRAJ_BEGIN … TRAJ_END` block of
+timed joint rows — this is motion input, not configuration. Every run still
 echoes its effective configuration and embeds it as `#` lines in the CSV,
 so each data file stays self-describing.
 
-**The default input is a whole joint trajectory** (Stage 2). With
-`config::kUseJointTrajectorySource = true` the Runner is given
-`JointTrajectorySource`: the arm holds its measured takeover joint
-position until a `TRAJ_BEGIN … TRAJ_END` block arrives on the same pipe,
-and then follows it in joint space (Hermite sampling, 2 deg splice guard
-at activation, `kTrajFollowingErrorStopDeg` following-error stop). Pose
-`x y z` lines are still parsed and mailboxed, but this source ignores
-them. Setting the constant to `false` selects the older
-`PoseTargetSource` Cartesian path described below — it stays compiled as
-the documented fallback until the supervised run gates its deletion.
+**A whole joint trajectory is the only input** (Stage 2). The Runner is
+given `JointTrajectorySource`: the arm holds its measured takeover joint
+position until a `TRAJ_BEGIN … TRAJ_END` block arrives on the pipe, and
+then follows it in joint space (Hermite sampling, 2 deg splice guard at
+activation, `kTrajFollowingErrorStopDeg` following-error stop). Anything
+else on the pipe while idle is rejected with a diagnostic naming
+`TRAJ_BEGIN` — the Cartesian `x y z` pose path and its profile were
+deleted once the supervised hardware run passed
+(`../docs/decisions/stage2-joint-trajectory-following.md`).
 
 **Read `Config.h` before every session** — with no runtime override, the
 compiled values are the only thing standing between you and the arm. In
@@ -133,8 +133,8 @@ What a run does, in order:
    measured state (q_command = q_measured) and captures the current pose as
    the hold pose, then sends one unchanged holding frame — the arm holds.
    Actuators stay in their default POSITION mode.
-4. **Default path (`kUseJointTrajectorySource = true`).** The arm holds its
-   measured takeover joint position. Each `TRAJ_BEGIN … TRAJ_END` block on
+4. The arm holds its measured takeover joint position. Each
+   `TRAJ_BEGIN … TRAJ_END` block on
    the pipe is validated by the reading thread, and the follower activates
    it only if its first point is within `kTrajStartToleranceDeg` of the
    measured position on every joint — a plan that fails that splice guard is
@@ -146,31 +146,6 @@ What a run does, in order:
    (`kTrajFollowingErrorStopDeg`) and the 45 deg/s joint-rate clip both
    remain active throughout.
 
-   **Cartesian fallback path (`kUseJointTrajectorySource = false`).**
-   The arm holds its measured takeover pose — there is no compiled
-   terminal target; the terminal target IS the measured startup pose, so
-   the arm's first profile is zero-distance and it simply stays put. The
-   pipe-reading thread accepts one `x y z` target per line in metres,
-   preserving the captured takeover orientation. A line may declare its
-   frame — `WORLD x y z` or `BASE x y z` — and a `WORLD` line is converted
-   to `base_link` at ingestion, so the control loop only ever sees
-   `base_link` targets. No prefix still means `base_link`. It rejects
-   malformed, trailing, or non-finite input, and rejects a `WORLD` line on
-   a stream that was not given the mounting transform rather than reading
-   it as `base_link`. The parser does not
-   perform reachability, collision, or path validation — that validation
-   happens bridge-side, before a target is ever written to the pipe. At
-   most eight live targets are queued in FIFO order. They cannot bypass
-   the startup hold: each target activates only after the previous
-   target (the startup hold, for the first one) emits its arrival edge,
-   and the final target holds.
-
-   Arrival requires both position error ≤ 1 mm and orientation error
-   ≤ 1 mrad. After arrival the source holds for two seconds, then advances
-   exactly one queued target. Each terminal-to-terminal Cartesian reference
-   follows the compiled seventh-order rest-to-rest profile (currently
-   0.025 m/s, 0.05 m/s², and 0.25 m/s³ limits). The reactive law tracks that
-   shaped reference; the independent 45 deg/s joint-rate clip remains active.
 5. Ctrl+C stops cleanly: the integrator stops updating (the position servo
    holds the last setpoint), single-level servoing is restored, and the
    last unwritten telemetry is flushed. Exit 0 only on a clean operator
@@ -201,8 +176,8 @@ mount calibration, collision safety, or safe robot behavior.
 
 `Christian_control/planner_bridge/` (`planner_bridge` binary, own build
 directory) is a separate, hardware-free process: one GPMP2 solve per
-invocation, emitted as pose-target lines onto the controller's named
-pipe (design: `../docs/decisions/stage1-planner-bridge.md`, updated by
+invocation, emitted as one timed joint-trajectory block onto the
+controller's named pipe (design: `../docs/decisions/stage1-planner-bridge.md`, updated by
 `../docs/decisions/stage15-bridge-workflow.md`). It is a new
 **source**, not a new controller — the controller code above is
 unchanged.

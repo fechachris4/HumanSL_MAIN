@@ -133,17 +133,17 @@ add_test(NAME plan_solver COMMAND test_plan_solver
          ${DH_PARAMS_TOOL_YAML}
          ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml)
 
-target_sources(bridge_core PRIVATE src/Waypoints.cpp)
-add_executable(test_waypoints
-    tests/test_waypoints.cpp
+target_sources(bridge_core PRIVATE src/PathValidation.cpp)
+add_executable(test_path_validation
+    tests/test_path_validation.cpp
     ${HUMANSL_ROOT}/Christian_control/basic_control/src/Targets.cpp
     ${HUMANSL_ROOT}/Christian_control/basic_control/src/JointTrajectory.cpp
 )
-target_include_directories(test_waypoints PRIVATE
+target_include_directories(test_path_validation PRIVATE
     src ${HUMANSL_ROOT}/Christian_control/basic_control/src)
-target_link_libraries(test_waypoints PRIVATE bridge_core)
-set_target_properties(test_waypoints PROPERTIES BUILD_RPATH "${TP_LIB}")
-add_test(NAME waypoints COMMAND test_waypoints
+target_link_libraries(test_path_validation PRIVATE bridge_core)
+set_target_properties(test_path_validation PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME path_validation COMMAND test_path_validation
          ${DH_PARAMS_TOOL_YAML})
 
 target_sources(bridge_core PRIVATE src/StartState.cpp)
@@ -172,7 +172,7 @@ add_test(NAME bridge_main COMMAND test_bridge_main
 # anything runs against it. (`ALL` on dh_params_tool covers bare `ctest`
 # after a full build — ctest itself never builds.)
 foreach(dh_consumer planner_bridge test_planner_model test_gpmp2_urdf_validation test_sphere_scaling
-        test_plan_solver test_waypoints test_bridge_main)
+        test_plan_solver test_path_validation test_bridge_main)
     add_dependencies(${dh_consumer} dh_params_tool)
 endforeach()
 
@@ -181,7 +181,7 @@ endforeach()
 # binaries alone doesn't resolve transitive deps under ctest's fork/exec —
 # a pre-existing gap in the third_party build, worked around once here for
 # every bridge_core-linked test rather than per add_test call.
-foreach(bridge_test_name planner_model world_sdf plan_solver waypoints start_state bridge_main gpmp2_urdf_validation sphere_scaling)
+foreach(bridge_test_name planner_model world_sdf plan_solver path_validation start_state bridge_main gpmp2_urdf_validation sphere_scaling)
     set_tests_properties(${bridge_test_name} PROPERTIES
         ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 endforeach()

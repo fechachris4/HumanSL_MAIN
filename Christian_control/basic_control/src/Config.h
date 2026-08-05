@@ -117,19 +117,6 @@ namespace config
     inline constexpr double kTrajStartToleranceDeg = 2.0;
     // Joint-space following-error stop: measured vs reference, any joint.
     inline constexpr double kTrajFollowingErrorStopDeg = 8.0;
-    // Which reference source the Runner is given. true = follow whole joint
-    // trajectories from the pipe (JointTrajectorySource); false = the older
-    // Cartesian pose path (PoseTargetSource), kept compiled as the documented
-    // fallback. REMOVE THIS SWITCH IN TASK 6b, together with the pose path it
-    // selects, once the supervised hardware run has passed.
-    inline constexpr bool kUseJointTrajectorySource = true;
-
-    // Terminal-to-terminal Cartesian references use a conservative
-    // seventh-order profile.  These are source-side reference limits, not
-    // replacements for the per-joint command clip or any safety guard.
-    inline constexpr double kProfileMaxSpeedMps = 0.025;
-    inline constexpr double kProfileMaxAccelerationMps2 = 0.05;
-    inline constexpr double kProfileMaxJerkMps3 = 0.25;
     // Dwell held at each reached target before the queue advances, s. Also
     // reused as the non-arrival timeout: if the arm is parked at a target and
     // has not arrived within this long, the run reports "target NOT reached"

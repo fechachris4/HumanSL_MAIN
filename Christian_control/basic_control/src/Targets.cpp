@@ -59,43 +59,9 @@ namespace
         return limits;
     }
 
-    void ProcessPoseTargetLine(PoseTargetMailbox& mailbox, const std::string& line,
-                               const std::optional<Eigen::Isometry3d>& world_from_base)
-    {
-        if (line.empty())
-            return;
-
-        std::string error;
-        const std::optional<PoseTarget> target =
-            ParsePoseTarget(line, world_from_base, error);
-        if (!target) {
-            std::cout << "target rejected: " << error << "\n";
-        } else if (!mailbox.Enqueue(*target)) {
-            std::cout << "target rejected: queue is full (8 pending targets)\n";
-        } else {
-            // A WORLD line was converted on the way in, so the numbers below
-            // are NOT the ones the operator typed. Echo the declared frame
-            // too — this echo is the only confirmation anyone gets before the
-            // arm starts moving toward the target.
-            const bool declared_world = line.rfind("WORLD", 0) == 0;
-            std::cout << "target queued: " << target->p_desired.x() << " "
-                      << target->p_desired.y() << " " << target->p_desired.z()
-                      << " m (base_link, "
-                      << (target->rotation.has_value() ? "+orientation" : "position-only")
-                      << ")";
-            if (declared_world)
-                std::cout << " <- converted from WORLD frame as typed";
-            std::cout << "\n";
-        }
-    }
-
     struct TargetInputRouter {
-        PoseTargetMailbox& pose_mailbox;
         JointTrajectoryMailbox& traj_mailbox;
         JointTrajectoryAccumulator accumulator;
-        // Empty when this input path was started without the model, in which
-        // case WORLD lines are rejected rather than misread as base_link.
-        std::optional<Eigen::Isometry3d> world_from_base;
     };
 
     bool IsTrajectoryKeywordLine(const std::string& line)
@@ -105,8 +71,15 @@ namespace
 
     void ProcessInputLine(TargetInputRouter& router, const std::string& line)
     {
+        // Trajectory blocks are the only input this controller accepts. A
+        // stray line while idle is reported and dropped rather than ignored:
+        // it is usually a target line from the retired Cartesian grammar, and
+        // silently swallowing it would look like the arm ignoring a command.
         if (!router.accumulator.Collecting() && !IsTrajectoryKeywordLine(line)) {
-            ProcessPoseTargetLine(router.pose_mailbox, line, router.world_from_base);
+            if (!line.empty())
+                std::cerr << "input rejected: expected TRAJ_BEGIN — this "
+                             "controller follows joint trajectories only ["
+                          << line << "]\n";
             return;
         }
 
@@ -159,117 +132,6 @@ namespace
     }
 } // namespace
 
-Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw)
-{
-    return (Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
-            Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
-            Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()))
-        .toRotationMatrix();
-}
-
-std::optional<PoseTarget> ParsePoseTarget(
-    const std::string& line,
-    const std::optional<Eigen::Isometry3d>& world_from_base, std::string& error)
-{
-    std::istringstream input(line);
-
-    // Optional leading frame keyword. Absent means base_link, which is what
-    // every target line meant before world-frame targets existed — so old
-    // input keeps its old meaning.
-    bool world_frame = false;
-    if (!line.empty() && (std::isalpha(static_cast<unsigned char>(line[0])) != 0)) {
-        std::string keyword;
-        input >> keyword;
-        if (keyword == "WORLD") {
-            world_frame = true;
-        } else if (keyword != "BASE") {
-            error = "unknown frame keyword '" + keyword +
-                    "' (expected WORLD or BASE)";
-            return std::nullopt;
-        }
-    }
-
-    std::vector<double> fields;
-    double value = 0.0;
-    while (input >> value)
-        fields.push_back(value);
-    std::string trailing;
-    input.clear();
-    if (input >> trailing || (fields.size() != 3 && fields.size() != 7)) {
-        error = "expected '[WORLD|BASE] x y z' or "
-                "'[WORLD|BASE] x y z qx qy qz qw'";
-        return std::nullopt;
-    }
-    for (const double field : fields)
-        if (!std::isfinite(field)) {
-            error = "all target values must be finite";
-            return std::nullopt;
-        }
-    // A WORLD line is refused rather than silently read as base_link when no
-    // transform was supplied — the two frames are ~0.06 m and 69 deg apart,
-    // so a silent fallback would command the wrong point.
-    if (world_frame && !world_from_base) {
-        error = "WORLD-frame targets need the world->base transform, which "
-                "this input path was not given";
-        return std::nullopt;
-    }
-
-    PoseTarget target;
-    target.p_desired = Eigen::Vector3d(fields[0], fields[1], fields[2]);
-    if (fields.size() == 7) {
-        if (!config::kAcceptOrientationTargets) {
-            error = "orientation targets disabled "
-                    "(config::kAcceptOrientationTargets)";
-            return std::nullopt;
-        }
-        const Eigen::Quaterniond q(fields[6], fields[3], fields[4], fields[5]);
-        if (std::abs(q.norm() - 1.0) > 1e-3) {
-            error = "quaternion must be unit norm (xyzw)";
-            return std::nullopt;
-        }
-        target.rotation = q.normalized().toRotationMatrix();
-    }
-
-    // Convert at ingestion, so PoseTarget is always base_link and nothing
-    // downstream of here — profile, control law, safety, logging — has to
-    // know that world-frame input exists at all.
-    if (world_frame) {
-        target.p_desired = world_from_base->inverse() * target.p_desired;
-        if (target.rotation)
-            target.rotation = world_from_base->linear().transpose() * *target.rotation;
-    }
-    return target;
-}
-
-std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& error)
-{
-    return ParsePoseTarget(line, std::nullopt, error);
-}
-
-bool PoseTargetMailbox::Enqueue(const PoseTarget& target)
-{
-    const std::uint64_t write = write_index_.load(std::memory_order_relaxed);
-    const std::uint64_t read = read_index_.load(std::memory_order_acquire);
-    if (write - read >= kCapacity)
-        return false;
-
-    entries_[write % kCapacity] = target;
-    write_index_.store(write + 1, std::memory_order_release);
-    return true;
-}
-
-std::optional<PoseTarget> PoseTargetMailbox::TryDequeue()
-{
-    const std::uint64_t read = read_index_.load(std::memory_order_relaxed);
-    const std::uint64_t write = write_index_.load(std::memory_order_acquire);
-    if (read == write)
-        return std::nullopt;
-
-    PoseTarget target = entries_[read % kCapacity];
-    read_index_.store(read + 1, std::memory_order_release);
-    return target;
-}
-
 JointTrajectoryMailbox::~JointTrajectoryMailbox()
 {
     delete slot_.exchange(nullptr);
@@ -285,26 +147,10 @@ std::unique_ptr<JointTrajectory> JointTrajectoryMailbox::Take()
     return std::unique_ptr<JointTrajectory>(slot_.exchange(nullptr));
 }
 
-void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
-                                const std::atomic<bool>& stop,
-                                const std::string& pipe_path)
-{
-    JointTrajectoryMailbox discarded_trajectories;
-    RunTargetInputFromPipe(mailbox, discarded_trajectories, stop, pipe_path);
-}
 
-void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
-                              const std::atomic<bool>& stop, int input_fd)
-{
-    JointTrajectoryMailbox discarded_trajectories;
-    RunTargetInput(mailbox, discarded_trajectories, stop, input_fd);
-}
-
-void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
-                            JointTrajectoryMailbox& traj_mailbox,
+void RunTargetInputFromPipe(JointTrajectoryMailbox& traj_mailbox,
                             const std::atomic<bool>& stop,
-                            const std::string& pipe_path,
-                            const std::optional<Eigen::Isometry3d>& world_from_base)
+                            const std::string& pipe_path)
 {
     while (!stop.load(std::memory_order_relaxed)) {
         // Non-blocking open: a blocking O_RDONLY open would wedge teardown
@@ -316,7 +162,7 @@ void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
                 std::chrono::milliseconds(kInputPollTimeoutMs));
             continue;
         }
-        RunTargetInput(pose_mailbox, traj_mailbox, stop, fd, world_from_base);
+        RunTargetInput(traj_mailbox, stop, fd);
         close(fd);
         // FromFd returned: stop (outer loop exits) or EOF (writer left) —
         // brief pause so a vanished writer cannot spin this loop hot.
@@ -325,12 +171,10 @@ void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
     }
 }
 
-void RunTargetInput(PoseTargetMailbox& pose_mailbox,
-                    JointTrajectoryMailbox& traj_mailbox,
-                    const std::atomic<bool>& stop, int input_fd,
-                    const std::optional<Eigen::Isometry3d>& world_from_base)
+void RunTargetInput(JointTrajectoryMailbox& traj_mailbox,
+                    const std::atomic<bool>& stop, int input_fd)
 {
-    TargetInputRouter router{pose_mailbox, traj_mailbox, {}, world_from_base};
+    TargetInputRouter router{traj_mailbox, {}};
     std::array<char, kInputReadBytes> bytes{};
     std::string pending_line;
     bool discarding_overlong_line = false;
@@ -379,126 +223,6 @@ void RunTargetInput(PoseTargetMailbox& pose_mailbox,
     }
 }
 
-PoseTargetSource::PoseTargetSource(Eigen::Vector3d startup_position_m,
-                                   PoseTarget terminal_target,
-                                   PoseTargetMailbox& mailbox,
-                                   CartesianMotionLimits profile_limits,
-                                   double target_hold_s)
-    : mailbox_(mailbox), active_target_(std::move(terminal_target)),
-      profile_limits_(profile_limits), target_hold_s_(target_hold_s)
-{
-    if (!startup_position_m.allFinite())
-        throw std::invalid_argument("startup position must be finite");
-    if (!active_target_.p_desired.allFinite())
-        throw std::invalid_argument("terminal target position must be finite");
-    if (!std::isfinite(profile_limits_.max_speed_m_s) ||
-        !std::isfinite(profile_limits_.max_acceleration_m_s2) ||
-        !std::isfinite(profile_limits_.max_jerk_m_s3) ||
-        profile_limits_.max_speed_m_s <= 0.0 ||
-        profile_limits_.max_acceleration_m_s2 <= 0.0 ||
-        profile_limits_.max_jerk_m_s3 <= 0.0)
-        throw std::invalid_argument("Cartesian profile limits must be finite and positive");
-    if (!std::isfinite(target_hold_s_) || target_hold_s_ < 0.0)
-        throw std::invalid_argument("target hold duration must be finite and non-negative");
-    active_target_.rotation.reset();
-    const std::optional<CartesianSegmentProfile> profile =
-        CartesianSegmentProfile::Create(startup_position_m,
-                                        active_target_.p_desired,
-                                        profile_limits_);
-    if (!profile)
-        throw std::invalid_argument("startup-to-terminal profile is invalid");
-    active_profile_ = *profile;
-    phase_ = Phase::kFollowingProfile;
-}
-
-bool PoseTargetSource::ValidDt(double dt_s) const
-{
-    return std::isfinite(dt_s) && dt_s > 0.0;
-}
-
-void PoseTargetSource::ActivateOneQueuedTarget()
-{
-    const std::optional<PoseTarget> next = mailbox_.TryDequeue();
-    if (!next)
-        return;
-    const std::optional<CartesianSegmentProfile> profile =
-        CartesianSegmentProfile::Create(active_target_.p_desired,
-                                        next->p_desired, profile_limits_);
-    if (!profile)
-        throw std::invalid_argument("queued target cannot form a finite Cartesian profile");
-
-    active_target_ = *next;
-    active_target_.rotation.reset();
-    active_profile_ = *profile;
-    profile_elapsed_s_ = 0.0;
-    ++sequence_;
-    phase_ = Phase::kFollowingProfile;
-}
-
-Reference PoseTargetSource::StationaryReference() const
-{
-    Reference reference;
-    PoseReference pose;
-    pose.p_desired = active_target_.p_desired;
-    pose.rotation.reset();
-    pose.twist = Twist{};
-    pose.sequence = sequence_;
-    pose.arrival_eligible = true;
-    reference.pose = pose;
-    return reference;
-}
-
-Reference PoseTargetSource::Get(const RobotState& /*state*/, double dt_s,
-                                ControllerStatus& /*status*/)
-{
-    const bool valid_dt = ValidDt(dt_s);
-    if (phase_ == Phase::kDwell && valid_dt) {
-        dwell_elapsed_s_ += dt_s;
-        if (dwell_elapsed_s_ >= target_hold_s_)
-            phase_ = Phase::kReadyForNext;
-    }
-    if (phase_ == Phase::kReadyForNext)
-        ActivateOneQueuedTarget();
-
-    if (phase_ != Phase::kFollowingProfile)
-        return StationaryReference();
-
-    const std::optional<CartesianProfileSample> profile_sample =
-        active_profile_->Sample(profile_elapsed_s_);
-    if (!profile_sample)
-        throw std::logic_error("active Cartesian profile has invalid elapsed time");
-
-    Reference reference;
-    PoseReference pose;
-    pose.p_desired = profile_sample->position_m;
-    pose.rotation.reset();
-    pose.twist.linear_m_s = profile_sample->velocity_m_s;
-    pose.twist.angular_rad_s.setZero();
-    pose.sequence = sequence_;
-    pose.arrival_eligible = profile_sample->complete;
-    reference.pose = pose;
-
-    if (profile_sample->complete) {
-        active_profile_.reset();
-        phase_ = Phase::kAwaitTerminalArrival;
-    } else if (valid_dt) {
-        profile_elapsed_s_ += dt_s;
-    }
-    return reference;
-}
-
-void PoseTargetSource::OnArrivalEdge(const ControllerStatus& status)
-{
-    NotifyPoseTargetSourceOnArrivalEdge(*this, status);
-}
-
-void PoseTargetSource::OnArrived()
-{
-    if (phase_ != Phase::kAwaitTerminalArrival)
-        return;
-    dwell_elapsed_s_ = 0.0;
-    phase_ = Phase::kDwell;
-}
 
 JointTrajectorySource::JointTrajectorySource(
     Eigen::Matrix<double, 7, 1> hold_q_rad, JointTrajectoryMailbox& mailbox)
@@ -578,9 +302,3 @@ Reference JointTrajectorySource::Get(const RobotState& state, double dt_s,
     return reference;
 }
 
-void NotifyPoseTargetSourceOnArrivalEdge(PoseTargetSource& source,
-                                         const ControllerStatus& status)
-{
-    if (status.arrived_edge)
-        source.OnArrived();
-}

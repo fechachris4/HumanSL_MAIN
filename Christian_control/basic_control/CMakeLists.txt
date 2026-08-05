@@ -368,16 +368,6 @@ target_include_directories(test_joint_trajectory PRIVATE
 target_link_libraries(test_joint_trajectory pthread)
 add_test(NAME joint_trajectory COMMAND test_joint_trajectory)
 
-# Pure fixed-size Cartesian segment time scaling. No Kortex or Pinocchio.
-add_executable(test_trajectory_profile
-        tests/test_trajectory_profile.cpp
-)
-target_include_directories(test_trajectory_profile PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
-add_test(NAME trajectory_profile COMMAND test_trajectory_profile)
-
 # Python-only regression coverage for offline log-format compatibility. The
 # interpreter is optional so portable C++ test configurations remain usable.
 find_package(Python3 COMPONENTS Interpreter QUIET)

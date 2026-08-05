@@ -158,30 +158,6 @@ namespace
 
     // The reference twist reaches the law through PoseReference, and every
     // operator target leaves it zero.
-    void TestPoseReferenceTwistDefault()
-    {
-        PoseReference reference;
-        reference.p_desired = Eigen::Vector3d(0.4, 0.1, 0.3);
-        Check(reference.twist.linear_m_s.norm() == 0.0 &&
-                  reference.twist.angular_rad_s.norm() == 0.0,
-              "a PoseReference defaults to a stationary target");
-        Check(reference.arrival_eligible,
-              "a stationary PoseReference is arrival-eligible by default");
-
-        RobotState state;
-        state.q_rad.setZero();
-        state.qdot_rad_s.setZero();
-        ControllerStatus status;
-        PoseTarget target;
-        target.p_desired = Eigen::Vector3d(0.4, 0.1, 0.3);
-        PoseTargetMailbox mailbox;
-        PoseTargetSource source(target.p_desired, target, mailbox);
-        const auto served = source.Get(state, 0.001, status);
-        Check(served.pose && served.pose->twist.linear_m_s.norm() == 0.0 &&
-                  served.pose->twist.angular_rad_s.norm() == 0.0,
-              "operator targets command no reference velocity");
-    }
-
     void TestDampedLeastSquares6()
     {
         // Identity-like Jacobian on joints 1-6: undamped solution exact.
@@ -395,188 +371,6 @@ namespace
         }
     }
 
-    void TestParsePoseTarget()
-    {
-        std::string error;
-        const auto target = ParsePoseTarget("0.4 0.1 0.3", error);
-        Check(target.has_value(), "three finite base_link coordinates are accepted");
-        Check(target && (target->p_desired - Eigen::Vector3d(0.4, 0.1, 0.3)).norm() == 0.0,
-              "parsed target keeps metre coordinates");
-        Check(target && !target->rotation.has_value(),
-              "runtime target is position-only");
-
-        Check(!ParsePoseTarget("0.4 0.1", error).has_value(),
-              "too few coordinates are rejected");
-        Check(!ParsePoseTarget("0.4 0.1 0.3 trailing", error).has_value(),
-              "trailing text is rejected");
-        Check(!ParsePoseTarget("0.4 0.1 0.3 0.0", error).has_value(),
-              "a fourth coordinate is rejected");
-        Check(!ParsePoseTarget("0.4 x 0.3", error).has_value(),
-              "malformed coordinate is rejected");
-        Check(!ParsePoseTarget("nan 0.1 0.3", error).has_value(),
-              "non-finite coordinate is rejected");
-        Check(ParsePoseTarget("5.0 -4.0 3.0", error).has_value(),
-              "any finite target is accepted without a reach sphere");
-        Check(!ParsePoseTarget("inf 0.1 0.3", error).has_value(),
-              "infinite coordinate is rejected");
-
-        // 7-field grammar: parses only when orientation targets are on.
-        Check(!ParsePoseTarget("0.4 0.1 0.3 0 0 0 1", error).has_value(),
-              "7-field line rejected while kAcceptOrientationTargets is false");
-        Check(error.find("orientation targets disabled") != std::string::npos,
-              "rejection names the disabled gate");
-        Check(!ParsePoseTarget("0.4 0.1 0.3 0 0 0 0.5", error).has_value(),
-              "non-unit quaternion rejected");
-        Check(!ParsePoseTarget("0.4 0.1 0.3 0 0 1", error).has_value(),
-              "six fields rejected");
-    }
-
-    void TestParseWorldFrameTarget()
-    {
-        std::string error;
-
-        // The real mounting transform's shape: a roll about x, offset along y.
-        // Values mirror config/dual_arm_mounting.yaml so the arithmetic under
-        // test is the arithmetic the controller will do.
-        Eigen::Isometry3d world_from_base = Eigen::Isometry3d::Identity();
-        world_from_base.linear() =
-            Eigen::AngleAxisd(1.2085, Eigen::Vector3d::UnitX()).toRotationMatrix();
-        world_from_base.translation() = Eigen::Vector3d(0, -0.0567075, 0);
-        const std::optional<Eigen::Isometry3d> mount(world_from_base);
-
-        // An explicit BASE keyword must mean exactly what no keyword means.
-        const auto bare = ParsePoseTarget("0.4 0.1 0.3", mount, error);
-        const auto based = ParsePoseTarget("BASE 0.4 0.1 0.3", mount, error);
-        Check(bare && based &&
-                  (bare->p_desired - based->p_desired).norm() < 1e-12,
-              "BASE keyword is identical to no keyword");
-
-        // A WORLD line is converted at ingestion: feeding in the world image
-        // of a known base point must give that base point back.
-        const Eigen::Vector3d p_base(0.4, 0.1, 0.3);
-        const Eigen::Vector3d p_world = world_from_base * p_base;
-        std::ostringstream world_line;
-        world_line << "WORLD " << std::setprecision(17) << p_world.x() << " "
-                   << p_world.y() << " " << p_world.z();
-        const auto converted = ParsePoseTarget(world_line.str(), mount, error);
-        Check(converted.has_value(), "WORLD line is accepted with a transform");
-        Check(converted && (converted->p_desired - p_base).norm() < 1e-9,
-              "WORLD target converts to the matching base_link point");
-
-        // The frames really differ: reading the SAME numbers as base_link
-        // instead of world lands somewhere else entirely, so a silent
-        // fallback would be a real command error, not a rounding one.
-        std::ostringstream base_line;
-        base_line << std::setprecision(17) << p_world.x() << " " << p_world.y()
-                  << " " << p_world.z();
-        const auto misread = ParsePoseTarget(base_line.str(), mount, error);
-        Check(misread && (misread->p_desired - converted->p_desired).norm() > 0.01,
-              "world and base readings of the same numbers differ materially");
-
-        // Without a transform, WORLD is refused — never treated as base_link.
-        Check(!ParsePoseTarget("WORLD 0.4 0.1 0.3", error).has_value(),
-              "WORLD line rejected when no transform was supplied");
-        Check(error.find("world->base transform") != std::string::npos,
-              "rejection names the missing transform");
-
-        Check(!ParsePoseTarget("MOON 0.4 0.1 0.3", mount, error).has_value(),
-              "unknown frame keyword is rejected");
-        Check(error.find("unknown frame keyword") != std::string::npos,
-              "rejection names the unknown keyword");
-        Check(!ParsePoseTarget("WORLD 0.4 0.1", mount, error).has_value(),
-              "WORLD line with too few coordinates is rejected");
-
-        // The orientation branch of the conversion, R_base = R_world_base^T *
-        // R_world. Unreachable while config::kAcceptOrientationTargets is
-        // false — the 7-field form is rejected before any conversion runs —
-        // so this asserts only when the gate is on, and says so when it is
-        // off rather than reporting coverage it does not have.
-        if constexpr (config::kAcceptOrientationTargets) {
-            const Eigen::Matrix3d R_base =
-                Eigen::AngleAxisd(0.3, Eigen::Vector3d(0.2, -0.5, 0.8).normalized())
-                    .toRotationMatrix();
-            const Eigen::Matrix3d R_world = world_from_base.linear() * R_base;
-            const Eigen::Quaterniond q_world(R_world);
-            std::ostringstream pose_line;
-            pose_line << "WORLD " << std::setprecision(17) << p_world.x() << " "
-                      << p_world.y() << " " << p_world.z() << " " << q_world.x()
-                      << " " << q_world.y() << " " << q_world.z() << " "
-                      << q_world.w();
-            const auto oriented = ParsePoseTarget(pose_line.str(), mount, error);
-            Check(oriented && oriented->rotation.has_value(),
-                  "WORLD pose target with orientation is accepted");
-            Check(oriented && oriented->rotation &&
-                      (*oriented->rotation - R_base).norm() < 1e-9,
-                  "WORLD orientation converts to the matching base_link "
-                  "rotation");
-            Check(oriented && (oriented->p_desired - p_base).norm() < 1e-9,
-                  "WORLD pose target position still converts correctly");
-        } else {
-            std::cout << "NOTE: WORLD orientation conversion not exercised — "
-                         "config::kAcceptOrientationTargets is false\n";
-        }
-
-        // A WORLD line arriving while a trajectory block is being collected is
-        // consumed by the accumulator, not the pose parser — the router sends
-        // every line to the accumulator while it is collecting. It must be
-        // refused there rather than parsed as trajectory numbers.
-        std::string traj_error;
-        JointTrajectoryAccumulator accumulator;
-        accumulator.Feed("TRAJ_BEGIN 2", traj_error);
-        Check(accumulator.Collecting(),
-              "accumulator is collecting after TRAJ_BEGIN");
-        accumulator.Feed("WORLD 0.4 0.1 0.3", traj_error);
-        Check(!traj_error.empty(),
-              "WORLD line inside a trajectory block is rejected, not parsed");
-    }
-
-    PoseTarget PositionTarget(double x, double y, double z)
-    {
-        PoseTarget target;
-        target.p_desired = Eigen::Vector3d(x, y, z);
-        return target;
-    }
-
-    void TestPoseTargetMailbox()
-    {
-        PoseTargetMailbox mailbox;
-        for (int i = 0; i < 8; ++i)
-            Check(mailbox.Enqueue(PositionTarget(0.1 * i, 0.0, 0.0)),
-                  "mailbox accepts each of its eight entries");
-        Check(!mailbox.Enqueue(PositionTarget(0.9, 0.0, 0.0)),
-              "mailbox rejects a ninth entry while full");
-
-        for (int i = 0; i < 8; ++i) {
-            const auto target = mailbox.TryDequeue();
-            Check(target.has_value(), "mailbox returns queued entry");
-            Check(target && target->p_desired == Eigen::Vector3d(0.1 * i, 0.0, 0.0),
-                  "mailbox preserves FIFO target ordering");
-        }
-        Check(!mailbox.TryDequeue().has_value(), "mailbox is empty after eight dequeues");
-    }
-
-    void TestPoseTargetMailboxConcurrentHandoff()
-    {
-        constexpr int kTargetCount = 128;
-        PoseTargetMailbox mailbox;
-        std::thread producer([&mailbox] {
-            for (int i = 0; i < kTargetCount; ++i) {
-                const PoseTarget target = PositionTarget(0.001 * i, 0.0, 0.0);
-                while (!mailbox.Enqueue(target))
-                    std::this_thread::yield();
-            }
-        });
-
-        for (int i = 0; i < kTargetCount; ++i) {
-            std::optional<PoseTarget> target;
-            while (!(target = mailbox.TryDequeue()))
-                std::this_thread::yield();
-            Check(target->p_desired == Eigen::Vector3d(0.001 * i, 0.0, 0.0),
-                  "concurrent SPSC handoff preserves FIFO ordering");
-        }
-        producer.join();
-    }
-
     bool WaitFor(const std::atomic<bool>& flag, std::chrono::milliseconds timeout)
     {
         const auto deadline = std::chrono::steady_clock::now() + timeout;
@@ -610,20 +404,30 @@ namespace
         return true;
     }
 
-    void TestPoseTargetInputHandlesPartialAndCompletePipeLines()
+    // A minimal valid block: two rows, all joints at zero, one second apart.
+    // Any q inside the compiled limits works — these tests are about the
+    // fd-level plumbing (partial lines, EOF, writer reconnect), not the
+    // trajectory contents.
+    const char* const kBlock =
+        "TRAJ_BEGIN 2\n"
+        "0    0 0 0 0 0 0 0    0 0 0 0 0 0 0\n"
+        "1.0  0 0 0 0 0 0 0    0 0 0 0 0 0 0\n"
+        "TRAJ_END\n";
+
+    void TestTrajectoryInputHandlesPartialAndCompletePipeLines()
     {
         int partial_pipe[2] = {-1, -1};
         Check(pipe(partial_pipe) == 0, "partial-line test creates a pipe");
         if (partial_pipe[0] >= 0 && partial_pipe[1] >= 0) {
-            PoseTargetMailbox mailbox;
+            JointTrajectoryMailbox mailbox;
             std::atomic<bool> stop{false};
             std::atomic<bool> exited{false};
             std::thread reader([&] {
-                RunPoseTargetInputFromFd(mailbox, stop, partial_pipe[0]);
+                RunTargetInput(mailbox, stop, partial_pipe[0]);
                 exited.store(true, std::memory_order_release);
             });
 
-            Check(WriteAll(partial_pipe[1], "0.1 0.2"),
+            Check(WriteAll(partial_pipe[1], "TRAJ_BEGIN 2\n0    0 0 0"),
                   "partial line is written while the pipe stays open");
             Check(WaitForPipeDrain(partial_pipe[0], std::chrono::milliseconds(250)),
                   "reader consumes the partial line into its owned buffer");
@@ -636,35 +440,32 @@ namespace
             close(partial_pipe[1]);
             reader.join();
             close(partial_pipe[0]);
-            Check(!mailbox.TryDequeue().has_value(),
-                  "unterminated partial input is not activated after stop");
+            Check(mailbox.Take() == nullptr,
+                  "an incomplete block is never published");
         }
 
         int complete_pipe[2] = {-1, -1};
         Check(pipe(complete_pipe) == 0, "complete-line test creates a pipe");
         if (complete_pipe[0] >= 0 && complete_pipe[1] >= 0) {
-            PoseTargetMailbox mailbox;
+            JointTrajectoryMailbox mailbox;
             std::atomic<bool> stop{false};
             std::atomic<bool> exited{false};
             std::thread reader([&] {
-                RunPoseTargetInputFromFd(mailbox, stop, complete_pipe[0]);
+                RunTargetInput(mailbox, stop, complete_pipe[0]);
                 exited.store(true, std::memory_order_release);
             });
 
-            Check(WriteAll(complete_pipe[1], "0.1 0.2 0.3\n0.2 0.3 0.4\n"),
-                  "multiple complete target lines are written to one pipe");
+            Check(WriteAll(complete_pipe[1], kBlock),
+                  "a complete trajectory block is written to the pipe");
             close(complete_pipe[1]);
             Check(WaitFor(exited, std::chrono::milliseconds(250)),
                   "input reader exits after pipe EOF");
             reader.join();
             close(complete_pipe[0]);
 
-            const auto first = mailbox.TryDequeue();
-            const auto second = mailbox.TryDequeue();
-            Check(first && first->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
-                  "first complete pipe line queues its target");
-            Check(second && second->p_desired == Eigen::Vector3d(0.2, 0.3, 0.4),
-                  "second complete pipe line queues its target");
+            // Latest-wins single slot: one block in, one block out.
+            Check(mailbox.Take() != nullptr,
+                  "the complete block is validated and published");
         }
     }
 
@@ -674,28 +475,28 @@ namespace
         unlink(pipe_path.c_str());
         Check(mkfifo(pipe_path.c_str(), 0600) == 0, "mkfifo succeeds");
 
-        PoseTargetMailbox mailbox;
+        JointTrajectoryMailbox mailbox;
         std::atomic<bool> stop{false};
         std::thread reader([&] {
-            RunPoseTargetInputFromPipe(mailbox, stop, pipe_path);
+            RunTargetInputFromPipe(mailbox, stop, pipe_path);
         });
 
         // Two independent writer sessions — the Stage 1 EOF failure mode.
-        for (int session = 0; session < 2; ++session) {
-            std::ofstream writer(pipe_path);   // blocks until reader has the pipe open
-            Check(static_cast<bool>(writer), "writer opens pipe");
-            writer << "0.1 0.2 0.3\n";
-        }                                       // close = EOF for the reader
-
-        // Both targets must arrive despite the intervening EOF.
-        Eigen::Vector3d seen[2];
+        // The mailbox is latest-wins, so each block is collected before the
+        // next writer opens; both must be seen despite the intervening EOF.
         int received = 0;
-        for (int attempt = 0; attempt < 200 && received < 2; ++attempt) {
-            if (const auto target = mailbox.TryDequeue())
-                seen[received++] = target->p_desired;
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        for (int session = 0; session < 2; ++session) {
+            {
+                std::ofstream writer(pipe_path); // blocks until the reader opens
+                Check(static_cast<bool>(writer), "writer opens pipe");
+                writer << kBlock;
+            }                                    // close = EOF for the reader
+            for (int attempt = 0; attempt < 200; ++attempt) {
+                if (mailbox.Take() != nullptr) { ++received; break; }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
         }
-        Check(received == 2, "targets from both writer sessions arrive");
+        Check(received == 2, "blocks from both writer sessions arrive");
 
         stop.store(true);
         const auto join_start = std::chrono::steady_clock::now();
@@ -703,161 +504,6 @@ namespace
         Check(std::chrono::steady_clock::now() - join_start
                   < std::chrono::seconds(1), "reader joins promptly on stop");
         unlink(pipe_path.c_str());
-    }
-
-    void TestPoseTargetSource()
-    {
-        RobotState state;
-        state.q_rad.setZero();
-        state.qdot_rad_s.setZero();
-        ControllerStatus status;
-
-        const PoseTarget position_only = PositionTarget(0.1, 0.2, 0.3);
-        PoseTargetMailbox mailbox;
-        const CartesianMotionLimits test_limits{1.0, 1.0, 1.0};
-        constexpr double kTestHoldS = 0.004;
-        PoseTargetSource fixed(position_only.p_desired, position_only, mailbox,
-                                test_limits, kTestHoldS);
-        auto initial = fixed.Get(state, 0.001, status);
-        Check(initial.pose &&
-                  (initial.pose->p_desired - Eigen::Vector3d(0.1, 0.2, 0.3))
-                          .norm() == 0.0,
-              "the fixed target is served from the first Get");
-        Check(initial.pose && !initial.pose->rotation.has_value(),
-              "position-only fixed target commands no orientation");
-        Check(initial.pose && initial.pose->sequence == 0,
-              "fixed target has sequence zero");
-        Check(initial.pose && initial.pose->arrival_eligible,
-              "fixed target is eligible for its terminal arrival");
-
-        Check(mailbox.Enqueue(PositionTarget(0.2, 0.3, 0.4)),
-              "first live target queues before fixed arrival");
-        Check(mailbox.Enqueue(PositionTarget(0.3, 0.4, 0.5)),
-              "second live target queues before fixed arrival");
-        auto before_arrival = fixed.Get(state, 0.001, status);
-        Check(before_arrival.pose && before_arrival.pose->sequence == 0 &&
-                  before_arrival.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
-              "queued targets cannot bypass the fixed target");
-
-        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
-        auto before_arrival_edge = fixed.Get(state, 0.001, status);
-        Check(before_arrival_edge.pose && before_arrival_edge.pose->sequence == 0,
-              "a non-arrival status does not advance the queued target");
-        status.arrived_edge = true;
-        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
-        for (int cycle = 0; cycle < 3; ++cycle) {
-            const auto dwell = fixed.Get(state, 0.001, status);
-            Check(dwell.pose && dwell.pose->sequence == 0 &&
-                      dwell.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
-                  "the reached fixed target holds for the configured dwell");
-        }
-        auto first_live = fixed.Get(state, 0.001, status);
-        Check(first_live.pose && first_live.pose->sequence == 1 &&
-                  first_live.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
-              "one queued target activates after the full arrival dwell");
-        Check(first_live.pose && !first_live.pose->arrival_eligible,
-              "a moving profile cannot trigger a terminal arrival");
-        status.arrived_edge = false;
-        bool moving_twist_seen = false;
-        Reference first_terminal;
-        for (int cycle = 0; cycle < 10000; ++cycle) {
-            first_terminal = fixed.Get(state, 0.001, status);
-            moving_twist_seen = moving_twist_seen ||
-                (first_terminal.pose &&
-                 first_terminal.pose->twist.linear_m_s.norm() > 1e-9);
-            if (first_terminal.pose && first_terminal.pose->arrival_eligible)
-                break;
-        }
-        Check(moving_twist_seen,
-              "the shaped target supplies Cartesian velocity feed-forward");
-        Check(first_terminal.pose && first_terminal.pose->sequence == 1 &&
-                  (first_terminal.pose->p_desired -
-                   Eigen::Vector3d(0.2, 0.3, 0.4)).norm() < 1e-12 &&
-                  first_terminal.pose->arrival_eligible,
-              "the shaped reference becomes arrival-eligible only at its endpoint");
-
-        status.arrived_edge = true;
-        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
-        for (int cycle = 0; cycle < 4; ++cycle)
-            fixed.Get(state, 0.001, status);
-        auto second_live = fixed.Get(state, 0.001, status);
-        Check(second_live.pose && second_live.pose->sequence == 2,
-              "each completed dwell activates exactly one queued target");
-        status.arrived_edge = true;
-        NotifyPoseTargetSourceOnArrivalEdge(fixed, status);
-        auto final_hold = fixed.Get(state, 0.001, status);
-        Check(final_hold.pose && final_hold.pose->sequence == 2,
-              "a moving target ignores a premature arrival notification");
-
-        PoseTargetMailbox late_mailbox;
-        PoseTargetSource late_source(position_only.p_desired, position_only,
-                                     late_mailbox, test_limits, kTestHoldS);
-        late_source.Get(state, 0.001, status);
-        late_source.OnArrived();
-        for (int cycle = 0; cycle < 4; ++cycle)
-            late_source.Get(state, 0.001, status);
-        Check(late_mailbox.Enqueue(PositionTarget(0.5, 0.4, 0.3)),
-              "target can be queued after an empty arrival");
-        auto late_target = late_source.Get(state, 0.001, status);
-        Check(late_target.pose && late_target.pose->sequence == 1 &&
-                  late_target.pose->p_desired == Eigen::Vector3d(0.1, 0.2, 0.3),
-              "empty arrival leaves source ready for a later target");
-    }
-
-    void TestPoseTargetSourceStartsAtMeasuredPose()
-    {
-        RobotState state;
-        state.q_rad.setZero();
-        state.qdot_rad_s.setZero();
-        ControllerStatus status;
-        const Eigen::Vector3d startup(0.1, 0.2, 0.3);
-        const PoseTarget terminal = PositionTarget(0.4, 0.2, 0.3);
-        PoseTargetMailbox mailbox;
-        const CartesianMotionLimits limits{1.0, 1.0, 1.0};
-        PoseTargetSource source(startup, terminal, mailbox, limits, 0.0);
-
-        const Reference first = source.Get(state, 0.001, status);
-        Check(first.pose && first.pose->p_desired == startup,
-              "initial reference starts at the measured Cartesian pose");
-        Check(first.pose && first.pose->twist.linear_m_s.norm() == 0.0,
-              "initial measured-pose reference has zero velocity");
-        Check(first.pose && !first.pose->arrival_eligible,
-              "distinct startup and terminal poses are not initially arrived");
-
-        bool progressed = false;
-        Reference terminal_reference;
-        for (int cycle = 0; cycle < 10000; ++cycle) {
-            terminal_reference = source.Get(state, 0.001, status);
-            if (terminal_reference.pose &&
-                terminal_reference.pose->p_desired.x() > startup.x())
-                progressed = true;
-            if (terminal_reference.pose &&
-                terminal_reference.pose->arrival_eligible)
-                break;
-        }
-        Check(progressed,
-              "the initial profile progresses away from the measured pose");
-        Check(terminal_reference.pose &&
-                  terminal_reference.pose->p_desired == terminal.p_desired &&
-                  terminal_reference.pose->twist.linear_m_s.norm() == 0.0,
-              "the initial profile ends at the configured terminal target");
-    }
-
-    // RotationFromRpy documents the R = Rz*Ry*Rx convention used by the
-    // retained kinematics utility.
-    void TestRotationFromRpy()
-    {
-        // Rz(yaw) alone: x -> y. Catches a Rx*Ry*Rz transposition.
-        const Eigen::Matrix3d rz = RotationFromRpy(0.0, 0.0, M_PI / 2.0);
-        Check((rz * Eigen::Vector3d::UnitX() - Eigen::Vector3d::UnitY())
-                      .norm() < 1e-12,
-              "yaw about +z maps +x to +y");
-
-        // A representative proper rotation remains valid for the utility.
-        const Eigen::Matrix3d home =
-            RotationFromRpy(M_PI / 2.0, 0.0, M_PI / 2.0);
-        Check(std::abs(home.determinant() - 1.0) < 1e-12,
-              "representative rpy is a proper rotation");
     }
 
 } // namespace
@@ -870,21 +516,13 @@ int main()
     Check(UnitRamp(2.0, 1.0) == 1.0, "null ramp clamps after duration");
     TestRotationLog();
     TestTwistError();
-    TestPoseReferenceTwistDefault();
     TestTaskTwistGating();
     TestDampedLeastSquares6();
     TestLimitAvoidance();
     TestDetailedSolveDecomposition();
     TestAgainstSimulationFixtures();
-    TestParsePoseTarget();
-    TestParseWorldFrameTarget();
-    TestPoseTargetMailbox();
-    TestPoseTargetMailboxConcurrentHandoff();
-    TestPoseTargetInputHandlesPartialAndCompletePipeLines();
+    TestTrajectoryInputHandlesPartialAndCompletePipeLines();
     TestPipeInputSurvivesWriterReconnect();
-    TestRotationFromRpy();
-    TestPoseTargetSource();
-    TestPoseTargetSourceStartsAtMeasuredPose();
 
     if (failures == 0) {
         std::cout << "all reactive-law tests passed\n";
