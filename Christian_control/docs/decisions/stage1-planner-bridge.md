@@ -92,6 +92,22 @@ kCapacity` rejects); capping in the bridge, before any target is written,
 keeps the failure a normal "shorter plan" case instead of a queue-full
 rejection mid-stream.
 
+## SDF grid volume and `--box` rejection
+
+`WorldSdf.cpp`'s grid is fixed: origin `(-1.2, -1.2, -0.4)` m, cell 0.04 m,
+60×60×50 cells, covering `x [-1.2, 1.2]`, `y [-1.2, 1.2]`, `z [-0.4, 1.6]`
+m in `base_link` (`WorldSdf.h` `WorldGridBounds()`). z was widened from
+40 to 50 cells (`-0.4..1.16` m to `-0.4..1.6` m) because the zero-config
+tool sits at `z = 1.3073` m (measured 2026-08-05) — inside the old grid's
+top face, leaving essentially no headroom for an obstacle near the tool's
+own working height. gpmp2's `SignedDistanceField::getSignedDistance`
+returns zero obstacle cost for any query outside the grid — "no
+obstacle" — with no warning. `BridgeMain.cpp` therefore rejects a
+`--box` whose center ± half-extent is not fully contained in
+`WorldGridBounds()` before the solve ever starts (exit 1, diagnostics
+state the checked volume), rather than silently planning through an
+obstacle gpmp2 could not see.
+
 ## `RunBridge` exit-code contract
 
 `BridgeMain.h` / `BridgeMain.cpp`:
@@ -102,7 +118,7 @@ rejection mid-stream.
 | 1 | bad arguments |
 | 2 | start state unavailable (bad `--state-csv`, or no complete `meas_j1..7` row) |
 | 3 | solve failed (model load or optimizer threw / returned an empty trajectory) |
-| 4 | validation rejected the plan (a support state exceeds the joint-2/4/6 warn limits) |
+| 4 | validation rejected the plan (a support state exceeds the joint-2/4/6 software limits — `Waypoints.cpp`'s `ValidationLimitsDeg()`, pinned by test to `config::kJointSoftwareLimitDeg`, Config.h:168: 126.9/145.0/118.0 deg, tighter for j2 than its 130 deg firmware warn limit) |
 
 All output is buffered in an `std::ostringstream` and written to `targets`
 only once, after validation fully passes (`RunBridge`, `BridgeMain.cpp`)
