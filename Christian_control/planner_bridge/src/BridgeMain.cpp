@@ -131,6 +131,22 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
 
 constexpr double kDegToRad = M_PI / 180.0;
 
+// Redirects std::cout's stream buffer to another stream for the guard's
+// lifetime, restoring the original buffer on destruction — including via
+// an exception unwinding through the guarded scope. Used to keep the
+// legacy optimizer's stdout chatter out of `targets` during the solve
+// (see the call site below).
+class CoutRedirectGuard {
+public:
+    explicit CoutRedirectGuard(std::ostream& to) : old_(std::cout.rdbuf(to.rdbuf())) {}
+    ~CoutRedirectGuard() { std::cout.rdbuf(old_); }
+    CoutRedirectGuard(const CoutRedirectGuard&) = delete;
+    CoutRedirectGuard& operator=(const CoutRedirectGuard&) = delete;
+
+private:
+    std::streambuf* old_;
+};
+
 }  // namespace
 
 int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
@@ -183,12 +199,13 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     // std::cout. In the real binary `targets` IS std::cout (see main.cpp),
     // piped directly into the controller's stdin over the operator FIFO,
     // so that chatter must never reach it. Redirect std::cout into
-    // `diagnostics` for the duration of the solve and restore it
-    // afterwards, whatever the outcome.
-    std::streambuf* const saved_cout_buf = std::cout.rdbuf(diagnostics.rdbuf());
-    const PlanOutcome outcome =
-        SolveToPosition(model, request, parsed.joint_limits_path);
-    std::cout.rdbuf(saved_cout_buf);
+    // `diagnostics` for the duration of the solve; the guard restores it
+    // on scope exit, including if an exception unwinds through here.
+    PlanOutcome outcome;
+    {
+        const CoutRedirectGuard cout_guard(diagnostics);
+        outcome = SolveToPosition(model, request, parsed.joint_limits_path);
+    }
 
     if (!outcome.ok) {
         diagnostics << "error: solve failed: " << outcome.error << "\n";
