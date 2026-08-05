@@ -48,7 +48,7 @@ namespace
         gains.kp_rotation_s_inv = 1.0;
         gains.kd_position = 0.3;
         gains.kd_rotation = 0.3;
-        gains.null_gain_s_inv = 1.0;
+        gains.limit_avoid_gain_s_inv = 1.0;
         gains.dls_lambda = 0.1;
         return gains;
     }
@@ -212,59 +212,89 @@ namespace
         Check(qdot_singular.norm() < 1e-9, "unreachable direction commands ~zero");
     }
 
-    void TestNullSpace()
+    void TestLimitAvoidance()
     {
         ReactivePoseGains gains = DefaultGains();
+        gains.limit_avoid_gain_s_inv = 2.0;
+        const double kDeg = M_PI / 180.0;
+        Eigen::Matrix<double, 7, 1> limit;
+        limit << 0, 126.9 * kDeg, 0, 145.0 * kDeg, 0, 118.0 * kDeg, 0;
+        const double zone = 20.0 * kDeg;
 
-        // Zero Jacobian + damping: the projector is the identity, so the
-        // objective comes through unchanged — isolates the wrap and mask.
-        const Eigen::Matrix<double, 6, 7> no_task = Eigen::Matrix<double, 6, 7>::Zero();
+        // Zero Jacobian + damping: projector = identity — isolates the
+        // objective, exactly as the old centering test did.
+        const Eigen::Matrix<double, 6, 7> no_task =
+            Eigen::Matrix<double, 6, 7>::Zero();
         Eigen::Matrix<double, 7, 1> q = Eigen::Matrix<double, 7, 1>::Zero();
-        Eigen::Matrix<double, 7, 1> midpoint = Eigen::Matrix<double, 7, 1>::Zero();
-        Eigen::Matrix<double, 7, 1> mask;
-        mask << 0, 1, 0, 1, 0, 1, 0; // config::kNullCenteringMask
 
-        // Kortex reports 350 deg; the wrap must pull it -10 deg toward 0,
-        // not -350 deg the long way round.
-        q[1] = 350.0 * M_PI / 180.0;
-        auto qdot = NullSpaceVelocity(no_task, q, midpoint, mask, gains);
-        Check(std::abs(qdot[1] - (10.0 * M_PI / 180.0)) < 1e-12,
-              "centering error wraps to (-pi, pi]");
+        // Everywhere inside the zone: EXACTLY zero, including wrapped and
+        // multi-turn positions on unbounded joints.
+        q << 170 * kDeg, 60 * kDeg, -350 * kDeg, 110 * kDeg, 40 * kDeg,
+             -90 * kDeg, 720 * kDeg;
+        auto qdot = LimitAvoidanceVelocity(no_task, q, limit, zone, gains);
+        Check(qdot.norm() == 0.0,
+              "objective is exactly zero everywhere inside the zones");
 
-        // Masked joints never center, however far from the midpoint.
+        // 10 deg into j4's zone (entry 125): push is inward, k * excess.
         q.setZero();
-        q[0] = 2.0;
-        q[2] = -2.5;
-        qdot = NullSpaceVelocity(no_task, q, midpoint, mask, gains);
-        Check(qdot.norm() == 0.0, "masked (continuous) joints never center");
+        q[3] = 135.0 * kDeg;
+        qdot = LimitAvoidanceVelocity(no_task, q, limit, zone, gains);
+        Check(std::abs(qdot[3] - (-2.0 * 10.0 * kDeg)) < 1e-12,
+              "positive-side push is inward and linear in the excess");
+        q[3] = -135.0 * kDeg;
+        qdot = LimitAvoidanceVelocity(no_task, q, limit, zone, gains);
+        Check(std::abs(qdot[3] - (2.0 * 10.0 * kDeg)) < 1e-12,
+              "negative-side push is inward and linear in the excess");
 
-        // With an undamped full-rank Jacobian the projector annihilates the
-        // task space exactly: J * qdot_null = 0.
+        // At the limit itself the magnitude is k * zone.
+        q.setZero();
+        q[5] = 118.0 * kDeg;
+        qdot = LimitAvoidanceVelocity(no_task, q, limit, zone, gains);
+        Check(std::abs(qdot[5] - (-2.0 * zone)) < 1e-12,
+              "push at the limit equals gain times zone width");
+
+        // Kortex-style wrapped reading: 250 deg = signed -110, in j6's zone.
+        q.setZero();
+        q[5] = 250.0 * kDeg;
+        qdot = LimitAvoidanceVelocity(no_task, q, limit, zone, gains);
+        Check(std::abs(qdot[5] - (2.0 * 12.0 * kDeg)) < 1e-12,
+              "objective wraps the position to the nearest turn");
+
+        // Unbounded joints (limit 0) never push, at any position.
+        q.setZero();
+        q[0] = 359.0 * kDeg;
+        q[2] = -2.5;
+        qdot = LimitAvoidanceVelocity(no_task, q, limit, zone, gains);
+        Check(qdot.norm() == 0.0, "unbounded joints never push");
+
+        // With an undamped full-rank Jacobian the projected push stays in
+        // the Jacobian null space: J * qdot_null = 0.
         gains.dls_lambda = 0.0;
         Eigen::Matrix<double, 6, 7> jacobian;
-        // Deterministic full-rank-6 matrix.
         for (int r = 0; r < 6; ++r)
             for (int c = 0; c < 7; ++c)
-                jacobian(r, c) = std::sin(1.0 + (3.0 * r) + (7.0 * c)) + (r == c ? 2.0 : 0.0);
+                jacobian(r, c) =
+                    std::sin(1.0 + (3.0 * r) + (7.0 * c)) + (r == c ? 2.0 : 0.0);
         q.setZero();
-        q[1] = 0.8;
-        q[3] = -1.1;
-        qdot = NullSpaceVelocity(jacobian, q, midpoint, mask, gains);
-        Check(qdot.norm() > 0.0, "centering produces motion");
+        q[3] = 140.0 * kDeg;
+        qdot = LimitAvoidanceVelocity(jacobian, q, limit, zone, gains);
+        Check(qdot.norm() > 0.0, "avoidance produces motion inside the zone");
         Check((jacobian * qdot).norm() < (1e-9 * qdot.norm()),
-              "projected centering lies in the Jacobian null space");
+              "projected push lies in the Jacobian null space");
 
         // SolveReactiveVelocity only adds it when enabled.
         gains = DefaultGains();
         const Eigen::Vector3d zero3 = Eigen::Vector3d::Zero();
+        q.setZero();
+        q[3] = 140.0 * kDeg;
         gains.null_space_enabled = false;
-        auto without = SolveReactiveVelocity(jacobian, zero3, zero3, zero3, zero3, q,
-                                             midpoint, mask, gains);
-        Check(without.norm() == 0.0, "null-space disabled -> no centering motion");
+        auto without = SolveReactiveVelocity(jacobian, zero3, zero3, zero3,
+                                             zero3, q, limit, zone, gains);
+        Check(without.norm() == 0.0, "null-space disabled -> no avoidance motion");
         gains.null_space_enabled = true;
-        auto with = SolveReactiveVelocity(jacobian, zero3, zero3, zero3, zero3, q,
-                                          midpoint, mask, gains);
-        Check(with.norm() > 0.0, "null-space enabled -> centering motion");
+        auto with = SolveReactiveVelocity(jacobian, zero3, zero3, zero3,
+                                          zero3, q, limit, zone, gains);
+        Check(with.norm() > 0.0, "null-space enabled -> avoidance motion");
     }
 
     // The detailed solve exposes the task/null decomposition the status
@@ -275,7 +305,7 @@ namespace
     {
         ReactivePoseGains gains = DefaultGains();
         gains.null_space_enabled = true;
-        gains.null_gain_s_inv = 5.0;
+        gains.limit_avoid_gain_s_inv = 5.0;
 
         Eigen::Matrix<double, 6, 7> jacobian;
         for (int r = 0; r < 6; ++r)
@@ -285,18 +315,18 @@ namespace
         const Eigen::Vector3d e_rot(0.01, 0.02, -0.03);
         const Eigen::Vector3d e_v(-0.01, 0.00, 0.02);
         const Eigen::Vector3d e_w(0.00, 0.01, 0.00);
+        const double kDeg = M_PI / 180.0;
         Eigen::Matrix<double, 7, 1> q = Eigen::Matrix<double, 7, 1>::Zero();
         q[1] = 0.8;
-        q[3] = -1.1;
-        const Eigen::Matrix<double, 7, 1> midpoint =
-            Eigen::Matrix<double, 7, 1>::Zero();
-        Eigen::Matrix<double, 7, 1> mask;
-        mask << 0, 1, 0, 1, 0, 1, 0;
+        q[3] = 140.0 * kDeg;
+        Eigen::Matrix<double, 7, 1> limit;
+        limit << 0, 126.9 * kDeg, 0, 145.0 * kDeg, 0, 118.0 * kDeg, 0;
+        const double zone = 20.0 * kDeg;
 
         const ReactiveSolution detailed = SolveReactiveVelocityDetailed(
-            jacobian, e_pos, e_rot, e_v, e_w, q, midpoint, mask, gains);
+            jacobian, e_pos, e_rot, e_v, e_w, q, limit, zone, gains);
         const auto legacy = SolveReactiveVelocity(jacobian, e_pos, e_rot, e_v,
-                                                  e_w, q, midpoint, mask, gains);
+                                                  e_w, q, limit, zone, gains);
         Check((detailed.qdot_task_rad_s + detailed.qdot_null_rad_s - legacy)
                   .norm() < 1e-12,
               "detailed solve parts sum to the legacy total");
@@ -306,7 +336,7 @@ namespace
         Check((detailed.qdot_task_rad_s - task_only).norm() < 1e-12,
               "detailed task part is exactly the DLS task solution");
         const auto null_only =
-            NullSpaceVelocity(jacobian, q, midpoint, mask, gains);
+            LimitAvoidanceVelocity(jacobian, q, limit, zone, gains);
         Check((detailed.qdot_null_rad_s - null_only).norm() < 1e-12,
               "detailed null part is exactly the projected centering velocity");
         Check((detailed.leak_twist - jacobian * null_only).norm() < 1e-12,
@@ -316,14 +346,14 @@ namespace
 
         gains.null_space_enabled = false;
         const ReactiveSolution disabled = SolveReactiveVelocityDetailed(
-            jacobian, e_pos, e_rot, e_v, e_w, q, midpoint, mask, gains);
+            jacobian, e_pos, e_rot, e_v, e_w, q, limit, zone, gains);
         Check(disabled.qdot_null_rad_s.norm() == 0.0,
               "null-space disabled -> zero null part");
         Check(disabled.leak_twist.norm() == 0.0,
               "null-space disabled -> zero leak twist");
         Check((disabled.qdot_task_rad_s -
                SolveReactiveVelocity(jacobian, e_pos, e_rot, e_v, e_w, q,
-                                     midpoint, mask, gains)).norm() < 1e-12,
+                                     limit, zone, gains)).norm() < 1e-12,
               "null-space disabled -> task part is the whole solution");
     }
 
@@ -335,37 +365,31 @@ namespace
             Eigen::Matrix<double, 6, 7> jacobian;
             for (int r = 0; r < 6; ++r)
                 for (int col = 0; col < 7; ++col)
-                    jacobian(r, col) = c.jacobian[(7 * r) + col];
-            const Eigen::Vector3d e_pos(c.e_pos[0], c.e_pos[1], c.e_pos[2]);
-            const Eigen::Vector3d e_rot(c.e_rot[0], c.e_rot[1], c.e_rot[2]);
-            const Eigen::Vector3d e_v(c.e_v[0], c.e_v[1], c.e_v[2]);
-            const Eigen::Vector3d e_w(c.e_w[0], c.e_w[1], c.e_w[2]);
-            Eigen::Matrix<double, 7, 1> q;
-            Eigen::Matrix<double, 7, 1> expected;
+                    jacobian(r, col) = c.jacobian[r * 7 + col];
+            Eigen::Matrix<double, 7, 1> q, limit;
             for (int i = 0; i < 7; ++i) {
                 q[i] = c.q[i];
-                expected[i] = c.expected[i];
+                limit[i] = c.limit_rad[i];
             }
-            Eigen::Matrix<double, 7, 1> midpoint = Eigen::Matrix<double, 7, 1>::Zero();
-            Eigen::Matrix<double, 7, 1> mask;
-            mask << 0, 1, 0, 1, 0, 1, 0;
-
             ReactivePoseGains gains;
             gains.kp_position_s_inv = c.kp_position_s_inv;
             gains.kp_rotation_s_inv = c.kp_rotation_s_inv;
             gains.kd_position = c.kd_position;
             gains.kd_rotation = c.kd_rotation;
-            gains.null_gain_s_inv = c.null_gain_s_inv;
+            gains.limit_avoid_gain_s_inv = c.limit_avoid_gain_s_inv;
             gains.dls_lambda = c.dls_lambda;
             gains.position_enabled = c.position_enabled;
             gains.orientation_enabled = c.orientation_enabled;
             gains.velocity_enabled = c.velocity_enabled;
             gains.null_space_enabled = c.null_space_enabled;
-
-            const auto qdot = SolveReactiveVelocity(jacobian, e_pos, e_rot, e_v, e_w,
-                                                    q, midpoint, mask, gains);
-            Check((qdot - expected).norm() < c.tolerance,
-                  std::string("matches the Python simulation law: ") + c.name);
+            const auto qdot = SolveReactiveVelocity(
+                jacobian, Eigen::Vector3d(c.e_pos), Eigen::Vector3d(c.e_rot),
+                Eigen::Vector3d(c.e_v), Eigen::Vector3d(c.e_w), q, limit,
+                c.zone_rad, gains);
+            for (int i = 0; i < 7; ++i)
+                Check(std::abs(qdot[i] - c.expected[i]) < c.tolerance,
+                      std::string("fixture ") + c.name + " joint " +
+                          std::to_string(i));
         }
     }
 
@@ -708,7 +732,7 @@ int main()
     TestPoseReferenceTwistDefault();
     TestTaskTwistGating();
     TestDampedLeastSquares6();
-    TestNullSpace();
+    TestLimitAvoidance();
     TestDetailedSolveDecomposition();
     TestAgainstSimulationFixtures();
     TestParsePoseTarget();

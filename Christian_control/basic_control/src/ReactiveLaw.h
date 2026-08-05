@@ -7,7 +7,7 @@
 //   2. twist error        e_v, e_w = reference twist − J·q̇
 //   3. task twist         ẋ = Kp·e_pose + Kd·e_twist
 //   4. damped least sq.   q̇_task = Jᵀ(JJᵀ + λ²I₆)⁻¹ ẋ
-//   5. joint centering    q̇_null = −k_null · wrap(q − q_mid)
+//   5. joint-limit avoidance (deadband)
 //   6. null-space proj.   q̇_raw = q̇_task + N q̇_null
 //
 // Header-only, Eigen-only, fixed-size, no allocation — no robot, no
@@ -19,8 +19,9 @@
 // - the null-space projector N = I₇ − Jᵀ(JJᵀ + λ²I₆)⁻¹J is DAMPED (the sim
 //   uses an undamped pseudoinverse, ill-conditioned exactly where the DLS
 //   is protecting the task solution);
-// - the centering error wraps to (−π, π] because Kortex reports positions
-//   in [0, 360); MuJoCo's q is continuous, so the sim never needed this.
+// - the deadband objective wraps to (−π, π] because Kortex reports
+//   positions in [0, 360); MuJoCo's q is continuous, so the sim never
+//   needed this.
 //
 
 #pragma once
@@ -40,7 +41,7 @@ struct ReactivePoseGains {
     double kp_rotation_s_inv = 0.0; // 1/s on the rotation-log error
     double kd_position = 0.0;       // unitless on the linear-velocity error
     double kd_rotation = 0.0;       // unitless on the angular-velocity error
-    double null_gain_s_inv = 0.0;   // 1/s on the joint-centering error
+    double limit_avoid_gain_s_inv = 0.0; // 1/s on the zone excess
     double dls_lambda = 0.0;        // DLS damping λ (also damps the projector)
     bool position_enabled = true;
     bool orientation_enabled = true;
@@ -127,21 +128,36 @@ DampedLeastSquares(const Eigen::Matrix<double, 3, 7>& jacobian_position,
     return jacobian_position.transpose() * jjt.ldlt().solve(v_desired);
 }
 
-// Equations 5-6: joint centering projected into the Jacobian null space.
-// `centering_mask` is 1 for joints that center, 0 for joints that must not
-// (the Gen3's continuous joints 1/3/5/7 have no meaningful midpoint).
+// Equations 5-6: deadband joint-limit avoidance projected into the
+// Jacobian null space. `limit_rad` holds each joint's software-limit
+// magnitude (applied symmetrically, ±limit); 0 marks an unbounded joint.
+// The objective is EXACTLY zero until a bounded joint's wrapped position
+// enters the activation zone [limit − zone, limit], then pushes inward
+// with gain · excess. Replaced wrap-to-midpoint centering on 2026-08-05:
+// centering fought the task from everywhere and the damped projector
+// leaked it into task space (218 mm stall equilibrium) — see
+// docs/superpowers/specs/2026-08-05-null-space-limit-avoidance-design.md.
 inline Eigen::Matrix<double, 7, 1>
-NullSpaceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
-                  const Eigen::Matrix<double, 7, 1>& q_rad,
-                  const Eigen::Matrix<double, 7, 1>& midpoint_rad,
-                  const Eigen::Matrix<double, 7, 1>& centering_mask,
-                  const ReactivePoseGains& gains)
+LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
+                       const Eigen::Matrix<double, 7, 1>& q_rad,
+                       const Eigen::Matrix<double, 7, 1>& limit_rad,
+                       double zone_rad,
+                       const ReactivePoseGains& gains)
 {
-    // Equation 5: the centering objective (wrapped — see the file header).
+    // Equation 5: the deadband objective (wrapped to (−π, π] because
+    // Kortex reports positions in [0, 360)).
     Eigen::Matrix<double, 7, 1> objective;
-    for (int i = 0; i < 7; ++i)
-        objective[i] = -gains.null_gain_s_inv * centering_mask[i] *
-                       std::remainder(q_rad[i] - midpoint_rad[i], 2.0 * M_PI);
+    for (int i = 0; i < 7; ++i) {
+        objective[i] = 0.0;
+        if (limit_rad[i] <= 0.0)
+            continue; // unbounded joint
+        const double signed_rad = std::remainder(q_rad[i], 2.0 * M_PI);
+        const double excess =
+            std::abs(signed_rad) - (limit_rad[i] - zone_rad);
+        if (excess > 0.0)
+            objective[i] = -gains.limit_avoid_gain_s_inv * excess *
+                           (signed_rad < 0.0 ? -1.0 : 1.0);
+    }
 
     // Equation 6: N = I₇ − Jᵀ(JJᵀ + λ²I₆)⁻¹J, the damped projector.
     Eigen::Matrix<double, 6, 6> jjt = jacobian * jacobian.transpose();
@@ -171,8 +187,8 @@ SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
                               const Eigen::Vector3d& e_pos, const Eigen::Vector3d& e_rot,
                               const Eigen::Vector3d& e_v, const Eigen::Vector3d& e_w,
                               const Eigen::Matrix<double, 7, 1>& q_rad,
-                              const Eigen::Matrix<double, 7, 1>& midpoint_rad,
-                              const Eigen::Matrix<double, 7, 1>& centering_mask,
+                              const Eigen::Matrix<double, 7, 1>& limit_rad,
+                              double zone_rad,
                               const ReactivePoseGains& gains)
 {
     const Eigen::Matrix<double, 6, 1> twist =
@@ -181,9 +197,9 @@ SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
     solution.qdot_task_rad_s =
         DampedLeastSquares6(jacobian, twist, gains.dls_lambda);
     if (gains.null_space_enabled) {
-        solution.qdot_null_rad_s = NullSpaceVelocity(jacobian, q_rad,
-                                                     midpoint_rad,
-                                                     centering_mask, gains);
+        solution.qdot_null_rad_s = LimitAvoidanceVelocity(jacobian, q_rad,
+                                                          limit_rad, zone_rad,
+                                                          gains);
         solution.leak_twist = jacobian * solution.qdot_null_rad_s;
     } else {
         solution.qdot_null_rad_s.setZero();
@@ -199,12 +215,11 @@ SolveReactiveVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
                       const Eigen::Vector3d& e_pos, const Eigen::Vector3d& e_rot,
                       const Eigen::Vector3d& e_v, const Eigen::Vector3d& e_w,
                       const Eigen::Matrix<double, 7, 1>& q_rad,
-                      const Eigen::Matrix<double, 7, 1>& midpoint_rad,
-                      const Eigen::Matrix<double, 7, 1>& centering_mask,
+                      const Eigen::Matrix<double, 7, 1>& limit_rad,
+                      double zone_rad,
                       const ReactivePoseGains& gains)
 {
     const ReactiveSolution solution = SolveReactiveVelocityDetailed(
-        jacobian, e_pos, e_rot, e_v, e_w, q_rad, midpoint_rad,
-        centering_mask, gains);
+        jacobian, e_pos, e_rot, e_v, e_w, q_rad, limit_rad, zone_rad, gains);
     return solution.qdot_task_rad_s + solution.qdot_null_rad_s;
 }

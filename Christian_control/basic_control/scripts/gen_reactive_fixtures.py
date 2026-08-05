@@ -11,17 +11,18 @@ equations. Regenerate only when the simulation law itself changes:
 The emitted header is checked in — the C++ tests must not depend on a
 Python environment.
 
-Tolerances: cases without null-space centering must agree to 1e-12 (the
-equations are identical). The null-space case uses a loose 1e-6 because the
-port deliberately damps the projector (the sim uses an undamped
-pseudoinverse); the fixture sets dls_damping = 1e-8, where the two coincide
-on a well-conditioned Jacobian — docs/decisions/reactive-pose-port.md.
+Tolerances: cases without an active limit-avoidance objective must agree to
+1e-12 (the equations are identical). The `avoidance_active` case uses a
+loose 1e-6 because the port deliberately damps the projector (the sim uses
+an undamped pseudoinverse); the fixture sets dls_damping = 1e-8, where the
+two coincide on a well-conditioned Jacobian —
+docs/decisions/reactive-pose-port.md.
 """
 
 from pathlib import Path
 import sys
 
-MSC_PROJECT = Path.home() / "Projects" / "Code" / "msc_project"
+MSC_PROJECT = Path.home() / "msc_project"
 sys.path.insert(0, str(MSC_PROJECT))
 
 import numpy as np
@@ -54,6 +55,7 @@ def make_config(**overrides):
         kd_position=0.3,
         kd_rotation=0.3,
         null_gain_s_inv=0.0,
+        limit_avoid_zone_rad=ZONE,
         dls_damping=0.1,
         position_enabled=True,
         orientation_enabled=True,
@@ -70,22 +72,25 @@ for angle in (0.0, 1e-9, 0.3, 1.2, 2.5, 3.0, 3.14159):
     log_cases.append((rotation, pin.log3(rotation)))
 
 # --- solve_reactive_velocity cases ------------------------------------------
-# Mask matches config::kNullCenteringMask (continuous joints never center).
-MASK = np.array([0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0])
-MID = np.zeros(7)
+# Kinova Gen3 software joint limits (deg), 0 marks an unbounded joint; a 20
+# deg activation zone matches Task 1's Python law.
+LIMIT = np.deg2rad(np.array([0.0, 126.9, 0.0, 145.0, 0.0, 118.0, 0.0]))
+ZONE = np.deg2rad(20.0)
 
 solve_cases = []
 
 
-def add_case(name, config, null_gain, tolerance, jacobian_scale=1.0):
+def add_case(name, config, null_gain, tolerance, jacobian_scale=1.0,
+             q=None):
     jacobian = jacobian_scale * rng.uniform(-1.0, 1.0, size=(6, 7))
     e_pos = rng.uniform(-0.05, 0.05, size=3)
     e_rot = rng.uniform(-0.2, 0.2, size=3)
     e_v = rng.uniform(-0.05, 0.05, size=3)
     e_w = rng.uniform(-0.1, 0.1, size=3)
-    q = rng.uniform(-2.0, 2.0, size=7)  # |q - mid| < pi: wrap is a no-op
+    if q is None:
+        q = rng.uniform(-2.0, 2.0, size=7)  # |q| < pi: wrap is a no-op
     solve = solve_reactive_velocity(
-        jacobian, e_pos, e_rot, e_v, e_w, q, MID, null_gain * MASK, config
+        jacobian, e_pos, e_rot, e_v, e_w, q, LIMIT, ZONE, null_gain, config
     )
     solve_cases.append(
         dict(
@@ -131,11 +136,29 @@ add_case(
     tolerance=1e-12,
     jacobian_scale=1e-6,
 )
+# Inside j4's zone (entry at 125 deg): the objective is active and the
+# damped-vs-undamped projector difference is exercised at loose tolerance.
+q_active = np.zeros(7)
+q_active[3] = np.deg2rad(140.0)
 add_case(
-    "null_space_tiny_damping",
+    "avoidance_active",
     make_config(dls_damping=1e-8),
-    null_gain=1.0,
+    null_gain=2.0,
     tolerance=1e-6,
+    q=q_active,
+)
+
+# Every bounded joint at least 10 deg on the safe side of its zone: the
+# objective is EXACTLY zero, so this must match the gain-0 solve exactly.
+q_inactive = rng.uniform(-2.0, 2.0, size=7)
+for i in (1, 3, 5):
+    q_inactive[i] = LIMIT[i] - ZONE - np.deg2rad(10.0)
+add_case(
+    "avoidance_inactive",
+    make_config(dls_damping=1e-8),
+    null_gain=2.0,
+    tolerance=1e-12,
+    q=q_inactive,
 )
 
 # --- emit -------------------------------------------------------------------
@@ -175,7 +198,7 @@ lines += [
     "        double kp_rotation_s_inv;",
     "        double kd_position;",
     "        double kd_rotation;",
-    "        double null_gain_s_inv;",
+    "        double limit_avoid_gain_s_inv;",
     "        double dls_lambda;",
     "        bool position_enabled;",
     "        bool orientation_enabled;",
@@ -183,6 +206,8 @@ lines += [
     "        bool null_space_enabled;",
     "        double tolerance;",
     "        double expected[7];",
+    "        double limit_rad[7];",
+    "        double zone_rad;",
     "    };",
     "",
     f"    inline constexpr SolveCase kSolveCases[{len(solve_cases)}] = {{",
@@ -209,7 +234,8 @@ for case in solve_cases:
         f"         {case['null_gain']!r}, {config.dls_damping!r},",
         f"         {bools},",
         f"         {case['tolerance']!r},",
-        f"         {{{fmt(case['expected'])}}}}},",
+        f"         {{{fmt(case['expected'])}}},",
+        f"         {{{fmt(LIMIT)}}}, {float(config.limit_avoid_zone_rad)!r}}},",
     ]
 lines += [
     "    };",
