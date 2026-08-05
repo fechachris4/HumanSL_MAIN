@@ -50,26 +50,15 @@ done
 [[ -n "${LATEST:-}" ]] || { echo "no run log appeared after 60 s"; exit 1; }
 echo "state source: $LATEST"
 
-while read -r -p "bridge> " cmd args; do case "$cmd" in
-    goal) # goal X Y Z [box CX CY CZ HX HY HZ]
-        if [[ ! -p "$PIPE" ]]; then
-            echo "target pipe not ready: $PIPE (controller creates it at startup — is it still starting up?)"
-            continue
-        fi
-        read -r gx gy gz maybe_box rest <<<"$args"
-        extra=()
-        # $rest is deliberately unquoted: it word-splits "CX CY CZ HX HY HZ"
-        # into six argv slots for --box; accepted exposure to glob expansion
-        # since this is an interactive operator prompt, not untrusted input.
-        [[ "${maybe_box:-}" == "box" ]] && extra=(--box $rest)
-        bridge_err=$(mktemp)
-        if ! "$BRIDGE" --goal "$gx" "$gy" "$gz" "${extra[@]}" > "$PIPE" 2>"$bridge_err"; then
-            rc=$?
-            echo "bridge exited $rc — nothing was sent: $(tail -1 "$bridge_err")"
-        fi
-        rm -f "$bridge_err"
-        ;;
-    quit|q) break ;;
-    *) echo "commands: goal X Y Z [box CX CY CZ HX HY HZ] | quit" ;;
-esac; done
+# The goal comes from config/goal.yaml (edit it before starting a session;
+# the bridge reads it because no --goal is passed here). One bridge run per
+# session — no prompt, no typed coordinates.
+for _ in $(seq 1 10); do [[ -p "$PIPE" ]] && break; sleep 1; done
+[[ -p "$PIPE" ]] || { echo "target pipe never appeared: $PIPE"; exit 1; }
+if "$BRIDGE" > "$PIPE"; then
+    echo "goal sent — arm is following the plan. Press Enter to stop the controller."
+    read -r
+else
+    echo "bridge exited $? — nothing was sent; stopping controller."
+fi
 echo "stopping controller..."

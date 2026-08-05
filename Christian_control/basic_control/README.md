@@ -194,7 +194,15 @@ Preconditions, every session, no exceptions:
   available.
 - The Kinova web dashboard closed (it blocks `SetServoingMode`).
 
-With those satisfied, one terminal runs the whole session:
+With those satisfied, set the goal **before** the session by editing one
+file — `Christian_control/planner_bridge/config/goal.yaml`:
+
+```yaml
+goal: [0.15, 0.075, 1.207]   # metres, base_link
+# box: {center: [...], half_extent: [...]}  # optional SDF obstacle
+```
+
+then one terminal runs the whole session:
 
 ```bash
 Christian_control/planner_bridge/scripts/run_session.sh
@@ -206,28 +214,22 @@ rebuild-skip; (2) prints the checklist above and requires typing `GO`
 before touching the arm — this is a pause the script enforces, not an
 authorization it grants; (3) starts `./controller` (output visible in
 this terminal) and waits for its run log to appear under `runs/`; (4)
-drops into a `bridge>` prompt.
+runs `planner_bridge` once — no `--goal`, so the bridge reads
+`goal.yaml` — with auto-discovered start state (the controller's own
+run log), writing its validated waypoints straight onto the pipe; a
+non-zero bridge exit writes nothing and the session shuts down. On
+success, press Enter to stop the controller when the move is done.
+There is no interactive prompt; to send a different goal, edit
+`goal.yaml` and run the script again. `--dry-run` performs the
+freshness check and the `GO` prompt, then stops before starting the
+controller — use it to exercise the gates with no hardware involved.
 
-At the prompt:
-
-```
-bridge> goal X Y Z
-bridge> goal X Y Z box CX CY CZ HX HY HZ   # optional SDF obstacle
-bridge> quit                                # stops the controller, tears down
-```
-
-Each `goal` line runs `planner_bridge` with auto-discovered start state
-(the controller's own run log) and writes its validated waypoints
-straight onto the pipe; a non-zero bridge exit writes nothing and the
-prompt reports it. `--dry-run` performs the freshness check and the
-`GO` prompt, then stops before starting the controller — use it to
-exercise the gates with no hardware involved.
-
-**Known limitation:** a `goal` write can block if the controller has
-died after creating the pipe but before this session's teardown runs
-(nothing is reading the far end). If a `goal` command appears to hang,
-check terminal 1 for a controller crash/exit and restart the session —
-do not wait indefinitely with the arm in an unknown state.
+**Known limitation:** the bridge's pipe write can block if the
+controller has died after creating the pipe but before this session's
+teardown runs (nothing is reading the far end). If the session appears
+to hang after `GO`, check the controller output above for a crash/exit
+and restart the session — do not wait indefinitely with the arm in an
+unknown state.
 
 Exit codes (`RunBridge`): 0 targets emitted (also returned by `--help`),
 1 bad arguments, 2 start state unavailable, 3 solve failed, 4 validation

@@ -10,6 +10,8 @@
 
 #include <unistd.h>
 
+#include <yaml-cpp/yaml.h>
+
 #include "PlannerModel.h"
 #include "PlanSolver.h"
 #include "StartState.h"
@@ -19,12 +21,21 @@
 namespace {
 
 constexpr char kUsageText[] =
-    "usage: planner_bridge --goal X Y Z [--state-csv PATH | --start-deg J1..J7]\n"
+    "usage: planner_bridge [--goal X Y Z | --goal-file PATH]\n"
+    "                       [--state-csv PATH | --start-deg J1..J7]\n"
     "                       [--runs-root PATH] [--dh PATH]\n"
     "                       [--joint-limits PATH]\n"
     "                       [--box CX CY CZ HX HY HZ]\n"
     "\n"
     "  --goal X Y Z           Target tool position, metres, base_link.\n"
+    "  --goal-file PATH       YAML goal file: `goal: [x, y, z]` (metres,\n"
+    "                         base_link) plus an optional `box:` with\n"
+    "                         `center:` and `half_extent:` lists. When\n"
+    "                         neither --goal nor --goal-file is given, the\n"
+    "                         default config/goal.yaml beside the\n"
+    "                         executable's parent directory is read — so\n"
+    "                         editing that one file is the normal way to\n"
+    "                         choose where the arm goes.\n"
     "  --state-csv PATH       Start state: latest measured joint angles\n"
     "                         (meas_j1..meas_j7) read from a controller\n"
     "                         telemetry CSV.\n"
@@ -90,6 +101,10 @@ std::string ExecutableDirectory() {
     return slash == std::string::npos ? "." : path.substr(0, slash);
 }
 
+std::string DefaultGoalPath() {
+    return ExecutableDirectory() + "/../config/goal.yaml";
+}
+
 std::string DefaultDhPath() {
     // config/ lives beside the CMakeLists.txt in planner_bridge/, one
     // level above the build/ directory the executable runs from — not
@@ -118,6 +133,7 @@ double ParseDouble(const std::string& token) {
 
 struct ParsedArgs {
     std::optional<Eigen::Vector3d> goal;
+    std::optional<std::string> goal_file;
     std::optional<std::string> state_csv;
     std::optional<std::array<double, 7>> start_deg;
     std::string dh_path = DefaultDhPath();
@@ -126,6 +142,46 @@ struct ParsedArgs {
     std::optional<AxisAlignedBox> box;
     bool emit_orientation = false;
 };
+
+// Reads a YAML sequence of exactly three finite numbers into a vector,
+// naming `what` in the error so the operator sees which key was malformed.
+Eigen::Vector3d ReadVector3(const YAML::Node& node, const std::string& what) {
+    if (!node || !node.IsSequence() || node.size() != 3)
+        throw std::invalid_argument(what + " must be a list of three numbers");
+    Eigen::Vector3d value;
+    for (int axis = 0; axis < 3; ++axis) {
+        value(axis) = node[static_cast<std::size_t>(axis)].as<double>();
+        if (!std::isfinite(value(axis)))
+            throw std::invalid_argument(what + " contains a non-finite number");
+    }
+    return value;
+}
+
+// Fills `parsed.goal` (and `parsed.box`, unless --box already set one) from
+// a YAML goal file. Any failure — missing file, wrong shape, non-numeric
+// value — throws std::invalid_argument naming the file, so a typo becomes
+// a refusal to plan rather than a coordinate the arm accepts.
+void LoadGoalFile(const std::string& path, ParsedArgs& parsed) {
+    YAML::Node root;
+    try {
+        root = YAML::LoadFile(path);
+    } catch (const std::exception& error) {
+        throw std::invalid_argument("cannot read goal file " + path + ": " +
+                                    error.what());
+    }
+    try {
+        parsed.goal = ReadVector3(root["goal"], "goal");
+        if (root["box"] && !parsed.box) {
+            AxisAlignedBox box;
+            box.center = ReadVector3(root["box"]["center"], "box center");
+            box.half_extent =
+                ReadVector3(root["box"]["half_extent"], "box half_extent");
+            parsed.box = box;
+        }
+    } catch (const std::exception& error) {
+        throw std::invalid_argument("goal file " + path + ": " + error.what());
+    }
+}
 
 // Throws std::invalid_argument / std::out_of_range on any malformed input;
 // RunBridge turns that into exit code 1 with the usage text.
@@ -144,6 +200,8 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             const double y = ParseDouble(next());
             const double z = ParseDouble(next());
             parsed.goal = Eigen::Vector3d(x, y, z);
+        } else if (flag == "--goal-file") {
+            parsed.goal_file = next();
         } else if (flag == "--state-csv") {
             parsed.state_csv = next();
         } else if (flag == "--start-deg") {
@@ -169,8 +227,12 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             throw std::invalid_argument("unrecognized flag: '" + flag + "'");
         }
     }
+    if (parsed.goal && parsed.goal_file)
+        throw std::invalid_argument(
+            "at most one of --goal or --goal-file may be given");
     if (!parsed.goal)
-        throw std::invalid_argument("--goal is required");
+        LoadGoalFile(parsed.goal_file ? *parsed.goal_file : DefaultGoalPath(),
+                     parsed);
     if (parsed.state_csv && parsed.start_deg)
         throw std::invalid_argument(
             "at most one of --state-csv or --start-deg may be given");

@@ -88,5 +88,66 @@ int main(int argc, char** argv) {
     assert(missing_targets.str().empty());
     assert(missing_diagnostics.str().find("start the controller") != std::string::npos);
     std::filesystem::remove_all("tbm_empty_tmp");
+
+    // --goal-file: the goal (and optional box) come from a YAML file, so a
+    // run needs no typed coordinates. Same proven-reachable goal as above.
+    {
+        std::ofstream goal_yaml("tbm_goal.yaml");
+        goal_yaml << "goal: [0.15, 0.075, 1.207]\n";
+    }
+    std::ostringstream file_targets, file_diagnostics;
+    const std::vector<std::string> file_args = {
+        "--goal-file", "tbm_goal.yaml",
+        "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+        "--dh", argv[1], "--joint-limits", argv[2]};
+    assert(RunBridge(file_args, file_targets, file_diagnostics) == 0);
+    {
+        std::istringstream file_lines(file_targets.str());
+        std::string file_line, file_error;
+        int file_count = 0;
+        while (std::getline(file_lines, file_line)) {
+            assert(ParsePoseTarget(file_line, file_error).has_value());
+            ++file_count;
+        }
+        assert(file_count >= 1);
+    }
+    std::filesystem::remove("tbm_goal.yaml");
+
+    // A goal file with a box outside the SDF grid is rejected exactly like
+    // the --box flag: exit 1, no target output.
+    {
+        std::ofstream goal_yaml("tbm_goal_box.yaml");
+        goal_yaml << "goal: [0.15, 0.075, 1.207]\n";
+        goal_yaml << "box:\n";
+        goal_yaml << "  center: [0, 0, 5.0]\n";
+        goal_yaml << "  half_extent: [0.05, 0.05, 0.05]\n";
+    }
+    std::ostringstream fbox_targets, fbox_diagnostics;
+    const std::vector<std::string> fbox_args = {
+        "--goal-file", "tbm_goal_box.yaml",
+        "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+        "--dh", argv[1], "--joint-limits", argv[2]};
+    assert(RunBridge(fbox_args, fbox_targets, fbox_diagnostics) == 1);
+    assert(fbox_targets.str().empty());
+    std::filesystem::remove("tbm_goal_box.yaml");
+
+    // Giving both --goal and --goal-file is ambiguous — hard error, since a
+    // silently-ignored file would hide which goal the arm is about to get.
+    std::ostringstream both_targets, both_ignored;
+    assert(RunBridge({"--goal", "0.15", "0.075", "1.207",
+                      "--goal-file", "tbm_goal.yaml"},
+                     both_targets, both_ignored) == 1);
+    assert(both_targets.str().empty());
+
+    // A missing/unreadable goal file is exit 1 with no target output, and
+    // the diagnostics name the file that failed.
+    std::ostringstream nofile_targets, nofile_diagnostics;
+    const std::vector<std::string> nofile_args = {
+        "--goal-file", "tbm_absent.yaml",
+        "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+        "--dh", argv[1], "--joint-limits", argv[2]};
+    assert(RunBridge(nofile_args, nofile_targets, nofile_diagnostics) == 1);
+    assert(nofile_targets.str().empty());
+    assert(nofile_diagnostics.str().find("tbm_absent.yaml") != std::string::npos);
     return 0;
 }

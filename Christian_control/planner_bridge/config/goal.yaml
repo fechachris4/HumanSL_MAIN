@@ -1,0 +1,11 @@
+# Where the arm goes: tool position, metres, right-arm base_link frame.
+# This is the one file to edit before a run. The bridge reads it whenever
+# planner_bridge is invoked without --goal/--goal-file, validates the
+# planned path, and only then writes waypoints to the controller.
+goal: [0.15, 0.075, 1.207]
+
+# Optional obstacle for the planner to avoid: axis-aligned box, metres,
+# base_link. Must lie inside the SDF grid volume or the run is rejected.
+# box:
+#   center: [0.5, 0.0, 0.3]
+#   half_extent: [0.05, 0.05, 0.05]

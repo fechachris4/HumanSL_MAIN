@@ -136,11 +136,17 @@ specific run — the script cannot substitute for that. Concretely:
 - `--dry-run` performs every step above and stops before starting the
   controller, so the gates themselves can be exercised with no
   hardware involved.
-- Its `goal X Y Z [box ...]` REPL is a thin wrapper: it waits for the
-  controller's run log to appear, then runs the bridge with auto-state
-  discovery against the pipe. It bypasses no validation the bridge or
-  controller already perform, and its trap-based teardown stops the
-  controller before doing anything else on `quit`.
+- ~~Its `goal X Y Z [box ...]` REPL is a thin wrapper~~ **Superseded
+  2026-08-05, same day:** the REPL is gone. The goal now lives in
+  `planner_bridge/config/goal.yaml`, edited before the session; the
+  script waits for the controller's run log, runs the bridge exactly
+  once with no `--goal` (the bridge reads the file itself via the
+  `--goal-file` default in `BridgeMain.cpp`), and waits for Enter to
+  tear down. Typing coordinates at a prompt next to a live arm was the
+  REPL's whole interface, and declaring them in a reviewable file while
+  the arm is powered down is both simpler and safer. It bypasses no
+  validation the bridge or controller already perform, and the
+  trap-based teardown still stops the controller on every exit path.
 
 If the script is skipped entirely and every step is done by hand, the
 underlying safety properties (validated-only targets, hold-at-startup,
