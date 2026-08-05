@@ -4,6 +4,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra)
 
+# DT_RUNPATH (the linker's new-dtags default) is non-transitive: it lets
+# planner_bridge find libgtsam.so, but libgtsam.so has no RPATH of its own,
+# so libgtsam.so's dependency libmetis-gtsam.so never resolves when the
+# binary is run bare (outside ctest, which papers over this via
+# LD_LIBRARY_PATH). DT_RPATH is transitive and fixes this for every
+# executable below.
+add_link_options(-Wl,--disable-new-dtags)
+
 get_filename_component(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(TP_LIB "${HUMANSL_ROOT}/third_party/lib")
 
