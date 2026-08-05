@@ -995,6 +995,189 @@ namespace
               "a rejected trajectory cannot activate on a later cycle");
     }
 
+    // Kortex reports positions on [0, 360) while trajectories are signed, so
+    // the same physical angle can arrive a full turn apart.
+    void TestJointSourceSpliceGuardWrapsTurns()
+    {
+        JointTrajectoryMailbox mailbox;
+        const double minus_twenty_deg = -20.0 * M_PI / 180.0;
+        const double three_forty_deg = 340.0 * M_PI / 180.0;
+        Eigen::Matrix<double, 7, 1> hold = Eigen::Matrix<double, 7, 1>::Zero();
+        hold(0) = three_forty_deg;
+        JointTrajectorySource source(hold, mailbox);
+
+        // Measured 340 deg IS the trajectory's -20 deg start: the same joint,
+        // the same place, one turn apart on the wire.
+        mailbox.Publish(RampOnJointOne(minus_twenty_deg,
+                                       minus_twenty_deg + 0.1));
+        const RobotState state = StateAtJointOne(three_forty_deg);
+        ControllerStatus status;
+        const Reference activation = source.Get(state, 0.1, status);
+        Check(status.joint_traj_activated,
+              "a start one full turn from the measured position activates");
+        Check(!status.joint_traj_rejected,
+              "a full-turn offset is not a splice-guard rejection");
+        Check(activation.joint &&
+                  std::abs(activation.joint->q_rad(0) - minus_twenty_deg) < 1e-12,
+              "the activated reference keeps the trajectory's own turn");
+
+        // And the rejection distance itself is the wrapped one: a genuine
+        // 5 deg offset dressed up as 355 deg must report 5 deg.
+        JointTrajectorySource other(hold, mailbox);
+        mailbox.Publish(RampOnJointOne(minus_twenty_deg + 5.0 * M_PI / 180.0,
+                                       minus_twenty_deg));
+        ControllerStatus rejected;
+        other.Get(state, 0.1, rejected);
+        Check(rejected.joint_traj_rejected,
+              "a genuine 5 deg start offset is still rejected");
+        Check(std::abs(rejected.joint_traj_start_error_deg - 5.0) < 1e-9,
+              "the reported start distance is the wrapped one, not 355 deg");
+    }
+
+    void TestJointTrackingWrapsTurns()
+    {
+        const double stop_gate_rad =
+            config::kTrajFollowingErrorStopDeg * M_PI / 180.0;
+        JointReference reference;
+        reference.q_rad.setZero();
+        reference.qdot_rad_s.setZero();
+
+        // Reference at 0 deg, measured at 359 deg: one degree away, so the
+        // command must be one degree's worth of correction — not 359's.
+        Eigen::Matrix<double, 7, 1> q_meas = Eigen::Matrix<double, 7, 1>::Zero();
+        q_meas(0) = 359.0 * M_PI / 180.0;
+        const JointTrackingCommand near_zero = SolveJointTracking(
+            reference, q_meas, config::kKpJointTracking, stop_gate_rad);
+        Check(std::abs(near_zero.qdot_rad_s(0) -
+                       config::kKpJointTracking * (1.0 * M_PI / 180.0)) < 1e-12,
+              "the tracking error is the wrapped one across a turn boundary");
+        Check(!near_zero.following_error_stop,
+              "a one degree wrapped error does not trip the stop gate");
+
+        // Sweeping the measured position through the boundary must not step
+        // the command: every cycle stays within the small-error band.
+        double previous = 0.0;
+        for (int i = 0; i <= 20; ++i) {
+            q_meas(0) = (355.0 + i * 0.5) * M_PI / 180.0;
+            const JointTrackingCommand command = SolveJointTracking(
+                reference, q_meas, config::kKpJointTracking, stop_gate_rad);
+            Check(std::abs(command.qdot_rad_s(0)) <=
+                      config::kKpJointTracking * (5.5 * M_PI / 180.0),
+                  "the command stays small on both sides of the zero crossing");
+            if (i > 0)
+                Check(std::abs(command.qdot_rad_s(0) - previous) <
+                          config::kKpJointTracking * (1.0 * M_PI / 180.0),
+                      "no 2 pi step in the command across the zero crossing");
+            previous = command.qdot_rad_s(0);
+        }
+    }
+
+    // --- Riskiest edges: replacement, rejection mid-flight, bad inputs ---
+
+    void TestJointSourceReplacesActiveTrajectory()
+    {
+        JointTrajectoryMailbox mailbox;
+        const Eigen::Matrix<double, 7, 1> hold =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        JointTrajectorySource source(hold, mailbox);
+        const RobotState state = StateAtJointOne(0.0);
+
+        mailbox.Publish(RampOnJointOne(0.0, 0.1));
+        Reference reference;
+        for (int i = 0; i < 6; ++i) {
+            ControllerStatus status;
+            reference = source.Get(state, 0.1, status);
+        }
+        Check(reference.joint &&
+                  std::abs(reference.joint->q_rad(0) - 0.05) < 1e-9,
+              "the first trajectory is half travelled before replacement");
+
+        // A newer plan arrives mid-flight. Its splice is checked against the
+        // CURRENT measured position, and it starts its own clock at zero.
+        mailbox.Publish(RampOnJointOne(0.0, 0.2));
+        ControllerStatus swap;
+        reference = source.Get(state, 0.1, swap);
+        Check(swap.joint_traj_activated,
+              "a newer trajectory is activated mid-flight");
+        Check(reference.joint && std::abs(reference.joint->q_rad(0)) < 1e-12,
+              "the replacement restarts its clock at t = 0");
+        for (int i = 0; i < 5; ++i) {
+            ControllerStatus status;
+            reference = source.Get(state, 0.1, status);
+        }
+        Check(reference.joint &&
+                  std::abs(reference.joint->q_rad(0) - 0.1) < 1e-9,
+              "the abandoned trajectory no longer contributes to the reference");
+    }
+
+    void TestJointSourceRejectionLeavesActiveRunning()
+    {
+        JointTrajectoryMailbox mailbox;
+        const Eigen::Matrix<double, 7, 1> hold =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        JointTrajectorySource source(hold, mailbox);
+        const RobotState state = StateAtJointOne(0.0);
+
+        mailbox.Publish(RampOnJointOne(0.0, 0.1));
+        for (int i = 0; i < 6; ++i) {
+            ControllerStatus status;
+            source.Get(state, 0.1, status);
+        }
+
+        // A block that fails the splice guard must not disturb the plan the
+        // arm is already following.
+        mailbox.Publish(RampOnJointOne(5.0 * M_PI / 180.0, 0.1));
+        ControllerStatus status;
+        const Reference reference = source.Get(state, 0.1, status);
+        Check(status.joint_traj_rejected && !status.joint_traj_activated,
+              "the distant block is rejected mid-flight");
+        Check(reference.joint &&
+                  std::abs(reference.joint->q_rad(0) - 0.0648) < 1e-9,
+              "the active trajectory keeps running through the rejection");
+    }
+
+    void TestJointSourceRejectsNonFiniteMeasurement()
+    {
+        JointTrajectoryMailbox mailbox;
+        const Eigen::Matrix<double, 7, 1> hold =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        JointTrajectorySource source(hold, mailbox);
+
+        RobotState state = StateAtJointOne(0.0);
+        state.q_rad(4) = std::numeric_limits<double>::quiet_NaN();
+        mailbox.Publish(RampOnJointOne(0.0, 0.1));
+        ControllerStatus status;
+        const Reference reference = source.Get(state, 0.1, status);
+        Check(status.joint_traj_rejected && !status.joint_traj_activated,
+              "a trajectory is never spliced onto a non-finite measurement");
+        Check(reference.joint && (reference.joint->q_rad - hold).norm() < 1e-12,
+              "the hold reference survives a non-finite measurement");
+    }
+
+    void TestJointSourceIgnoresInvalidDt()
+    {
+        JointTrajectoryMailbox mailbox;
+        const Eigen::Matrix<double, 7, 1> hold =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        JointTrajectorySource source(hold, mailbox);
+        const RobotState state = StateAtJointOne(0.0);
+
+        mailbox.Publish(RampOnJointOne(0.0, 0.1));
+        ControllerStatus first;
+        source.Get(state, 0.1, first); // activation samples t = 0, clock -> 0.1
+
+        Reference reference;
+        for (const double bad_dt : {0.0, -0.1,
+                                    std::numeric_limits<double>::quiet_NaN(),
+                                    std::numeric_limits<double>::infinity()}) {
+            ControllerStatus status;
+            reference = source.Get(state, bad_dt, status);
+        }
+        Check(reference.joint &&
+                  std::abs(reference.joint->q_rad(0) - 0.1 * 0.028) < 1e-12,
+              "non-positive and non-finite dt never advance the sample clock");
+    }
+
     // --- The joint tracking law, before the per-joint clip ---
 
     void TestJointTrackingLaw()
@@ -1069,6 +1252,12 @@ int main()
     TestJointSourceHoldsWithoutTrajectory();
     TestJointSourceActivatesAndTracks();
     TestJointSourceRejectsDistantStart();
+    TestJointSourceSpliceGuardWrapsTurns();
+    TestJointTrackingWrapsTurns();
+    TestJointSourceReplacesActiveTrajectory();
+    TestJointSourceRejectionLeavesActiveRunning();
+    TestJointSourceRejectsNonFiniteMeasurement();
+    TestJointSourceIgnoresInvalidDt();
     TestJointTrackingLaw();
     TestJointFollowingErrorStop();
     if (failures == 0) {

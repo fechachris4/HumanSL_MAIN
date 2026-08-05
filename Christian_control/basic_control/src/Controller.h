@@ -40,9 +40,12 @@ struct JointTrackingCommand {
 // Joint-space tracking: feed-forward reference velocity plus proportional
 // correction on the position error,
 //
-//     q̇_cmd = q̇_ref + kp (q_ref - q_meas)
+//     q̇_cmd = q̇_ref + kp wrap(q_ref - q_meas)
 //
-// and the worst joint's |q_ref - q_meas| against the stop gate. Pure
+// and the worst joint's wrapped |q_ref - q_meas| against the stop gate. The
+// error is wrapped (WrappedJointError, State.h) because measured positions
+// arrive on [0, 360) while the reference is signed — unwrapped, a joint
+// either side of zero would be commanded a full turn the wrong way. Pure
 // arithmetic on fixed-size vectors: no allocation, no model, no I/O. The
 // gains arrive as arguments so this header stays Config-free; the caller
 // passes config::kKpJointTracking and kTrajFollowingErrorStopDeg in radians.
@@ -52,7 +55,8 @@ SolveJointTracking(const JointReference& reference,
                    const Eigen::Matrix<double, 7, 1>& q_meas, double kp_s_inv,
                    double following_error_stop_rad)
 {
-    const Eigen::Matrix<double, 7, 1> error = reference.q_rad - q_meas;
+    const Eigen::Matrix<double, 7, 1> error =
+        WrappedJointError(reference.q_rad, q_meas);
     JointTrackingCommand command;
     command.qdot_rad_s = reference.qdot_rad_s + kp_s_inv * error;
     command.max_abs_error_rad = error.cwiseAbs().maxCoeff();
@@ -97,6 +101,12 @@ private:
     // no orientation.
     Eigen::Vector3d hold_position_ = Eigen::Vector3d::Zero();
     Eigen::Matrix3d hold_rotation_ = Eigen::Matrix3d::Identity();
+
+    // True once a joint reference has been followed, cleared by the re-seat
+    // it triggers on the first pose-channel cycle after it. Without that
+    // re-seat the takeover hold pose would still be the one captured before
+    // the trajectory ran.
+    bool followed_joint_reference_ = false;
 
     // Arrival notice: armed only when the pose-reference sequence changes,
     // so the hold pose never fires and each target fires once.

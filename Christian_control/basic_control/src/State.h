@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <optional>
@@ -66,11 +67,13 @@ struct ControllerStatus {
     bool joint_traj_complete_edge = false;
     double joint_traj_start_error_deg = 0.0;
 
-    // The controller's joint-space following-error stop request: measured vs
-    // reference exceeded config::kTrajFollowingErrorStopDeg on some joint.
-    // Data only — the Runner feeds it to the same ResolveStopPriority input
-    // the hardware following-error rule uses, so the stop reason stays
-    // LoopStop::kFollowingError.
+    // The controller's joint-space following-error stop request: the wrapped
+    // measured-vs-reference error exceeded config::kTrajFollowingErrorStopDeg
+    // on some joint. NOT YET ENFORCED: nothing reads this flag today, so it
+    // is telemetry only. The gated task that wires the joint path into
+    // Main.cpp must also feed it to the same ResolveStopPriority
+    // following-error input the hardware rule uses, keeping the stop reason
+    // LoopStop::kFollowingError rather than adding a stop path.
     bool joint_following_error_stop = false;
     double joint_following_error_deg = 0.0;
 
@@ -113,6 +116,27 @@ struct PoseReference {
     // is eligible to generate the controller's arrival edge.
     bool arrival_eligible = true;
 };
+
+// Per-joint (reference - measured), taken on the SHORT way round.
+//
+// Kortex reports joint positions on [0, 360) while trajectories, limits and
+// firmware thresholds are all signed, so the same physical angle arrives a
+// full turn apart: a joint truly at -20 deg reads 340 deg. A raw subtraction
+// then reports 360 deg of error, which would reject every trajectory at the
+// splice guard and, past it, drive a full-speed correction the wrong way
+// round. std::remainder maps each difference into [-pi, pi], the same fix
+// Runner.cpp and Actuation.cpp already apply at their own boundaries. A
+// non-finite input stays non-finite: callers must test for that themselves.
+inline Eigen::Matrix<double, 7, 1>
+WrappedJointError(const Eigen::Matrix<double, 7, 1>& q_reference_rad,
+                  const Eigen::Matrix<double, 7, 1>& q_measured_rad)
+{
+    Eigen::Matrix<double, 7, 1> error;
+    for (int i = 0; i < 7; ++i)
+        error[i] = std::remainder(q_reference_rad[i] - q_measured_rad[i],
+                                  2.0 * M_PI);
+    return error;
+}
 
 // A desired joint position and the velocity it is moving at — what a
 // joint-space source (a sampled trajectory) commands. Both are seven-wide,

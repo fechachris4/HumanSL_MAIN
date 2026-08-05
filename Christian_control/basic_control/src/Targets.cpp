@@ -452,14 +452,17 @@ Reference JointTrajectorySource::Get(const RobotState& state, double dt_s,
 {
     // The activation splice guard. A trajectory that does not begin where the
     // arm actually is would step the command by that whole distance on its
-    // first cycle, so it is dropped whole rather than followed in part.
+    // first cycle, so it is dropped whole rather than followed in part. The
+    // distance is the WRAPPED one (State.h): measured positions arrive on
+    // [0, 360) and trajectory points are signed, so a joint at -20 deg reads
+    // 340 deg and an unwrapped guard would reject everything.
     if (std::unique_ptr<JointTrajectory> incoming = mailbox_.Take()) {
         const double tolerance_rad =
             config::kTrajStartToleranceDeg * kDegreesToRadians;
         const double start_error_rad =
-            incoming->points.empty()
+            (incoming->points.empty() || !state.q_rad.allFinite())
                 ? std::numeric_limits<double>::infinity()
-                : (incoming->points.front().q_rad - state.q_rad)
+                : WrappedJointError(incoming->points.front().q_rad, state.q_rad)
                       .cwiseAbs()
                       .maxCoeff();
         if (!(start_error_rad <= tolerance_rad)) {

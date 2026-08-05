@@ -67,6 +67,7 @@ TrackingController::DesiredVelocity(const RobotState& state,
     // telemetry to fill — the command flows into the same clip and
     // integration path as the pose channel's.
     if (reference.joint) {
+        followed_joint_reference_ = true;
         const JointTrackingCommand command = SolveJointTracking(
             *reference.joint, state.q_rad, config::kKpJointTracking,
             config::kTrajFollowingErrorStopDeg * kDegToRad);
@@ -77,6 +78,16 @@ TrackingController::DesiredVelocity(const RobotState& state,
         status.p_desired.setConstant(not_computed);
         status.p_current.setConstant(not_computed);
         return command.qdot_rad_s;
+    }
+
+    // Coming back to the pose channel after joint tracking, the hold pose
+    // captured at takeover is stale by the whole trajectory: holding it would
+    // command the arm back to where the run started. Re-seat it (and the
+    // arrival gates) from the CURRENT measurement, exactly as takeover does,
+    // before any pose command is computed.
+    if (followed_joint_reference_) {
+        followed_joint_reference_ = false;
+        Reset(state);
     }
 
     // Pose channel, or the hold pose when the source gave no reference.

@@ -175,6 +175,12 @@ private:
 // Never blocks, never does I/O and never allocates: Take is one atomic
 // exchange, and the bounded delete of a rejected or displaced trajectory is
 // the same accepted RT exception as the mailbox itself.
+//
+// CALLER CONTRACT: `dt_s` must be the Runner's already-clamped cycle time
+// (ClampedCycleDt). Non-positive and non-finite values are ignored here, but
+// a large positive dt is trusted and would jump the sample clock — the loop's
+// single dt clamp is what bounds it, and duplicating that bound here would
+// mean two places deciding what a cycle may last.
 class JointTrajectorySource
 {
 public:
