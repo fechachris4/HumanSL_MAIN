@@ -132,7 +132,7 @@ stream (`std::cout`, piped to the controller over the FIFO).
 
 ## Two things the plan didn't foresee
 
-1. **`TrajectoryGeneration/src/GenerateTrajectory.cpp` is a new forwarding
+1. **`planner_bridge/src/GenerateTrajectory.cpp` is a new forwarding
    shim, not existing legacy code.** `GenerateTrajectory.h` declared a
    free function `optimizeJointTrajectory` that was never defined
    anywhere in the tree — the only implementation was the class method
@@ -145,10 +145,10 @@ stream (`std::cout`, piped to the controller over the FIFO).
    variable is computed and never assigned to the returned struct,
    leaving the field default-constructed/indeterminate).
    `initiation_duration` is set to zero rather than left indeterminate.
-   This file is new source in the legacy `TrajectoryGeneration/` tree,
-   added to make the plan actually buildable end to end — **it is
-   pending Christian's explicit sign-off** before being treated as a
-   permanent part of that tree rather than a bridge-local workaround.
+   The shim was first added inside the legacy `TrajectoryGeneration/`
+   tree; on 2026-08-05 Christian ruled it should live with the bridge
+   instead, so it sits in `planner_bridge/src/` and compiles only into
+   `bridge_core`. The legacy tree remains untouched by this branch.
 2. **`LD_LIBRARY_PATH` test-environment workaround.** All six
    `planner_bridge` ctest targets that link `bridge_core`
    (`planner_model`, `world_sdf`, `plan_solver`, `waypoints`,

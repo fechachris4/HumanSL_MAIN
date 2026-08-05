@@ -15,7 +15,7 @@ set(TG_SOURCES
     ${HUMANSL_ROOT}/TrajectoryGeneration/src/GenerateArmModel.cpp
     ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryInitiation.cpp
     ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryOptimization.cpp
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/GenerateTrajectory.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/GenerateTrajectory.cpp
     ${HUMANSL_ROOT}/TrajectoryExecution/src/Jacobian.cpp
 )
 
