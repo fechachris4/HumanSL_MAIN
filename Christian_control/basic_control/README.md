@@ -181,21 +181,54 @@ Hardware run (requires explicit authorization, operator present, e-stop
 in reach; the controller consumes bridge waypoints only after reaching
 its compiled terminal target):
 
+**Hold a persistent write end open on the FIFO for the whole session,
+before starting the controller — do not let each `planner_bridge` run be
+the FIFO's only writer.** A named FIFO delivers EOF to its reader once
+every writer has closed. The controller's stdin reader,
+`RunPoseTargetInputFromFd` (`src/Targets.cpp`), treats EOF as final: on
+read, if `read_count == 0` it processes any trailing partial line and then
+`break`s out of its poll loop for good (`src/Targets.cpp` — the loop that
+calls `poll`/`read` on `input_fd`). There is no re-open or retry — once
+that loop exits, the controller silently never reads another target for
+the rest of the run. If each bridge invocation opens and closes
+`/tmp/bridge_targets` for its own `>` redirect, the *first* run's exit
+closes the only writer, stdin reader hits EOF and exits, and **every
+subsequent bridge run writes into a pipe nobody is reading, exits 0, and
+the operator has no indication the new goal was never delivered.**
+
+Open the persistent writer in the *operator's own shell* — a shell
+builtin FD, not the controller process — so it survives every
+`planner_bridge` run:
+
 ```bash
 mkfifo /tmp/bridge_targets
 ./controller --log < /tmp/bridge_targets        # terminal 1
+exec 3>/tmp/bridge_targets                      # terminal 2, ONCE, before any bridge run —
+                                                 # keeps a writer open so the
+                                                 # controller's stdin reader never sees EOF
 ./planner_bridge --state-csv <today's run csv> \
-    --goal <x y z> > /tmp/bridge_targets        # terminal 2, repeat per replan
+    --goal <x y z> >&3                          # terminal 2, repeat per replan — write to FD 3, not >
+exec 3>&-                                       # terminal 2, ONCE, at the end of the session
 ```
 
 Stop-and-replan: wait for hold (arrival messages in terminal 1), then
-re-run the bridge with a new goal; each run reads the fresh CSV state.
+re-run the bridge with a new goal (`>&3`, not `>`); each run reads the
+fresh CSV state. Do not close FD 3 between runs — only at the very end of
+the session.
 
-Exit codes (`RunBridge`): 0 targets emitted, 1 bad arguments, 2 start
-state unavailable, 3 solve failed, 4 validation rejected the plan. A
-non-zero exit writes nothing to the FIFO. At most 8 waypoints are ever
-emitted per solve (`PoseTargetMailbox::kCapacity`, `Targets.h`) — the
-same queue this section's stdin target input already fills.
+Exit codes (`RunBridge`): 0 targets emitted (also returned by `--help`),
+1 bad arguments, 2 start state unavailable, 3 solve failed, 4 validation
+rejected the plan. A non-zero exit writes nothing to the FIFO. At most 8
+waypoints are ever emitted per solve (`PoseTargetMailbox::kCapacity`,
+`Targets.h`) — the same queue this section's stdin target input already
+fills.
+
+An optional `--box CX CY CZ HX HY HZ` obstacle must lie fully inside the
+SDF grid's checked volume — `x [-1.2, 1.2]`, `y [-1.2, 1.2]`,
+`z [-0.4, 1.6]` m in `base_link` (`WorldSdf.h` `WorldGridBounds()`) — or
+the run is rejected (exit 1) before solving. Outside that volume gpmp2
+reports zero obstacle cost with no warning, so an unchecked box would be
+silently ignored rather than avoided.
 
 **Stage 1 limitation**: the controller tracks the reactive law's own
 path between bridge waypoints, not GPMP2's planned joint path — only the
