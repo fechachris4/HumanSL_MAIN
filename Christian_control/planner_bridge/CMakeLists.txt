@@ -40,3 +40,21 @@ target_link_libraries(planner_bridge PRIVATE bridge_core)
 set_target_properties(planner_bridge PROPERTIES BUILD_RPATH "${TP_LIB}")
 
 enable_testing()
+
+target_sources(bridge_core PRIVATE src/PlannerModel.cpp)
+add_executable(test_planner_model
+    tests/test_planner_model.cpp
+    ${HUMANSL_ROOT}/Christian_control/basic_control/tools/AnalyticalKinematics.cpp
+)
+target_include_directories(test_planner_model PRIVATE
+    src ${HUMANSL_ROOT}/Christian_control/basic_control/tools)
+target_link_libraries(test_planner_model PRIVATE bridge_core)
+set_target_properties(test_planner_model PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME planner_model COMMAND test_planner_model
+         ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml)
+# libgtsam.so/libgpmp2.so carry no RUNPATH of their own to their sibling
+# libs (libmetis-gtsam.so, libcephes-gtsam.so.1, ...), so RUNPATH on our
+# binary alone doesn't resolve transitive deps under ctest's fork/exec.
+# Not related to this task's DH/flip logic — a pre-existing gap in the
+# third_party build.
+set_tests_properties(planner_model PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
