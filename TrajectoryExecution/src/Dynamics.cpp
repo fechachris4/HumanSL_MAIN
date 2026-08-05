@@ -17,9 +17,12 @@ Dynamics::Dynamics(const std::string& urdf_path) {
     // Set initial gravity in model
     model_.gravity.linear() = gravity_world_;
     
-    std::cout << "Model loaded successfully!" << std::endl;
-    std::cout << "Number of joints: " << model_.njoints << std::endl;
-    std::cout << "Number of DOFs: " << model_.nv << std::endl;
+    // stderr, not stdout: planner_bridge's STDOUT is the target pipe
+    // (run_session.sh runs `planner_bridge > $PIPE`), so anything printed
+    // there is read by the controller as wire input. These are diagnostics.
+    std::cerr << "Model loaded successfully!" << std::endl;
+    std::cerr << "Number of joints: " << model_.njoints << std::endl;
+    std::cerr << "Number of DOFs: " << model_.nv << std::endl;
 }
 
 Eigen::VectorXd Dynamics::convertJointAnglesToConfig(const Eigen::VectorXd& joint_angles) {

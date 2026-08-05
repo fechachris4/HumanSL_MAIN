@@ -406,6 +406,13 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
 
     PlannerModel model;
     try {
+        // Same reason as the solve below: constructing the model builds a
+        // Dynamics, and anything the Pinocchio/legacy stack prints to
+        // std::cout here would land in the target pipe, because this
+        // binary's stdout IS that pipe. The guard cannot simply wrap all of
+        // RunBridge — `targets` is std::cout in the real binary, so the
+        // final block write must happen with std::cout restored.
+        const CoutRedirectGuard cout_guard(diagnostics);
         model = LoadPlannerModel(parsed.dh_path);
     } catch (const std::exception& error) {
         diagnostics << "error: solve failed: could not load planner model from "
