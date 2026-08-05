@@ -122,20 +122,30 @@ demands huge joint speeds; λ trades tracking accuracy for bounded, well-
 conditioned motion. Larger = slower but safer near singularities. Also
 damps the null-space projector, so it is doing two jobs with one number.
 
-### Lines 102–110 — reactive-law gains and toggles
+### Lines 121–128 — reactive-law gains and toggles
 `kKpRotation` (orientation error gain), `kKdPosition`/`kKdRotation`
-(velocity-error damping), `kNullGain` (centering strength), and the three
-enable flags. Current staging: orientation and the Kd term ON, null-space
-centering OFF. These map one-to-one onto terms in ReactiveLaw.h; the
-toggles exist so each term was brought up on hardware separately.
+(velocity-error damping), and the three enable flags —
+`kOrientationEnabled`, `kVelocityTermEnabled`, `kNullSpaceEnabled`. Current
+staging: orientation, the Kd term, and null-space limit avoidance are all
+ON. These map one-to-one onto terms in ReactiveLaw.h; the toggles exist so
+each term was brought up on hardware separately.
 
-### Lines 112–118 — null-space centering targets
-Midpoints (all 0) and the mask selecting bounded joints 2/4/6 only
-(continuous joints can't be "centered"). The CAUTION comment is the real
-content: this arm's *configured soft limits* sit far inside the URDF range,
-so centering joint 4 toward 0 can push it into its limit — confirm in the
-web dashboard before ever flipping `kNullSpaceEnabled` to true. Currently
-dormant (the toggle is false).
+### Lines 184–192 — deadband null-space limit avoidance
+`kLimitAvoidZoneDeg` (20°) and `kLimitAvoidGain` (2.0, 1/s) replaced the
+midpoint-centering targets (`kNullGain`/`kNullMidpointDeg`/
+`kNullCenteringMask`) on 2026-08-05 — centering pulled every bounded joint
+everywhere, and the damped projector leaked enough of it into task space to
+stall the arm 218 mm short of a target; see
+`docs/superpowers/specs/2026-08-05-null-space-limit-avoidance-design.md`.
+The replacement objective is exactly zero except inside the deadband
+`[kJointSoftwareLimitDeg − kLimitAvoidZoneDeg, kJointSoftwareLimitDeg]` per
+bounded joint (2/4/6 only; the continuous joints' `kJointSoftwareLimitDeg`
+entries are 0, the sentinel `LimitAvoidanceVelocity` reads as "skip"), where
+it pushes inward at `kLimitAvoidGain × excess` — at the limit itself that
+is gain × zone ≈ 40°/s before projection and the per-joint clip. Anchoring
+the zone to `kJointSoftwareLimitDeg` (Lines 163–182) instead of an
+independent constant means the avoidance zone and the software stop it
+backs up cannot drift apart.
 
 ### Target validation
 The stdin parser validates target syntax and finite coordinates only. There is
@@ -216,8 +226,9 @@ Passed into `RunControlLoop` at Main.cpp:420. But read the next flag —
 ### Lines 194–201 — command shaping
 **FLAG edit-hazard (lines 200–201):** `kCommandLeadLimitDeg = 1.0` is the
 lead-projection target from wrapped measured position (constructor arg of
-`PositionIntegration`, Main.cpp:397); `kNullRampDurationS` fades centering
-in over 1 s. Each already-clamped qdot first forms a proposed command; when
+`PositionIntegration`, Main.cpp:397); `kNullRampDurationS` fades the
+null-space limit-avoidance gain in over 1 s. Each already-clamped qdot first
+forms a proposed command; when
 its lead exceeds the threshold, the lead projection targets exactly 1° from
 wrapped measurement. A final envelope limits the sent delta to
 `abs(qdot_clamped * dt)`, so it wins when discontinuous feedback would

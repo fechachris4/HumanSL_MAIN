@@ -2,10 +2,11 @@
 
 **Entry point:** header-only — there is no .cpp. In the running program the
 only caller is `TrackingController::DesiredVelocity`
-(Controller.cpp:120–127), which calls `UnitRamp` and then
-`SolveReactiveVelocity` once per pose-channel cycle; `SolveReactiveVelocity`
-in turn calls `TaskTwist`, `DampedLeastSquares6` and (when enabled)
-`NullSpaceVelocity`. `RotationLog` and `TwistError` are called directly by
+(Controller.cpp:144–152), which calls `UnitRamp` and then
+`SolveReactiveVelocityDetailed` once per pose-channel cycle;
+`SolveReactiveVelocityDetailed` in turn calls `TaskTwist`,
+`DampedLeastSquares6` and (when enabled) `LimitAvoidanceVelocity`.
+`RotationLog` and `TwistError` are called directly by
 the controller (Controller.cpp:87–88, 97). Execution order per cycle is
 therefore: equations 1–2 in the controller, then 3–6 in here — the same
 order the file's banner lists them.
@@ -22,9 +23,9 @@ deviations from the simulation law. **[edit-hazard, lines 18–24]** Both
 deviations are hardware-truth encodings, not style: (a) the null-space
 projector is damped because the sim's undamped pseudoinverse is
 ill-conditioned exactly where DLS is protecting the task solution; (b) the
-centering error wraps to (−π, π] because Kortex reports positions in
-[0, 360) while MuJoCo's q is continuous. "Simplifying" either back to match
-Python re-introduces the hardware failure each one prevents.
+deadband limit-avoidance objective wraps to (−π, π] because Kortex reports
+positions in [0, 360) while MuJoCo's q is continuous. "Simplifying" either
+back to match Python re-introduces the hardware failure each one prevents.
 
 ### Lines 26–35 — includes
 Eigen Dense + Geometry (AngleAxis lives in Geometry), and State.h solely for
@@ -35,7 +36,8 @@ Plain data: five gains with their units in the comments (the `_s_inv` suffix
 means 1/s — a proportional gain that converts an error in meters or radians
 into a velocity), the DLS damping λ, and four enable switches. The design
 point (line 37): a disabled term contributes *exactly zero*, so the staged
-bring-up (P-only → +Kd → +centering) is pure configuration, no code edits.
+bring-up (P-only → +Kd → +limit avoidance) is pure configuration, no code
+edits.
 All members have default values, so `ReactivePoseGains gains;` is a valid
 P-position-only baseline with zero gains. **[edit-hazard, line 45]**
 `position_enabled` defaults true and is the one switch
@@ -106,36 +108,50 @@ direction-probing tool. It is dead weight in the controller's read, kept
 here so the tool shares one verified implementation — reasonable, but know
 that deleting it breaks the probe tool, not the controller.
 
-### Lines 130–153 — `NullSpaceVelocity` (equations 5–6)
-The secondary objective: gently pull the bounded joints toward a midpoint,
-using only motion that does not disturb the end-effector task.
+### Lines 131–169 — `LimitAvoidanceVelocity` (equations 5–6)
+The secondary objective, replacing wrap-to-midpoint centering on 2026-08-05
+(design rationale:
+`docs/superpowers/specs/2026-08-05-null-space-limit-avoidance-design.md` —
+centering fought the task from everywhere and the damped projector leaked it
+into task space, a 218 mm stall equilibrium). It is a *deadband*: exactly
+zero everywhere except a small zone approaching each bounded joint's
+software limit, using only motion that does not disturb the end-effector
+task.
 
-- **139–144 — equation 5, the centering objective.** Per joint:
-  `−k_null · mask · wrap(q − q_mid)`. The mask (from
-  `config::kNullCenteringMask`, currently 0,1,0,1,0,1,0) zeroes the
-  continuous joints 1/3/5/7, which have no meaningful midpoint.
-  `std::remainder(x, 2π)` wraps the error to (−π, π].
-  **[edit-hazard, lines 142–144]** Drop the wrap and a joint reported at
-  350° with midpoint 0 gets pushed a further full turn instead of −10° —
-  the hardware deviation (b) from the banner, easy to lose in a refactor
-  because the un-wrapped version looks cleaner and matches the Python.
-- **146–152 — equation 6, the damped projector.**
+- **147–160 — equation 5, the deadband objective.** Per joint, skip if
+  `limit_rad[i] <= 0` (the sentinel for an unbounded joint — continuous
+  joints 1/3/5/7 always have `kJointSoftwareLimitDeg == 0`). Otherwise wrap
+  the position with `std::remainder(q_rad[i], 2π)` to (−π, π], compute
+  `excess = |signed_rad| − (limit_rad[i] − zone_rad)`, and only if
+  `excess > 0` (inside the zone) set `objective[i] = −gain · excess`,
+  signed back toward zero. Outside the zone `objective[i]` stays exactly
+  `0.0` — this is what makes the term inert across the whole working range,
+  unlike centering's everywhere-nonzero pull toward a midpoint.
+  **[edit-hazard, lines 154–159]** Drop the wrap and a joint reported at
+  350° gets measured as if it were 10° short of 0° rather than 10° past
+  360° — the hardware deviation (b) from the banner, easy to lose in a
+  refactor because the un-wrapped version looks cleaner and matches the
+  Python.
+- **163–167 — equation 6, the damped projector.**
   `N = I₇ − Jᵀ(JJᵀ + λ²I)⁻¹J`: multiplying any joint velocity by N removes
   the component that would move the end-effector, leaving pure internal
   ("null-space") motion. Damped with the same λ as the task solve —
-  deviation (a) from the banner. **[unnecessary, lines 146–151]** Note it
+  deviation (a) from the banner. **[unnecessary, lines 163–167]** Note it
   rebuilds `JJᵀ + λ²I` and refactors it, even though `DampedLeastSquares6`
   just solved the identical system in the same cycle — duplicated fixed-size
   work, kept because each function is self-contained and testable in
   isolation. A shared factorization would be faster but couple the
   functions; at 6×6 the cost is negligible, so this is a "know it's
   duplicated" flag, not a "fix it" one.
-- **152** — return `N · objective`: the centering velocity, projected.
+- **168** — return `N · objective`: the limit-avoidance velocity, projected.
 
-### Lines 155–174 — `SolveReactiveVelocity` (equations 3–6 composed)
-The one call the controller makes: build the task twist (eq 3), solve DLS
-for the task joint velocity (eq 4), and, only if `null_space_enabled`, add
-the projected centering velocity (eqs 5–6). Returns the raw q̇ — the
+### Lines 185–226 — `SolveReactiveVelocityDetailed` / `SolveReactiveVelocity` (equations 3–6 composed)
+`SolveReactiveVelocityDetailed` (the function the controller actually calls,
+Controller.cpp:150) builds the task twist (eq 3), solves DLS for the task
+joint velocity (eq 4), and, only if `null_space_enabled`, adds the projected
+limit-avoidance velocity (eqs 5–6), keeping the two terms separate in a
+`ReactiveSolution` for telemetry. `SolveReactiveVelocity` is the thin
+sum-only wrapper. Returns the raw q̇ — the
 signature comment repeats the layering contract one last time: **the Runner
 clamps, the actuation integrates — never this law.** This function has no
 idea speed limits exist; if that division of labour ever blurs (a clamp

@@ -88,8 +88,8 @@ translation unit where the controller meets Pinocchio).
 
 ### Lines 11–29 — `ConfiguredGains()` (runs once, from the constructor)
 Builds a `ReactivePoseGains` struct (ReactiveLaw.h:38) from Config
-constants: Kp position/rotation, Kd position/rotation, null gain, DLS λ, and
-the three term switches. **[edit-hazard, lines 15–28]** Note what is *not*
+constants: Kp position/rotation, Kd position/rotation, the limit-avoidance
+gain (`kLimitAvoidGain`), DLS λ, and the three term switches. **[edit-hazard, lines 15–28]** Note what is *not*
 set: `position_enabled` stays at its struct default (`true`). There is no
 `kPositionEnabled` in Config.h even though the gains struct has the switch —
 someone adding one must remember this function, or the new config constant
@@ -100,9 +100,11 @@ Runs in Main, before any hardware connection. The member-initializer list
 (`: model_(model), workspace_(...), gains_(...)`) initializes members in
 declaration order: bind the model reference, heap-allocate the Pinocchio
 workspace once (`std::make_unique` builds the object and wraps it in the
-`unique_ptr` in one step), copy the gains. The body converts the null-space
-midpoints deg→rad and copies the centering mask (1 = this joint centers,
-0 = continuous joint, no meaningful midpoint).
+`unique_ptr` in one step), copy the gains. The body converts
+`kJointSoftwareLimitDeg` deg→rad into `limit_rad_` (per joint; 0 stays 0,
+the sentinel for an unbounded joint) and `kLimitAvoidZoneDeg` deg→rad into
+the single `zone_rad_`, so `LimitAvoidanceVelocity` never touches Config.h
+units directly.
 
 ### Lines 44–54 — `Reset` (takeover)
 Runs forward kinematics on the takeover-seeded measurement
@@ -173,13 +175,16 @@ Follow it in execution order:
   only in the sense that the Jacobian is already at hand; it is logging work
   living in the controller. (Cost is small and fixed-size, so it is a
   tidiness flag, not a performance one. Note the cycle now forms `J·Jᵀ`
-  three times: here, in `DampedLeastSquares6`, and in `NullSpaceVelocity`.)
+  three times: here, in `DampedLeastSquares6`, and in
+  `LimitAvoidanceVelocity`.)
 
-- **120–127 — Equations 3–6.** Copy the gains, scale only the null-space
-  gain by `UnitRamp(t_s, kNullRampDurationS)` — centering fades in over the
-  first second after takeover so the takeover cannot begin with a projected
-  joint transient; the task-space law is at full strength immediately. Then
-  hand everything to `SolveReactiveVelocity` (ReactiveLaw.md), which returns
-  the raw desired q̇ the Runner will clamp. The per-cycle copy of the whole
+- **144–152 — Equations 3–6.** Copy the gains, scale only the
+  limit-avoidance gain by `UnitRamp(t_s, kNullRampDurationS)` — the
+  limit-avoidance push fades in over the first second after takeover so the
+  takeover cannot begin with a projected joint transient; the task-space law
+  is at full strength immediately. Then
+  hand everything to `SolveReactiveVelocityDetailed` (ReactiveLaw.md), which
+  returns the raw desired q̇ (task + limit-avoidance) the Runner will clamp.
+  The per-cycle copy of the whole
   gains struct to scale one field is slightly wasteful but keeps `gains_`
   immutable — a reasonable trade.
