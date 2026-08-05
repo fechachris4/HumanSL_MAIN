@@ -1,10 +1,21 @@
 #include "GenerateTrajectory.h"
+#include <chrono>
 #include "TrajectoryOptimization.h"
 
 // GenerateTrajectory.h declares this free function but never defined it —
 // OptimizeTrajectory::optimizeJointTrajectory (TrajectoryOptimization.h) is
 // the only implementation in the tree. This is a thin forwarding shim: zero
 // start velocity, class defaults for target_dt/tolerances.
+//
+// OptimizeTrajectory::optimizeJointTrajectory never populates
+// TrajectoryResult::optimization_duration/initiation_duration on the struct
+// it returns (a local duration is computed and discarded — see
+// TrajectoryOptimization.cpp:561), leaving both fields default-constructed
+// (indeterminate). Timing the call here, at the shim boundary, fills in
+// optimization_duration without touching that file; initiation_duration is
+// set to zero rather than left indeterminate (this shim does no separate
+// initiation step — InitializeTrajectory's timing, if any, belongs to its
+// own caller).
 TrajectoryResult optimizeJointTrajectory(
     const gpmp2::ArmModel& arm_model,
     const gpmp2::SignedDistanceField& sdf,
@@ -17,7 +28,13 @@ TrajectoryResult optimizeJointTrajectory(
     const double total_time_sec) {
     OptimizeTrajectory optimizer;
     const gtsam::Vector start_vel = gtsam::Vector::Zero(start_config.size());
-    return optimizer.optimizeJointTrajectory(arm_model, sdf, init_values, target_pose,
-                                              start_config, start_vel, pos_limits, vel_limits,
-                                              total_time_step, total_time_sec);
+    const auto start_time = std::chrono::steady_clock::now();
+    TrajectoryResult result = optimizer.optimizeJointTrajectory(
+        arm_model, sdf, init_values, target_pose, start_config, start_vel,
+        pos_limits, vel_limits, total_time_step, total_time_sec);
+    const auto end_time = std::chrono::steady_clock::now();
+    result.optimization_duration =
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+    result.initiation_duration = std::chrono::milliseconds::zero();
+    return result;
 }
