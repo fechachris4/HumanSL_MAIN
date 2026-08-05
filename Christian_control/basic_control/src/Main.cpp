@@ -104,6 +104,7 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
          std::to_string(config::kStaleFeedbackStopCycles));
     line("overrun_factor", FormatDouble(config::kOverrunFactor));
     line("takeover_hold_s", FormatDouble(config::kTakeoverHoldS));
+    line("status_print_period_s", FormatDouble(config::kStatusPrintPeriodS));
     out << prefix << "log_file = " << (log_file.empty() ? "<timestamped>" : log_file)
         << (log_file.empty() ? " (default)\n" : " (--log)\n");
     line("control_dt_s", FormatDouble(config::kControlDtS));
@@ -121,7 +122,7 @@ std::string ParseLogFileArg(int argc, char** argv) {
 
 void WriteCsvPreamble(const std::string& log_file, std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 7 (compiled)\n";
+    csv << "# log_format = 8 (compiled)\n";
     WriteConfigLines(log_file, csv, "# ");
 }
 } // namespace

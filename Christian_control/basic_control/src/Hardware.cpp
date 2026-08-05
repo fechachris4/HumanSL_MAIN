@@ -393,6 +393,11 @@ void WriteCsvHeader(std::ostream& csv)
         csv << ",lead_limited_j" << i;
     for (int i = 1; i <= 7; ++i)
         csv << ",ack_unchanged_j" << i;
+    for (int i = 1; i <= 7; ++i)
+        csv << ",taskvel_j" << i;
+    for (int i = 1; i <= 7; ++i)
+        csv << ",nullvel_j" << i;
+    csv << ",null_leak_mps";
     csv << "\n";
 }
 
@@ -438,6 +443,11 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
         csv << "," << (v ? 1 : 0);
     for (int v : s.ack_unchanged_cycles)
         csv << "," << v;
+    for (double v : s.qdot_task_deg_s)
+        csv << "," << v;
+    for (double v : s.qdot_null_deg_s)
+        csv << "," << v;
+    csv << "," << s.null_leak_m_s;
     csv << "\n";
 }
 

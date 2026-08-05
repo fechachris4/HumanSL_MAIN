@@ -45,6 +45,12 @@ namespace
         }
         s.sigma_min = status.sigma_min;
         s.rot_error_rad = status.rot_error_rad;
+        s.null_leak_m_s = status.null_leak_m_s;
+        for (int i = 0; i < NUM_JOINTS; ++i)
+        {
+            s.qdot_task_deg_s[i] = status.qdot_task_rad_s[i] * kRadToDeg;
+            s.qdot_null_deg_s[i] = status.qdot_null_rad_s[i] * kRadToDeg;
+        }
         for (int i = 0; i < 4; ++i)
             s.tool_quat_xyzw[i] = status.tool_quat.coeffs()[i]; // Eigen order x,y,z,w
         for (int i = 0; i < NUM_JOINTS; ++i)
@@ -298,6 +304,16 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
 
         ControllerStatus status;
 
+        // Periodic status line: cadence in whole cycles from the same grid
+        // that paces the loop; 0 = disabled. The saturation tally counts
+        // cycles (not joints) where any clip engaged since the last line.
+        const long status_period_cycles = config::kStatusPrintPeriodS > 0.0
+            ? std::lround(config::kStatusPrintPeriodS *
+                          config::kControlFrequencyHz)
+            : 0;
+        long cycles_since_status = 0;
+        int saturated_cycles_in_window = 0;
+
         while (!stop)
         {
             next_cycle += period;
@@ -483,6 +499,49 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 break;
             }
             log.push(sample);
+
+            // Status line, in the slack after the exchange and the log push
+            // so it never delays a Send. Same thread as the arrival notice;
+            // one bounded line per period.
+            if (status_period_cycles > 0)
+            {
+                for (int i = 0; i < NUM_JOINTS; ++i)
+                {
+                    if (clamp_result.saturated[i])
+                    {
+                        ++saturated_cycles_in_window;
+                        break;
+                    }
+                }
+                if (++cycles_since_status >= status_period_cycles)
+                {
+                    StatusLineData status_line;
+                    status_line.t_s = state.t_s;
+                    status_line.position_error_m =
+                        (status.p_desired - status.p_current).norm();
+                    status_line.rot_error_rad = status.rot_error_rad;
+                    status_line.task_speed_deg_s =
+                        status.qdot_task_rad_s.norm() * kRadToDeg;
+                    status_line.null_speed_deg_s =
+                        status.qdot_null_rad_s.norm() * kRadToDeg;
+                    status_line.null_leak_m_s = status.null_leak_m_s;
+                    status_line.sigma_min = status.sigma_min;
+                    status_line.saturated_cycles = saturated_cycles_in_window;
+                    status_line.window_cycles =
+                        static_cast<int>(cycles_since_status);
+                    constexpr int kBoundedJoints[3] = {1, 3, 5}; // j2/j4/j6
+                    for (int b = 0; b < 3; ++b)
+                    {
+                        status_line.bounded_q_deg[b] = std::remainder(
+                            state.q_rad[kBoundedJoints[b]] * kRadToDeg, 360.0);
+                        status_line.bounded_limit_deg[b] =
+                            config::kJointSoftwareLimitDeg[kBoundedJoints[b]];
+                    }
+                    std::cout << FormatStatusLine(status_line) << "\n";
+                    cycles_since_status = 0;
+                    saturated_cycles_in_window = 0;
+                }
+            }
 
             // Fixed-rate pacing on a grid (sleep_until, so errors don't add
             // up); after a stall, continue instead of bursting.

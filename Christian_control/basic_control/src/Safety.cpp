@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
 #include <thread>
@@ -282,6 +283,25 @@ void PrintFaultChange(const LoopLogSample& s, long cycle,
             std::cout << "  joint " << (i + 1) << ": "
                       << DecodeActuatorBank(prev_joint_banks[i]) << " -> "
                       << DecodeActuatorBank(s.fault_bank[i]) << "\n";
+}
+
+std::string FormatStatusLine(const StatusLineData& d)
+{
+    // snprintf, not streams: one fixed-size buffer, explicit precision per
+    // field, and no global stream-state side effects.
+    char buffer[256];
+    std::snprintf(
+        buffer, sizeof buffer,
+        "status t=%.1fs err=%.1fmm rot=%.1fmrad task=%.1f null=%.1f deg/s "
+        "leak=%.3fm/s sig=%.3f sat=%d/%d "
+        "j2=%.1f/%.1f j4=%.1f/%.1f j6=%.1f/%.1f deg",
+        d.t_s, d.position_error_m * 1000.0, d.rot_error_rad * 1000.0,
+        d.task_speed_deg_s, d.null_speed_deg_s, d.null_leak_m_s, d.sigma_min,
+        d.saturated_cycles, d.window_cycles,
+        d.bounded_q_deg[0], d.bounded_limit_deg[0],
+        d.bounded_q_deg[1], d.bounded_limit_deg[1],
+        d.bounded_q_deg[2], d.bounded_limit_deg[2]);
+    return buffer;
 }
 
 // ---------------------------------------------------------------

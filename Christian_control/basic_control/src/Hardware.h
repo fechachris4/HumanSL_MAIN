@@ -219,7 +219,7 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 7; WriteCsvRow is the authority):
+// CSV column order (log_format = 8; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -227,7 +227,8 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   command_frame_id, feedback_frame_id, command_ack_j1..7,
 //   status_flags_j1..7, jitter_us_j1..7,
 //   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
-//   ack_unchanged_j1..7                                   (120 columns)
+//   ack_unchanged_j1..7, taskvel_j1..7, nullvel_j1..7,
+//   null_leak_mps                                         (135 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -238,7 +239,13 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // trajectory-playback columns (ref_j1..7, playback_t_s, playback_state)
 // with the trajectory playback feature. Format 7 (2026-08-04) removes the
 // informational reach-screen column; tooling should use column names rather
-// than positional indexes.
+// than positional indexes. Format 8 (2026-08-05) appends the reactive-law
+// decomposition — taskvel_j*/nullvel_j* (deg/s, the two law terms BEFORE
+// summation and before the speed clamp) and null_leak_mps (the linear speed
+// of J·q̇_null, the end-effector velocity the damped null-space projector
+// leaks into task space; NaN on rows where no law ran). Added after the
+// 2026-08-05 stall, where the summed telemetry could not show two large
+// cancelling terms.
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -319,6 +326,25 @@ struct LoopLogSample {
     JointVector requested_velocity_deg_s{}; // before the per-joint speed clamp
     std::array<bool, 7> lead_limited{};     // lead constraint was active
     std::array<int, 7> ack_unchanged_cycles{}; // consecutive repeated ack IDs
+
+    // Reactive-law decomposition (log_format 8). See the column note above.
+    JointVector qdot_task_deg_s{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    JointVector qdot_null_deg_s{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    double null_leak_m_s = std::numeric_limits<double>::quiet_NaN();
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully
@@ -356,7 +382,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 7. Both
+// Column header and one data row — the authority for log_format = 8. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);

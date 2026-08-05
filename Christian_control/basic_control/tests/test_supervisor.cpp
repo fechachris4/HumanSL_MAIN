@@ -210,6 +210,49 @@ int main()
               "the refusal names the arm state as the reason");
     }
 
+    {
+        // The periodic status line: every number the 2026-08-05 stall
+        // diagnosis needed, in the units the operator reasons in. The
+        // formatter is pure so this test pins the exact rendering.
+        StatusLineData d;
+        d.t_s = 12.04;
+        d.position_error_m = 0.1438;   // -> mm
+        d.rot_error_rad = 0.0452;      // -> mrad
+        d.task_speed_deg_s = 610.23;
+        d.null_speed_deg_s = 2497.04;
+        d.null_leak_m_s = 0.4153;
+        d.sigma_min = 0.0421;
+        d.saturated_cycles = 3;
+        d.window_cycles = 500;
+        d.bounded_q_deg = {54.71, 116.24, 45.08};
+        d.bounded_limit_deg = {126.9, 145.0, 118.0};
+        const std::string line = FormatStatusLine(d);
+        Check(line.find("t=12.0s") != std::string::npos,
+              "status line reports loop time in seconds");
+        Check(line.find("err=143.8mm") != std::string::npos,
+              "status line reports the position error in mm");
+        Check(line.find("rot=45.2mrad") != std::string::npos,
+              "status line reports the rotation error in mrad");
+        Check(line.find("task=610.2") != std::string::npos,
+              "status line reports the task-velocity norm");
+        Check(line.find("null=2497.0") != std::string::npos,
+              "status line reports the null-velocity norm");
+        Check(line.find("leak=0.415m/s") != std::string::npos,
+              "status line reports the null-space leak speed");
+        Check(line.find("sig=0.042") != std::string::npos,
+              "status line reports sigma_min");
+        Check(line.find("sat=3/500") != std::string::npos,
+              "status line reports clip saturation over the window");
+        Check(line.find("j2=54.7/126.9") != std::string::npos,
+              "status line reports joint 2 against its software limit");
+        Check(line.find("j4=116.2/145.0") != std::string::npos,
+              "status line reports joint 4 against its software limit");
+        Check(line.find("j6=45.1/118.0") != std::string::npos,
+              "status line reports joint 6 against its software limit");
+        Check(line.find('\n') == std::string::npos,
+              "status line is a single line (caller adds the newline)");
+    }
+
     if (failures == 0) {
         std::cout << "all supervisor tests passed\n";
         return 0;

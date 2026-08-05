@@ -44,6 +44,19 @@ struct ControllerStatus {
     double sigma_min = std::numeric_limits<double>::quiet_NaN();     // σ_min(J)
     double rot_error_rad = std::numeric_limits<double>::quiet_NaN(); // |log3|
 
+    // The law's two terms BEFORE summation (rad/s), and the linear speed of
+    // the leak twist J·q̇_null the damped projector lets into task space.
+    // NaN default = "this cycle ran no law" (takeover hold). Added after the
+    // 2026-08-05 stall, where these two terms silently cancelled at 218 mm
+    // from the target and no printed or logged value could show it.
+    Eigen::Matrix<double, 7, 1> qdot_task_rad_s =
+        Eigen::Matrix<double, 7, 1>::Constant(
+            std::numeric_limits<double>::quiet_NaN());
+    Eigen::Matrix<double, 7, 1> qdot_null_rad_s =
+        Eigen::Matrix<double, 7, 1>::Constant(
+            std::numeric_limits<double>::quiet_NaN());
+    double null_leak_m_s = std::numeric_limits<double>::quiet_NaN();
+
     // MEASURED tool orientation, flange frame in the right-arm base frame.
     // Hamilton convention, hemisphere-fixed to w >= 0 so logs never jump
     // sign. Telemetry only.

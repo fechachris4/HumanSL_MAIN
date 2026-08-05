@@ -152,6 +152,46 @@ NullSpaceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
     return projector * objective;
 }
 
+// The solved velocity split into its two objectives, plus the leak the
+// DAMPED projector lets back into task space. The leak twist J·q̇_null is
+// the end-effector velocity the centering term causes despite projection —
+// zero only for an undamped projector. The 2026-08-05 stall parked the arm
+// 218 mm short of its target exactly where Kp·e_pos balanced this leak, so
+// the decomposition is first-class telemetry, not a debug extra.
+struct ReactiveSolution {
+    Eigen::Matrix<double, 7, 1> qdot_task_rad_s; // equations 3-4
+    Eigen::Matrix<double, 7, 1> qdot_null_rad_s; // equations 5-6 (zero when off)
+    Eigen::Matrix<double, 6, 1> leak_twist;      // J · q̇_null [v; ω]
+};
+
+// Equations 3-6 composed, decomposition preserved. The total command is
+// qdot_task_rad_s + qdot_null_rad_s (SolveReactiveVelocity below).
+inline ReactiveSolution
+SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
+                              const Eigen::Vector3d& e_pos, const Eigen::Vector3d& e_rot,
+                              const Eigen::Vector3d& e_v, const Eigen::Vector3d& e_w,
+                              const Eigen::Matrix<double, 7, 1>& q_rad,
+                              const Eigen::Matrix<double, 7, 1>& midpoint_rad,
+                              const Eigen::Matrix<double, 7, 1>& centering_mask,
+                              const ReactivePoseGains& gains)
+{
+    const Eigen::Matrix<double, 6, 1> twist =
+        TaskTwist(e_pos, e_rot, e_v, e_w, gains);
+    ReactiveSolution solution;
+    solution.qdot_task_rad_s =
+        DampedLeastSquares6(jacobian, twist, gains.dls_lambda);
+    if (gains.null_space_enabled) {
+        solution.qdot_null_rad_s = NullSpaceVelocity(jacobian, q_rad,
+                                                     midpoint_rad,
+                                                     centering_mask, gains);
+        solution.leak_twist = jacobian * solution.qdot_null_rad_s;
+    } else {
+        solution.qdot_null_rad_s.setZero();
+        solution.leak_twist.setZero();
+    }
+    return solution;
+}
+
 // Equations 3-6 composed: the requested joint velocity BEFORE any clamping
 // (the Runner clamps, the actuation integrates — never this law).
 inline Eigen::Matrix<double, 7, 1>
@@ -163,12 +203,8 @@ SolveReactiveVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
                       const Eigen::Matrix<double, 7, 1>& centering_mask,
                       const ReactivePoseGains& gains)
 {
-    const Eigen::Matrix<double, 6, 1> twist =
-        TaskTwist(e_pos, e_rot, e_v, e_w, gains);
-    Eigen::Matrix<double, 7, 1> qdot =
-        DampedLeastSquares6(jacobian, twist, gains.dls_lambda);
-    if (gains.null_space_enabled)
-        qdot += NullSpaceVelocity(jacobian, q_rad, midpoint_rad,
-                                  centering_mask, gains);
-    return qdot;
+    const ReactiveSolution solution = SolveReactiveVelocityDetailed(
+        jacobian, e_pos, e_rot, e_v, e_w, q_rad, midpoint_rad,
+        centering_mask, gains);
+    return solution.qdot_task_rad_s + solution.qdot_null_rad_s;
 }

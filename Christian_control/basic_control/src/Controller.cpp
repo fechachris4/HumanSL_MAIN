@@ -142,12 +142,17 @@ TrackingController::DesiredVelocity(const RobotState& state,
     const Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> eigensolver(jjt);
     status.sigma_min = std::sqrt(std::max(0.0, eigensolver.eigenvalues()(0)));
 
-    // Equations 3-6: task twist -> DLS -> null-space (ReactiveLaw.h).
+    // Equations 3-6: task twist -> DLS -> null-space (ReactiveLaw.h). The
+    // decomposition goes out through status so the Runner can print and log
+    // the two terms that the summed command hides.
     ReactivePoseGains ramped_gains = gains_;
     ramped_gains.null_gain_s_inv *=
         UnitRamp(state.t_s, config::kNullRampDurationS);
-    return SolveReactiveVelocity(ee.jacobian, e_pos, e_rot, e_twist.linear_m_s,
-                                 e_twist.angular_rad_s, state.q_rad,
-                                 null_midpoint_rad_, null_centering_mask_,
-                                 ramped_gains);
+    const ReactiveSolution solution = SolveReactiveVelocityDetailed(
+        ee.jacobian, e_pos, e_rot, e_twist.linear_m_s, e_twist.angular_rad_s,
+        state.q_rad, null_midpoint_rad_, null_centering_mask_, ramped_gains);
+    status.qdot_task_rad_s = solution.qdot_task_rad_s;
+    status.qdot_null_rad_s = solution.qdot_null_rad_s;
+    status.null_leak_m_s = solution.leak_twist.head<3>().norm();
+    return solution.qdot_task_rad_s + solution.qdot_null_rad_s;
 }

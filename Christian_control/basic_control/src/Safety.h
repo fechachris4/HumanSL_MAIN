@@ -146,6 +146,36 @@ void PrintFaultChange(const LoopLogSample& s, long cycle,
                       const std::array<std::uint32_t, 7>& prev_joint_banks,
                       std::uint32_t prev_base_bank);
 
+// One periodic operator status line (config::kStatusPrintPeriodS). Every
+// value is an input so the formatter stays pure and hardware-free:
+//   position_error_m    ‖p_desired − p_current‖, printed in mm
+//   rot_error_rad       rotation-log error norm, printed in mrad
+//   task/null_speed     ‖q̇_task‖ / ‖q̇_null‖ in deg/s — the two law terms
+//                       BEFORE summation; a secondary objective dwarfing
+//                       the task is visible here and nowhere else
+//   null_leak_m_s       ‖linear(J·q̇_null)‖ — phantom end-effector speed
+//                       the damped projector lets through
+//   saturated_cycles    cycles in the window where any joint hit the clip
+//   bounded_q_deg       j2/j4/j6 signed positions vs bounded_limit_deg
+//                       (config::kJointSoftwareLimitDeg)
+struct StatusLineData {
+    double t_s = 0.0;
+    double position_error_m = 0.0;
+    double rot_error_rad = 0.0;
+    double task_speed_deg_s = 0.0;
+    double null_speed_deg_s = 0.0;
+    double null_leak_m_s = 0.0;
+    double sigma_min = 0.0;
+    int saturated_cycles = 0;
+    int window_cycles = 0;
+    std::array<double, 3> bounded_q_deg{};     // joints 2, 4, 6
+    std::array<double, 3> bounded_limit_deg{}; // matching software limits
+};
+
+// Renders one single line, no trailing newline. Pure formatting — the
+// Runner decides when to call it (edge/period), never every cycle.
+std::string FormatStatusLine(const StatusLineData& d);
+
 // ---------------------------------------------------------------
 // ServoingGuard — RAII ownership of the servoing mode
 // ---------------------------------------------------------------

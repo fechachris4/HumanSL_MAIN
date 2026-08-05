@@ -283,9 +283,9 @@ checkable by grep — leave it.
 
 ### `LoopLogSample` (Hardware.h:256-304)
 
-A plain struct: one control cycle, 120 CSV columns' worth of values. The
+A plain struct: one control cycle, 135 CSV columns' worth of values. The
 long comment block (Hardware.h:199-255) is the log-format contract —
-column order (log_format = 7; the "(120 columns)" count is at
+column order (log_format = 8; the "(135 columns)" count is at
 Hardware.h:213), the requested/sent/measured distinction, timestamp
 semantics, and the warning that a row mixes *two* exchanges (controller
 inputs from last cycle's reply, measurements from this cycle's). The
@@ -355,7 +355,7 @@ traffic is synchronized around the atomic operation.
 
 ### `WriteCsvHeader` / `WriteCsvRow` (Hardware.cpp:316-398)
 
-The authority for log_format 7: the header's (316-352) column order and
+The authority for log_format 8: the header's column order and
 the row's (354-398) field order must match each other and the comment in
 Hardware.h. Straight streaming of every field, booleans as 0/1. The
 frame-id columns now follow the quaternion columns directly (the nine

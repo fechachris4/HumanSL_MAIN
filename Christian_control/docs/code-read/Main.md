@@ -120,10 +120,9 @@ wrong word.
 Writes two header comment lines then delegates to `WriteConfigLines` with
 the `"# "` prefix. CSV parsers skip `#` lines, so the preamble rides inside
 the data file without breaking it.
-**FLAG edit-hazard (line 115):** `# log_format = 7 (compiled)` is a
-hand-maintained schema version, bumped from 6 when the reach-screen telemetry
-column left
-the preamble in the fixed-target-only change. If someone changes the CSV
+**FLAG edit-hazard (line 115):** `# log_format = 8 (compiled)` is a
+hand-maintained schema version, bumped from 7 with the reactive-law
+decomposition columns (taskvel_j*, nullvel_j*, null_leak_mps). If someone changes the CSV
 columns or preamble contract without bumping this number — or bumps it
 without changing them — every analysis script keyed on the format number
 silently misreads data.

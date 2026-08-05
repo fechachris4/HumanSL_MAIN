@@ -267,6 +267,66 @@ namespace
         Check(with.norm() > 0.0, "null-space enabled -> centering motion");
     }
 
+    // The detailed solve exposes the task/null decomposition the status
+    // line and CSV report; its parts must sum to exactly the legacy total,
+    // and its leak twist must be the Jacobian image of the projected
+    // centering velocity — the quantity that competes with the task.
+    void TestDetailedSolveDecomposition()
+    {
+        ReactivePoseGains gains = DefaultGains();
+        gains.null_space_enabled = true;
+        gains.null_gain_s_inv = 5.0;
+
+        Eigen::Matrix<double, 6, 7> jacobian;
+        for (int r = 0; r < 6; ++r)
+            for (int c = 0; c < 7; ++c)
+                jacobian(r, c) = std::sin(1.0 + (3.0 * r) + (7.0 * c)) + (r == c ? 2.0 : 0.0);
+        const Eigen::Vector3d e_pos(0.05, -0.02, 0.10);
+        const Eigen::Vector3d e_rot(0.01, 0.02, -0.03);
+        const Eigen::Vector3d e_v(-0.01, 0.00, 0.02);
+        const Eigen::Vector3d e_w(0.00, 0.01, 0.00);
+        Eigen::Matrix<double, 7, 1> q = Eigen::Matrix<double, 7, 1>::Zero();
+        q[1] = 0.8;
+        q[3] = -1.1;
+        const Eigen::Matrix<double, 7, 1> midpoint =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        Eigen::Matrix<double, 7, 1> mask;
+        mask << 0, 1, 0, 1, 0, 1, 0;
+
+        const ReactiveSolution detailed = SolveReactiveVelocityDetailed(
+            jacobian, e_pos, e_rot, e_v, e_w, q, midpoint, mask, gains);
+        const auto legacy = SolveReactiveVelocity(jacobian, e_pos, e_rot, e_v,
+                                                  e_w, q, midpoint, mask, gains);
+        Check((detailed.qdot_task_rad_s + detailed.qdot_null_rad_s - legacy)
+                  .norm() < 1e-12,
+              "detailed solve parts sum to the legacy total");
+
+        const auto task_only = DampedLeastSquares6(
+            jacobian, TaskTwist(e_pos, e_rot, e_v, e_w, gains), gains.dls_lambda);
+        Check((detailed.qdot_task_rad_s - task_only).norm() < 1e-12,
+              "detailed task part is exactly the DLS task solution");
+        const auto null_only =
+            NullSpaceVelocity(jacobian, q, midpoint, mask, gains);
+        Check((detailed.qdot_null_rad_s - null_only).norm() < 1e-12,
+              "detailed null part is exactly the projected centering velocity");
+        Check((detailed.leak_twist - jacobian * null_only).norm() < 1e-12,
+              "leak twist is the Jacobian image of the projected centering");
+        Check(detailed.leak_twist.norm() > 0.0,
+              "damped projector leaks: the leak twist is nonzero");
+
+        gains.null_space_enabled = false;
+        const ReactiveSolution disabled = SolveReactiveVelocityDetailed(
+            jacobian, e_pos, e_rot, e_v, e_w, q, midpoint, mask, gains);
+        Check(disabled.qdot_null_rad_s.norm() == 0.0,
+              "null-space disabled -> zero null part");
+        Check(disabled.leak_twist.norm() == 0.0,
+              "null-space disabled -> zero leak twist");
+        Check((disabled.qdot_task_rad_s -
+               SolveReactiveVelocity(jacobian, e_pos, e_rot, e_v, e_w, q,
+                                     midpoint, mask, gains)).norm() < 1e-12,
+              "null-space disabled -> task part is the whole solution");
+    }
+
     // The port must compute what the simulation computes: identical inputs
     // through the Python law (fixtures) and this law, identical outputs.
     void TestAgainstSimulationFixtures()
@@ -649,6 +709,7 @@ int main()
     TestTaskTwistGating();
     TestDampedLeastSquares6();
     TestNullSpace();
+    TestDetailedSolveDecomposition();
     TestAgainstSimulationFixtures();
     TestParsePoseTarget();
     TestPoseTargetMailbox();

@@ -68,7 +68,7 @@ namespace config
     // Before any controller or command-integrator state is initialized,
     // stream the Seed pose for this exact grid-aligned interval. This is a
     // low-level POSITION-path handshake, not a motion-response test.
-    inline constexpr double kTakeoverHoldS = 0.5;
+    inline constexpr double kTakeoverHoldS = 0.05;
     inline constexpr std::chrono::microseconds kTakeoverHoldDuration =
         std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::duration<double>{kTakeoverHoldS});
@@ -123,7 +123,7 @@ namespace config
     inline constexpr double kKpRotation = 10.0; // 1/s on the rotation-log error
     inline constexpr double kKdPosition = 0.5; // on the linear-velocity error
     inline constexpr double kKdRotation = 0.5; // on the angular-velocity error
-    inline constexpr double kNullGain = 2.0; // 1/s on the centering error
+    inline constexpr double kNullGain = 23.0; // 1/s on the centering error
     inline constexpr bool kOrientationEnabled = true;
     inline constexpr bool kVelocityTermEnabled = true; // Kd term
     inline constexpr bool kNullSpaceEnabled = false;
@@ -143,9 +143,6 @@ namespace config
     };
     inline constexpr JointVector kJointBoundedMask = {0, 1, 0, 1, 0, 1, 0};
 
-    // Null-space centering targets, derived from the same published ranges
-    // and masked out for continuous joints. Keep centering disabled: it is
-    // not a position-limit mechanism.
     inline constexpr JointVector kNullMidpointDeg = {
         0,
         (kJointLowerDeg[1] + kJointUpperDeg[1]) / 2.0,
@@ -252,6 +249,14 @@ namespace config
     // guard is then the backstop (compiled-config.md).
     inline constexpr double kNullRampDurationS = 1.0;
     inline constexpr double kCommandLeadLimitDeg = 1.0;
+
+    // Periodic operator status line (FormatStatusLine): position/rotation
+    // error, the task and null-space velocity norms BEFORE summation, the
+    // null-space leak speed, sigma_min, clip-saturation count, and the
+    // bounded joints against their software limits. One line every this
+    // many seconds; non-positive disables it. Reporting only — printed from
+    // the loop thread like the arrival notice, so keep it >= 0.5 s.
+    inline constexpr double kStatusPrintPeriodS = 1.0;
 
     // Arrival notice: one printed line the first time the end-effector
     // comes within this distance of a new target, m. Informational only.
