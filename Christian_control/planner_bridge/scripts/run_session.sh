@@ -35,14 +35,16 @@ read -r -p "Type GO to start the controller: " confirm
 [[ $DRY_RUN = 1 ]] && { echo "dry-run: would start $CONTROLLER now"; exit 0; }
 
 SESSION_MARK=$(mktemp)   # anything newer than this was created by THIS session
+CONTROLLER_PID=""        # set right after the fork; trap is a no-op until then
+trap 'kill -INT "$CONTROLLER_PID" 2>/dev/null || true; wait "$CONTROLLER_PID" 2>/dev/null || true; rm -f "$SESSION_MARK"' EXIT
 "$CONTROLLER" & CONTROLLER_PID=$!   # no --log: timestamped default under runs/
-trap 'kill -INT $CONTROLLER_PID 2>/dev/null || true; wait $CONTROLLER_PID 2>/dev/null || true; rm -f "$SESSION_MARK"' EXIT
 
+mkdir -p "$REPO/runs"   # first run on a fresh checkout has no runs/ dir yet
 echo "waiting for the controller's run log..."
 for _ in $(seq 1 60); do
-    LATEST=$(find "$REPO/runs" -name 'loop_log*.csv' -newer "$SESSION_MARK" 2>/dev/null | head -1)
+    LATEST=$(find "$REPO/runs" -name 'loop_log*.csv' -newer "$SESSION_MARK" 2>/dev/null | head -1) || true
     [[ -n "${LATEST:-}" ]] && break
-    kill -0 $CONTROLLER_PID 2>/dev/null || { echo "controller exited during startup"; exit 1; }
+    kill -0 "$CONTROLLER_PID" 2>/dev/null || { echo "controller exited during startup"; exit 1; }
     sleep 1
 done
 [[ -n "${LATEST:-}" ]] || { echo "no run log appeared after 60 s"; exit 1; }
@@ -56,6 +58,9 @@ while read -r -p "bridge> " cmd args; do case "$cmd" in
         fi
         read -r gx gy gz maybe_box rest <<<"$args"
         extra=()
+        # $rest is deliberately unquoted: it word-splits "CX CY CZ HX HY HZ"
+        # into six argv slots for --box; accepted exposure to glob expansion
+        # since this is an interactive operator prompt, not untrusted input.
         [[ "${maybe_box:-}" == "box" ]] && extra=(--box $rest)
         "$BRIDGE" --goal "$gx" "$gy" "$gz" "${extra[@]}" > "$PIPE" \
             || echo "bridge exited $? — nothing was sent"
