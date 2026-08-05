@@ -160,6 +160,48 @@ First hardware runs: start from the printed current position and change
 The common-frame model and hardware-free tests do not prove physical
 mount calibration, collision safety, or safe robot behavior.
 
+## Planner bridge (Stage 1) — supervised runs only
+
+`Christian_control/planner_bridge/` (`planner_bridge` binary, own build
+directory) is a separate, hardware-free process: one GPMP2 solve per
+invocation, emitted as `x y z` lines on this controller's existing stdin
+target grammar (design: `../docs/decisions/stage1-planner-bridge.md`).
+It is a new **source**, not a new controller — the controller code above
+is unchanged.
+
+Offline check (no robot, safe anytime; zero-config tool sits at
+`(0.0, -0.0246, 1.3073)` in `base_link`, so this goal is reachable from a
+single solve):
+
+```bash
+./planner_bridge --start-deg 0 0 0 0 0 0 0 --goal 0.15 0.075 1.207
+```
+
+Hardware run (requires explicit authorization, operator present, e-stop
+in reach; the controller consumes bridge waypoints only after reaching
+its compiled terminal target):
+
+```bash
+mkfifo /tmp/bridge_targets
+./controller --log < /tmp/bridge_targets        # terminal 1
+./planner_bridge --state-csv <today's run csv> \
+    --goal <x y z> > /tmp/bridge_targets        # terminal 2, repeat per replan
+```
+
+Stop-and-replan: wait for hold (arrival messages in terminal 1), then
+re-run the bridge with a new goal; each run reads the fresh CSV state.
+
+Exit codes (`RunBridge`): 0 targets emitted, 1 bad arguments, 2 start
+state unavailable, 3 solve failed, 4 validation rejected the plan. A
+non-zero exit writes nothing to the FIFO. At most 8 waypoints are ever
+emitted per solve (`PoseTargetMailbox::kCapacity`, `Targets.h`) — the
+same queue this section's stdin target input already fills.
+
+**Stage 1 limitation**: the controller tracks the reactive law's own
+path between bridge waypoints, not GPMP2's planned joint path — only the
+sampled waypoints are guaranteed to lie on the planned path. See the
+decision record for the full argument.
+
 ## Offline analysis
 
 After a run (never during — all scripts are offline-only and never touch
