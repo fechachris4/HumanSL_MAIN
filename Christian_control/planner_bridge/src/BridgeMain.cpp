@@ -91,7 +91,10 @@ std::string ExecutableDirectory() {
 }
 
 std::string DefaultDhPath() {
-    return ExecutableDirectory() + "/config/dh_params_tool.yaml";
+    // config/ lives beside the CMakeLists.txt in planner_bridge/, one
+    // level above the build/ directory the executable runs from — not
+    // beside the executable itself.
+    return ExecutableDirectory() + "/../config/dh_params_tool.yaml";
 }
 
 std::string DefaultJointLimitsPath() {
