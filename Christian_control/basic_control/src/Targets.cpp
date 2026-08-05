@@ -6,6 +6,8 @@
 #include <cerrno>
 #include <cmath>
 #include <iostream>
+#include <limits>
+#include <memory>
 #include <poll.h>
 #include <stdexcept>
 #include <sstream>
@@ -26,6 +28,7 @@ namespace
     constexpr int kInputPollTimeoutMs = 50;
     constexpr std::size_t kInputReadBytes = 256;
     constexpr std::size_t kMaxInputLineBytes = 512;
+    constexpr double kDegreesToRadians = M_PI / 180.0;
 
     // Continuous joints (1/3/5/7) carry a zero sentinel in the compiled
     // software limits. Validation demands finite bounds, so they get one full
@@ -432,6 +435,70 @@ void PoseTargetSource::OnArrived()
         return;
     dwell_elapsed_s_ = 0.0;
     phase_ = Phase::kDwell;
+}
+
+JointTrajectorySource::JointTrajectorySource(
+    Eigen::Matrix<double, 7, 1> hold_q_rad, JointTrajectoryMailbox& mailbox)
+    : mailbox_(mailbox), hold_q_rad_(std::move(hold_q_rad))
+{
+    if (!hold_q_rad_.allFinite())
+        throw std::invalid_argument("takeover hold position must be finite");
+}
+
+JointTrajectorySource::~JointTrajectorySource() = default;
+
+Reference JointTrajectorySource::Get(const RobotState& state, double dt_s,
+                                     ControllerStatus& status)
+{
+    // The activation splice guard. A trajectory that does not begin where the
+    // arm actually is would step the command by that whole distance on its
+    // first cycle, so it is dropped whole rather than followed in part.
+    if (std::unique_ptr<JointTrajectory> incoming = mailbox_.Take()) {
+        const double tolerance_rad =
+            config::kTrajStartToleranceDeg * kDegreesToRadians;
+        const double start_error_rad =
+            incoming->points.empty()
+                ? std::numeric_limits<double>::infinity()
+                : (incoming->points.front().q_rad - state.q_rad)
+                      .cwiseAbs()
+                      .maxCoeff();
+        if (!(start_error_rad <= tolerance_rad)) {
+            status.joint_traj_rejected = true;
+            status.joint_traj_start_error_deg =
+                start_error_rad / kDegreesToRadians;
+            incoming.reset();
+        } else {
+            active_ = std::move(incoming);
+            elapsed_s_ = 0.0;
+            complete_reported_ = false;
+            status.joint_traj_activated = true;
+        }
+    }
+
+    Reference reference;
+    JointReference joint;
+    joint.qdot_rad_s.setZero();
+    if (!active_) {
+        joint.q_rad = hold_q_rad_;
+        reference.joint = joint;
+        return reference;
+    }
+
+    const JointTrajectorySample sample =
+        SampleJointTrajectory(*active_, elapsed_s_);
+    if (std::isfinite(dt_s) && dt_s > 0.0)
+        elapsed_s_ += dt_s;
+    if (sample.complete) {
+        hold_q_rad_ = sample.q_rad;
+        if (!complete_reported_) {
+            complete_reported_ = true;
+            status.joint_traj_complete_edge = true;
+        }
+    }
+    joint.q_rad = sample.q_rad;
+    joint.qdot_rad_s = sample.qdot_rad_s;
+    reference.joint = joint;
+    return reference;
 }
 
 void NotifyPoseTargetSourceOnArrivalEdge(PoseTargetSource& source,

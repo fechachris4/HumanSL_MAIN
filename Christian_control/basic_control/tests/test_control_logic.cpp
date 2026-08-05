@@ -19,6 +19,8 @@
 
 #include "Actuation.h"
 #include "Arrival.h"
+#include "Config.h"
+#include "Controller.h"
 #include "Freshness.h"
 #include "JointTrajectory.h"
 #include "ReactiveLaw.h"
@@ -865,6 +867,187 @@ namespace
               "a pose line after a validation error still reaches the pose mailbox");
     }
 
+    // --- JointTrajectorySource: hold, activation splice guard, tracking ---
+
+    // Two points one second apart; only joint 1 moves, from `q0_rad` to
+    // `q1_rad`, stationary at both ends.
+    std::unique_ptr<JointTrajectory> RampOnJointOne(double q0_rad, double q1_rad)
+    {
+        auto traj = std::make_unique<JointTrajectory>();
+        JointTrajectoryPoint start{};
+        start.t_s = 0.0;
+        start.q_rad.setZero();
+        start.qdot_rad_s.setZero();
+        start.q_rad(0) = q0_rad;
+        JointTrajectoryPoint end = start;
+        end.t_s = 1.0;
+        end.q_rad(0) = q1_rad;
+        traj->points = {start, end};
+        return traj;
+    }
+
+    RobotState StateAtJointOne(double q1_rad)
+    {
+        RobotState state{};
+        state.q_rad.setZero();
+        state.qdot_rad_s.setZero();
+        state.q_rad(0) = q1_rad;
+        return state;
+    }
+
+    void TestJointSourceHoldsWithoutTrajectory()
+    {
+        JointTrajectoryMailbox mailbox;
+        Eigen::Matrix<double, 7, 1> hold = Eigen::Matrix<double, 7, 1>::Zero();
+        hold(2) = 0.3;
+        JointTrajectorySource source(hold, mailbox);
+
+        ControllerStatus status;
+        const Reference reference =
+            source.Get(StateAtJointOne(0.0), 0.002, status);
+        Check(reference.joint.has_value(),
+              "the joint source always fills the joint channel");
+        Check(!reference.pose.has_value(),
+              "a joint reference never carries a pose channel");
+        if (reference.joint) {
+            Check((reference.joint->q_rad - hold).norm() < 1e-12,
+                  "with no trajectory the reference is the takeover hold pose");
+            Check(reference.joint->qdot_rad_s.norm() == 0.0,
+                  "the hold reference commands zero joint velocity");
+        }
+        Check(!status.joint_traj_activated && !status.joint_traj_rejected,
+              "an idle cycle reports neither activation nor rejection");
+    }
+
+    void TestJointSourceActivatesAndTracks()
+    {
+        JointTrajectoryMailbox mailbox;
+        const Eigen::Matrix<double, 7, 1> hold =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        JointTrajectorySource source(hold, mailbox);
+        mailbox.Publish(RampOnJointOne(0.0, 0.1));
+
+        const RobotState state = StateAtJointOne(0.0);
+        ControllerStatus first;
+        const Reference activation = source.Get(state, 0.1, first);
+        Check(first.joint_traj_activated,
+              "a trajectory starting at the measured position is activated");
+        Check(activation.joint && std::abs(activation.joint->q_rad(0)) < 1e-12,
+              "the activation cycle samples the trajectory at t = 0");
+
+        // Five more cycles of 0.1 s put the clock at the half-way point,
+        // where the zero-velocity Hermite ramp is exactly half travelled.
+        Reference reference;
+        for (int i = 0; i < 5; ++i) {
+            ControllerStatus status;
+            reference = source.Get(state, 0.1, status);
+        }
+        Check(reference.joint &&
+                  std::abs(reference.joint->q_rad(0) - 0.05) < 1e-9,
+              "the sample clock advances with the accumulated dt");
+
+        // Run past the end: the reference holds the final point and arrival
+        // is reported exactly once.
+        int arrival_edges = 0;
+        for (int i = 0; i < 10; ++i) {
+            ControllerStatus status;
+            reference = source.Get(state, 0.1, status);
+            if (status.joint_traj_complete_edge)
+                ++arrival_edges;
+        }
+        Check(arrival_edges == 1,
+              "the trajectory reports arrival on exactly one cycle");
+        Check(reference.joint &&
+                  std::abs(reference.joint->q_rad(0) - 0.1) < 1e-12 &&
+                  reference.joint->qdot_rad_s.norm() == 0.0,
+              "past the end the reference holds the final point at rest");
+    }
+
+    void TestJointSourceRejectsDistantStart()
+    {
+        JointTrajectoryMailbox mailbox;
+        const Eigen::Matrix<double, 7, 1> hold =
+            Eigen::Matrix<double, 7, 1>::Zero();
+        JointTrajectorySource source(hold, mailbox);
+
+        // Measured at 5 deg on joint 1, trajectory starts at 0: outside the
+        // 2 deg splice tolerance, so it must never be followed at all.
+        const double five_deg = 5.0 * M_PI / 180.0;
+        mailbox.Publish(RampOnJointOne(0.0, 0.1));
+        ControllerStatus status;
+        const Reference reference =
+            source.Get(StateAtJointOne(five_deg), 0.1, status);
+        Check(status.joint_traj_rejected,
+              "a trajectory starting outside the splice tolerance is rejected");
+        Check(!status.joint_traj_activated,
+              "a rejected trajectory is never activated");
+        Check(std::abs(status.joint_traj_start_error_deg - 5.0) < 1e-9,
+              "the rejection reports the offending start distance in degrees");
+        Check(reference.joint && (reference.joint->q_rad - hold).norm() < 1e-12,
+              "a rejected trajectory leaves the hold reference unchanged");
+
+        // The rejected block is gone: later cycles keep holding.
+        ControllerStatus later;
+        const Reference after = source.Get(StateAtJointOne(five_deg), 0.1, later);
+        Check(after.joint && (after.joint->q_rad - hold).norm() < 1e-12,
+              "a rejected trajectory is not followed on any later cycle");
+        Check(!later.joint_traj_activated,
+              "a rejected trajectory cannot activate on a later cycle");
+    }
+
+    // --- The joint tracking law, before the per-joint clip ---
+
+    void TestJointTrackingLaw()
+    {
+        JointReference reference;
+        reference.q_rad.setZero();
+        reference.qdot_rad_s.setZero();
+        reference.q_rad(0) = 0.1;
+        Eigen::Matrix<double, 7, 1> q_meas = Eigen::Matrix<double, 7, 1>::Zero();
+
+        const JointTrackingCommand command = SolveJointTracking(
+            reference, q_meas, config::kKpJointTracking,
+            config::kTrajFollowingErrorStopDeg * M_PI / 180.0);
+        Check(std::abs(command.qdot_rad_s(0) - 0.1 * config::kKpJointTracking) <
+                  1e-12,
+              "the pre-clip command is Kp times the joint position error");
+        Check(command.qdot_rad_s.tail<6>().norm() == 0.0,
+              "joints without error command no velocity");
+        Check(!command.following_error_stop,
+              "an error inside the stop threshold requests no stop");
+
+        // The stated reference velocity is the feed-forward term.
+        reference.qdot_rad_s(1) = 0.2;
+        const JointTrackingCommand fed = SolveJointTracking(
+            reference, q_meas, config::kKpJointTracking,
+            config::kTrajFollowingErrorStopDeg * M_PI / 180.0);
+        Check(std::abs(fed.qdot_rad_s(1) - 0.2) < 1e-12,
+              "the reference velocity feeds forward joint by joint");
+    }
+
+    void TestJointFollowingErrorStop()
+    {
+        JointReference reference;
+        reference.q_rad.setZero();
+        reference.qdot_rad_s.setZero();
+        reference.q_rad(3) = 10.0 * M_PI / 180.0; // 10 deg, over the 8 deg gate
+        const Eigen::Matrix<double, 7, 1> q_meas =
+            Eigen::Matrix<double, 7, 1>::Zero();
+
+        const JointTrackingCommand command = SolveJointTracking(
+            reference, q_meas, config::kKpJointTracking,
+            config::kTrajFollowingErrorStopDeg * M_PI / 180.0);
+        Check(command.following_error_stop,
+              "a 10 deg joint following error requests the stop");
+        Check(std::abs(command.max_abs_error_rad - 10.0 * M_PI / 180.0) < 1e-12,
+              "the worst joint error is reported with the stop request");
+
+        // The stop request travels on the status the Runner already resolves.
+        ControllerStatus status;
+        Check(!status.joint_following_error_stop,
+              "a fresh status requests no stop");
+    }
+
 } // namespace
 
 int main()
@@ -883,6 +1066,11 @@ int main()
     TestNewerTrajectoryBlockReplacesOlder();
     TestInvalidTrajectoryIsNeverPublished();
     TestOutOfLimitTrajectoryIsNeverPublished();
+    TestJointSourceHoldsWithoutTrajectory();
+    TestJointSourceActivatesAndTracks();
+    TestJointSourceRejectsDistantStart();
+    TestJointTrackingLaw();
+    TestJointFollowingErrorStop();
     if (failures == 0) {
         std::cout << "all control-logic tests passed\n";
         return 0;

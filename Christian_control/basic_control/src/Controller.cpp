@@ -5,6 +5,8 @@
 
 #include "Controller.h"
 
+#include <limits>
+
 #include "Config.h"
 #include "Kinematics.h"
 
@@ -61,6 +63,22 @@ TrackingController::DesiredVelocity(const RobotState& state,
                                     const Reference& reference, double dt_s,
                                     ControllerStatus& status)
 {
+    // Joint channel: tracked directly, with no model and no Cartesian
+    // telemetry to fill — the command flows into the same clip and
+    // integration path as the pose channel's.
+    if (reference.joint) {
+        const JointTrackingCommand command = SolveJointTracking(
+            *reference.joint, state.q_rad, config::kKpJointTracking,
+            config::kTrajFollowingErrorStopDeg * kDegToRad);
+        status.joint_following_error_deg =
+            command.max_abs_error_rad / kDegToRad;
+        status.joint_following_error_stop = command.following_error_stop;
+        const double not_computed = std::numeric_limits<double>::quiet_NaN();
+        status.p_desired.setConstant(not_computed);
+        status.p_current.setConstant(not_computed);
+        return command.qdot_rad_s;
+    }
+
     // Pose channel, or the hold pose when the source gave no reference.
     const Eigen::Vector3d p_desired =
         reference.pose ? reference.pose->p_desired : hold_position_;

@@ -103,6 +103,14 @@ namespace config
     // remains the final command-rate bound.
     inline constexpr double kKpCartesian = 10.0;
 
+    // Joint-space tracking gain on (q_ref - q_meas), 1/s.
+    inline constexpr double kKpJointTracking = 5.0;
+    // A trajectory whose first point is farther than this from the measured
+    // position (any joint) is rejected at activation — the splice guard.
+    inline constexpr double kTrajStartToleranceDeg = 2.0;
+    // Joint-space following-error stop: measured vs reference, any joint.
+    inline constexpr double kTrajFollowingErrorStopDeg = 8.0;
+
     // Terminal-to-terminal Cartesian references use a conservative
     // seventh-order profile.  These are source-side reference limits, not
     // replacements for the per-joint command clip or any safety guard.

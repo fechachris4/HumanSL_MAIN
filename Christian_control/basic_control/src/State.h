@@ -57,6 +57,23 @@ struct ControllerStatus {
             std::numeric_limits<double>::quiet_NaN());
     double null_leak_m_s = std::numeric_limits<double>::quiet_NaN();
 
+    // Joint-trajectory following (JointTrajectorySource). The three edges
+    // fire on the single cycle that activates, rejects, or completes a
+    // trajectory; joint_traj_start_error_deg carries the worst-joint distance
+    // that failed the activation splice guard.
+    bool joint_traj_activated = false;
+    bool joint_traj_rejected = false;
+    bool joint_traj_complete_edge = false;
+    double joint_traj_start_error_deg = 0.0;
+
+    // The controller's joint-space following-error stop request: measured vs
+    // reference exceeded config::kTrajFollowingErrorStopDeg on some joint.
+    // Data only — the Runner feeds it to the same ResolveStopPriority input
+    // the hardware following-error rule uses, so the stop reason stays
+    // LoopStop::kFollowingError.
+    bool joint_following_error_stop = false;
+    double joint_following_error_deg = 0.0;
+
     // MEASURED tool orientation, flange frame in the right-arm base frame.
     // Hamilton convention, hemisphere-fixed to w >= 0 so logs never jump
     // sign. Telemetry only.
@@ -97,8 +114,19 @@ struct PoseReference {
     bool arrival_eligible = true;
 };
 
-// What a source hands the controller each cycle: an optional pose target.
-// Unset means "no reference": the controller holds the takeover pose.
+// A desired joint position and the velocity it is moving at — what a
+// joint-space source (a sampled trajectory) commands. Both are seven-wide,
+// radians and radians per second, in Kortex actuator order.
+struct JointReference {
+    Eigen::Matrix<double, 7, 1> q_rad;
+    Eigen::Matrix<double, 7, 1> qdot_rad_s;
+};
+
+// What a source hands the controller each cycle: one channel, never both.
+// The pose channel goes to the reactive law, the joint channel to the joint
+// tracking law. Neither set means "no reference": the controller holds the
+// takeover pose.
 struct Reference {
     std::optional<PoseReference> pose;
+    std::optional<JointReference> joint;
 };

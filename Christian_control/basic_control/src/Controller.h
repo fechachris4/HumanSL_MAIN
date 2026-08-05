@@ -3,6 +3,7 @@
 // Reference, whichever channel the source filled.
 //
 //   pose channel   -> the reactive law (ReactiveLaw.h) — FK + 6×7 Jacobian
+//   joint channel  -> the joint tracking law below — no model at all
 //   no reference   -> the reactive law toward the pose captured at Reset,
 //                     i.e. "hold here": a silent source never causes motion
 //
@@ -28,6 +29,38 @@
 
 class DualArmKinematics;      // Kinematics.h — only the .cpp needs them
 struct KinematicsWorkspace;
+
+// The joint tracking law's output, before the per-joint clip.
+struct JointTrackingCommand {
+    Eigen::Matrix<double, 7, 1> qdot_rad_s = Eigen::Matrix<double, 7, 1>::Zero();
+    double max_abs_error_rad = 0.0;
+    bool following_error_stop = false;
+};
+
+// Joint-space tracking: feed-forward reference velocity plus proportional
+// correction on the position error,
+//
+//     q̇_cmd = q̇_ref + kp (q_ref - q_meas)
+//
+// and the worst joint's |q_ref - q_meas| against the stop gate. Pure
+// arithmetic on fixed-size vectors: no allocation, no model, no I/O. The
+// gains arrive as arguments so this header stays Config-free; the caller
+// passes config::kKpJointTracking and kTrajFollowingErrorStopDeg in radians.
+// A non-positive gate disables the stop request.
+inline JointTrackingCommand
+SolveJointTracking(const JointReference& reference,
+                   const Eigen::Matrix<double, 7, 1>& q_meas, double kp_s_inv,
+                   double following_error_stop_rad)
+{
+    const Eigen::Matrix<double, 7, 1> error = reference.q_rad - q_meas;
+    JointTrackingCommand command;
+    command.qdot_rad_s = reference.qdot_rad_s + kp_s_inv * error;
+    command.max_abs_error_rad = error.cwiseAbs().maxCoeff();
+    command.following_error_stop =
+        following_error_stop_rad > 0.0 &&
+        !(command.max_abs_error_rad <= following_error_stop_rad);
+    return command;
+}
 
 class TrackingController
 {

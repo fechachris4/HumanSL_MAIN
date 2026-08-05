@@ -161,6 +161,42 @@ private:
     std::optional<CartesianSegmentProfile> active_profile_;
 };
 
+// Follows whole joint trajectories published by the input thread.
+//
+// Startup holds the measured takeover q at zero velocity. Each RT cycle it
+// Takes any newly published trajectory: if the first point is within
+// config::kTrajStartToleranceDeg of the measured q on EVERY joint it is
+// activated with its clock at zero, otherwise it is deleted, the rejection
+// is reported in ControllerStatus, and the current reference keeps holding —
+// a trajectory that fails the splice guard is never partially followed.
+// While active, Get returns the Hermite sample; past the end it holds the
+// final point and reports arrival once.
+//
+// Never blocks, never does I/O and never allocates: Take is one atomic
+// exchange, and the bounded delete of a rejected or displaced trajectory is
+// the same accepted RT exception as the mailbox itself.
+class JointTrajectorySource
+{
+public:
+    JointTrajectorySource(Eigen::Matrix<double, 7, 1> hold_q_rad,
+                          JointTrajectoryMailbox& mailbox);
+    ~JointTrajectorySource();
+    JointTrajectorySource(const JointTrajectorySource&) = delete;
+    JointTrajectorySource& operator=(const JointTrajectorySource&) = delete;
+
+    Reference Get(const RobotState& state, double dt_s,
+                  ControllerStatus& status);
+
+private:
+    JointTrajectoryMailbox& mailbox_;
+    Eigen::Matrix<double, 7, 1> hold_q_rad_;
+    // Incomplete here on purpose (see the forward declaration above), so the
+    // destructor is defined in the .cpp.
+    std::unique_ptr<JointTrajectory> active_;
+    double elapsed_s_ = 0.0;
+    bool complete_reported_ = false;
+};
+
 // The hardware loop calls this bridge with its per-cycle status. Keeping the
 // edge gate in pure target code gives hardware-free coverage of the exact
 // arrival-to-queue handoff contract.
