@@ -51,7 +51,7 @@ history: `../docs/decisions/cartesian-velocity-controller.md` and earlier.
   | `State.h` | the records that cross boundaries: `RobotState`, `ControllerStatus`, `Reference`, `ReferenceSource` | `state.py` + `backend.py` |
   | `ReactiveLaw.h` | the pose equations 1-6, header-only, no robot | `reactive_controller.py` |
   | `Controller.h/.cpp` | **THE controller** — tracks whichever reference channel is set | `servo.py` |
-  | `Targets.h/.cpp` | position targets, strict stdin parsing, eight-entry SPSC mailbox, `PoseTargetSource` | `desired_pos.py` |
+  | `Targets.h/.cpp` | position targets, strict pipe-line parsing, eight-entry SPSC mailbox, `PoseTargetSource` | `desired_pos.py` |
   | `Actuation.h/.cpp` | `PositionIntegration`: q_command integrator + lead limiter | `position_actuation.py` |
   | `Kinematics.h/.cpp` | Pinocchio FK/Jacobians + the `DualArmKinematics` adapter | `pin_fk.py` |
   | `Safety.h/.cpp` | stop classification, readiness gate, fault decoding, `ServoingGuard` | (hardware-only) |
@@ -299,9 +299,11 @@ rules above apply):
   these are trajectory-generation limits, not independent measured-motion
   safety guards. The reactive error correction and per-joint clip can still
   change the executed speed and path, so the CSV remains the evidence.
-- **Input validation is deliberately narrow**: stdin validates only the target
-  syntax and finiteness. It does not prove inverse-kinematics feasibility,
-  collision clearance, joint-limit clearance, or a safe path.
+- **Input validation is deliberately narrow**: the pipe reader
+  (`RunPoseTargetInputFromPipe` over `config::kTargetPipePath`) validates
+  only the target syntax and finiteness. It does not prove
+  inverse-kinematics feasibility, collision clearance, joint-limit
+  clearance, or a safe path.
 - **Low-level servoing bypasses the robot's motion supervisor** — no
   onboard planning, obstacle avoidance or self-collision avoidance. The
   end effector travels the straight line to the target and the DLS solution
