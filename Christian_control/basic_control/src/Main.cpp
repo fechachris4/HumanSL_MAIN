@@ -28,6 +28,7 @@
 #include "Actuation.h"
 #include "Config.h"
 #include "Controller.h"
+#include "FramePrint.h"
 #include "Hardware.h"
 #include "Kinematics.h"
 #include "ProcessLock.h"
@@ -189,6 +190,22 @@ namespace
         std::cout << std::defaultfloat << "\n";
     }
 
+    // The measured right configuration in the world frame, alongside the left
+    // arm at its compiled nominal. The left row is OPEN-LOOP: the left arm has
+    // no connection and no feedback, so it reports where the model says a left
+    // arm at kLeftNominalRad would be, not where anything measured is.
+    void PrintMeasuredWorldFrame(DualArmKinematics& model,
+                                 const Eigen::Matrix<double, 7, 1>& q_rad)
+    {
+        Eigen::Matrix<double, 7, 1> left_q_rad;
+        for (int i = 0; i < 7; ++i)
+            left_q_rad[i] = config::kLeftNominalRad[static_cast<std::size_t>(i)];
+        PrintDualArmFkTable(
+            model, q_rad, left_q_rad,
+            "world-frame FK at the measured right configuration "
+            "(left arm at nominal, model-only — not measured):");
+    }
+
     // Current joint state plus the end-effector position (our FK) — the
     // printed p is what a "hold here" desired position looks like, so the
     // operator can start from it and edit one coordinate.
@@ -221,6 +238,12 @@ namespace
                   << "  orientation rpy: " << zyx.z() << " " << zyx.y() << " "
                   << zyx.x() << " (rad, R = Rz*Ry*Rx)"
                   << std::defaultfloat << "\n";
+
+        // Same measured configuration, in world. This is the line to check
+        // against the physical rig: the base-frame position above is the one
+        // the Kinova dashboard's tool_pose agrees with, so if that matches and
+        // this does not, the world<-base mounting transform is what is wrong.
+        PrintMeasuredWorldFrame(model, q_rad);
     }
 
 } // namespace
@@ -464,11 +487,18 @@ int main(int argc, char** argv)
                       << config::kTargetPipePath << " — not starting\n";
             return 1;
         }
+        // Handing the input thread T_world_base is what lets an operator write
+        // "WORLD x y z" on the pipe; the conversion to base_link happens in
+        // the parser, so the control loop below is unchanged either way.
+        const std::optional<Eigen::Isometry3d> world_from_right_base(
+            Eigen::Isometry3d(
+                controlled_model.WorldFromBase(Arm::kRight).toHomogeneousMatrix()));
         std::thread input_thread(RunTargetInputFromPipe,
                                  std::ref(pose_targets),
                                  std::ref(trajectory_targets),
                                  std::cref(g_stop),
-                                 std::string(config::kTargetPipePath));
+                                 std::string(config::kTargetPipePath),
+                                 world_from_right_base);
         InputThreadStopJoiner input_thread_joiner(input_thread, g_stop);
 
         // MOVES THE ARM: servoing mode is entered and restored inside the

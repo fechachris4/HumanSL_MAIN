@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "Config.h"
+#include "JointTrajectory.h"
 #include "ReactiveLaw.h"
 #include "Targets.h"
 #include "reactive_fixtures.h"
@@ -430,6 +431,105 @@ namespace
               "six fields rejected");
     }
 
+    void TestParseWorldFrameTarget()
+    {
+        std::string error;
+
+        // The real mounting transform's shape: a roll about x, offset along y.
+        // Values mirror config/dual_arm_mounting.yaml so the arithmetic under
+        // test is the arithmetic the controller will do.
+        Eigen::Isometry3d world_from_base = Eigen::Isometry3d::Identity();
+        world_from_base.linear() =
+            Eigen::AngleAxisd(1.2085, Eigen::Vector3d::UnitX()).toRotationMatrix();
+        world_from_base.translation() = Eigen::Vector3d(0, -0.0567075, 0);
+        const std::optional<Eigen::Isometry3d> mount(world_from_base);
+
+        // An explicit BASE keyword must mean exactly what no keyword means.
+        const auto bare = ParsePoseTarget("0.4 0.1 0.3", mount, error);
+        const auto based = ParsePoseTarget("BASE 0.4 0.1 0.3", mount, error);
+        Check(bare && based &&
+                  (bare->p_desired - based->p_desired).norm() < 1e-12,
+              "BASE keyword is identical to no keyword");
+
+        // A WORLD line is converted at ingestion: feeding in the world image
+        // of a known base point must give that base point back.
+        const Eigen::Vector3d p_base(0.4, 0.1, 0.3);
+        const Eigen::Vector3d p_world = world_from_base * p_base;
+        std::ostringstream world_line;
+        world_line << "WORLD " << std::setprecision(17) << p_world.x() << " "
+                   << p_world.y() << " " << p_world.z();
+        const auto converted = ParsePoseTarget(world_line.str(), mount, error);
+        Check(converted.has_value(), "WORLD line is accepted with a transform");
+        Check(converted && (converted->p_desired - p_base).norm() < 1e-9,
+              "WORLD target converts to the matching base_link point");
+
+        // The frames really differ: reading the SAME numbers as base_link
+        // instead of world lands somewhere else entirely, so a silent
+        // fallback would be a real command error, not a rounding one.
+        std::ostringstream base_line;
+        base_line << std::setprecision(17) << p_world.x() << " " << p_world.y()
+                  << " " << p_world.z();
+        const auto misread = ParsePoseTarget(base_line.str(), mount, error);
+        Check(misread && (misread->p_desired - converted->p_desired).norm() > 0.01,
+              "world and base readings of the same numbers differ materially");
+
+        // Without a transform, WORLD is refused — never treated as base_link.
+        Check(!ParsePoseTarget("WORLD 0.4 0.1 0.3", error).has_value(),
+              "WORLD line rejected when no transform was supplied");
+        Check(error.find("world->base transform") != std::string::npos,
+              "rejection names the missing transform");
+
+        Check(!ParsePoseTarget("MOON 0.4 0.1 0.3", mount, error).has_value(),
+              "unknown frame keyword is rejected");
+        Check(error.find("unknown frame keyword") != std::string::npos,
+              "rejection names the unknown keyword");
+        Check(!ParsePoseTarget("WORLD 0.4 0.1", mount, error).has_value(),
+              "WORLD line with too few coordinates is rejected");
+
+        // The orientation branch of the conversion, R_base = R_world_base^T *
+        // R_world. Unreachable while config::kAcceptOrientationTargets is
+        // false — the 7-field form is rejected before any conversion runs —
+        // so this asserts only when the gate is on, and says so when it is
+        // off rather than reporting coverage it does not have.
+        if constexpr (config::kAcceptOrientationTargets) {
+            const Eigen::Matrix3d R_base =
+                Eigen::AngleAxisd(0.3, Eigen::Vector3d(0.2, -0.5, 0.8).normalized())
+                    .toRotationMatrix();
+            const Eigen::Matrix3d R_world = world_from_base.linear() * R_base;
+            const Eigen::Quaterniond q_world(R_world);
+            std::ostringstream pose_line;
+            pose_line << "WORLD " << std::setprecision(17) << p_world.x() << " "
+                      << p_world.y() << " " << p_world.z() << " " << q_world.x()
+                      << " " << q_world.y() << " " << q_world.z() << " "
+                      << q_world.w();
+            const auto oriented = ParsePoseTarget(pose_line.str(), mount, error);
+            Check(oriented && oriented->rotation.has_value(),
+                  "WORLD pose target with orientation is accepted");
+            Check(oriented && oriented->rotation &&
+                      (*oriented->rotation - R_base).norm() < 1e-9,
+                  "WORLD orientation converts to the matching base_link "
+                  "rotation");
+            Check(oriented && (oriented->p_desired - p_base).norm() < 1e-9,
+                  "WORLD pose target position still converts correctly");
+        } else {
+            std::cout << "NOTE: WORLD orientation conversion not exercised — "
+                         "config::kAcceptOrientationTargets is false\n";
+        }
+
+        // A WORLD line arriving while a trajectory block is being collected is
+        // consumed by the accumulator, not the pose parser — the router sends
+        // every line to the accumulator while it is collecting. It must be
+        // refused there rather than parsed as trajectory numbers.
+        std::string traj_error;
+        JointTrajectoryAccumulator accumulator;
+        accumulator.Feed("TRAJ_BEGIN 2", traj_error);
+        Check(accumulator.Collecting(),
+              "accumulator is collecting after TRAJ_BEGIN");
+        accumulator.Feed("WORLD 0.4 0.1 0.3", traj_error);
+        Check(!traj_error.empty(),
+              "WORLD line inside a trajectory block is rejected, not parsed");
+    }
+
     PoseTarget PositionTarget(double x, double y, double z)
     {
         PoseTarget target;
@@ -777,6 +877,7 @@ int main()
     TestDetailedSolveDecomposition();
     TestAgainstSimulationFixtures();
     TestParsePoseTarget();
+    TestParseWorldFrameTarget();
     TestPoseTargetMailbox();
     TestPoseTargetMailboxConcurrentHandoff();
     TestPoseTargetInputHandlesPartialAndCompletePipeLines();

@@ -3,6 +3,7 @@
 //
 
 #include <array>
+#include <cctype>
 #include <cerrno>
 #include <cmath>
 #include <iostream>
@@ -58,23 +59,33 @@ namespace
         return limits;
     }
 
-    void ProcessPoseTargetLine(PoseTargetMailbox& mailbox, const std::string& line)
+    void ProcessPoseTargetLine(PoseTargetMailbox& mailbox, const std::string& line,
+                               const std::optional<Eigen::Isometry3d>& world_from_base)
     {
         if (line.empty())
             return;
 
         std::string error;
-        const std::optional<PoseTarget> target = ParsePoseTarget(line, error);
+        const std::optional<PoseTarget> target =
+            ParsePoseTarget(line, world_from_base, error);
         if (!target) {
             std::cout << "target rejected: " << error << "\n";
         } else if (!mailbox.Enqueue(*target)) {
             std::cout << "target rejected: queue is full (8 pending targets)\n";
         } else {
+            // A WORLD line was converted on the way in, so the numbers below
+            // are NOT the ones the operator typed. Echo the declared frame
+            // too — this echo is the only confirmation anyone gets before the
+            // arm starts moving toward the target.
+            const bool declared_world = line.rfind("WORLD", 0) == 0;
             std::cout << "target queued: " << target->p_desired.x() << " "
                       << target->p_desired.y() << " " << target->p_desired.z()
                       << " m (base_link, "
                       << (target->rotation.has_value() ? "+orientation" : "position-only")
-                      << ")\n";
+                      << ")";
+            if (declared_world)
+                std::cout << " <- converted from WORLD frame as typed";
+            std::cout << "\n";
         }
     }
 
@@ -82,6 +93,9 @@ namespace
         PoseTargetMailbox& pose_mailbox;
         JointTrajectoryMailbox& traj_mailbox;
         JointTrajectoryAccumulator accumulator;
+        // Empty when this input path was started without the model, in which
+        // case WORLD lines are rejected rather than misread as base_link.
+        std::optional<Eigen::Isometry3d> world_from_base;
     };
 
     bool IsTrajectoryKeywordLine(const std::string& line)
@@ -92,7 +106,7 @@ namespace
     void ProcessInputLine(TargetInputRouter& router, const std::string& line)
     {
         if (!router.accumulator.Collecting() && !IsTrajectoryKeywordLine(line)) {
-            ProcessPoseTargetLine(router.pose_mailbox, line);
+            ProcessPoseTargetLine(router.pose_mailbox, line, router.world_from_base);
             return;
         }
 
@@ -153,9 +167,28 @@ Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw)
         .toRotationMatrix();
 }
 
-std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& error)
+std::optional<PoseTarget> ParsePoseTarget(
+    const std::string& line,
+    const std::optional<Eigen::Isometry3d>& world_from_base, std::string& error)
 {
     std::istringstream input(line);
+
+    // Optional leading frame keyword. Absent means base_link, which is what
+    // every target line meant before world-frame targets existed — so old
+    // input keeps its old meaning.
+    bool world_frame = false;
+    if (!line.empty() && (std::isalpha(static_cast<unsigned char>(line[0])) != 0)) {
+        std::string keyword;
+        input >> keyword;
+        if (keyword == "WORLD") {
+            world_frame = true;
+        } else if (keyword != "BASE") {
+            error = "unknown frame keyword '" + keyword +
+                    "' (expected WORLD or BASE)";
+            return std::nullopt;
+        }
+    }
+
     std::vector<double> fields;
     double value = 0.0;
     while (input >> value)
@@ -163,7 +196,8 @@ std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& 
     std::string trailing;
     input.clear();
     if (input >> trailing || (fields.size() != 3 && fields.size() != 7)) {
-        error = "expected 'x y z' or 'x y z qx qy qz qw'";
+        error = "expected '[WORLD|BASE] x y z' or "
+                "'[WORLD|BASE] x y z qx qy qz qw'";
         return std::nullopt;
     }
     for (const double field : fields)
@@ -171,6 +205,14 @@ std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& 
             error = "all target values must be finite";
             return std::nullopt;
         }
+    // A WORLD line is refused rather than silently read as base_link when no
+    // transform was supplied — the two frames are ~0.06 m and 69 deg apart,
+    // so a silent fallback would command the wrong point.
+    if (world_frame && !world_from_base) {
+        error = "WORLD-frame targets need the world->base transform, which "
+                "this input path was not given";
+        return std::nullopt;
+    }
 
     PoseTarget target;
     target.p_desired = Eigen::Vector3d(fields[0], fields[1], fields[2]);
@@ -187,7 +229,21 @@ std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& 
         }
         target.rotation = q.normalized().toRotationMatrix();
     }
+
+    // Convert at ingestion, so PoseTarget is always base_link and nothing
+    // downstream of here — profile, control law, safety, logging — has to
+    // know that world-frame input exists at all.
+    if (world_frame) {
+        target.p_desired = world_from_base->inverse() * target.p_desired;
+        if (target.rotation)
+            target.rotation = world_from_base->linear().transpose() * *target.rotation;
+    }
     return target;
+}
+
+std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& error)
+{
+    return ParsePoseTarget(line, std::nullopt, error);
 }
 
 bool PoseTargetMailbox::Enqueue(const PoseTarget& target)
@@ -247,7 +303,8 @@ void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
 void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
                             JointTrajectoryMailbox& traj_mailbox,
                             const std::atomic<bool>& stop,
-                            const std::string& pipe_path)
+                            const std::string& pipe_path,
+                            const std::optional<Eigen::Isometry3d>& world_from_base)
 {
     while (!stop.load(std::memory_order_relaxed)) {
         // Non-blocking open: a blocking O_RDONLY open would wedge teardown
@@ -259,7 +316,7 @@ void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
                 std::chrono::milliseconds(kInputPollTimeoutMs));
             continue;
         }
-        RunTargetInput(pose_mailbox, traj_mailbox, stop, fd);
+        RunTargetInput(pose_mailbox, traj_mailbox, stop, fd, world_from_base);
         close(fd);
         // FromFd returned: stop (outer loop exits) or EOF (writer left) —
         // brief pause so a vanished writer cannot spin this loop hot.
@@ -270,9 +327,10 @@ void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
 
 void RunTargetInput(PoseTargetMailbox& pose_mailbox,
                     JointTrajectoryMailbox& traj_mailbox,
-                    const std::atomic<bool>& stop, int input_fd)
+                    const std::atomic<bool>& stop, int input_fd,
+                    const std::optional<Eigen::Isometry3d>& world_from_base)
 {
-    TargetInputRouter router{pose_mailbox, traj_mailbox, {}};
+    TargetInputRouter router{pose_mailbox, traj_mailbox, {}, world_from_base};
     std::array<char, kInputReadBytes> bytes{};
     std::string pending_line;
     bool discarding_overlong_line = false;

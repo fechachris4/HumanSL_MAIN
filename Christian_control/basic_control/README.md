@@ -96,8 +96,9 @@ without contacting the arm; this guard does not cover other Kortex programs.
 gain, term switch, and limit is a compiled constant in `src/Config.h`.
 During a run, the controller reads targets from a named pipe
 (`config::kTargetPipePath`, `/tmp/humansl_bridge_targets`), which it
-creates itself at startup; a target line is `x y z` (metres, `base_link`)
-— this is target input, not configuration. Every run still
+creates itself at startup; a target line is `x y z` (metres), optionally
+prefixed by the frame it is written in — `WORLD x y z` or `BASE x y z`, with
+no prefix meaning `base_link` — this is target input, not configuration. Every run still
 echoes its effective configuration and embeds it as `#` lines in the CSV,
 so each data file stays self-describing.
 
@@ -150,8 +151,13 @@ What a run does, in order:
    terminal target; the terminal target IS the measured startup pose, so
    the arm's first profile is zero-distance and it simply stays put. The
    pipe-reading thread accepts one `x y z` target per line in metres,
-   `base_link` only, preserving the captured takeover orientation. It
-   rejects malformed, trailing, or non-finite input. The parser does not
+   preserving the captured takeover orientation. A line may declare its
+   frame — `WORLD x y z` or `BASE x y z` — and a `WORLD` line is converted
+   to `base_link` at ingestion, so the control loop only ever sees
+   `base_link` targets. No prefix still means `base_link`. It rejects
+   malformed, trailing, or non-finite input, and rejects a `WORLD` line on
+   a stream that was not given the mounting transform rather than reading
+   it as `base_link`. The parser does not
    perform reachability, collision, or path validation — that validation
    happens bridge-side, before a target is ever written to the pipe. At
    most eight live targets are queued in FIFO order. They cannot bypass

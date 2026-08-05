@@ -20,9 +20,11 @@
 #include "State.h"
 #include "TrajectoryProfile.h"
 
-// One base_link target. A parsed 7-field line carries orientation, but it
-// is only reachable while config::kAcceptOrientationTargets is true — see
-// ParsePoseTarget; PoseTargetSource still clears it every activation.
+// One base_link target — ALWAYS base_link, whichever frame the input line
+// declared: ParsePoseTarget converts WORLD input at ingestion. A parsed
+// 7-field line carries orientation, but it is only reachable while
+// config::kAcceptOrientationTargets is true — see ParsePoseTarget;
+// PoseTargetSource still clears it every activation.
 struct PoseTarget {
     Eigen::Vector3d p_desired;               // metres, right-arm base frame
     std::optional<Eigen::Matrix3d> rotation; // set only when the 7-field
@@ -33,10 +35,26 @@ struct PoseTarget {
 Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw);
 
 // Parse public runtime input: either "x y z" (three finite metre
-// coordinates, base_link) or "x y z qx qy qz qw" (adds a unit quaternion,
-// xyzw). The 7-field form is rejected with an error naming
+// coordinates) or "x y z qx qy qz qw" (adds a unit quaternion, xyzw). The
+// 7-field form is rejected with an error naming
 // config::kAcceptOrientationTargets while that gate is false — orientation
 // is never silently dropped.
+//
+// An optional leading frame keyword declares which frame the numbers are in:
+// "WORLD x y z" or "BASE x y z". No keyword means base_link, so every target
+// line written before world-frame targets existed still means what it did.
+// WORLD input is converted to base_link HERE, at ingestion, so PoseTarget is
+// always a base_link target and no consumer downstream changes.
+//
+// world_from_base is T_world_base for the right arm, passed BY VALUE so this
+// parser stays free of Pinocchio and testable without a robot model. When it
+// is empty a WORLD line is rejected, never silently treated as base_link.
+std::optional<PoseTarget> ParsePoseTarget(
+    const std::string& line,
+    const std::optional<Eigen::Isometry3d>& world_from_base,
+    std::string& error);
+
+// Overload for callers with no model to hand: WORLD lines are rejected.
 std::optional<PoseTarget> ParsePoseTarget(const std::string& line,
                                           std::string& error);
 
@@ -88,10 +106,12 @@ private:
 // on EOF the pipe is reopened, so each bridge invocation may open, write,
 // and close independently. `stop` is the only exit. The fd-level loop is
 // the tested RunTargetInput, unchanged.
-void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
-                            JointTrajectoryMailbox& traj_mailbox,
-                            const std::atomic<bool>& stop,
-                            const std::string& pipe_path);
+// world_from_base, when supplied, is what lets WORLD-frame target lines be
+// accepted on this stream; see ParsePoseTarget.
+void RunTargetInputFromPipe(
+    PoseTargetMailbox& pose_mailbox, JointTrajectoryMailbox& traj_mailbox,
+    const std::atomic<bool>& stop, const std::string& pipe_path,
+    const std::optional<Eigen::Isometry3d>& world_from_base = std::nullopt);
 
 // Same input loop over a borrowed POSIX file descriptor. Kept separate so the
 // pipe entry point stays simple and the partial-pipe teardown contract is
@@ -103,9 +123,10 @@ void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
 // compiled joint limits and only then published. Any grammar or validation
 // error goes to stderr with the offending line and resets the accumulator —
 // nothing is silently skipped, and the thread survives.
-void RunTargetInput(PoseTargetMailbox& pose_mailbox,
-                    JointTrajectoryMailbox& traj_mailbox,
-                    const std::atomic<bool>& stop, int input_fd);
+void RunTargetInput(
+    PoseTargetMailbox& pose_mailbox, JointTrajectoryMailbox& traj_mailbox,
+    const std::atomic<bool>& stop, int input_fd,
+    const std::optional<Eigen::Isometry3d>& world_from_base = std::nullopt);
 
 // Pose-only entry points, kept for callers that predate joint trajectories.
 // They own a throwaway trajectory mailbox, so a block arriving on such a
