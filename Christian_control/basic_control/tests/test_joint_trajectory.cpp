@@ -82,5 +82,25 @@ int main()
         bad.points[2].t_s = 0.5;
         assert(ValidateJointTrajectory(bad, lo, hi, vmax).has_value());
     }
+
+    // Endpoint interpolation: at support times, exactly the support values.
+    {
+        const auto s0 = SampleJointTrajectory(traj, 0.0);
+        assert(std::abs(s0.q_rad(0)) < 1e-12 && !s0.complete);
+        const auto s1 = SampleJointTrajectory(traj, 1.0);
+        assert(std::abs(s1.q_rad(0) - 10.0 * M_PI / 180.0) < 1e-9);
+        // Midpoint lies between the bracketing supports and velocity is finite.
+        const auto sm = SampleJointTrajectory(traj, 0.5);
+        assert(sm.q_rad(0) > 0.0 && sm.q_rad(0) < 10.0 * M_PI / 180.0);
+        // Past the end: last position, zero velocity, complete.
+        const auto se = SampleJointTrajectory(traj, 99.0);
+        assert(std::abs(se.q_rad(0) - 20.0 * M_PI / 180.0) < 1e-9);
+        assert(se.qdot_rad_s.norm() == 0.0 && se.complete);
+        // Hermite consistency: derivative at t=1 approximates the stated velocity.
+        const double h = 1e-5;
+        const auto a = SampleJointTrajectory(traj, 1.0 - h);
+        const auto b = SampleJointTrajectory(traj, 1.0 + h);
+        assert(std::abs((b.q_rad(0) - a.q_rad(0)) / (2 * h) - s1.qdot_rad_s(0)) < 1e-3);
+    }
     return 0;
 }

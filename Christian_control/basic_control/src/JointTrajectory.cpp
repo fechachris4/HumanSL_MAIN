@@ -184,3 +184,57 @@ std::optional<std::string> ValidateJointTrajectory(
     }
     return std::nullopt;
 }
+
+JointTrajectorySample SampleJointTrajectory(const JointTrajectory& traj,
+                                            double t_s)
+{
+    JointTrajectorySample sample;
+    sample.q_rad.setZero();
+    sample.qdot_rad_s.setZero();
+    sample.complete = true;
+    if (traj.points.empty())
+        return sample;
+
+    const JointTrajectoryPoint& first = traj.points.front();
+    const JointTrajectoryPoint& last = traj.points.back();
+    if (!(t_s > first.t_s)) {
+        sample.q_rad = first.q_rad;
+        sample.qdot_rad_s = first.qdot_rad_s;
+        // A NaN time lands here; holding the start with `complete` false is
+        // the standing-still answer, and the loop keeps its own timeout.
+        sample.complete = traj.points.size() < 2;
+        return sample;
+    }
+    if (t_s >= last.t_s) {
+        sample.q_rad = last.q_rad;
+        return sample;
+    }
+
+    std::size_t upper = 1;
+    while (traj.points[upper].t_s <= t_s)
+        ++upper;
+    const JointTrajectoryPoint& p0 = traj.points[upper - 1];
+    const JointTrajectoryPoint& p1 = traj.points[upper];
+
+    const double dt_s = p1.t_s - p0.t_s;
+    const double s = (t_s - p0.t_s) / dt_s;
+    const double s2 = s * s;
+    const double s3 = s2 * s;
+
+    const double h00 = 2.0 * s3 - 3.0 * s2 + 1.0;
+    const double h10 = s3 - 2.0 * s2 + s;
+    const double h01 = -2.0 * s3 + 3.0 * s2;
+    const double h11 = s3 - s2;
+
+    const double d00 = 6.0 * s2 - 6.0 * s;
+    const double d10 = 3.0 * s2 - 4.0 * s + 1.0;
+    const double d01 = -6.0 * s2 + 6.0 * s;
+    const double d11 = 3.0 * s2 - 2.0 * s;
+
+    sample.q_rad = h00 * p0.q_rad + h10 * dt_s * p0.qdot_rad_s +
+                   h01 * p1.q_rad + h11 * dt_s * p1.qdot_rad_s;
+    sample.qdot_rad_s = (d00 * p0.q_rad + d01 * p1.q_rad) / dt_s +
+                        d10 * p0.qdot_rad_s + d11 * p1.qdot_rad_s;
+    sample.complete = false;
+    return sample;
+}

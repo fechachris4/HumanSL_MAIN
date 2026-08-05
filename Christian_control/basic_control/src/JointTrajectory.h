@@ -73,3 +73,18 @@ std::optional<std::string> ValidateJointTrajectory(
     const Eigen::Matrix<double, 7, 1>& limits_low_deg,
     const Eigen::Matrix<double, 7, 1>& limits_high_deg,
     const Eigen::Matrix<double, 7, 1>& vel_limit_deg_s);
+
+struct JointTrajectorySample {
+    Eigen::Matrix<double, 7, 1> q_rad;
+    Eigen::Matrix<double, 7, 1> qdot_rad_s;
+    bool complete;
+};
+
+// Cubic Hermite between the two bracketing points (positions + stated
+// velocities); clamps: t <= 0 returns the first point, t >= last returns the
+// last point with zero velocity. `complete` true once t >= last t.
+//
+// Called from the control loop, so it neither allocates nor does I/O; an
+// empty trajectory yields a zero sample already marked complete.
+JointTrajectorySample SampleJointTrajectory(const JointTrajectory& traj,
+                                            double t_s);
