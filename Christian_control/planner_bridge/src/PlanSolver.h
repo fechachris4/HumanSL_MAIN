@@ -14,6 +14,7 @@ struct PlanOutcome {
     std::string error;                 // set when !ok
     TrajectoryResult result;           // trajectory_pos: radians, Kortex order
     double final_goal_error_m = 0.0;   // FK(last waypoint) vs requested goal
+    double total_time_sec = 0.0;       // planned duration the states span
 };
 
 // joint_limits_yaml: TrajectoryGeneration/config/joint_limits.yaml.

@@ -2,15 +2,20 @@
 #undef NDEBUG
 
 #include <cassert>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include "BridgeMain.h"
+#include "JointTrajectory.h"
 #include "Targets.h"
+#include "TrajectoryEmit.h"
+
+static_assert(kMaxTrajectoryBlockPoints == kMaxJointTrajectoryPoints,
+              "the bridge's block cap must match what the controller accepts");
 
 int main(int argc, char** argv) {
     assert(argc == 3 && "usage: test_bridge_main <dh_tool.yaml> <joint_limits.yaml>");
-    std::ostringstream targets, diagnostics;
     // Zero-config tool position measured 2026-08-05: (0.0, -0.0246, 1.3073)
     // in base_link. (0.20, 0.35, 0.90) is 0.59 m away — unreachable from a
     // single-solve offset — so the goal below reuses the (0.15, 0.10, -0.10)
@@ -19,7 +24,51 @@ int main(int argc, char** argv) {
         "--goal", "0.15", "0.075", "1.207",
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
         "--dh", argv[1], "--joint-limits", argv[2]};
-    const int exit_code = RunBridge(args, targets, diagnostics);
+
+    // Default output is the timed joint-trajectory block, parsed here by the
+    // controller's own accumulator so the wire contract is tested end-to-end.
+    {
+        std::ostringstream targets, diagnostics;
+        assert(RunBridge(args, targets, diagnostics) == 0);
+
+        JointTrajectoryAccumulator accumulator;
+        std::istringstream lines(targets.str());
+        std::string line, error;
+        int complete_blocks = 0;
+        JointTrajectory traj;
+        while (std::getline(lines, line)) {
+            const std::optional<JointTrajectory> finished =
+                accumulator.Feed(line, error);
+            assert(error.empty());
+            if (finished) {
+                traj = *finished;
+                ++complete_blocks;
+            }
+        }
+        assert(complete_blocks == 1);
+        assert(!accumulator.Collecting());
+        assert(traj.points.size() >= 2);
+        assert(traj.points.front().t_s == 0.0);
+        for (std::size_t i = 1; i < traj.points.size(); ++i)
+            assert(traj.points[i].t_s > traj.points[i - 1].t_s);
+
+        Eigen::Matrix<double, 7, 1> low_deg, high_deg, vel_limit_deg_s;
+        low_deg.setConstant(-360.0);
+        high_deg.setConstant(360.0);
+        vel_limit_deg_s.setConstant(45.0);
+        const std::optional<std::string> traj_error =
+            ValidateJointTrajectory(traj, low_deg, high_deg, vel_limit_deg_s);
+        assert(!traj_error.has_value());
+
+        // --start-deg above is all zeros, so the block's first state is it.
+        for (int joint = 0; joint < 7; ++joint)
+            assert(std::abs(traj.points.front().q_rad(joint)) < 1e-6);
+    }
+
+    std::ostringstream targets, diagnostics;
+    std::vector<std::string> waypoint_args = args;
+    waypoint_args.push_back("--emit-waypoints");
+    const int exit_code = RunBridge(waypoint_args, targets, diagnostics);
     assert(exit_code == 0);
 
     std::istringstream lines(targets.str());
@@ -62,7 +111,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> auto_args = {
         "--goal", "0.15", "0.075", "1.207",
         "--dh", argv[1], "--joint-limits", argv[2],
-        "--runs-root", "tbm_tmp"};
+        "--runs-root", "tbm_tmp", "--emit-waypoints"};
     assert(RunBridge(auto_args, auto_targets, auto_diagnostics) == 0);
     {
         std::istringstream auto_lines(auto_targets.str());
@@ -99,7 +148,7 @@ int main(int argc, char** argv) {
     const std::vector<std::string> file_args = {
         "--goal-file", "tbm_goal.yaml",
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
-        "--dh", argv[1], "--joint-limits", argv[2]};
+        "--dh", argv[1], "--joint-limits", argv[2], "--emit-waypoints"};
     assert(RunBridge(file_args, file_targets, file_diagnostics) == 0);
     {
         std::istringstream file_lines(file_targets.str());
