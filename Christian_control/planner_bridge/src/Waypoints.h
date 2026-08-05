@@ -3,6 +3,7 @@
 #include <optional>
 #include <string>
 #include <vector>
+#include <Eigen/Geometry>
 #include "PlannerModel.h"
 
 // Controller-side acceptance rules: joints 2/4/6 within the controller's
@@ -24,9 +25,18 @@ const std::array<double, 7>& ValidationLimitsDeg();
 // Cartesian tool positions of the support states, thinned to at most
 // max_count points at least min_spacing_m apart. The final point is
 // always included; the first (current position) is always dropped.
+// When `rotations_xyzw` is non-null, it is cleared and filled with the
+// tool orientation (ToolPoseInBaseLink(model, q).rotation(), as xyzw)
+// at each kept support state, 1:1 with the returned waypoints — including
+// entries evicted by the goal-proximity eviction below.
 std::vector<Eigen::Vector3d> SampleCartesianWaypoints(
     const PlannerModel& model, const std::vector<gtsam::Vector>& trajectory_pos,
-    std::size_t max_count = 8, double min_spacing_m = 0.05);
+    std::size_t max_count = 8, double min_spacing_m = 0.05,
+    std::vector<Eigen::Quaterniond>* rotations_xyzw = nullptr);
 
 // "x y z" with 6 decimals — the exact grammar ParsePoseTarget accepts.
 std::string FormatTargetLine(const Eigen::Vector3d& position_m);
+
+// "x y z qx qy qz qw", 6 decimals, xyzw — the orientation-carrying form.
+std::string FormatTargetLine(const Eigen::Vector3d& position_m,
+                             const Eigen::Quaterniond& rotation_xyzw);

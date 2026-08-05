@@ -274,6 +274,11 @@ namespace config
 
     inline constexpr double kArrivalOrientationToleranceRad = 0.001;
 
+    // Stage 1.6 gate: while false, a 7-field target line (x y z qx qy qz qw)
+    // is REJECTED loudly — orientation is never silently dropped. Enabling
+    // consumption is a separate reviewed change, blocked on j6 health.
+    inline constexpr bool kAcceptOrientationTargets = false;
+
     // Loop log, written DURING the run by a writer thread (Hardware.h).
     // kLogBufferSeconds sizes only the handoff queue — slack for a disk
     // hiccup, not a retention limit. ~175 KB/s at 500 Hz; prune runs/.

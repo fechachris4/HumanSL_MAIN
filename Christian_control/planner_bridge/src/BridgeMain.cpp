@@ -47,6 +47,11 @@ constexpr char kUsageText[] =
     "                         (WorldSdf.h WorldGridBounds()) or the run is\n"
     "                         rejected — outside that volume gpmp2 silently\n"
     "                         reports no obstacle.\n"
+    "  --emit-orientation      Emit each waypoint as 7 fields\n"
+    "                         (x y z qx qy qz qw) instead of 3. The\n"
+    "                         controller's parser rejects 7-field lines\n"
+    "                         while config::kAcceptOrientationTargets is\n"
+    "                         false, so this is off by default.\n"
     "\n"
     "Exit codes: 0 targets emitted (also returned by --help), 1 bad\n"
     "arguments, 2 start-state unavailable, 3 solve failed, 4 validation\n"
@@ -116,6 +121,7 @@ struct ParsedArgs {
     std::string joint_limits_path = DefaultJointLimitsPath();
     std::string runs_root = DefaultRunsRootPath();
     std::optional<AxisAlignedBox> box;
+    bool emit_orientation = false;
 };
 
 // Throws std::invalid_argument / std::out_of_range on any malformed input;
@@ -154,6 +160,8 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             box.half_extent = Eigen::Vector3d(ParseDouble(next()), ParseDouble(next()),
                                                ParseDouble(next()));
             parsed.box = box;
+        } else if (flag == "--emit-orientation") {
+            parsed.emit_orientation = true;
         } else {
             throw std::invalid_argument("unrecognized flag: '" + flag + "'");
         }
@@ -282,15 +290,21 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         return 4;
     }
 
-    const std::vector<Eigen::Vector3d> waypoints =
-        SampleCartesianWaypoints(model, outcome.result.trajectory_pos);
+    std::vector<Eigen::Quaterniond> rotations_xyzw;
+    const std::vector<Eigen::Vector3d> waypoints = SampleCartesianWaypoints(
+        model, outcome.result.trajectory_pos, /*max_count=*/8, /*min_spacing_m=*/0.05,
+        parsed.emit_orientation ? &rotations_xyzw : nullptr);
 
     // Buffer everything and write to `targets` only once validation has
     // fully passed, so no non-zero exit path can leave partial output
     // there.
     std::ostringstream buffered_targets;
-    for (const Eigen::Vector3d& waypoint : waypoints)
-        buffered_targets << FormatTargetLine(waypoint) << "\n";
+    for (std::size_t i = 0; i < waypoints.size(); ++i) {
+        if (parsed.emit_orientation)
+            buffered_targets << FormatTargetLine(waypoints[i], rotations_xyzw[i]) << "\n";
+        else
+            buffered_targets << FormatTargetLine(waypoints[i]) << "\n";
+    }
     targets << buffered_targets.str();
 
     diagnostics << "waypoints: " << waypoints.size()

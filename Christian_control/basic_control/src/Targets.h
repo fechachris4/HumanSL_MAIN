@@ -19,18 +19,23 @@
 #include "State.h"
 #include "TrajectoryProfile.h"
 
-// One base_link target. Every live target is position-only, preserving the
-// controller's takeover orientation.
+// One base_link target. A parsed 7-field line carries orientation, but it
+// is only reachable while config::kAcceptOrientationTargets is true — see
+// ParsePoseTarget; PoseTargetSource still clears it every activation.
 struct PoseTarget {
     Eigen::Vector3d p_desired;               // metres, right-arm base frame
-    std::optional<Eigen::Matrix3d> rotation; // always nullopt at runtime
+    std::optional<Eigen::Matrix3d> rotation; // set only when the 7-field
+                                              // grammar parses; see above
 };
 
 // Rotation matrix from roll/pitch/yaw RADIANS, composed R = Rz·Ry·Rx.
 Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw);
 
-// Parse public runtime input: exactly three finite x y z coordinates in
-// metres, in base_link. Only syntax and finite-value validation are applied.
+// Parse public runtime input: either "x y z" (three finite metre
+// coordinates, base_link) or "x y z qx qy qz qw" (adds a unit quaternion,
+// xyzw). The 7-field form is rejected with an error naming
+// config::kAcceptOrientationTargets while that gate is false — orientation
+// is never silently dropped.
 std::optional<PoseTarget> ParsePoseTarget(const std::string& line,
                                           std::string& error);
 

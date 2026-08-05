@@ -11,6 +11,7 @@
 #include <sstream>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -39,7 +40,9 @@ namespace
         } else {
             std::cout << "target queued: " << target->p_desired.x() << " "
                       << target->p_desired.y() << " " << target->p_desired.z()
-                      << " m (base_link, position-only)\n";
+                      << " m (base_link, "
+                      << (target->rotation.has_value() ? "+orientation" : "position-only")
+                      << ")\n";
         }
     }
 
@@ -82,25 +85,37 @@ Eigen::Matrix3d RotationFromRpy(double roll, double pitch, double yaw)
 std::optional<PoseTarget> ParsePoseTarget(const std::string& line, std::string& error)
 {
     std::istringstream input(line);
-    double x = 0.0;
-    double y = 0.0;
-    double z = 0.0;
-    if (!(input >> x >> y >> z)) {
-        error = "expected exactly three x y z coordinates in metres";
-        return std::nullopt;
-    }
+    std::vector<double> fields;
+    double value = 0.0;
+    while (input >> value)
+        fields.push_back(value);
     std::string trailing;
-    if (input >> trailing) {
-        error = "expected exactly three x y z coordinates in metres";
+    input.clear();
+    if (input >> trailing || (fields.size() != 3 && fields.size() != 7)) {
+        error = "expected 'x y z' or 'x y z qx qy qz qw'";
         return std::nullopt;
     }
-    if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z)) {
-        error = "all target coordinates must be finite";
-        return std::nullopt;
-    }
+    for (const double field : fields)
+        if (!std::isfinite(field)) {
+            error = "all target values must be finite";
+            return std::nullopt;
+        }
 
     PoseTarget target;
-    target.p_desired = Eigen::Vector3d(x, y, z);
+    target.p_desired = Eigen::Vector3d(fields[0], fields[1], fields[2]);
+    if (fields.size() == 7) {
+        if (!config::kAcceptOrientationTargets) {
+            error = "orientation targets disabled "
+                    "(config::kAcceptOrientationTargets)";
+            return std::nullopt;
+        }
+        const Eigen::Quaterniond q(fields[6], fields[3], fields[4], fields[5]);
+        if (std::abs(q.norm() - 1.0) > 1e-3) {
+            error = "quaternion must be unit norm (xyzw)";
+            return std::nullopt;
+        }
+        target.rotation = q.normalized().toRotationMatrix();
+    }
     return target;
 }
 

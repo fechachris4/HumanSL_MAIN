@@ -33,8 +33,10 @@ std::optional<std::string> ValidateJointPath(
 
 std::vector<Eigen::Vector3d> SampleCartesianWaypoints(
     const PlannerModel& model, const std::vector<gtsam::Vector>& trajectory_pos,
-    std::size_t max_count, double min_spacing_m) {
+    std::size_t max_count, double min_spacing_m,
+    std::vector<Eigen::Quaterniond>* rotations_xyzw) {
     std::vector<Eigen::Vector3d> waypoints;
+    if (rotations_xyzw) rotations_xyzw->clear();
     if (trajectory_pos.size() < 2) return waypoints;
     Eigen::Matrix<double, 7, 1> q(trajectory_pos.front());
     Eigen::Vector3d last_kept = ToolPositionInBaseLink(model, q);
@@ -44,6 +46,8 @@ std::vector<Eigen::Vector3d> SampleCartesianWaypoints(
         if ((p - last_kept).norm() >= min_spacing_m &&
             waypoints.size() + 1 < max_count) {   // reserve one slot for the goal
             waypoints.push_back(p);
+            if (rotations_xyzw)
+                rotations_xyzw->push_back(ToolPoseInBaseLink(model, q).rotation().toQuaternion());
             last_kept = p;
         }
     }
@@ -52,11 +56,16 @@ std::vector<Eigen::Vector3d> SampleCartesianWaypoints(
     // The goal always wins: drop any trailing kept intermediates that fall
     // within min_spacing_m of it (GPMP2 trajectories cluster support states
     // near the goal), so the final consecutive pair still meets the spacing
-    // guarantee.
+    // guarantee. Evicted rotations are popped in lockstep so the two arrays
+    // stay 1:1.
     while (!waypoints.empty() &&
-           (goal - waypoints.back()).norm() < min_spacing_m)
+           (goal - waypoints.back()).norm() < min_spacing_m) {
         waypoints.pop_back();
+        if (rotations_xyzw) rotations_xyzw->pop_back();
+    }
     waypoints.push_back(goal);
+    if (rotations_xyzw)
+        rotations_xyzw->push_back(ToolPoseInBaseLink(model, q).rotation().toQuaternion());
     return waypoints;
 }
 
@@ -64,5 +73,15 @@ std::string FormatTargetLine(const Eigen::Vector3d& position_m) {
     char buffer[64];
     std::snprintf(buffer, sizeof buffer, "%.6f %.6f %.6f",
                   position_m.x(), position_m.y(), position_m.z());
+    return std::string(buffer);
+}
+
+std::string FormatTargetLine(const Eigen::Vector3d& position_m,
+                             const Eigen::Quaterniond& rotation_xyzw) {
+    char buffer[128];
+    std::snprintf(buffer, sizeof buffer, "%.6f %.6f %.6f %.6f %.6f %.6f %.6f",
+                  position_m.x(), position_m.y(), position_m.z(),
+                  rotation_xyzw.x(), rotation_xyzw.y(), rotation_xyzw.z(),
+                  rotation_xyzw.w());
     return std::string(buffer);
 }

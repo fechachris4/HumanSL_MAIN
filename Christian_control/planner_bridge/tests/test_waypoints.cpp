@@ -2,6 +2,7 @@
 #undef NDEBUG
 
 #include <cassert>
+#include <sstream>
 #include "Waypoints.h"
 #include "Targets.h"  // basic_control — ParsePoseTarget round-trip
 #include "Config.h"   // basic_control — pin ValidationLimitsDeg() against it
@@ -82,6 +83,21 @@ int main(int argc, char** argv) {
     for (const auto& waypoint : clustered_waypoints) {
         std::string error;
         assert(ParsePoseTarget(FormatTargetLine(waypoint), error).has_value());
+    }
+
+    // 7-field orientation-carrying overload: identity quaternion round-trips
+    // to "0 0 0 1" at 6 decimals, and the first three fields match the
+    // 3-field overload exactly.
+    {
+        const Eigen::Vector3d p(0.4, 0.1, 0.3);
+        const std::string line3 = FormatTargetLine(p);
+        const std::string line7 = FormatTargetLine(p, Eigen::Quaterniond::Identity());
+        assert(line7 == line3 + " 0.000000 0.000000 0.000000 1.000000");
+        int field_count = 0;
+        std::istringstream fields(line7);
+        double value = 0.0;
+        while (fields >> value) ++field_count;
+        assert(field_count == 7);
     }
     return 0;
 }

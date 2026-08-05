@@ -418,6 +418,16 @@ namespace
               "any finite target is accepted without a reach sphere");
         Check(!ParsePoseTarget("inf 0.1 0.3", error).has_value(),
               "infinite coordinate is rejected");
+
+        // 7-field grammar: parses only when orientation targets are on.
+        Check(!ParsePoseTarget("0.4 0.1 0.3 0 0 0 1", error).has_value(),
+              "7-field line rejected while kAcceptOrientationTargets is false");
+        Check(error.find("orientation targets disabled") != std::string::npos,
+              "rejection names the disabled gate");
+        Check(!ParsePoseTarget("0.4 0.1 0.3 0 0 0 0.5", error).has_value(),
+              "non-unit quaternion rejected");
+        Check(!ParsePoseTarget("0.4 0.1 0.3 0 0 1", error).has_value(),
+              "six fields rejected");
     }
 
     PoseTarget PositionTarget(double x, double y, double z)
