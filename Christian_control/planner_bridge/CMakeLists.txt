@@ -58,3 +58,11 @@ add_test(NAME planner_model COMMAND test_planner_model
 # Not related to this task's DH/flip logic — a pre-existing gap in the
 # third_party build.
 set_tests_properties(planner_model PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
+
+target_sources(bridge_core PRIVATE src/WorldSdf.cpp)
+add_executable(test_world_sdf tests/test_world_sdf.cpp)
+target_include_directories(test_world_sdf PRIVATE src)
+target_link_libraries(test_world_sdf PRIVATE bridge_core)
+set_target_properties(test_world_sdf PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME world_sdf COMMAND test_world_sdf)
+set_tests_properties(world_sdf PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
