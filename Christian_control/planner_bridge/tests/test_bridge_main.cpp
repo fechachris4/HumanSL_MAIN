@@ -1,3 +1,6 @@
+// Test assertions must never no-op under a Release (NDEBUG) configure.
+#undef NDEBUG
+
 #include <cassert>
 #include <sstream>
 #include "BridgeMain.h"
@@ -30,5 +33,17 @@ int main(int argc, char** argv) {
     std::ostringstream empty_targets, ignored;
     assert(RunBridge({"--goal", "not-a-number"}, empty_targets, ignored) == 1);
     assert(empty_targets.str().empty());
+
+    // A --box outside the SDF grid volume (z up to 1.6 m; this box sits at
+    // z=5 m) must be rejected before solving, not silently treated as "no
+    // obstacle" by gpmp2 — exit 1, no target output.
+    std::ostringstream box_targets, box_diagnostics;
+    const std::vector<std::string> out_of_grid_box_args = {
+        "--goal", "0.15", "0.075", "1.207",
+        "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+        "--dh", argv[1], "--joint-limits", argv[2],
+        "--box", "0", "0", "5.0", "0.05", "0.05", "0.05"};
+    assert(RunBridge(out_of_grid_box_args, box_targets, box_diagnostics) == 1);
+    assert(box_targets.str().empty());
     return 0;
 }

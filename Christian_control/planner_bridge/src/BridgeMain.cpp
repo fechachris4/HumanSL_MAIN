@@ -39,9 +39,35 @@ constexpr char kUsageText[] =
     "                         directory (../../.. up to the repo root).\n"
     "  --box CX CY CZ HX HY HZ  Optional axis-aligned obstacle box:\n"
     "                         centre and half-extents, metres, base_link.\n"
+    "                         Must lie fully inside the SDF grid volume\n"
+    "                         (WorldSdf.h WorldGridBounds()) or the run is\n"
+    "                         rejected — outside that volume gpmp2 silently\n"
+    "                         reports no obstacle.\n"
     "\n"
-    "Exit codes: 0 targets emitted, 1 bad arguments, 2 start-state\n"
-    "unavailable, 3 solve failed, 4 validation rejected the plan.\n";
+    "Exit codes: 0 targets emitted (also returned by --help), 1 bad\n"
+    "arguments, 2 start-state unavailable, 3 solve failed, 4 validation\n"
+    "rejected the plan.\n";
+
+// Describes a GridBounds volume once, for both the --box rejection
+// diagnostic and anywhere else the checked volume needs stating.
+std::string DescribeGridBounds(const GridBounds& bounds) {
+    std::ostringstream text;
+    text << "x [" << bounds.min_m.x() << ", " << bounds.max_m.x() << "] m, "
+         << "y [" << bounds.min_m.y() << ", " << bounds.max_m.y() << "] m, "
+         << "z [" << bounds.min_m.z() << ", " << bounds.max_m.z() << "] m";
+    return text.str();
+}
+
+// True when `box`'s full extent (center +/- half_extent, every axis) fits
+// inside `bounds`. Used to reject a --box before it is ever handed to
+// gpmp2, which returns zero obstacle cost for out-of-grid queries with no
+// warning of its own.
+bool BoxWithinGridBounds(const AxisAlignedBox& box, const GridBounds& bounds) {
+    const Eigen::Vector3d box_min = box.center - box.half_extent;
+    const Eigen::Vector3d box_max = box.center + box.half_extent;
+    return (box_min.array() >= bounds.min_m.array()).all() &&
+           (box_max.array() <= bounds.max_m.array()).all();
+}
 
 // Directory containing the running executable, via /proc/self/exe. Falls
 // back to "." if the link cannot be read (e.g. non-Linux, sandboxed exec).
@@ -164,6 +190,17 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     } catch (const std::exception& error) {
         diagnostics << "error: " << error.what() << "\n\n" << kUsageText;
         return 1;
+    }
+
+    if (parsed.box) {
+        const GridBounds bounds = WorldGridBounds();
+        if (!BoxWithinGridBounds(*parsed.box, bounds)) {
+            diagnostics << "error: --box extends outside the SDF grid volume ("
+                        << DescribeGridBounds(bounds) << "); gpmp2 reports no "
+                        << "obstacle for out-of-grid queries, so this box "
+                        << "cannot be honoured\n";
+            return 1;
+        }
     }
 
     Eigen::Matrix<double, 7, 1> q_start_rad;

@@ -12,16 +12,21 @@ double BoxSignedDistance(const Eigen::Vector3d& p, const AxisAlignedBox& box) {
 }  // namespace
 
 gpmp2::SignedDistanceField MakeWorldSdf(const std::optional<AxisAlignedBox>& box) {
-    const gtsam::Point3 origin(-1.2, -1.2, -0.4);
-    const double cell = 0.04;
-    const int nx = 60, ny = 60, nz = 40;
+    const gtsam::Point3 origin(kGridOriginXM, kGridOriginYM, kGridOriginZM);
     // gpmp2 layout: one z-slice per matrix; matrix rows = y, cols = x.
-    std::vector<gtsam::Matrix> field(nz, gtsam::Matrix(ny, nx));
-    for (int k = 0; k < nz; ++k)
-        for (int j = 0; j < ny; ++j)
-            for (int i = 0; i < nx; ++i) {
-                const Eigen::Vector3d p = origin + Eigen::Vector3d(i, j, k) * cell;
+    std::vector<gtsam::Matrix> field(kGridNz, gtsam::Matrix(kGridNy, kGridNx));
+    for (int k = 0; k < kGridNz; ++k)
+        for (int j = 0; j < kGridNy; ++j)
+            for (int i = 0; i < kGridNx; ++i) {
+                const Eigen::Vector3d p = origin + Eigen::Vector3d(i, j, k) * kGridCellM;
                 field[k](j, i) = box ? BoxSignedDistance(p, *box) : 10.0;
             }
-    return gpmp2::SignedDistanceField(origin, cell, field);
+    return gpmp2::SignedDistanceField(origin, kGridCellM, field);
+}
+
+GridBounds WorldGridBounds() {
+    GridBounds bounds;
+    bounds.min_m = Eigen::Vector3d(kGridOriginXM, kGridOriginYM, kGridOriginZM);
+    bounds.max_m = bounds.min_m + Eigen::Vector3d(kGridNx, kGridNy, kGridNz) * kGridCellM;
+    return bounds;
 }
