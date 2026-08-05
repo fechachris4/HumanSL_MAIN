@@ -38,11 +38,18 @@ std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
     std::optional<Eigen::Matrix<double, 7, 1>> latest;
     while (std::getline(csv, line)) {
         const auto fields = SplitCsv(line);
-        if (static_cast<int>(fields.size()) <= highest) continue;  // torn row
+        // Accept only full-width rows matching header (torn rows are skipped silently)
+        if (static_cast<int>(fields.size()) != static_cast<int>(header.size())) continue;
         Eigen::Matrix<double, 7, 1> q_deg;
         bool valid = true;
         for (int j = 0; j < 7 && valid; ++j) {
-            try { q_deg[j] = std::stod(fields[column[j]]); }
+            try {
+                size_t pos = 0;
+                const double val = std::stod(fields[column[j]], &pos);
+                // Reject if entire field was not consumed (e.g., "12abc" parses 12 but pos != len)
+                if (pos != fields[column[j]].size()) valid = false;
+                else { q_deg[j] = val; }
+            }
             catch (const std::exception&) { valid = false; }
             if (valid && !std::isfinite(q_deg[j])) valid = false;
         }
