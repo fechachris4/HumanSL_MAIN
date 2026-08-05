@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "Config.h"
+#include "JointTrajectory.h"
 #include "Targets.h"
 
 namespace
@@ -25,6 +26,34 @@ namespace
     constexpr int kInputPollTimeoutMs = 50;
     constexpr std::size_t kInputReadBytes = 256;
     constexpr std::size_t kMaxInputLineBytes = 512;
+
+    // Continuous joints (1/3/5/7) carry a zero sentinel in the compiled
+    // software limits. Validation demands finite bounds, so they get one full
+    // turn either way: wide enough for any legal angle, tight enough that a
+    // nonsense number still fails at ingest.
+    constexpr double kContinuousJointBoundDeg = 360.0;
+
+    // The gate is the software limit the actuation guard already stops on,
+    // not the wider model limit — a block that would trip that guard mid-run
+    // is refused at ingest instead.
+    Eigen::Matrix<double, 7, 1> PositionLimitMagnitudesDeg()
+    {
+        Eigen::Matrix<double, 7, 1> limits;
+        for (int i = 0; i < 7; ++i) {
+            const double software_limit_deg = config::kJointSoftwareLimitDeg[i];
+            limits(i) = software_limit_deg > 0.0 ? software_limit_deg
+                                                 : kContinuousJointBoundDeg;
+        }
+        return limits;
+    }
+
+    Eigen::Matrix<double, 7, 1> VelocityLimitsDegS()
+    {
+        Eigen::Matrix<double, 7, 1> limits;
+        for (int i = 0; i < 7; ++i)
+            limits(i) = config::kQdotLimitDegS[i];
+        return limits;
+    }
 
     void ProcessPoseTargetLine(PoseTargetMailbox& mailbox, const std::string& line)
     {
@@ -46,7 +75,46 @@ namespace
         }
     }
 
-    void ConsumeInputBytes(PoseTargetMailbox& mailbox, const char* bytes,
+    struct TargetInputRouter {
+        PoseTargetMailbox& pose_mailbox;
+        JointTrajectoryMailbox& traj_mailbox;
+        JointTrajectoryAccumulator accumulator;
+    };
+
+    bool IsTrajectoryKeywordLine(const std::string& line)
+    {
+        return line.rfind("TRAJ_BEGIN", 0) == 0 || line.rfind("TRAJ_END", 0) == 0;
+    }
+
+    void ProcessInputLine(TargetInputRouter& router, const std::string& line)
+    {
+        if (!router.accumulator.Collecting() && !IsTrajectoryKeywordLine(line)) {
+            ProcessPoseTargetLine(router.pose_mailbox, line);
+            return;
+        }
+
+        std::string error;
+        std::optional<JointTrajectory> block = router.accumulator.Feed(line, error);
+        if (!error.empty()) {
+            std::cerr << "trajectory rejected: " << error << " [" << line << "]\n";
+            return;
+        }
+        if (!block)
+            return;
+
+        // The sole gate: nothing is published without passing validation.
+        const std::optional<std::string> invalid = ValidateJointTrajectory(
+            *block, -PositionLimitMagnitudesDeg(), PositionLimitMagnitudesDeg(),
+            VelocityLimitsDegS());
+        if (invalid) {
+            std::cerr << "trajectory rejected: " << *invalid << " [" << line << "]\n";
+            return;
+        }
+        router.traj_mailbox.Publish(
+            std::make_unique<JointTrajectory>(std::move(*block)));
+    }
+
+    void ConsumeInputBytes(TargetInputRouter& router, const char* bytes,
                            std::size_t count, std::string& pending_line,
                            bool& discarding_overlong_line)
     {
@@ -59,7 +127,7 @@ namespace
                 } else {
                     if (!pending_line.empty() && pending_line.back() == '\r')
                         pending_line.pop_back();
-                    ProcessPoseTargetLine(mailbox, pending_line);
+                    ProcessInputLine(router, pending_line);
                 }
                 pending_line.clear();
             } else if (!discarding_overlong_line) {
@@ -143,9 +211,40 @@ std::optional<PoseTarget> PoseTargetMailbox::TryDequeue()
     return target;
 }
 
+JointTrajectoryMailbox::~JointTrajectoryMailbox()
+{
+    delete slot_.exchange(nullptr);
+}
+
+void JointTrajectoryMailbox::Publish(std::unique_ptr<JointTrajectory> traj)
+{
+    delete slot_.exchange(traj.release());
+}
+
+std::unique_ptr<JointTrajectory> JointTrajectoryMailbox::Take()
+{
+    return std::unique_ptr<JointTrajectory>(slot_.exchange(nullptr));
+}
+
 void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
                                 const std::atomic<bool>& stop,
                                 const std::string& pipe_path)
+{
+    JointTrajectoryMailbox discarded_trajectories;
+    RunTargetInputFromPipe(mailbox, discarded_trajectories, stop, pipe_path);
+}
+
+void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
+                              const std::atomic<bool>& stop, int input_fd)
+{
+    JointTrajectoryMailbox discarded_trajectories;
+    RunTargetInput(mailbox, discarded_trajectories, stop, input_fd);
+}
+
+void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
+                            JointTrajectoryMailbox& traj_mailbox,
+                            const std::atomic<bool>& stop,
+                            const std::string& pipe_path)
 {
     while (!stop.load(std::memory_order_relaxed)) {
         // Non-blocking open: a blocking O_RDONLY open would wedge teardown
@@ -157,7 +256,7 @@ void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
                 std::chrono::milliseconds(kInputPollTimeoutMs));
             continue;
         }
-        RunPoseTargetInputFromFd(mailbox, stop, fd);
+        RunTargetInput(pose_mailbox, traj_mailbox, stop, fd);
         close(fd);
         // FromFd returned: stop (outer loop exits) or EOF (writer left) —
         // brief pause so a vanished writer cannot spin this loop hot.
@@ -166,9 +265,11 @@ void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
     }
 }
 
-void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
-                              const std::atomic<bool>& stop, int input_fd)
+void RunTargetInput(PoseTargetMailbox& pose_mailbox,
+                    JointTrajectoryMailbox& traj_mailbox,
+                    const std::atomic<bool>& stop, int input_fd)
 {
+    TargetInputRouter router{pose_mailbox, traj_mailbox, {}};
     std::array<char, kInputReadBytes> bytes{};
     std::string pending_line;
     bool discarding_overlong_line = false;
@@ -195,7 +296,7 @@ void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
 
         const ssize_t read_count = read(input_fd, bytes.data(), bytes.size());
         if (read_count > 0) {
-            ConsumeInputBytes(mailbox, bytes.data(),
+            ConsumeInputBytes(router, bytes.data(),
                               static_cast<std::size_t>(read_count), pending_line,
                               discarding_overlong_line);
             continue;
@@ -210,8 +311,8 @@ void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
         if (!stop.load(std::memory_order_relaxed)) {
             if (discarding_overlong_line)
                 std::cout << "target rejected: input line exceeds 512 bytes\n";
-            else
-                ProcessPoseTargetLine(mailbox, pending_line);
+            else if (!pending_line.empty())
+                ProcessInputLine(router, pending_line);
         }
         break;
     }

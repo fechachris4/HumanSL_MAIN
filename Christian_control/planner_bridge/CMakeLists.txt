@@ -82,6 +82,7 @@ target_sources(bridge_core PRIVATE src/Waypoints.cpp)
 add_executable(test_waypoints
     tests/test_waypoints.cpp
     ${HUMANSL_ROOT}/Christian_control/basic_control/src/Targets.cpp
+    ${HUMANSL_ROOT}/Christian_control/basic_control/src/JointTrajectory.cpp
 )
 target_include_directories(test_waypoints PRIVATE
     src ${HUMANSL_ROOT}/Christian_control/basic_control/src)

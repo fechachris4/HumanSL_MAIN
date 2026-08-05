@@ -9,6 +9,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -56,17 +57,63 @@ private:
     alignas(64) std::atomic<std::uint64_t> write_index_{0};
 };
 
+// Declared, not included: TrajectoryGeneration/include/utils.h defines a
+// different global struct of this name, and planner_bridge translation units
+// include both that and this header. Callers that touch the trajectory's
+// contents include JointTrajectory.h themselves.
+struct JointTrajectory;
+
+// Single-slot, latest-wins handoff for whole joint trajectories. The input
+// thread is the only producer and validates every block BEFORE publishing,
+// so the RT consumer only ever sees a valid trajectory. Publish deletes the
+// block it displaces; Take is one atomic exchange, and the caller owns what
+// it receives — the one bounded free per plan activation is the accepted RT
+// exception recorded in the plan header.
+class JointTrajectoryMailbox
+{
+public:
+    JointTrajectoryMailbox() = default;
+    ~JointTrajectoryMailbox();
+    JointTrajectoryMailbox(const JointTrajectoryMailbox&) = delete;
+    JointTrajectoryMailbox& operator=(const JointTrajectoryMailbox&) = delete;
+
+    void Publish(std::unique_ptr<JointTrajectory> traj); // input thread
+    std::unique_ptr<JointTrajectory> Take();             // RT thread; may be null
+
+private:
+    std::atomic<JointTrajectory*> slot_{nullptr};
+};
+
 // Reads target lines from a named pipe, surviving writer disconnects:
 // on EOF the pipe is reopened, so each bridge invocation may open, write,
 // and close independently. `stop` is the only exit. The fd-level loop is
-// the tested RunPoseTargetInputFromFd, unchanged.
-void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
-                                const std::atomic<bool>& stop,
-                                const std::string& pipe_path);
+// the tested RunTargetInput, unchanged.
+void RunTargetInputFromPipe(PoseTargetMailbox& pose_mailbox,
+                            JointTrajectoryMailbox& traj_mailbox,
+                            const std::atomic<bool>& stop,
+                            const std::string& pipe_path);
 
 // Same input loop over a borrowed POSIX file descriptor. Kept separate so the
 // pipe entry point stays simple and the partial-pipe teardown contract is
 // testable without robot dependencies.
+//
+// Line routing: while the accumulator is collecting, every line is a
+// trajectory line; while it is idle, a TRAJ_* keyword opens a block and
+// anything else is a pose line. A completed block is validated against the
+// compiled joint limits and only then published. Any grammar or validation
+// error goes to stderr with the offending line and resets the accumulator —
+// nothing is silently skipped, and the thread survives.
+void RunTargetInput(PoseTargetMailbox& pose_mailbox,
+                    JointTrajectoryMailbox& traj_mailbox,
+                    const std::atomic<bool>& stop, int input_fd);
+
+// Pose-only entry points, kept for callers that predate joint trajectories.
+// They own a throwaway trajectory mailbox, so a block arriving on such a
+// stream is validated and then dropped rather than reaching any consumer.
+void RunPoseTargetInputFromPipe(PoseTargetMailbox& mailbox,
+                                const std::atomic<bool>& stop,
+                                const std::string& pipe_path);
+
 void RunPoseTargetInputFromFd(PoseTargetMailbox& mailbox,
                               const std::atomic<bool>& stop, int input_fd);
 

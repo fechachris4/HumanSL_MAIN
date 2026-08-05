@@ -300,6 +300,8 @@ enable_testing()
 add_executable(test_control_logic
         tests/test_control_logic.cpp
         src/Actuation.cpp
+        src/Targets.cpp
+        src/JointTrajectory.cpp
 )
 target_include_directories(test_control_logic PRIVATE
         src
@@ -316,6 +318,7 @@ add_test(NAME control_logic COMMAND test_control_logic)
 add_executable(test_reactive_law
         tests/test_reactive_law.cpp
         src/Targets.cpp
+        src/JointTrajectory.cpp
 )
 target_include_directories(test_reactive_law PRIVATE
         src
