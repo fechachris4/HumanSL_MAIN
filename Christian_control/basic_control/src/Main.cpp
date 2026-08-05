@@ -68,7 +68,8 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("kp_rot", FormatDouble(config::kKpRotation));
     line("kd_pos", FormatDouble(config::kKdPosition));
     line("kd_rot", FormatDouble(config::kKdRotation));
-    line("null_gain", FormatDouble(config::kNullGain));
+    line("limit_avoid_zone_deg", FormatDouble(config::kLimitAvoidZoneDeg));
+    line("limit_avoid_gain", FormatDouble(config::kLimitAvoidGain));
     line("orientation_enabled", config::kOrientationEnabled ? "true" : "false");
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");

@@ -57,8 +57,8 @@ private:
     // Built once from Config.h in the constructor, because the null-space
     // targets need a deg->rad conversion and the loop must not repeat it.
     ReactivePoseGains gains_;
-    Eigen::Matrix<double, 7, 1> null_midpoint_rad_;
-    Eigen::Matrix<double, 7, 1> null_centering_mask_;
+    Eigen::Matrix<double, 7, 1> limit_rad_;
+    double zone_rad_ = 0.0;
 
     // The takeover pose: the target when a reference has no pose channel or
     // no orientation.

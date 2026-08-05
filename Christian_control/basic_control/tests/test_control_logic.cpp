@@ -454,10 +454,15 @@ namespace
               "Table 39 upper position concepts match the Gen3 7-DoF values");
         Check(config::kJointBoundedMask == JointVector{0, 1, 0, 1, 0, 1, 0},
               "only joints 2, 4, and 6 are position-bounded");
-        Check(config::kNullMidpointDeg == JointVector{0, 0, 0, 0, 0, 0, 0},
-              "null midpoint is derived from the bounded position concepts");
-        Check(config::kNullCenteringMask == config::kJointBoundedMask,
-              "null centering mask aliases the bounded-joint mask");
+        Check(config::kLimitAvoidZoneDeg == 20.0,
+              "avoidance zone is 20 deg below each software limit");
+        Check(config::kLimitAvoidGain == 2.0,
+              "avoidance gain is the staged 2.0 1/s");
+        Check(config::kNullSpaceEnabled,
+              "the null-space channel ships enabled with limit avoidance");
+        Check(config::kLimitAvoidZoneDeg <
+                  config::kJointSoftwareLimitDeg[5],
+              "zone width stays inside the narrowest bounded joint's limit");
         Check(config::kJointSoftwareLimitDeg ==
                   JointVector{0, 126.9, 0, 145.0, 0, 118.0, 0},
               "software position bounds apply the 2 deg margin without widening firmware warnings");

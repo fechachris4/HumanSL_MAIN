@@ -19,7 +19,7 @@ ReactivePoseGains ConfiguredGains()
     gains.kp_rotation_s_inv = config::kKpRotation;
     gains.kd_position = config::kKdPosition;
     gains.kd_rotation = config::kKdRotation;
-    gains.null_gain_s_inv = config::kNullGain;
+    gains.limit_avoid_gain_s_inv = config::kLimitAvoidGain;
     gains.dls_lambda = config::kDlsLambda;
     gains.orientation_enabled = config::kOrientationEnabled;
     gains.velocity_enabled = config::kVelocityTermEnabled;
@@ -35,10 +35,9 @@ TrackingController::TrackingController(DualArmKinematics& model)
       arrival_monitor_(config::kArrivalDwellS),
       timeout_monitor_(config::kTargetHoldS)
 {
-    for (int i = 0; i < 7; ++i) {
-        null_midpoint_rad_[i] = config::kNullMidpointDeg[i] * kDegToRad;
-        null_centering_mask_[i] = config::kNullCenteringMask[i];
-    }
+    for (int i = 0; i < 7; ++i)
+        limit_rad_[i] = config::kJointSoftwareLimitDeg[i] * kDegToRad;
+    zone_rad_ = config::kLimitAvoidZoneDeg * kDegToRad;
 }
 
 TrackingController::~TrackingController() = default;
@@ -146,11 +145,11 @@ TrackingController::DesiredVelocity(const RobotState& state,
     // decomposition goes out through status so the Runner can print and log
     // the two terms that the summed command hides.
     ReactivePoseGains ramped_gains = gains_;
-    ramped_gains.null_gain_s_inv *=
+    ramped_gains.limit_avoid_gain_s_inv *=
         UnitRamp(state.t_s, config::kNullRampDurationS);
     const ReactiveSolution solution = SolveReactiveVelocityDetailed(
         ee.jacobian, e_pos, e_rot, e_twist.linear_m_s, e_twist.angular_rad_s,
-        state.q_rad, null_midpoint_rad_, null_centering_mask_, ramped_gains);
+        state.q_rad, limit_rad_, zone_rad_, ramped_gains);
     status.qdot_task_rad_s = solution.qdot_task_rad_s;
     status.qdot_null_rad_s = solution.qdot_null_rad_s;
     status.null_leak_m_s = solution.leak_twist.head<3>().norm();

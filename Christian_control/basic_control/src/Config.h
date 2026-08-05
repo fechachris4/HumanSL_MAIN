@@ -119,14 +119,13 @@ namespace config
     inline constexpr double kDlsLambda = 0.1;
 
     // Reactive-pose law gains (reactive-pose-port.md). Staging reached:
-    // orientation and the velocity (Kd) term ON, null-space centering OFF.
+    // orientation, Kd term, and null-space limit avoidance ON.
     inline constexpr double kKpRotation = 10.0; // 1/s on the rotation-log error
     inline constexpr double kKdPosition = 0.5; // on the linear-velocity error
     inline constexpr double kKdRotation = 0.5; // on the angular-velocity error
-    inline constexpr double kNullGain = 23.0; // 1/s on the centering error
     inline constexpr bool kOrientationEnabled = true;
     inline constexpr bool kVelocityTermEnabled = true; // Kd term
-    inline constexpr bool kNullSpaceEnabled = false;
+    inline constexpr bool kNullSpaceEnabled = true;
 
     // Published Gen3 7-DoF position concepts, degrees, in Kortex actuator
     // order. Kinova's User Guide, Table 39:
@@ -142,17 +141,6 @@ namespace config
         0, 128.9, 0, 147.8, 0, 120.3, 0
     };
     inline constexpr JointVector kJointBoundedMask = {0, 1, 0, 1, 0, 1, 0};
-
-    inline constexpr JointVector kNullMidpointDeg = {
-        0,
-        (kJointLowerDeg[1] + kJointUpperDeg[1]) / 2.0,
-        0,
-        (kJointLowerDeg[3] + kJointUpperDeg[3]) / 2.0,
-        0,
-        (kJointLowerDeg[5] + kJointUpperDeg[5]) / 2.0,
-        0
-    };
-    inline constexpr JointVector kNullCenteringMask = kJointBoundedMask;
 
     // The clip applied to q̇ before integration. Equal to the model limits
     // above by construction, so the two cannot disagree.
@@ -192,6 +180,16 @@ namespace config
              : kJointLimitWarnDeg[5]),
         0
     };
+
+    // Deadband null-space limit avoidance (ReactiveLaw.h). The objective is
+    // exactly zero until a bounded joint's wrapped position comes within
+    // kLimitAvoidZoneDeg of its software limit above, then pushes inward at
+    // kLimitAvoidGain (1/s) times the excess — at the limit that is
+    // gain × zone ≈ 40 deg/s before projection, bounded by the per-joint
+    // clip. Replaced midpoint centering 2026-08-05:
+    // docs/superpowers/specs/2026-08-05-null-space-limit-avoidance-design.md.
+    inline constexpr double kLimitAvoidZoneDeg = 20.0;
+    inline constexpr double kLimitAvoidGain = 2.0;
 
     // Validation runs stop automatically on any live base or actuator fault.
     // Compile-time only, never runtime-settable.
