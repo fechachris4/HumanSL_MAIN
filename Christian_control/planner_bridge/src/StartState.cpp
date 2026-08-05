@@ -26,13 +26,11 @@ std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
     if (!std::getline(csv, line)) { error = "empty file"; return std::nullopt; }
     const auto header = SplitCsv(line);
     std::array<int, 7> column{};
-    int highest = 0;
     for (int j = 0; j < 7; ++j) {
         const std::string name = "meas_j" + std::to_string(j + 1);
         const auto it = std::find(header.begin(), header.end(), name);
         if (it == header.end()) { error = "missing column " + name; return std::nullopt; }
         column[j] = static_cast<int>(it - header.begin());
-        highest = std::max(highest, column[j]);
     }
 
     std::optional<Eigen::Matrix<double, 7, 1>> latest;
