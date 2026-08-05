@@ -15,6 +15,7 @@ set(TG_SOURCES
     ${HUMANSL_ROOT}/TrajectoryGeneration/src/GenerateArmModel.cpp
     ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryInitiation.cpp
     ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryOptimization.cpp
+    ${HUMANSL_ROOT}/TrajectoryGeneration/src/GenerateTrajectory.cpp
     ${HUMANSL_ROOT}/TrajectoryExecution/src/Jacobian.cpp
 )
 
@@ -66,3 +67,13 @@ target_link_libraries(test_world_sdf PRIVATE bridge_core)
 set_target_properties(test_world_sdf PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME world_sdf COMMAND test_world_sdf)
 set_tests_properties(world_sdf PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
+
+target_sources(bridge_core PRIVATE src/PlanSolver.cpp)
+add_executable(test_plan_solver tests/test_plan_solver.cpp)
+target_include_directories(test_plan_solver PRIVATE src)
+target_link_libraries(test_plan_solver PRIVATE bridge_core)
+set_target_properties(test_plan_solver PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME plan_solver COMMAND test_plan_solver
+         ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml
+         ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml)
+set_tests_properties(plan_solver PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
