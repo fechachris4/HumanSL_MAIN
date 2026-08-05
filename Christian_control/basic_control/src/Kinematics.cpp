@@ -142,8 +142,11 @@ namespace
 DualArmKinematics::DualArmKinematics(
     Dynamics& dynamics, const JointVector& left_nominal_rad,
     const std::string& right_base_frame,
-    const std::string& right_end_effector_frame)
+    const std::string& right_end_effector_frame,
+    const std::string& left_base_frame,
+    const std::string& left_end_effector_frame)
     : dynamics_(dynamics), right_base_frame_id_(0), right_frame_id_(0),
+      left_base_frame_id_(0), left_frame_id_(0),
       left_nominal_rad_(left_nominal_rad),
       q_full_(pinocchio::neutral(dynamics.model_))
 {
@@ -159,6 +162,12 @@ DualArmKinematics::DualArmKinematics(
     if (!dynamics_.model_.existFrame(right_end_effector_frame))
         throw std::runtime_error("dual model has no right end-effector frame named '" +
                                  right_end_effector_frame + "'");
+    if (!dynamics_.model_.existFrame(left_base_frame))
+        throw std::runtime_error("dual model has no left base frame named '" +
+                                 left_base_frame + "'");
+    if (!dynamics_.model_.existFrame(left_end_effector_frame))
+        throw std::runtime_error("dual model has no left end-effector frame named '" +
+                                 left_end_effector_frame + "'");
 
     ResolveJoints(dynamics_.model_, kRightJointNames, kJointConfigurationSizes,
                   right_q_indices_, right_v_indices_);
@@ -170,6 +179,17 @@ DualArmKinematics::DualArmKinematics(
                   dynamics_.model_.nv, "v");
     right_base_frame_id_ = dynamics_.model_.getFrameId(right_base_frame);
     right_frame_id_ = dynamics_.model_.getFrameId(right_end_effector_frame);
+    left_base_frame_id_ = dynamics_.model_.getFrameId(left_base_frame);
+    left_frame_id_ = dynamics_.model_.getFrameId(left_end_effector_frame);
+
+    // Both mounts are FIXED joints onto the `world` root, so each base frame's
+    // placement is the same for every configuration. Evaluate once here (at
+    // the neutral configuration) and cache; nothing downstream has to redo FK
+    // just to convert a point between world and a base frame.
+    pinocchio::framesForwardKinematics(dynamics_.model_, dynamics_.data_,
+                                       pinocchio::neutral(dynamics_.model_));
+    world_from_right_base_ = dynamics_.data_.oMf[right_base_frame_id_];
+    world_from_left_base_ = dynamics_.data_.oMf[left_base_frame_id_];
 
     for (int i = 0; i < 7; ++i) {
         const double value = left_nominal_rad_[static_cast<std::size_t>(i)];
@@ -198,6 +218,63 @@ const Eigen::VectorXd& DualArmKinematics::FullConfigurationForRight(
                       kJointConfigurationSizes[joint], right_q_rad[i]);
     }
     return q_full_;
+}
+
+const Eigen::VectorXd& DualArmKinematics::FullConfiguration(
+    const Eigen::Matrix<double, 7, 1>& right_q_rad,
+    const Eigen::Matrix<double, 7, 1>& left_q_rad)
+{
+    if (!left_q_rad.allFinite())
+        throw std::runtime_error("left joint configuration must be finite");
+    FullConfigurationForRight(right_q_rad); // validates and writes the right half
+    for (int i = 0; i < 7; ++i) {
+        const std::size_t joint = static_cast<std::size_t>(i);
+        SetJointAngle(q_full_, left_q_indices_[joint],
+                      kJointConfigurationSizes[joint], left_q_rad[i]);
+    }
+    return q_full_;
+}
+
+// ---------------------------------------------------------------
+// World frame
+// ---------------------------------------------------------------
+
+const pinocchio::SE3& DualArmKinematics::WorldFromBase(Arm arm) const
+{
+    return arm == Arm::kRight ? world_from_right_base_ : world_from_left_base_;
+}
+
+Eigen::Vector3d DualArmKinematics::PointBaseToWorld(
+    Arm arm, const Eigen::Vector3d& p_base) const
+{
+    return WorldFromBase(arm).act(p_base);
+}
+
+Eigen::Vector3d DualArmKinematics::PointWorldToBase(
+    Arm arm, const Eigen::Vector3d& p_world) const
+{
+    return WorldFromBase(arm).actInv(p_world);
+}
+
+Pose DualArmKinematics::ToolPoseInWorld(
+    Arm arm, const Eigen::Matrix<double, 7, 1>& right_q_rad,
+    const Eigen::Matrix<double, 7, 1>& left_q_rad)
+{
+    const Eigen::VectorXd& q = FullConfiguration(right_q_rad, left_q_rad);
+    pinocchio::framesForwardKinematics(dynamics_.model_, dynamics_.data_, q);
+    // oMf is already the world-frame placement: `world` is the model root.
+    const pinocchio::SE3& world_M_tool =
+        dynamics_.data_.oMf[arm == Arm::kRight ? right_frame_id_ : left_frame_id_];
+    return Pose{world_M_tool.translation(), world_M_tool.rotation()};
+}
+
+Pose DualArmKinematics::ToolPoseInWorld(
+    Arm arm, const Eigen::Matrix<double, 7, 1>& right_q_rad)
+{
+    Eigen::Matrix<double, 7, 1> left_q_rad;
+    for (int i = 0; i < 7; ++i)
+        left_q_rad[i] = left_nominal_rad_[static_cast<std::size_t>(i)];
+    return ToolPoseInWorld(arm, right_q_rad, left_q_rad);
 }
 
 void DualArmKinematics::UpdateFullKinematics(

@@ -171,7 +171,12 @@ int main()
                     std::to_string(i + 1));
         }
 
-        // Exact fixed mounting geometry from the downloaded URDF.
+        // Exact fixed mounting geometry. The numbers live in
+        // config/dual_arm_mounting.yaml; test_dual_arm_mounting.cpp is what
+        // holds the URDF to that file. Here we only pin the SHAPE the rest of
+        // this test depends on: world at the midpoint, mirrored about world's
+        // XZ plane, so each base sits at -+separation/2 along world y with no
+        // z offset.
         const Eigen::VectorXd& q_mount =
             adapter.FullConfigurationForRight(
                 Eigen::Matrix<double, 7, 1>::Zero());
@@ -181,16 +186,51 @@ int main()
             forward_kinematics(dynamics, q_mount, "leftbase_link");
         const Eigen::Matrix3d right_rotation = RotX(1.2085);
         const Eigen::Matrix3d left_rotation = RotX(-1.2085);
+        constexpr double kHalfSeparation = 0.113415 / 2.0;
         Check((right_base.rotation - right_rotation).norm() < 1e-12,
               "right fixed mount rotation is +1.2085 rad about x");
         Check((left_base.rotation - left_rotation).norm() < 1e-12,
               "left fixed mount rotation is -1.2085 rad about x");
         Check((right_base.position -
-               right_rotation * Eigen::Vector3d(0, -0.16, 0)).norm() < 1e-12,
-              "right fixed mount keeps -0.16 m local-y translation");
+               Eigen::Vector3d(0, -kHalfSeparation, 0)).norm() < 1e-9,
+              "right base sits half the separation along world -y");
         Check((left_base.position -
-               left_rotation * Eigen::Vector3d(0, 0.16, 0)).norm() < 1e-12,
-              "left fixed mount keeps +0.16 m local-y translation");
+               Eigen::Vector3d(0, kHalfSeparation, 0)).norm() < 1e-9,
+              "left base sits half the separation along world +y");
+        Check(((right_base.position + left_base.position) / 2.0).norm() < 1e-12,
+              "world origin is the midpoint of the two base origins");
+
+        // The world accessors must agree with plain FK on the same frames, and
+        // the point helpers must round-trip.
+        Check((adapter.WorldFromBase(Arm::kRight).translation() -
+               right_base.position).norm() < 1e-12,
+              "WorldFromBase(right) matches FK on base_link");
+        Check((adapter.WorldFromBase(Arm::kLeft).translation() -
+               left_base.position).norm() < 1e-12,
+              "WorldFromBase(left) matches FK on leftbase_link");
+        const Eigen::Vector3d p_base(0.4, -0.1, 0.3);
+        Check((adapter.PointWorldToBase(
+                   Arm::kRight, adapter.PointBaseToWorld(Arm::kRight, p_base)) -
+               p_base).norm() < 1e-12,
+              "base->world->base round-trips for the right arm");
+        Check((adapter.PointBaseToWorld(Arm::kRight, Eigen::Vector3d::Zero()) -
+               right_base.position).norm() < 1e-12,
+              "the right base origin maps to the mount position in world");
+        // A world-frame tool pose must equal the base-frame one carried through
+        // the mount — the identity the WORLD target path relies on.
+        const Eigen::Matrix<double, 7, 1> q_probe =
+            (Eigen::Matrix<double, 7, 1>() << 0.2, -0.4, 0.1, 0.9, -0.3, 0.5, 0.7)
+                .finished();
+        KinematicsWorkspace probe_workspace(dynamics);
+        const PoseJacobian probe_base =
+            adapter.RightPoseAndJacobian(q_probe, probe_workspace);
+        const Pose probe_world = adapter.ToolPoseInWorld(Arm::kRight, q_probe);
+        Check((adapter.PointBaseToWorld(Arm::kRight, probe_base.position) -
+               probe_world.position).norm() < 1e-12,
+              "world tool position equals the base one through the mount");
+        Check((adapter.PointWorldToBase(Arm::kRight, probe_world.position) -
+               probe_base.position).norm() < 1e-12,
+              "world tool position converts back to the base one");
 
         // Full 6x14 Jacobian is computed, then the adapter selects exactly the
         // seven named right columns. The separate left tree contributes zero

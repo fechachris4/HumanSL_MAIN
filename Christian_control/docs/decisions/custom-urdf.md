@@ -21,10 +21,41 @@ Project-specific differences remain explicit: the common `world` root and both
 mounted branches are retained, joint/link names are not renamed, and the
 official vision camera frames are not included:
 
-- right: `world -> base_linktras`, roll `+1.2085` rad; then
-  `base_linktras -> base_link`, translation `(0, -0.16, 0)` m;
-- left: `world -> leftbase_linktras`, roll `-1.2085` rad; then
-  `leftbase_linktras -> leftbase_link`, translation `(0, +0.16, 0)` m.
+- right: `world -> base_link`, translation `(0, -0.0567075, 0)` m, roll
+  `+1.2085` rad;
+- left: `world -> leftbase_link`, translation `(0, +0.0567075, 0)` m, roll
+  `-1.2085` rad.
+
+A URDF `<origin>` composes as `Trans(xyz)` then `Rot(rpy)`, so one fixed joint
+per arm expresses each mount directly.
+
+## The world origin sits at the base midpoint (2026-08-05)
+
+The mount geometry above is *the same rig* it always described, re-expressed
+about a different origin. It previously reached each `base_link` through an
+intermediate `base_linktras` / `leftbase_linktras` link: roll first, then
+translate `0.16` m along the rolled y axis. That put `world` `0.149614` m
+*above* the two base origins — a torso-apex point, equidistant (`0.16` m) from
+both bases but not between them.
+
+`world` now sits at the midpoint of the two `base_link` origins, so world y
+reads directly as "between the arms" and world z as "at mount height". The
+separation (`0.113415` m) and tilt (`±1.2085` rad) are unchanged, and the
+intermediate links carried no geometry and are gone. Frame count drops from 44
+to 40; `nq = 22` and `nv = 14` are unaffected, because every mounting joint is
+fixed.
+
+The numbers now live in `basic_control/config/dual_arm_mounting.yaml`, which is
+their declared source of truth, and `tests/test_dual_arm_mounting.cpp` (ctest
+`dual_arm_mounting`) fails the test step if the URDF drifts from it.
+
+**These values are inherited, not measured.** They arrived fully formed in
+commit `af116a5c` with no measurement note, and the original `0.16` m
+base-to-world radius was a round number. They describe the mount's intended
+geometry. Replace them with surveyed values when the rig is measured; the YAML
+and the URDF mounting block are the only two places that change.
+
+## The Cartesian interface is still `base_link`
 
 The mounted branches remain part of the model, but they do not define the
 controller's Cartesian interface. `DualArmKinematics` transforms the right
@@ -32,6 +63,31 @@ tool pose and all six Jacobian rows from the model-root axes into the right
 arm's `base_link` frame. Operator targets, printed positions, orientations,
 and CSV Cartesian fields use that same right-base frame. Reach telemetry is
 therefore measured from the zero origin of `base_link`.
+
+World-frame access is **additive** and does not re-frame the control law.
+`world` is the URDF root, so Pinocchio's `oMf` placements already are
+world-frame poses; the base-frame methods are the ones doing extra work.
+`DualArmKinematics` adds `WorldFromBase`, `ToolPoseInWorld`, and the
+`PointBaseToWorld` / `PointWorldToBase` pair (`p_world = T_world_base * p_base`
+and its inverse) for either arm. `ReactiveLaw`, `Safety`, and the arrival
+monitors continue to reason in `base_link` axes, unchanged.
+
+A target line may declare its frame — `WORLD x y z` or `BASE x y z`, with no
+keyword still meaning `base_link` — and `ParsePoseTarget` converts WORLD input
+to `base_link` at ingestion. A `PoseTarget` is therefore always a `base_link`
+target and nothing downstream of the parser knows world-frame input exists. A
+WORLD line on a stream that was not given `T_world_base` is rejected, never
+silently read as `base_link`. Note that orientation on either frame's 7-field
+form remains gated off by `config::kAcceptOrientationTargets`, which is
+currently `false`.
+
+`tools/print_dual_arm_fk` prints both arms' tool frames in world and in their
+own base frames at a chosen configuration. It links the URDF only — not Kortex
+— so it cannot connect or command, and is safe to run with the robot off. The
+two arms' tool frames are NOT the same point: the right chain ends at
+`ConfiguredTool_Link` (the mounted tool) and the left at its bare flange, so
+their positions are not a symmetry check. The left arm has no connection and
+no feedback, so every left figure is open-loop against the URDF.
 
 Kinova's User Guide Tables 39 and 40 publish 128.9/147.8/120.3 deg position
 ranges and 79.64/69.91 deg/s general speed limits. Those values are close to,

@@ -92,8 +92,20 @@ gtsam::Pose3 createPoseFromTube( const TubeInfo& tube_axis, double human_max_y, 
     return gtsam::Pose3(rotation, target_position);
 }
    
+// DEAD, AND CONTRADICTS THE CANONICAL MODEL. Its only caller is the root
+// test_kinova.cpp, which does not build (it wants config/dh_params.yaml, a
+// file that does not exist). The mounting geometry below — rpy (+-3pi/4, 0,
+// 3pi/2) and +-0.06029 m x offsets, i.e. 0.12058 m apart — disagrees with
+// basic_control/config/GEN3_dual_mounted.urdf, which mounts the bases
+// 0.113415 m apart with roll +-1.2085 rad about world x. The "Fixed relative
+// spacing from XACRO" comment refers to nothing that still exists: the
+// vendored kortex_dual_robots.xacro uses a +-1 m placeholder.
+//
+// The canonical mounting transforms are the URDF's, sourced from
+// basic_control/config/dual_arm_mounting.yaml. Do NOT revive this function
+// against them without re-deriving it from that file.
 std::pair<gtsam::Pose3, gtsam::Pose3> createArmBasePoses(const gtsam::Point3& clav_point, const gtsam::Point3& strn_point) {
-    
+
     gtsam::Point3 human_torso_centre = (clav_point + strn_point) / 2.0;
 
     // Calculate positions: 25cm behind human back, at 1.2m height, with fixed relative spacing

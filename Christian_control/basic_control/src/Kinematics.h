@@ -91,6 +91,10 @@ struct PoseJacobian {
 
 
 
+// Which arm a world-frame query refers to. The controller still commands
+// only the right arm; this selects which branch of the model to READ.
+enum class Arm { kRight, kLeft };
+
 class DualArmKinematics
 {
 public:
@@ -101,9 +105,12 @@ public:
         2, 1, 2, 1, 2, 1, 2
     };
 
-    DualArmKinematics(Dynamics& dynamics, const JointVector& left_nominal_rad,
-                      const std::string& right_base_frame,
-                      const std::string& right_end_effector_frame);
+    DualArmKinematics(
+        Dynamics& dynamics, const JointVector& left_nominal_rad,
+        const std::string& right_base_frame,
+        const std::string& right_end_effector_frame,
+        const std::string& left_base_frame = config::kLeftBaseFrame,
+        const std::string& left_end_effector_frame = config::kLeftEndEffectorFrame);
 
     PositionJacobian RightPositionAndJacobian(
         const Eigen::Matrix<double, 7, 1>& right_q_rad,
@@ -112,10 +119,47 @@ public:
         const Eigen::Matrix<double, 7, 1>& right_q_rad,
         KinematicsWorkspace& workspace);
 
+    // ---------------------------------------------------------------
+    // World frame
+    // ---------------------------------------------------------------
+    //
+    // `world` is the URDF root, so Pinocchio's oMf placements ARE world-frame
+    // poses; nothing extra is computed to reach world. The base-frame methods
+    // above are the ones doing extra work, converting INTO base_link, and they
+    // remain the controller's interface — see docs/decisions/custom-urdf.md.
+
+    // T_world_base for either arm. Constant: both mounts are fixed joints, so
+    // this does not depend on the configuration. Cached at construction.
+    const pinocchio::SE3& WorldFromBase(Arm arm) const;
+
+    // The legacy-point conversion: p_world = T_world_base * p_base, and its
+    // inverse. Use these to lift anything still expressed in an arm's
+    // base_link frame (recorded targets, older logs) into world, or to push a
+    // world-frame target down into the frame the control loop still uses.
+    Eigen::Vector3d PointBaseToWorld(Arm arm, const Eigen::Vector3d& p_base) const;
+    Eigen::Vector3d PointWorldToBase(Arm arm, const Eigen::Vector3d& p_world) const;
+
+    // Tool pose of one arm in the WORLD frame, at a configuration given for
+    // BOTH arms. Both are required because one Pinocchio model holds both
+    // branches; passing the left angles explicitly keeps the caller honest
+    // about what the left arm was assumed to be doing.
+    Pose ToolPoseInWorld(Arm arm,
+                         const Eigen::Matrix<double, 7, 1>& right_q_rad,
+                         const Eigen::Matrix<double, 7, 1>& left_q_rad);
+
+    // Same, with the left arm at its compiled nominal — the live case, where
+    // the left arm is model-only and has no feedback to report.
+    Pose ToolPoseInWorld(Arm arm, const Eigen::Matrix<double, 7, 1>& right_q_rad);
+
     // Exposed for hardware-free structural tests. The returned reference is
     // owned by this adapter and is overwritten by the next call.
     const Eigen::VectorXd& FullConfigurationForRight(
         const Eigen::Matrix<double, 7, 1>& right_q_rad);
+
+    // Both arms' angles into the full q, by joint name. Same ownership rule.
+    const Eigen::VectorXd& FullConfiguration(
+        const Eigen::Matrix<double, 7, 1>& right_q_rad,
+        const Eigen::Matrix<double, 7, 1>& left_q_rad);
 
     Dynamics& dynamics() { return dynamics_; }
     pinocchio::FrameIndex right_base_frame_id() const { return right_base_frame_id_; }
@@ -133,6 +177,10 @@ private:
     Dynamics& dynamics_;
     pinocchio::FrameIndex right_base_frame_id_;
     pinocchio::FrameIndex right_frame_id_;
+    pinocchio::FrameIndex left_base_frame_id_;
+    pinocchio::FrameIndex left_frame_id_;
+    pinocchio::SE3 world_from_right_base_;
+    pinocchio::SE3 world_from_left_base_;
     std::array<int, 7> right_q_indices_{};
     std::array<int, 7> right_v_indices_{};
     std::array<int, 7> left_q_indices_{};

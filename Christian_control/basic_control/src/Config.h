@@ -41,6 +41,13 @@ namespace config
     // The left arm is model-only: held here whenever the 14-joint
     // configuration is assembled. No left connection, feedback or command.
     inline constexpr JointVector kLeftNominalRad = {0, 0, 0, 0, 0, 0, 0};
+    // Left-arm frame names, for kinematics only. The left chain ends at the
+    // bare flange: ConfiguredTool_Link is RIGHT-ARM ONLY, because it encodes
+    // the tool physically mounted on the right flange. Left and right tool
+    // points are therefore not the same point on the arm — never compare
+    // their poses as though they were.
+    inline constexpr const char* kLeftBaseFrame = "leftbase_link";
+    inline constexpr const char* kLeftEndEffectorFrame = "leftEndEffector_Link";
 
     // Both right-arm sessions (TCP + UDP, Hardware.h). Timeouts are what
     // the base waits before dropping an idle session/connection.

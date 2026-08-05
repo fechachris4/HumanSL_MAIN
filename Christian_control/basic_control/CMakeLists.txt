@@ -292,6 +292,34 @@ target_link_libraries(make_synthetic_log
         pthread
 )
 
+# --- print_dual_arm_fk: both arms' FK in world and base_link, for checking
+#     the mounted model against the physical rig. URDF only — deliberately
+#     NOT linked against Kortex, so it cannot connect or command. Safe to run
+#     with the robot off. ---
+add_executable(print_dual_arm_fk
+        tools/print_dual_arm_fk.cpp
+        src/Kinematics.cpp
+        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+)
+target_include_directories(print_dual_arm_fk PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+        ${HUMANSL_ROOT}/TrajectoryExecution/include
+)
+target_link_libraries(print_dual_arm_fk
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+        pthread
+)
+set_target_properties(print_dual_arm_fk PROPERTIES
+        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+)
+target_link_options(print_dual_arm_fk PRIVATE
+        -Wl,--allow-shlib-undefined
+        -Wl,-z,lazy
+)
+
 # --- test_control_logic: hardware-free tests for the controller's pure
 #     logic (DLS resolution, cycle-dt clamp, PositionIntegration). No
 #     Kortex, no Pinocchio — safe to run anywhere. ---
@@ -421,6 +449,35 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             -Wl,-z,lazy
     )
     add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
+
+    # The URDF's mounting block against config/dual_arm_mounting.yaml, which
+    # is its declared source of truth. Nothing generates one from the other,
+    # so this test is what keeps them honest.
+    add_executable(test_dual_arm_mounting
+            tests/test_dual_arm_mounting.cpp
+            src/Kinematics.cpp
+            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+    )
+    target_include_directories(test_dual_arm_mounting PRIVATE
+            src
+            ${HUMANSL_ROOT}/third_party/include
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+            ${HUMANSL_ROOT}/TrajectoryExecution/include
+    )
+    target_link_libraries(test_dual_arm_mounting
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+            pthread
+    )
+    set_target_properties(test_dual_arm_mounting PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+    )
+    target_link_options(test_dual_arm_mounting PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,-z,lazy
+    )
+    add_test(NAME dual_arm_mounting COMMAND test_dual_arm_mounting
+             "${CMAKE_CURRENT_SOURCE_DIR}/config/dual_arm_mounting.yaml")
 
     # The run-log CSV schema: header and row pinned to each other. Kortex is
     # a link-time dependency of Hardware.cpp only; no robot is contacted.
