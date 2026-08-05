@@ -1,0 +1,86 @@
+#undef NDEBUG
+//
+// Hardware-free tests for the joint-trajectory wire grammar, its line
+// accumulator, and its validation. No Kortex, Pinocchio, or robot connection.
+//
+
+#include <cassert>
+#include <string>
+
+#include "JointTrajectory.h"
+
+static JointTrajectory FeedBlock(const std::vector<std::string>& lines)
+{
+    JointTrajectoryAccumulator acc;
+    std::string error;
+    std::optional<JointTrajectory> out;
+    for (const auto& l : lines) {
+        out = acc.Feed(l, error);
+        assert(error.empty());
+    }
+    assert(out.has_value());
+    return *out;
+}
+
+int main()
+{
+    // Happy path: 3 points, degrees on the wire, radians in memory.
+    const auto traj = FeedBlock({
+        "TRAJ_BEGIN 3",
+        "0    0 0 0 0 0 0 0    0 0 0 0 0 0 0",
+        "1.0  10 0 0 0 0 0 0   10 0 0 0 0 0 0",
+        "2.0  20 0 0 0 0 0 0   0 0 0 0 0 0 0",
+    });
+    assert(traj.points.size() == 3);
+    assert(std::abs(traj.points[1].q_rad(0) - 10.0 * M_PI / 180.0) < 1e-12);
+    assert(std::abs(traj.points[1].qdot_rad_s(0) - 10.0 * M_PI / 180.0) < 1e-12);
+
+    // A malformed row resets and reports; the next block still works.
+    {
+        JointTrajectoryAccumulator acc;
+        std::string error;
+        assert(!acc.Feed("TRAJ_BEGIN 2", error) && error.empty());
+        assert(!acc.Feed("0 1 2 nonsense", error).has_value());
+        assert(!error.empty());
+    }
+    // Row count mismatch: TRAJ_END before <count> rows is an error.
+    {
+        JointTrajectoryAccumulator acc;
+        std::string error;
+        acc.Feed("TRAJ_BEGIN 2", error);
+        acc.Feed("0 0 0 0 0 0 0 0 0 0 0 0 0 0 0", error);
+        assert(!acc.Feed("TRAJ_END", error).has_value());
+        assert(!error.empty());
+    }
+
+    // Validation.
+    Eigen::Matrix<double, 7, 1> lo = Eigen::Matrix<double, 7, 1>::Constant(-180.0);
+    Eigen::Matrix<double, 7, 1> hi = Eigen::Matrix<double, 7, 1>::Constant(180.0);
+    Eigen::Matrix<double, 7, 1> vmax = Eigen::Matrix<double, 7, 1>::Constant(45.0);
+    assert(!ValidateJointTrajectory(traj, lo, hi, vmax).has_value());
+    // Position outside limits rejected.
+    {
+        auto bad = traj;
+        bad.points[2].q_rad(0) = 200.0 * M_PI / 180.0;
+        assert(ValidateJointTrajectory(bad, lo, hi, vmax).has_value());
+    }
+    // Stated velocity above the clip rejected.
+    {
+        auto bad = traj;
+        bad.points[1].qdot_rad_s(0) = 90.0 * M_PI / 180.0;
+        assert(ValidateJointTrajectory(bad, lo, hi, vmax).has_value());
+    }
+    // Implied velocity above the clip rejected (20 deg in 0.1 s = 200 deg/s).
+    {
+        auto bad = traj;
+        bad.points[2].t_s = 1.1;
+        assert(ValidateJointTrajectory(bad, lo, hi, vmax).has_value());
+    }
+    // Non-monotonic time rejected.
+    {
+        auto bad = traj;
+        bad.points[2].t_s = 0.5;
+        assert(ValidateJointTrajectory(bad, lo, hi, vmax).has_value());
+    }
+    return 0;
+}

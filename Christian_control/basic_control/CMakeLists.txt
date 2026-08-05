@@ -67,6 +67,7 @@ add_executable(controller
         src/Runner.cpp
         src/Controller.cpp
         src/Targets.cpp
+        src/JointTrajectory.cpp
         src/Actuation.cpp
         src/Kinematics.cpp
         src/Hardware.cpp
@@ -322,6 +323,20 @@ target_include_directories(test_reactive_law PRIVATE
 )
 target_link_libraries(test_reactive_law pthread)
 add_test(NAME reactive_law COMMAND test_reactive_law)
+
+# --- test_joint_trajectory: hardware-free tests for the joint-trajectory wire
+#     grammar, accumulator, and validation (src/JointTrajectory.cpp — pure
+#     Eigen). No Kortex, no Pinocchio — safe to run anywhere. ---
+add_executable(test_joint_trajectory
+        tests/test_joint_trajectory.cpp
+        src/JointTrajectory.cpp
+)
+target_include_directories(test_joint_trajectory PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(test_joint_trajectory pthread)
+add_test(NAME joint_trajectory COMMAND test_joint_trajectory)
 
 # Pure fixed-size Cartesian segment time scaling. No Kortex or Pinocchio.
 add_executable(test_trajectory_profile
