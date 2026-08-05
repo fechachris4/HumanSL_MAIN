@@ -7,8 +7,8 @@
 # (currently world), so it is stamped explicitly here — these numbers have
 # always been right-arm base_link, and reading them as world would move the
 # target 0.709 m.
-frame: right_base
-goal: [ 0.65, -0.40, 0.46 ]
+frame: world
+goal: [ 0.0, -0.4, 0.30 ]
 
 # Optional obstacle for the planner to avoid: axis-aligned box, metres.
 # right_base only — an axis-aligned box in another frame is not axis-aligned

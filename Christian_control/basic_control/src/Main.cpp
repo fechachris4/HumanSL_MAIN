@@ -420,6 +420,14 @@ int main(int argc, char** argv)
         csv << "# startup_position_m = " << ee_now.position.x() << " "
             << ee_now.position.y() << " " << ee_now.position.z()
             << " (measured FK, " << config::kRightBaseFrame << ")\n";
+        // The same measurement in world, so a log can be read in either
+        // frame without needing the mounting transform to hand. Derived from
+        // the model, not a stored constant: change the URDF and this follows.
+        const Eigen::Vector3d startup_world =
+            controlled_model.PointBaseToWorld(Arm::kRight, ee_now.position);
+        csv << "# startup_position_world_m = " << startup_world.x() << " "
+            << startup_world.y() << " " << startup_world.z()
+            << " (measured FK, world)\n";
         csv << "# startup_joint_deg =";
         for (int j = 0; j < 7; ++j)
             csv << " " << initial.actuators(j).position();
