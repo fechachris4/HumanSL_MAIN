@@ -1,3 +1,6 @@
+// Test assertions must never no-op under a Release (NDEBUG) configure.
+#undef NDEBUG
+
 #include <cassert>
 #include <cmath>
 #include <cstdio>
