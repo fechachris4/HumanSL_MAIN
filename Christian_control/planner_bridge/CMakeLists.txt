@@ -53,12 +53,6 @@ target_link_libraries(test_planner_model PRIVATE bridge_core)
 set_target_properties(test_planner_model PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME planner_model COMMAND test_planner_model
          ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml)
-# libgtsam.so/libgpmp2.so carry no RUNPATH of their own to their sibling
-# libs (libmetis-gtsam.so, libcephes-gtsam.so.1, ...), so RUNPATH on our
-# binary alone doesn't resolve transitive deps under ctest's fork/exec.
-# Not related to this task's DH/flip logic — a pre-existing gap in the
-# third_party build.
-set_tests_properties(planner_model PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 
 target_sources(bridge_core PRIVATE src/WorldSdf.cpp)
 add_executable(test_world_sdf tests/test_world_sdf.cpp)
@@ -66,7 +60,6 @@ target_include_directories(test_world_sdf PRIVATE src)
 target_link_libraries(test_world_sdf PRIVATE bridge_core)
 set_target_properties(test_world_sdf PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME world_sdf COMMAND test_world_sdf)
-set_tests_properties(world_sdf PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 
 target_sources(bridge_core PRIVATE src/PlanSolver.cpp)
 add_executable(test_plan_solver tests/test_plan_solver.cpp)
@@ -76,7 +69,6 @@ set_target_properties(test_plan_solver PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME plan_solver COMMAND test_plan_solver
          ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml
          ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml)
-set_tests_properties(plan_solver PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 
 target_sources(bridge_core PRIVATE src/Waypoints.cpp)
 add_executable(test_waypoints
@@ -89,7 +81,6 @@ target_link_libraries(test_waypoints PRIVATE bridge_core)
 set_target_properties(test_waypoints PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME waypoints COMMAND test_waypoints
          ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml)
-set_tests_properties(waypoints PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 
 target_sources(bridge_core PRIVATE src/StartState.cpp)
 add_executable(test_start_state tests/test_start_state.cpp)
@@ -97,7 +88,6 @@ target_include_directories(test_start_state PRIVATE src)
 target_link_libraries(test_start_state PRIVATE bridge_core)
 set_target_properties(test_start_state PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME start_state COMMAND test_start_state)
-set_tests_properties(start_state PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 
 target_sources(bridge_core PRIVATE src/BridgeMain.cpp)
 add_executable(test_bridge_main
@@ -111,4 +101,13 @@ set_target_properties(test_bridge_main PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME bridge_main COMMAND test_bridge_main
          ${CMAKE_CURRENT_SOURCE_DIR}/config/dh_params_tool.yaml
          ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml)
-set_tests_properties(bridge_main PROPERTIES ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
+
+# libgtsam.so/libgpmp2.so carry no RUNPATH of their own to their sibling
+# libs (libmetis-gtsam.so, libcephes-gtsam.so.1, ...), so RUNPATH on our
+# binaries alone doesn't resolve transitive deps under ctest's fork/exec —
+# a pre-existing gap in the third_party build, worked around once here for
+# every bridge_core-linked test rather than per add_test call.
+foreach(bridge_test_name planner_model world_sdf plan_solver waypoints start_state bridge_main)
+    set_tests_properties(${bridge_test_name} PROPERTIES
+        ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
+endforeach()
