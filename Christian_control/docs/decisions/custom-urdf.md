@@ -55,14 +55,15 @@ base-to-world radius was a round number. They describe the mount's intended
 geometry. Replace them with surveyed values when the rig is measured; the YAML
 and the URDF mounting block are the only two places that change.
 
-## The Cartesian interface is still `base_link`
+## The controller's internal Cartesian frame is still `base_link`
 
 The mounted branches remain part of the model, but they do not define the
-controller's Cartesian interface. `DualArmKinematics` transforms the right
-tool pose and all six Jacobian rows from the model-root axes into the right
-arm's `base_link` frame. Operator targets, printed positions, orientations,
-and CSV Cartesian fields use that same right-base frame. Reach telemetry is
-therefore measured from the zero origin of `base_link`.
+controller's internal Cartesian frame. `DualArmKinematics` transforms the
+right tool pose and all six Jacobian rows from the model-root axes into the
+right arm's `base_link` frame, and the Jacobian rows the control law consumes
+are in those axes. The controller no longer has Cartesian *targets* at all
+(see the retired section below); what remains base_link-framed is the
+diagnostic surface.
 
 World-frame access is **additive** and does not re-frame the control law.
 `world` is the URDF root, so Pinocchio's `oMf` placements already are
@@ -72,14 +73,54 @@ world-frame poses; the base-frame methods are the ones doing extra work.
 and its inverse) for either arm. `ReactiveLaw`, `Safety`, and the arrival
 monitors continue to reason in `base_link` axes, unchanged.
 
-A target line may declare its frame — `WORLD x y z` or `BASE x y z`, with no
-keyword still meaning `base_link` — and `ParsePoseTarget` converts WORLD input
-to `base_link` at ingestion. A `PoseTarget` is therefore always a `base_link`
-target and nothing downstream of the parser knows world-frame input exists. A
-WORLD line on a stream that was not given `T_world_base` is rejected, never
-silently read as `base_link`. Note that orientation on either frame's 7-field
-form remains gated off by `config::kAcceptOrientationTargets`, which is
-currently `false`.
+## One reference frame for the pipeline (2026-08-05)
+
+`config::kReferenceFrame` (`world | right_base | left_base`, default `world`)
+is the single switch deciding which frame Cartesian **targets are read in**
+and Cartesian **quantities are reported in**, across both projects. A goal
+file may override it per file with a `frame:` key governing that whole file;
+a bare `--goal X Y Z` always follows the constant.
+
+The transforms themselves stay in the URDF. Nothing in C++ hardcodes
+`T_world_base`: the bridge obtains it through
+`pinocchio_kinematics_adapter::WorldFromBase`, which reads the loaded model.
+Changing `dual_arm_mounting.yaml` and the URDF therefore needs no code change
+anywhere — verified by moving the mount 0.30 m and watching the same world
+goal resolve to a different `base_link` point with the same binary and no
+rebuild.
+
+**The planner stays base_link internally, deliberately.** `gpmp2`'s
+`ObstacleSDFFactorArm` pairs the arm model and the SDF in one factor, so they
+must share a frame; putting the arm model in world while the SDF grid stayed
+`base_link` would leave every collision check silently wrong. World input is
+therefore converted **once, at the bridge boundary**, and everything below
+that line — grid-bounds check, IK seed, solve — is `base_link`.
+
+Two things the constant deliberately does not govern, because it cannot:
+
+- `ToolPoseAndJacobianInBaseLink` is permanently `base_link`; `utils.cpp`
+  composes it with `DhRootInBaseLink().inverse()`, which is only correct in
+  that frame.
+- `tools/print_dual_arm_fk` prints world and base side by side, because that
+  comparison is what validates the mounting transform in the first place.
+
+An obstacle `box:` may only be given in `right_base`. An axis-aligned box in
+another frame is not axis-aligned after the mount rotation, and the SDF grid
+can only represent axis-aligned boxes; the bridge refuses rather than
+shipping a box that is not the one asked for.
+
+## Retired: world-frame target lines on the controller pipe
+
+The controller briefly accepted `WORLD x y z` / `BASE x y z` target lines,
+converted to `base_link` in `ParsePoseTarget`. That grammar is GONE: stage 2
+deleted the whole Cartesian pose path, so the controller now takes only
+`TRAJ_BEGIN … TRAJ_END` joint-trajectory blocks and has no Cartesian target
+input at all (`stage2-joint-trajectory-following.md`).
+
+Frame selection therefore lives entirely on the planner side now — see the
+section above. The controller's remaining Cartesian surface is diagnostic:
+the startup FK print, and the `pd_x..z` / `p_x..z` CSV columns, which the
+joint path leaves as NaN.
 
 `tools/print_dual_arm_fk` prints both arms' tool frames in world and in their
 own base frames at a chosen configuration. It links the URDF only — not Kortex

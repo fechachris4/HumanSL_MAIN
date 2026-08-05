@@ -41,6 +41,21 @@ PoseAndJacobian ToolPoseAndJacobianInBaseLink(const Eigen::Matrix<double, 7, 1>&
     return PoseAndJacobian{result.position, result.rotation, result.jacobian};
 }
 
+Eigen::Isometry3d WorldFromBase(bool left_arm)
+{
+    // Any DualArmKinematics instance carries the same mounting transforms —
+    // they come from the model, not the end-effector frame — so reuse the
+    // one already built for the configured tool frame rather than
+    // constructing another.
+    const pinocchio::SE3& mount =
+        SharedKinematics(config::kRightEndEffectorFrame)
+            .WorldFromBase(left_arm ? Arm::kLeft : Arm::kRight);
+    Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
+    transform.linear() = mount.rotation();
+    transform.translation() = mount.translation();
+    return transform;
+}
+
 Eigen::Isometry3d DhRootInBaseLink() {
     Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
     transform.linear() = Eigen::AngleAxisd(M_PI, Eigen::Vector3d::UnitX()).toRotationMatrix();

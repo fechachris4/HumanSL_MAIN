@@ -1,11 +1,19 @@
-# Where the arm goes: tool position, metres, right-arm base_link frame.
+# Where the arm goes: tool position, metres, in the frame declared below.
 # This is the one file to edit before a run. The bridge reads it whenever
 # planner_bridge is invoked without --goal/--goal-file, validates the
-# planned path, and only then writes waypoints to the controller.
-goal: [ -0.15, -0.40, 0.46 ]
+# planned path, and only then writes the trajectory block to the controller.
+# Which frame `goal` and `box` are written in: world, right_base or
+# left_base. Omitting this key means the compiled config::kReferenceFrame
+# (currently world), so it is stamped explicitly here — these numbers have
+# always been right-arm base_link, and reading them as world would move the
+# target 0.709 m.
+frame: right_base
+goal: [ 0.65, -0.40, 0.46 ]
 
-# Optional obstacle for the planner to avoid: axis-aligned box, metres,
-# base_link. Must lie inside the SDF grid volume or the run is rejected.
+# Optional obstacle for the planner to avoid: axis-aligned box, metres.
+# right_base only — an axis-aligned box in another frame is not axis-aligned
+# in base_link, and the SDF grid can only represent axis-aligned boxes.
+# Must lie inside the SDF grid volume or the run is rejected.
 # box:
 #   center: [0.5, 0.0, 0.3]
 #   half_extent: [0.05, 0.05, 0.05]

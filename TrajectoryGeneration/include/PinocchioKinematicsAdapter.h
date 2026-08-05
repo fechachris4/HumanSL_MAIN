@@ -41,6 +41,19 @@ struct PoseAndJacobian {
 PoseAndJacobian ToolPoseAndJacobianInBaseLink(const Eigen::Matrix<double, 7, 1>& q_rad,
                                               const std::string& end_effector_frame);
 
+// T_world_base for one arm, read from the canonical URDF via Pinocchio —
+// the ONLY way planner-side code should obtain the mounting transform, so
+// that changing config/dual_arm_mounting.yaml (and the URDF generated from
+// it) needs no code change anywhere. Never hardcode this.
+//
+// Constant for a given model: both mounts are fixed joints onto the `world`
+// root, so the result does not depend on the configuration.
+//
+// `arm` selects which base: false = right (base_link), true = left
+// (leftbase_link). A bool rather than an enum so this header stays free of
+// basic_control's Config.h, for the gtsam/Pinocchio isolation reason above.
+Eigen::Isometry3d WorldFromBase(bool left_arm);
+
 // The fixed DH-root-to-base_link offset every hand-rolled DH chain in this
 // codebase assumes (a pure rotation, zero translation — the DH convention's
 // root frame and base_link share an origin, just rotated). Every DH-chain

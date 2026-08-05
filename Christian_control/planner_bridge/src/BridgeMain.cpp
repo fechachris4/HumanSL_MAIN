@@ -19,6 +19,8 @@
 #include "TrajectoryEmit.h"
 #include "WorldSdf.h"
 #include "PathValidation.h"
+#include "PinocchioKinematicsAdapter.h"
+#include "Config.h"   // basic_control — config::kReferenceFrame
 
 namespace {
 
@@ -36,9 +38,13 @@ constexpr char kUsageText[] =
     "  more rows than the controller accepts, so the block carries an\n"
     "  evenly spread subset of at most 1000 of those states.\n"
     "\n"
-    "  --goal X Y Z           Target tool position, metres, base_link.\n"
-    "  --goal-file PATH       YAML goal file: `goal: [x, y, z]` (metres,\n"
-    "                         base_link) plus an optional `box:` with\n"
+    "  --goal X Y Z           Target tool position, metres, in the\n"
+    "                         compiled config::kReferenceFrame.\n"
+    "  --goal-file PATH       YAML goal file: `goal: [x, y, z]` metres,\n"
+    "                         plus an optional `frame:` (world, right_base\n"
+    "                         or left_base; default config::kReferenceFrame)\n"
+    "                         governing the whole file, and an optional `box:`\n"
+    "                         with\n"
     "                         `center:` and `half_extent:` lists. When\n"
     "                         neither --goal nor --goal-file is given, the\n"
     "                         default config/goal.yaml beside the\n"
@@ -63,7 +69,8 @@ constexpr char kUsageText[] =
     "                         resolved relative to the executable's\n"
     "                         directory (../../.. up to the repo root).\n"
     "  --box CX CY CZ HX HY HZ  Optional axis-aligned obstacle box:\n"
-    "                         centre and half-extents, metres, base_link.\n"
+    "                         centre and half-extents, metres,\n"
+    "                         right_base only (see --goal-file).\n"
     "                         Must lie fully inside the SDF grid volume\n"
     "                         (WorldSdf.h WorldGridBounds()) or the run is\n"
     "                         rejected — outside that volume gpmp2 silently\n"
@@ -138,6 +145,9 @@ double ParseDouble(const std::string& token) {
 
 struct ParsedArgs {
     std::optional<Eigen::Vector3d> goal;
+    // The frame `goal` and `box` were written in, before conversion. Set from
+    // a goal file's `frame:` key, otherwise config::kReferenceFrame.
+    config::ReferenceFrame frame = config::kReferenceFrame;
     std::optional<std::string> goal_file;
     std::optional<std::string> state_csv;
     std::optional<std::array<double, 7>> start_deg;
@@ -146,6 +156,46 @@ struct ParsedArgs {
     std::string runs_root = DefaultRunsRootPath();
     std::optional<AxisAlignedBox> box;
 };
+
+
+// ---------------------------------------------------------------
+// Frame boundary
+// ---------------------------------------------------------------
+//
+// The planner is base_link INTERNALLY and stays that way: the gpmp2 arm
+// model and the SDF are paired in one ObstacleSDFFactorArm, so they must
+// share a frame or every collision check is silently wrong. World-frame
+// input is therefore converted here, once, at the edge — and the transform
+// comes from the URDF through Pinocchio, never from a constant in this file,
+// so moving the world frame in dual_arm_mounting.yaml needs no code change.
+
+const char* FrameName(config::ReferenceFrame frame) {
+    return config::kReferenceFrameNames[static_cast<int>(frame)];
+}
+
+config::ReferenceFrame FrameFromName(const std::string& name) {
+    for (int i = 0; i < 3; ++i)
+        if (name == config::kReferenceFrameNames[i])
+            return static_cast<config::ReferenceFrame>(i);
+    throw std::invalid_argument(
+        "unknown frame '" + name + "' (expected world, right_base or left_base)");
+}
+
+// declared frame -> right base_link, the frame everything downstream uses.
+Eigen::Vector3d ToRightBase(const Eigen::Vector3d& point,
+                            config::ReferenceFrame frame) {
+    switch (frame) {
+    case config::ReferenceFrame::kRightBase:
+        return point;
+    case config::ReferenceFrame::kWorld:
+        return pinocchio_kinematics_adapter::WorldFromBase(false).inverse() * point;
+    case config::ReferenceFrame::kLeftBase:
+        // Through world: T_rightbase_world * T_world_leftbase * p.
+        return pinocchio_kinematics_adapter::WorldFromBase(false).inverse() *
+               (pinocchio_kinematics_adapter::WorldFromBase(true) * point);
+    }
+    throw std::invalid_argument("unhandled reference frame");
+}
 
 // Reads a YAML sequence of exactly three finite numbers into a vector,
 // naming `what` in the error so the operator sees which key was malformed.
@@ -174,6 +224,11 @@ void LoadGoalFile(const std::string& path, ParsedArgs& parsed) {
                                     error.what());
     }
     try {
+        // One `frame:` governs the whole file — goal and box alike, so a file
+        // can never end up half-converted. Omitted means the compiled
+        // config::kReferenceFrame, which is also what a bare --goal uses.
+        if (root["frame"])
+            parsed.frame = FrameFromName(root["frame"].as<std::string>());
         parsed.goal = ReadVector3(root["goal"], "goal");
         if (root["box"] && !parsed.box) {
             AxisAlignedBox box;
@@ -277,6 +332,36 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         diagnostics << "error: " << error.what() << "\n\n" << kUsageText;
         return 1;
     }
+
+    // THE frame boundary. Everything below this point is right base_link:
+    // the grid-bounds check, the solve, and the SDF all share that frame.
+    const config::ReferenceFrame declared_frame = parsed.frame;
+    try {
+        if (parsed.goal)
+            parsed.goal = ToRightBase(*parsed.goal, declared_frame);
+        if (parsed.box) {
+            parsed.box->center = ToRightBase(parsed.box->center, declared_frame);
+            // half_extent is a size, not a point — but the box is
+            // axis-aligned in its DECLARED frame, so a rotating conversion
+            // would not leave it axis-aligned in base_link. Refuse rather
+            // than silently shipping a box that is not the one asked for.
+            if (declared_frame != config::ReferenceFrame::kRightBase) {
+                diagnostics << "error: an obstacle box may only be given in "
+                               "right_base for now — an axis-aligned box in "
+                            << FrameName(declared_frame)
+                            << " is not axis-aligned in base_link, and the SDF "
+                               "grid only represents axis-aligned boxes\n";
+                return 1;
+            }
+        }
+    } catch (const std::exception& error) {
+        diagnostics << "error: " << error.what() << "\n";
+        return 1;
+    }
+    if (declared_frame != config::ReferenceFrame::kRightBase)
+        diagnostics << "goal frame: " << FrameName(declared_frame)
+                    << " -> base_link [" << parsed.goal->x() << ", "
+                    << parsed.goal->y() << ", " << parsed.goal->z() << "]\n";
 
     if (parsed.box) {
         const GridBounds bounds = WorldGridBounds();

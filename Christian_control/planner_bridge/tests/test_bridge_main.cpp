@@ -7,11 +7,35 @@
 #include <fstream>
 #include <sstream>
 #include "BridgeMain.h"
+#include "Config.h"   // basic_control — config::kReferenceFrame
 #include "JointTrajectory.h"
+#include "PinocchioKinematicsAdapter.h"
 #include "TrajectoryEmit.h"
 
 static_assert(kMaxTrajectoryBlockPoints == kMaxJointTrajectoryPoints,
               "the bridge's block cap must match what the controller accepts");
+
+// The single trajectory block on `text`, parsed by the controller's own
+// accumulator — the wire contract, checked end to end.
+static JointTrajectory ParseSingleBlock(const std::string& text) {
+    JointTrajectoryAccumulator accumulator;
+    std::istringstream lines(text);
+    std::string line, error;
+    int complete_blocks = 0;
+    JointTrajectory parsed;
+    while (std::getline(lines, line)) {
+        const std::optional<JointTrajectory> finished =
+            accumulator.Feed(line, error);
+        assert(error.empty());
+        if (finished) {
+            parsed = *finished;
+            ++complete_blocks;
+        }
+    }
+    assert(complete_blocks == 1);
+    assert(!accumulator.Collecting());
+    return parsed;
+}
 
 // One complete, well-formed trajectory block on `text`, parsed by the
 // controller's own accumulator — the wire contract, checked end to end.
@@ -37,8 +61,25 @@ int main(int argc, char** argv) {
     // in base_link. (0.20, 0.35, 0.90) is 0.59 m away — unreachable from a
     // single-solve offset — so the goal below reuses the (0.15, 0.10, -0.10)
     // offset already proven solvable by test_plan_solver.cpp (~20.6 cm).
+    //
+    // A bare --goal is read in config::kReferenceFrame, so the SAME physical
+    // point is spelled differently per frame. Both spellings appear below and
+    // must plan identically — that equivalence is the frame test.
+    // The one physical point, spelled in all three frames, so the test
+    // compiles and runs whatever config::kReferenceFrame is set to. Spelling
+    // only two of them would turn a legal config into a build break.
+    const char* const kGoalPerFrame[3][3] = {
+        {"0.15", "-1.158774", "0.497919"},   // kWorld
+        {"0.15", "0.075", "1.207"},          // kRightBase
+        {"0.15", "-0.896391", "-0.960105"},  // kLeftBase
+    };
+    const char* const* const kGoalInConfiguredFrame =
+        kGoalPerFrame[static_cast<int>(config::kReferenceFrame)];
+
+    std::string configured_frame_targets;
     const std::vector<std::string> args = {
-        "--goal", "0.15", "0.075", "1.207",
+        "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
+        kGoalInConfiguredFrame[2],
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
         "--dh", argv[1], "--joint-limits", argv[2]};
 
@@ -64,6 +105,7 @@ int main(int argc, char** argv) {
         }
         assert(complete_blocks == 1);
         assert(!accumulator.Collecting());
+        configured_frame_targets = targets.str();
         assert(traj.points.size() >= 2);
         assert(traj.points.front().t_s == 0.0);
         for (std::size_t i = 1; i < traj.points.size(); ++i)
@@ -93,7 +135,8 @@ int main(int argc, char** argv) {
     // obstacle" by gpmp2 — exit 1, no target output.
     std::ostringstream box_targets, box_diagnostics;
     const std::vector<std::string> out_of_grid_box_args = {
-        "--goal", "0.15", "0.075", "1.207",
+        "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
+        kGoalInConfiguredFrame[2],
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
         "--dh", argv[1], "--joint-limits", argv[2],
         "--box", "0", "0", "5.0", "0.05", "0.05", "0.05"};
@@ -112,19 +155,110 @@ int main(int argc, char** argv) {
     }
     std::ostringstream auto_targets, auto_diagnostics;
     const std::vector<std::string> auto_args = {
-        "--goal", "0.15", "0.075", "1.207",
+        "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
+        kGoalInConfiguredFrame[2],
         "--dh", argv[1], "--joint-limits", argv[2],
         "--runs-root", "tbm_tmp"};
     assert(RunBridge(auto_args, auto_targets, auto_diagnostics) == 0);
     assert(CompleteBlocksIn(auto_targets.str()) == 1);
     std::filesystem::remove_all("tbm_tmp");
 
+    // Frame equivalence: the same physical point, declared right_base in a
+    // goal file, must produce the same plan as the configured-frame --goal
+    // above. This is what proves the boundary conversion is the identity on
+    // the physical target rather than merely running without error.
+    {
+        {
+            std::ofstream frame_yaml("tbm_frame.yaml");
+            frame_yaml << "frame: right_base\n"
+                       << "goal: [0.15, 0.075, 1.207]\n";
+        }
+        std::ostringstream frame_targets, frame_diagnostics;
+        const std::vector<std::string> frame_args = {
+            "--goal-file", "tbm_frame.yaml",
+            "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+            "--dh", argv[1], "--joint-limits", argv[2]};
+        assert(RunBridge(frame_args, frame_targets, frame_diagnostics) == 0);
+        const JointTrajectory viaFile = ParseSingleBlock(frame_targets.str());
+        const JointTrajectory viaCli = ParseSingleBlock(configured_frame_targets);
+
+        // The claim is that both spellings command the same TOOL POSITION —
+        // not the same joint angles. The arm is redundant, so for one
+        // Cartesian goal the optimizer may legitimately settle a different
+        // elbow posture; asserting on joints made this test flaky about 1 run
+        // in 4. Compare where the tool ends up instead.
+        //
+        // Tolerance: the world spelling carries 6 decimals, so it round-trips
+        // a micrometre off, and each solve converges to within its own ~3 mm
+        // goal error — two independent solves can differ by roughly twice
+        // that, so 10 mm is the honest bound here, not a slack one.
+        // Via the Eigen-only adapter, not PlannerModel: PlannerModel.h pulls
+        // in utils.h, whose rival `struct JointTrajectory` cannot coexist
+        // with the controller's in one translation unit.
+        const Eigen::Vector3d tool_file =
+            pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+                viaFile.points.back().q_rad, config::kRightEndEffectorFrame)
+                .position;
+        const Eigen::Vector3d tool_cli =
+            pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+                viaCli.points.back().q_rad, config::kRightEndEffectorFrame)
+                .position;
+        assert((tool_file - tool_cli).norm() < 0.010);
+        std::filesystem::remove("tbm_frame.yaml");
+
+        // The SAME physical point in every frame the constant accepts, so
+        // each conversion branch in ToRightBase is exercised — including
+        // left_base, whose two-step composition
+        // (T_rightbase_world * T_world_leftbase) is the easiest to get
+        // backwards and would otherwise ship untested because it is named in
+        // config but never the default.
+        for (int frame = 0; frame < 3; ++frame) {
+            {
+                std::ofstream each_yaml("tbm_eachframe.yaml");
+                each_yaml << "frame: "
+                          << config::kReferenceFrameNames[frame] << "\n"
+                          << "goal: [" << kGoalPerFrame[frame][0] << ", "
+                          << kGoalPerFrame[frame][1] << ", "
+                          << kGoalPerFrame[frame][2] << "]\n";
+            }
+            std::ostringstream each_targets, each_diagnostics;
+            const std::vector<std::string> each_args = {
+                "--goal-file", "tbm_eachframe.yaml",
+                "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+                "--dh", argv[1], "--joint-limits", argv[2]};
+            assert(RunBridge(each_args, each_targets, each_diagnostics) == 0);
+            const JointTrajectory each = ParseSingleBlock(each_targets.str());
+            const Eigen::Vector3d tool_each =
+                pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+                    each.points.back().q_rad, config::kRightEndEffectorFrame)
+                    .position;
+            assert((tool_each - tool_cli).norm() < 0.010);
+            std::filesystem::remove("tbm_eachframe.yaml");
+        }
+    }
+
+    // An unknown frame name is refused, naming the accepted values.
+    {
+        {
+            std::ofstream bad_yaml("tbm_badframe.yaml");
+            bad_yaml << "frame: torso\ngoal: [0.15, 0.075, 1.207]\n";
+        }
+        std::ostringstream bad_targets, bad_diagnostics;
+        assert(RunBridge({"--goal-file", "tbm_badframe.yaml"}, bad_targets,
+                         bad_diagnostics) == 1);
+        assert(bad_targets.str().empty());
+        assert(bad_diagnostics.str().find("unknown frame 'torso'") !=
+               std::string::npos);
+        std::filesystem::remove("tbm_badframe.yaml");
+    }
+
     // Empty/missing runs root: exit 2, no target output, diagnostics point
     // at starting the controller.
     std::filesystem::create_directories("tbm_empty_tmp");
     std::ostringstream missing_targets, missing_diagnostics;
     const std::vector<std::string> missing_args = {
-        "--goal", "0.15", "0.075", "1.207",
+        "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
+        kGoalInConfiguredFrame[2],
         "--dh", argv[1], "--joint-limits", argv[2],
         "--runs-root", "tbm_empty_tmp"};
     assert(RunBridge(missing_args, missing_targets, missing_diagnostics) == 2);
@@ -136,7 +270,7 @@ int main(int argc, char** argv) {
     // run needs no typed coordinates. Same proven-reachable goal as above.
     {
         std::ofstream goal_yaml("tbm_goal.yaml");
-        goal_yaml << "goal: [0.15, 0.075, 1.207]\n";
+        goal_yaml << "frame: right_base\ngoal: [0.15, 0.075, 1.207]\n";
     }
     std::ostringstream file_targets, file_diagnostics;
     const std::vector<std::string> file_args = {
@@ -151,7 +285,7 @@ int main(int argc, char** argv) {
     // the --box flag: exit 1, no target output.
     {
         std::ofstream goal_yaml("tbm_goal_box.yaml");
-        goal_yaml << "goal: [0.15, 0.075, 1.207]\n";
+        goal_yaml << "frame: right_base\ngoal: [0.15, 0.075, 1.207]\n";
         goal_yaml << "box:\n";
         goal_yaml << "  center: [0, 0, 5.0]\n";
         goal_yaml << "  half_extent: [0.05, 0.05, 0.05]\n";
@@ -168,7 +302,8 @@ int main(int argc, char** argv) {
     // Giving both --goal and --goal-file is ambiguous — hard error, since a
     // silently-ignored file would hide which goal the arm is about to get.
     std::ostringstream both_targets, both_ignored;
-    assert(RunBridge({"--goal", "0.15", "0.075", "1.207",
+    assert(RunBridge({"--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
+        kGoalInConfiguredFrame[2],
                       "--goal-file", "tbm_goal.yaml"},
                      both_targets, both_ignored) == 1);
     assert(both_targets.str().empty());

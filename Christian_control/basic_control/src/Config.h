@@ -41,6 +41,34 @@ namespace config
     // The left arm is model-only: held here whenever the 14-joint
     // configuration is assembled. No left connection, feedback or command.
     inline constexpr JointVector kLeftNominalRad = {0, 0, 0, 0, 0, 0, 0};
+    // ---------------------------------------------------------------
+    // The pipeline's reference frame — ONE switch
+    // ---------------------------------------------------------------
+    //
+    // Which frame Cartesian targets are READ in and Cartesian quantities are
+    // REPORTED in, across the planner and the controller. Change it here and
+    // nothing else in either project changes: the transforms themselves come
+    // from the URDF (config/dual_arm_mounting.yaml -> GEN3_dual_mounted.urdf,
+    // via Pinocchio), never from a constant in code.
+    //
+    // Applies to: a goal file with no `frame:` key, a bare `--goal X Y Z`,
+    // and printed/diagnostic Cartesian output.
+    //
+    // Deliberately does NOT apply to two places, because it cannot:
+    //   - pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink, which
+    //     is permanently base_link — utils.cpp composes it with
+    //     DhRootInBaseLink().inverse(), and the GPMP2 arm model and the SDF
+    //     must share a frame or every collision check is silently wrong;
+    //   - tools/print_dual_arm_fk, which prints world AND base side by side
+    //     because that comparison is what validates the mounting transform.
+    enum class ReferenceFrame { kWorld, kRightBase, kLeftBase };
+    inline constexpr ReferenceFrame kReferenceFrame = ReferenceFrame::kWorld;
+
+    // The names accepted in a goal file's `frame:` key, in enum order.
+    inline constexpr const char* kReferenceFrameNames[] = {
+        "world", "right_base", "left_base"
+    };
+
     // Left-arm frame names, for kinematics only. The left chain ends at the
     // bare flange: ConfiguredTool_Link is RIGHT-ARM ONLY, because it encodes
     // the tool physically mounted on the right flange. Left and right tool
