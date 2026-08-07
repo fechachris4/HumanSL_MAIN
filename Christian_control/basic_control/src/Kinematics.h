@@ -81,17 +81,23 @@ struct PoseJacobian {
 // The Pinocchio model contains both mounted Gen3 arms (14 velocity DoFs).
 // Kinova's continuous joints 1/3/5/7 each use Pinocchio's two-value
 // (cos(angle), sin(angle)) configuration representation, so model.nq is 22.
-// The controller and Kortex command path remain seven-wide for the right arm.
-// This adapter assembles q_full = [right measured, left nominal] by JOINT NAME,
-// computes the full mounted-model kinematics, expresses the right tool pose
-// and Jacobian in the right base frame, and selects the seven right-arm
-// Jacobian columns in Kortex actuator order.
+// The controller and Kortex command path remain seven-wide, for exactly one
+// CONTROLLED arm, chosen at construction and fixed for the adapter's life —
+// one basic_control process drives one arm (Main.cpp's RunOneArm; a
+// --arm=both run is two processes, each with its own adapter). This adapter
+// assembles q_full = [controlled measured, other nominal] by JOINT NAME,
+// computes the full mounted-model kinematics, expresses the controlled
+// arm's tool pose and Jacobian in ITS base frame, and selects its seven
+// Jacobian columns in Kortex actuator order. The other (uncontrolled) arm
+// has no connection in this process; its slots are seeded once at
+// construction from other_arm_nominal_rad and never updated, so its
+// reported FK is model-only, not measured — see config::ArmConfig.
 //
 
 
 
 
-// Which arm a world-frame query refers to. The controller still commands
+// Which arm a mount-frame query refers to. The controller still commands
 // only the right arm; this selects which branch of the model to READ.
 enum class Arm { kRight, kLeft };
 
@@ -105,56 +111,67 @@ public:
         2, 1, 2, 1, 2, 1, 2
     };
 
+    // other_arm_nominal_rad: the UNCONTROLLED arm's assumed pose
+    // (config::ArmConfig::other_arm_nominal_rad — kLeftNominalRad when
+    // controlled_arm is kRight, kRightNominalRad when it is kLeft).
     DualArmKinematics(
-        Dynamics& dynamics, const JointVector& left_nominal_rad,
+        Dynamics& dynamics, Arm controlled_arm,
+        const JointVector& other_arm_nominal_rad,
         const std::string& right_base_frame,
         const std::string& right_end_effector_frame,
         const std::string& left_base_frame = config::kLeftBaseFrame,
         const std::string& left_end_effector_frame = config::kLeftEndEffectorFrame);
 
-    PositionJacobian RightPositionAndJacobian(
-        const Eigen::Matrix<double, 7, 1>& right_q_rad,
+    Arm controlled_arm() const { return controlled_arm_; }
+    const JointVector& other_arm_nominal_rad() const { return other_arm_nominal_rad_; }
+
+    // Pose and Jacobian of the CONTROLLED arm's tool, in ITS OWN base frame,
+    // at the given measured configuration. The per-cycle hot path
+    // (Controller.cpp) — the only kinematics call in the control loop.
+    PositionJacobian ControlledPositionAndJacobian(
+        const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
         KinematicsWorkspace& workspace);
-    PoseJacobian RightPoseAndJacobian(
-        const Eigen::Matrix<double, 7, 1>& right_q_rad,
+    PoseJacobian ControlledPoseAndJacobian(
+        const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
         KinematicsWorkspace& workspace);
 
     // ---------------------------------------------------------------
     // World frame
     // ---------------------------------------------------------------
     //
-    // `world` is the URDF root, so Pinocchio's oMf placements ARE world-frame
-    // poses; nothing extra is computed to reach world. The base-frame methods
+    // `mount` is the URDF root, so Pinocchio's oMf placements ARE mount-frame
+    // poses; nothing extra is computed to reach mount. The base-frame methods
     // above are the ones doing extra work, converting INTO base_link, and they
     // remain the controller's interface — see docs/decisions/custom-urdf.md.
 
-    // T_world_base for either arm. Constant: both mounts are fixed joints, so
+    // T_mount_base for either arm. Constant: both mounts are fixed joints, so
     // this does not depend on the configuration. Cached at construction.
-    const pinocchio::SE3& WorldFromBase(Arm arm) const;
+    const pinocchio::SE3& MountFromBase(Arm arm) const;
 
-    // The legacy-point conversion: p_world = T_world_base * p_base, and its
+    // The legacy-point conversion: p_mount = T_mount_base * p_base, and its
     // inverse. Use these to lift anything still expressed in an arm's
-    // base_link frame (recorded targets, older logs) into world, or to push a
-    // world-frame target down into the frame the control loop still uses.
-    Eigen::Vector3d PointBaseToWorld(Arm arm, const Eigen::Vector3d& p_base) const;
-    Eigen::Vector3d PointWorldToBase(Arm arm, const Eigen::Vector3d& p_world) const;
+    // base_link frame (recorded targets, older logs) into mount, or to push a
+    // mount-frame target down into the frame the control loop still uses.
+    Eigen::Vector3d PointBaseToMount(Arm arm, const Eigen::Vector3d& p_base) const;
+    Eigen::Vector3d PointMountToBase(Arm arm, const Eigen::Vector3d& p_mount) const;
 
     // Tool pose of one arm in the WORLD frame, at a configuration given for
     // BOTH arms. Both are required because one Pinocchio model holds both
-    // branches; passing the left angles explicitly keeps the caller honest
-    // about what the left arm was assumed to be doing.
-    Pose ToolPoseInWorld(Arm arm,
+    // branches; passing both angles explicitly keeps the caller honest about
+    // what the uncontrolled arm was assumed to be doing.
+    Pose ToolPoseInMount(Arm arm,
                          const Eigen::Matrix<double, 7, 1>& right_q_rad,
                          const Eigen::Matrix<double, 7, 1>& left_q_rad);
 
-    // Same, with the left arm at its compiled nominal — the live case, where
-    // the left arm is model-only and has no feedback to report.
-    Pose ToolPoseInWorld(Arm arm, const Eigen::Matrix<double, 7, 1>& right_q_rad);
+    // Same, with the CONTROLLED arm at controlled_q_rad and the other arm at
+    // its compiled other_arm_nominal_rad — the live case, where the other
+    // arm is model-only and has no feedback to report.
+    Pose ToolPoseInMount(Arm arm, const Eigen::Matrix<double, 7, 1>& controlled_q_rad);
 
     // Exposed for hardware-free structural tests. The returned reference is
     // owned by this adapter and is overwritten by the next call.
-    const Eigen::VectorXd& FullConfigurationForRight(
-        const Eigen::Matrix<double, 7, 1>& right_q_rad);
+    const Eigen::VectorXd& FullConfigurationForControlled(
+        const Eigen::Matrix<double, 7, 1>& controlled_q_rad);
 
     // Both arms' angles into the full q, by joint name. Same ownership rule.
     const Eigen::VectorXd& FullConfiguration(
@@ -168,23 +185,23 @@ public:
     const std::array<int, 7>& right_v_indices() const { return right_v_indices_; }
     const std::array<int, 7>& left_q_indices() const { return left_q_indices_; }
     const std::array<int, 7>& left_v_indices() const { return left_v_indices_; }
-    const JointVector& left_nominal_rad() const { return left_nominal_rad_; }
 
 private:
-    void UpdateFullKinematics(const Eigen::Matrix<double, 7, 1>& right_q_rad,
+    void UpdateFullKinematics(const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
                               KinematicsWorkspace& workspace);
 
     Dynamics& dynamics_;
+    Arm controlled_arm_;
     pinocchio::FrameIndex right_base_frame_id_;
     pinocchio::FrameIndex right_frame_id_;
     pinocchio::FrameIndex left_base_frame_id_;
     pinocchio::FrameIndex left_frame_id_;
-    pinocchio::SE3 world_from_right_base_;
-    pinocchio::SE3 world_from_left_base_;
+    pinocchio::SE3 mount_from_right_base_;
+    pinocchio::SE3 mount_from_left_base_;
     std::array<int, 7> right_q_indices_{};
     std::array<int, 7> right_v_indices_{};
     std::array<int, 7> left_q_indices_{};
     std::array<int, 7> left_v_indices_{};
-    JointVector left_nominal_rad_;
+    JointVector other_arm_nominal_rad_;
     Eigen::VectorXd q_full_;
 };

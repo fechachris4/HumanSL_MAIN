@@ -24,6 +24,7 @@
 #include <gpmp2/planner/TrajUtils.h>
 
 #include "JerkPenaltyFactor.h"
+#include "TrajectoryOptimization.h"  // OptimizerTuning, the default argument's type
 
 
 /**
@@ -38,7 +39,8 @@ TrajectoryResult optimizeJointTrajectory(
     const JointLimits& pos_limits,
     const JointLimits& vel_limits,
     const size_t total_time_step,
-    const double total_time_sec
+    const double total_time_sec,
+    const OptimizerTuning& tuning = OptimizerTuning{}
 );
 
 

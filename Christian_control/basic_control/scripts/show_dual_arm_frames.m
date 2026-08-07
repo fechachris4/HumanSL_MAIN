@@ -1,10 +1,10 @@
 function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
 % show_dual_arm_frames — ONE figure: the dual-mounted Gen3 model posed in the
-% WORLD frame, with the world/base_link/leftbase_link/tool frames, the two
+% MOUNT frame, with the mount/base_link/leftbase_link/tool frames, the two
 % arms' reach shells, and a goal point drawn in whichever frame you declare.
 % Fully interactive (orbit/pan/zoom).
 %
-% Since 2026-08-05 `world` sits at the MIDPOINT of the two base_link origins
+% Since 2026-08-05 `mount` sits at the MIDPOINT of the two base_link origins
 % (Christian_control/docs/decisions/custom-urdf.md). This script checks that
 % rather than assuming it: it recomputes the midpoint from the posed model and
 % reports the residual, so if the URDF mounting block is ever edited the
@@ -14,7 +14,7 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
 %   show_dual_arm_frames                            % both arms at q = 0
 %   show_dual_arm_frames(rightDeg)                  % 1x7 degrees, right arm
 %   show_dual_arm_frames(rightDeg, leftDeg)         % both arms
-%   show_dual_arm_frames(rightDeg, leftDeg, [x y z], "WORLD")
+%   show_dual_arm_frames(rightDeg, leftDeg, [x y z], "MOUNT")
 %   show_dual_arm_frames(rightDeg, leftDeg, [x y z], "BASE")   % right base_link
 %
 % CROSS-CHECK: the numbers printed below come from MATLAB's own URDF parser,
@@ -30,8 +30,8 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     if nargin < 3, goal = []; end
     if nargin < 4 || isempty(goalFrame), goalFrame = "BASE"; end
     goalFrame = upper(string(goalFrame));
-    if ~ismember(goalFrame, ["WORLD", "BASE"])
-        error('goalFrame must be "WORLD" or "BASE"');
+    if ~ismember(goalFrame, ["MOUNT", "BASE"])
+        error('goalFrame must be "MOUNT" or "BASE"');
     end
     if numel(rightDeg) ~= 7 || numel(leftDeg) ~= 7
         error("rightDeg and leftDeg must each hold 7 joint angles in degrees");
@@ -84,7 +84,7 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     dualPose = setJointsByName(dualPose, rightNames, deg2rad(rightDeg));
     dualPose = setJointsByName(dualPose, leftNames,  deg2rad(leftDeg));
 
-    T_world = getTransform(dual, dualPose, dual.BaseName);
+    T_mount = getTransform(dual, dualPose, dual.BaseName);
     T_rbase = getTransform(dual, dualPose, "base_link");
     T_lbase = getTransform(dual, dualPose, "leftbase_link");
     % NOTE: the two tool frames are NOT the same point on the arm. The right
@@ -102,35 +102,35 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     hold on; axis equal
     view(45, 18); camva(6)
     xlabel("x [m]"); ylabel("y [m]"); zlabel("z [m]");
-    title(sprintf(['Dual-mounted Gen3 in WORLD - bases %.4f m apart, ' ...
+    title(sprintf(['Dual-mounted Gen3 in MOUNT - bases %.4f m apart, ' ...
                    'tilted %c%.2f%c about x'], separation, char(177), ...
                   rad2deg(tilt), char(176)));
 
-    plot3(T_world(1,4), T_world(2,4), T_world(3,4), "o", ...
+    plot3(T_mount(1,4), T_mount(2,4), T_mount(3,4), "o", ...
           MarkerSize=20, MarkerFaceColor="r", MarkerEdgeColor="k", LineWidth=1.5);
-    drawTriad(T_world, 0.30, "world (URDF root, = base midpoint)");
+    drawTriad(T_mount, 0.30, "mount (URDF root, = base midpoint)");
     drawTriad(T_rbase, 0.22, "base\_link (right)");
     drawTriad(T_lbase, 0.22, "leftbase\_link");
     drawTriad(T_rtool, 0.12, "ConfiguredTool\_Link");
     drawTriad(T_ltool, 0.12, "leftEndEffector\_Link");
 
     % ---------------------------------------------------------------
-    % Check, do not assert: is world really the midpoint?
+    % Check, do not assert: is mount really the midpoint?
     % ---------------------------------------------------------------
     midpoint = (T_rbase(1:3,4) + T_lbase(1:3,4)) / 2;
-    residual = norm(midpoint - T_world(1:3,4));
+    residual = norm(midpoint - T_mount(1:3,4));
     if residual < 1e-9
-        fprintf(['world IS the midpoint of base_link/leftbase_link ' ...
+        fprintf(['mount IS the midpoint of base_link/leftbase_link ' ...
                  '(residual %.2e m)\n'], residual);
     else
-        % Loud, and drawn, because every world-frame number depends on it.
-        fprintf(2, ['WARNING: world is NOT the midpoint - off by %.6f m. ' ...
+        % Loud, and drawn, because every mount-frame number depends on it.
+        fprintf(2, ['WARNING: mount is NOT the midpoint - off by %.6f m. ' ...
                     'The URDF mounting block no longer matches ' ...
                     'dual_arm_mounting.yaml.\n'], residual);
         plot3(midpoint(1), midpoint(2), midpoint(3), "s", ...
               MarkerSize=18, MarkerFaceColor="m", MarkerEdgeColor="k", LineWidth=1.5);
         text(midpoint(1), midpoint(2), midpoint(3)-0.06, ...
-             "TRUE midpoint (world has drifted from it)", ...
+             "TRUE midpoint (mount has drifted from it)", ...
              FontWeight="bold", Color="m");
     end
 
@@ -138,8 +138,8 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     % The table to diff against ./build/print_dual_arm_fk
     % ---------------------------------------------------------------
     fprintf("\nmodel: %s\n", urdfPath);
-    printMount("right base_link in world", T_rbase);
-    printMount("left  base_link in world", T_lbase);
+    printMount("right base_link in mount", T_rbase);
+    printMount("left  base_link in mount", T_lbase);
     fprintf("\nFK at the requested configuration (angles given in degrees):\n");
     printArm("right", "ConfiguredTool_Link",  "base_link",     T_rtool, T_rbase);
     printArm("left ", "leftEndEffector_Link", "leftbase_link", T_ltool, T_lbase);
@@ -152,23 +152,23 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     if ~isempty(goal)
         goal = goal(:);
         if goalFrame == "BASE"
-            goalWorld = T_rbase * [goal; 1];
-            goalWorld = goalWorld(1:3);
-            fprintf("goal (base_link) [%.4f %.4f %.4f] -> world [%.4f %.4f %.4f]\n", ...
-                    goal, goalWorld);
+            goalMount = T_rbase * [goal; 1];
+            goalMount = goalMount(1:3);
+            fprintf("goal (base_link) [%.4f %.4f %.4f] -> mount [%.4f %.4f %.4f]\n", ...
+                    goal, goalMount);
         else
-            goalWorld = goal;
+            goalMount = goal;
             goalBase = T_rbase \ [goal; 1];
-            fprintf("goal (world) [%.4f %.4f %.4f] -> base_link [%.4f %.4f %.4f]\n", ...
+            fprintf("goal (mount) [%.4f %.4f %.4f] -> base_link [%.4f %.4f %.4f]\n", ...
                     goal, goalBase(1:3));
         end
-        plot3(goalWorld(1), goalWorld(2), goalWorld(3), "rp", ...
+        plot3(goalMount(1), goalMount(2), goalMount(3), "rp", ...
               MarkerSize=16, MarkerFaceColor="r");
-        text(goalWorld(1)+0.03, goalWorld(2), goalWorld(3), ...
+        text(goalMount(1)+0.03, goalMount(2), goalMount(3), ...
              sprintf("goal (%s)", goalFrame));
         toolP = T_rtool(1:3, 4);
-        plot3([toolP(1) goalWorld(1)], [toolP(2) goalWorld(2)], ...
-              [toolP(3) goalWorld(3)], "r--", LineWidth=1.5);
+        plot3([toolP(1) goalMount(1)], [toolP(2) goalMount(2)], ...
+              [toolP(3) goalMount(3)], "r--", LineWidth=1.5);
     end
 
     % ~0.9 m reach shell about each base, so feasibility is eyeballable.
@@ -202,7 +202,7 @@ end
 function printArm(label, toolFrame, baseFrame, T_tool, T_base)
     T_inBase = T_base \ T_tool;
     fprintf("  %s  tool frame %s\n", label, toolFrame);
-    fprintf("    world      p %s   rpy %s\n", ...
+    fprintf("    mount      p %s   rpy %s\n", ...
             fmtXyz(T_tool(1:3,4)), fmtRpy(T_tool(1:3,1:3)));
     fprintf("    %-10s p %s   rpy %s\n", baseFrame, ...
             fmtXyz(T_inBase(1:3,4)), fmtRpy(T_inBase(1:3,1:3)));

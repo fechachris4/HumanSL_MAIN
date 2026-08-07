@@ -5,7 +5,7 @@
 // GenerateTrajectory.h declares this free function but never defined it —
 // OptimizeTrajectory::optimizeJointTrajectory (TrajectoryOptimization.h) is
 // the only implementation in the tree. This is a thin forwarding shim: zero
-// start velocity, class defaults for target_dt/tolerances.
+// start velocity, the caller's graph weights, class default for target_dt.
 //
 // OptimizeTrajectory::optimizeJointTrajectory never populates
 // TrajectoryResult::optimization_duration/initiation_duration on the struct
@@ -25,13 +25,14 @@ TrajectoryResult optimizeJointTrajectory(
     const JointLimits& pos_limits,
     const JointLimits& vel_limits,
     const size_t total_time_step,
-    const double total_time_sec) {
+    const double total_time_sec,
+    const OptimizerTuning& tuning) {
     OptimizeTrajectory optimizer;
     const gtsam::Vector start_vel = gtsam::Vector::Zero(start_config.size());
     const auto start_time = std::chrono::steady_clock::now();
     TrajectoryResult result = optimizer.optimizeJointTrajectory(
         arm_model, sdf, init_values, target_pose, start_config, start_vel,
-        pos_limits, vel_limits, total_time_step, total_time_sec);
+        pos_limits, vel_limits, total_time_step, total_time_sec, tuning);
     const auto end_time = std::chrono::steady_clock::now();
     result.optimization_duration =
         std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);

@@ -7,12 +7,13 @@
 // are the session login and the ClearFaults RPC itself. Exit 0 only if,
 // after clearing, the arm reports SERVOING_READY with every fault bank zero.
 //
-//   ./clear_faults
+//   ./clear_faults [--ip <address>]   (default: config::kRightRobotIp)
 //
 
 #include "Config.h"
 #include "Hardware.h"
 #include "Safety.h"
+#include "ToolArgs.h"
 
 #include <chrono>
 #include <iostream>
@@ -65,11 +66,12 @@ namespace
     }
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    const std::string ip = ParseIpArg(argc, argv, "clear_faults");
     try
     {
-        Connect connection(config::kRightRobotIp);
+        Connect connection(ip);
         k_api::BaseCyclic::Feedback fb =
             connection.base_cyclic()->RefreshFeedback();
         PrintState("before", fb);

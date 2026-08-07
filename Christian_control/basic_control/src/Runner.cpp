@@ -90,7 +90,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           LoopLog& log, const std::atomic<bool>& stop,
                           std::chrono::microseconds period,
                           const JointVector& qdot_limit_deg_s,
-                          double following_error_limit_deg, bool robot_ready)
+                          double following_error_limit_deg, bool robot_ready,
+                          const char* base_frame)
 {
     // T1: the readiness gate is a hard precondition (unreachable from main,
     // which returns before calling us when the gate fails).
@@ -389,7 +390,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             {
                 std::cout << "target reached: " << status.p_desired[0] << " "
                     << status.p_desired[1] << " " << status.p_desired[2]
-                    << " m, within " << status.arrival_error_m * 1000.0
+                    << " m in " << base_frame
+                    << ", within " << status.arrival_error_m * 1000.0
                     << " mm — holding\n";
                 reference.OnArrivalEdge(status);
             }

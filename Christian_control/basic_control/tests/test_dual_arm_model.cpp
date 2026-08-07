@@ -65,14 +65,14 @@ int main()
         Check(dynamics.model_.nv == 14, "dual model has nv = 14");
         Check(dynamics.model_.njoints == 15,
               "dual model has 14 movable joints plus Pinocchio universe");
-        Check(dynamics.model_.existFrame("world"), "dual model retains world frame");
+        Check(dynamics.model_.existFrame("mount"), "dual model retains mount frame");
         Check(dynamics.model_.existFrame("base_link"),
               "dual model retains mounted right base");
         Check(dynamics.model_.existFrame("leftbase_link"),
               "dual model retains mounted left base");
 
         DualArmKinematics adapter(
-            dynamics, config::kLeftNominalRad,
+            dynamics, Arm::kRight, config::kLeftNominalRad,
             config::kRightBaseFrame,
             config::kRightEndEffectorFrame);
 
@@ -97,7 +97,7 @@ int main()
         Eigen::Matrix<double, 7, 1> right_q;
         right_q << 0.11, -0.22, 0.33, -0.44, 0.55, -0.66, 0.77;
         const Eigen::VectorXd& q_full =
-            adapter.FullConfigurationForRight(right_q);
+            adapter.FullConfigurationForControlled(right_q);
         for (int i = 0; i < 7; ++i) {
             const pinocchio::JointIndex right_id =
                 dynamics.model_.getJointId(right_names[static_cast<std::size_t>(i)]);
@@ -159,7 +159,7 @@ int main()
 
         // Changing the right measured state must never mutate the left nominal.
         const Eigen::VectorXd& q_second =
-            adapter.FullConfigurationForRight(
+            adapter.FullConfigurationForControlled(
                 Eigen::Matrix<double, 7, 1>::Constant(-0.25));
         for (int i = 0; i < 7; ++i) {
             const std::size_t joint = static_cast<std::size_t>(i);
@@ -174,11 +174,11 @@ int main()
         // Exact fixed mounting geometry. The numbers live in
         // config/dual_arm_mounting.yaml; test_dual_arm_mounting.cpp is what
         // holds the URDF to that file. Here we only pin the SHAPE the rest of
-        // this test depends on: world at the midpoint, mirrored about world's
-        // XZ plane, so each base sits at -+separation/2 along world y with no
+        // this test depends on: mount at the midpoint, mirrored about mount's
+        // XZ plane, so each base sits at -+separation/2 along mount y with no
         // z offset.
         const Eigen::VectorXd& q_mount =
-            adapter.FullConfigurationForRight(
+            adapter.FullConfigurationForControlled(
                 Eigen::Matrix<double, 7, 1>::Zero());
         const Pose right_base =
             forward_kinematics(dynamics, q_mount, "base_link");
@@ -193,79 +193,79 @@ int main()
               "left fixed mount rotation is -1.2085 rad about x");
         Check((right_base.position -
                Eigen::Vector3d(0, -kHalfSeparation, 0)).norm() < 1e-9,
-              "right base sits half the separation along world -y");
+              "right base sits half the separation along mount -y");
         Check((left_base.position -
                Eigen::Vector3d(0, kHalfSeparation, 0)).norm() < 1e-9,
-              "left base sits half the separation along world +y");
+              "left base sits half the separation along mount +y");
         Check(((right_base.position + left_base.position) / 2.0).norm() < 1e-12,
-              "world origin is the midpoint of the two base origins");
+              "mount origin is the midpoint of the two base origins");
 
-        // The world accessors must agree with plain FK on the same frames, and
+        // The mount accessors must agree with plain FK on the same frames, and
         // the point helpers must round-trip.
-        Check((adapter.WorldFromBase(Arm::kRight).translation() -
+        Check((adapter.MountFromBase(Arm::kRight).translation() -
                right_base.position).norm() < 1e-12,
-              "WorldFromBase(right) matches FK on base_link");
-        Check((adapter.WorldFromBase(Arm::kLeft).translation() -
+              "MountFromBase(right) matches FK on base_link");
+        Check((adapter.MountFromBase(Arm::kLeft).translation() -
                left_base.position).norm() < 1e-12,
-              "WorldFromBase(left) matches FK on leftbase_link");
+              "MountFromBase(left) matches FK on leftbase_link");
         const Eigen::Vector3d p_base(0.4, -0.1, 0.3);
-        Check((adapter.PointWorldToBase(
-                   Arm::kRight, adapter.PointBaseToWorld(Arm::kRight, p_base)) -
+        Check((adapter.PointMountToBase(
+                   Arm::kRight, adapter.PointBaseToMount(Arm::kRight, p_base)) -
                p_base).norm() < 1e-12,
-              "base->world->base round-trips for the right arm");
-        Check((adapter.PointBaseToWorld(Arm::kRight, Eigen::Vector3d::Zero()) -
+              "base->mount->base round-trips for the right arm");
+        Check((adapter.PointBaseToMount(Arm::kRight, Eigen::Vector3d::Zero()) -
                right_base.position).norm() < 1e-12,
-              "the right base origin maps to the mount position in world");
-        // A world-frame tool pose must equal the base-frame one carried through
+              "the right base origin maps to the mount position in mount");
+        // A mount-frame tool pose must equal the base-frame one carried through
         // the mount — the identity the WORLD target path relies on.
         const Eigen::Matrix<double, 7, 1> q_probe =
             (Eigen::Matrix<double, 7, 1>() << 0.2, -0.4, 0.1, 0.9, -0.3, 0.5, 0.7)
                 .finished();
         KinematicsWorkspace probe_workspace(dynamics);
         const PoseJacobian probe_base =
-            adapter.RightPoseAndJacobian(q_probe, probe_workspace);
-        const Pose probe_world = adapter.ToolPoseInWorld(Arm::kRight, q_probe);
-        Check((adapter.PointBaseToWorld(Arm::kRight, probe_base.position) -
-               probe_world.position).norm() < 1e-12,
-              "world tool position equals the base one through the mount");
-        Check((adapter.PointWorldToBase(Arm::kRight, probe_world.position) -
+            adapter.ControlledPoseAndJacobian(q_probe, probe_workspace);
+        const Pose probe_mount = adapter.ToolPoseInMount(Arm::kRight, q_probe);
+        Check((adapter.PointBaseToMount(Arm::kRight, probe_base.position) -
+               probe_mount.position).norm() < 1e-12,
+              "mount tool position equals the base one through the mount");
+        Check((adapter.PointMountToBase(Arm::kRight, probe_mount.position) -
                probe_base.position).norm() < 1e-12,
-              "world tool position converts back to the base one");
+              "mount tool position converts back to the base one");
 
         // Full 6x14 Jacobian is computed, then the adapter selects exactly the
         // seven named right columns. The separate left tree contributes zero
         // columns to the right end-effector and is never sent to the controller.
         KinematicsWorkspace workspace(dynamics);
         const PoseJacobian selected =
-            adapter.RightPoseAndJacobian(right_q, workspace);
+            adapter.ControlledPoseAndJacobian(right_q, workspace);
         const Eigen::VectorXd q_eval =
-            adapter.FullConfigurationForRight(right_q);
-        const Pose world_tool = forward_kinematics(
+            adapter.FullConfigurationForControlled(right_q);
+        const Pose mount_tool = forward_kinematics(
             dynamics, q_eval, config::kRightEndEffectorFrame);
-        const Eigen::Matrix3d base_R_world = right_base.rotation.transpose();
+        const Eigen::Matrix3d base_R_mount = right_base.rotation.transpose();
         const Eigen::Vector3d expected_base_position =
-            base_R_world * (world_tool.position - right_base.position);
+            base_R_mount * (mount_tool.position - right_base.position);
         const Eigen::Matrix3d expected_base_rotation =
-            base_R_world * world_tool.rotation;
+            base_R_mount * mount_tool.rotation;
         Check((selected.position - expected_base_position).norm() < 1e-12,
               "right tool position is expressed in base_link");
         Check((selected.rotation - expected_base_rotation).norm() < 1e-12,
               "right tool orientation is expressed in base_link");
 
-        KinematicsWorkspace world_workspace(dynamics);
+        KinematicsWorkspace mount_workspace(dynamics);
         pinocchio::computeJointJacobians(dynamics.model_, dynamics.data_, q_eval);
         pinocchio::updateFramePlacements(dynamics.model_, dynamics.data_);
         pinocchio::getFrameJacobian(
             dynamics.model_, dynamics.data_, adapter.right_frame_id(),
-            pinocchio::LOCAL_WORLD_ALIGNED, world_workspace.jacobian_full);
+            pinocchio::LOCAL_WORLD_ALIGNED, mount_workspace.jacobian_full);
         for (int i = 0; i < 7; ++i) {
             const int right_v =
                 adapter.right_v_indices()[static_cast<std::size_t>(i)];
             Eigen::Matrix<double, 6, 1> expected_base_column;
             expected_base_column.head<3>() =
-                base_R_world * world_workspace.jacobian_full.col(right_v).head<3>();
+                base_R_mount * mount_workspace.jacobian_full.col(right_v).head<3>();
             expected_base_column.tail<3>() =
-                base_R_world * world_workspace.jacobian_full.col(right_v).tail<3>();
+                base_R_mount * mount_workspace.jacobian_full.col(right_v).tail<3>();
             Check((selected.jacobian.col(i) -
                    workspace.jacobian_full.col(right_v)).norm() < 1e-12,
                   "selected Jacobian column matches full right column " +
@@ -282,6 +282,79 @@ int main()
         Check(selected.position.allFinite() && selected.rotation.allFinite() &&
                   selected.jacobian.allFinite(),
               "mounted right pose and selected Jacobian are finite");
+
+        // --- left-controlled adapter: the same model, mirrored. Reuses
+        // `dynamics` (safe: every call below fully recomputes dynamics.data_
+        // before reading it, and nothing here interleaves with `adapter`
+        // above). Right's own checks above already cover both arms' index
+        // maps, velocity/effort/position limits and cos/sin sizing (those
+        // depend only on the joint chain, not on controlled_arm), so this
+        // block only re-tests what controlled_arm actually changes: which
+        // half of q_full gets written every cycle, and which base/tool
+        // frame ControlledPoseAndJacobian resolves into.
+        DualArmKinematics left_adapter(
+            dynamics, Arm::kLeft, config::kRightNominalRad,
+            config::kRightBaseFrame, config::kRightEndEffectorFrame);
+        Check(left_adapter.controlled_arm() == Arm::kLeft,
+              "left-controlled adapter reports Arm::kLeft");
+        Check(left_adapter.other_arm_nominal_rad() == config::kRightNominalRad,
+              "left-controlled adapter's other-arm nominal is the right nominal");
+
+        Eigen::Matrix<double, 7, 1> left_q;
+        left_q << 0.12, -0.23, 0.34, -0.45, 0.56, -0.67, 0.78;
+        const Eigen::VectorXd& left_q_full =
+            left_adapter.FullConfigurationForControlled(left_q);
+        for (int i = 0; i < 7; ++i) {
+            const std::size_t joint = static_cast<std::size_t>(i);
+            CheckStoredAngle(
+                left_q_full, left_adapter.left_q_indices()[joint],
+                DualArmKinematics::kJointConfigurationSizes[joint], left_q[i],
+                "left measured joint enters its named full-model slot " +
+                    std::to_string(i + 1));
+            CheckStoredAngle(
+                left_q_full, left_adapter.right_q_indices()[joint],
+                DualArmKinematics::kJointConfigurationSizes[joint],
+                config::kRightNominalRad[joint],
+                "right joint stays at nominal under left control " +
+                    std::to_string(i + 1));
+        }
+
+        KinematicsWorkspace left_workspace(dynamics);
+        const PoseJacobian left_selected =
+            left_adapter.ControlledPoseAndJacobian(left_q, left_workspace);
+        const Eigen::VectorXd& left_q_eval =
+            left_adapter.FullConfigurationForControlled(left_q);
+        const Pose left_mount_tool = forward_kinematics(
+            dynamics, left_q_eval, config::kLeftEndEffectorFrame);
+        const Pose left_base_pose =
+            forward_kinematics(dynamics, left_q_eval, "leftbase_link");
+        const Eigen::Matrix3d left_base_R_mount =
+            left_base_pose.rotation.transpose();
+        const Eigen::Vector3d left_expected_position =
+            left_base_R_mount * (left_mount_tool.position - left_base_pose.position);
+        const Eigen::Matrix3d left_expected_rotation =
+            left_base_R_mount * left_mount_tool.rotation;
+        Check((left_selected.position - left_expected_position).norm() < 1e-12,
+              "left-controlled tool position is expressed in leftbase_link");
+        Check((left_selected.rotation - left_expected_rotation).norm() < 1e-12,
+              "left-controlled tool orientation is expressed in leftbase_link");
+        Check(left_selected.position.allFinite() && left_selected.rotation.allFinite() &&
+                  left_selected.jacobian.allFinite(),
+              "left-controlled pose and Jacobian are finite");
+
+        // ToolPoseInMount's controlled-arm convenience overload must place
+        // the measured angles into the LEFT slot now (it put them into the
+        // right slot for the right-controlled `adapter` above).
+        Eigen::Matrix<double, 7, 1> right_nominal_q;
+        for (int i = 0; i < 7; ++i)
+            right_nominal_q[i] = config::kRightNominalRad[static_cast<std::size_t>(i)];
+        const Pose left_probe_mount =
+            left_adapter.ToolPoseInMount(Arm::kLeft, left_q);
+        const Pose left_probe_mount_explicit =
+            left_adapter.ToolPoseInMount(Arm::kLeft, right_nominal_q, left_q);
+        Check((left_probe_mount.position - left_probe_mount_explicit.position).norm() <
+                  1e-12,
+              "left ToolPoseInMount convenience overload matches the explicit one");
     } catch (const std::exception& error) {
         std::cout << "FAIL: dual-arm model validation threw: "
                   << error.what() << "\n";

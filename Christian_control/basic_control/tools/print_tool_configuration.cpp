@@ -11,22 +11,24 @@
 // computes the pose at the URDF's modeled tool offset instead. No motion,
 // no writes, no servoing change.
 //
-//   ./print_tool_configuration
+//   ./print_tool_configuration [--ip <address>]   (default: config::kRightRobotIp)
 //
 
 #include "Config.h"
 #include "Hardware.h"
+#include "ToolArgs.h"
 
 #include <iomanip>
 #include <iostream>
 
 namespace k_api = Kinova::Api;
 
-int main()
+int main(int argc, char** argv)
 {
+    const std::string ip = ParseIpArg(argc, argv, "print_tool_configuration");
     try
     {
-        Connect connection(config::kRightRobotIp);
+        Connect connection(ip);
 
         const k_api::ControlConfig::ToolConfiguration tool =
             connection.control_config()->GetToolConfiguration();

@@ -47,7 +47,7 @@ TrackingController::~TrackingController() = default;
 void TrackingController::Reset(const RobotState& state)
 {
     const PoseJacobian ee =
-        model_.RightPoseAndJacobian(state.q_rad, *workspace_);
+        model_.ControlledPoseAndJacobian(state.q_rad, *workspace_);
     // Hold here: an empty reference (or a position-only target's missing
     // orientation) resolves to the pose measured at takeover.
     hold_position_ = ee.position;
@@ -111,10 +111,11 @@ TrackingController::DesiredVelocity(const RobotState& state,
         timeout_monitor_.Rearm();
     }
 
-    // The adapter composes the SAME full q from measured right joints and the
-    // fixed left nominal, then selects only the right 7 Jacobian columns.
+    // The adapter composes the SAME full q from the controlled arm's
+    // measured joints and the other arm's fixed nominal, then selects only
+    // the controlled arm's 7 Jacobian columns.
     const PoseJacobian ee =
-        model_.RightPoseAndJacobian(state.q_rad, *workspace_);
+        model_.ControlledPoseAndJacobian(state.q_rad, *workspace_);
 
     // Equation 1: pose error, reference minus actual (ReactiveLaw.h).
     const Eigen::Vector3d e_pos = p_desired - ee.position;

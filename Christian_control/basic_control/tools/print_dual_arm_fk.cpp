@@ -1,6 +1,6 @@
 //
 // print_dual_arm_fk — forward kinematics for BOTH arms at a chosen
-// configuration, in the world frame and in each arm's own base_link, so the
+// configuration, in the mount frame and in each arm's own base_link, so the
 // mounted model can be checked against the physical rig.
 //
 // Reads the URDF only. No Kortex, no connection, no motion: safe to run with
@@ -15,7 +15,7 @@
 //
 // How to use the output: the right arm's base_link row is the one the Kinova
 // web dashboard's tool_pose reports, so compare that first. Once it agrees,
-// the world row is that same pose carried through the mounting transform, and
+// the mount row is that same pose carried through the mounting transform, and
 // a disagreement there is the mounting geometry in
 // config/dual_arm_mounting.yaml — not the arm model.
 //
@@ -81,16 +81,20 @@ int main(int argc, char** argv)
 
     try {
         Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-        DualArmKinematics model(dynamics, config::kLeftNominalRad,
+        // controlled_arm is irrelevant here: this tool only calls
+        // MountFromBase and the fully-explicit ToolPoseInMount(arm, right_q,
+        // left_q), neither of which reads it. Right is passed for
+        // concreteness only.
+        DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
                                 config::kRightBaseFrame,
                                 config::kRightEndEffectorFrame);
 
         std::printf("model: %s\n", GEN3_DUAL_URDF_PATH);
         for (const auto& [label, arm] :
              std::array<std::pair<const char*, Arm>, 2>{
-                 {{"right base_link in world", Arm::kRight},
-                  {"left  base_link in world", Arm::kLeft}}}) {
-            const pinocchio::SE3& mount = model.WorldFromBase(arm);
+                 {{"right base_link in mount", Arm::kRight},
+                  {"left  base_link in mount", Arm::kLeft}}}) {
+            const pinocchio::SE3& mount = model.MountFromBase(arm);
             std::printf("%s: p [% .6f % .6f % .6f]  roll_x % .6f rad\n", label,
                         mount.translation().x(), mount.translation().y(),
                         mount.translation().z(),

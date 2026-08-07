@@ -233,6 +233,30 @@ def main():
 
     pd_all = np.column_stack([cols["pd_x"], cols["pd_y"], cols["pd_z"]])
     p_all = np.column_stack([cols["p_x"], cols["p_y"], cols["p_z"]])
+
+    # The joint-trajectory motion path computes no Cartesian pose: the joint
+    # branch in Controller.cpp returns before any FK and stamps p_desired /
+    # p_current as not-computed, so these columns are NaN on every control
+    # row. NaN comparisons are silently false, so without this guard the code
+    # below runs to completion and prints an authoritative-looking RMS error
+    # and two PDFs, all NaN. A tool that reports nothing is fine; a tool that
+    # reports a number that is not a measurement is not.
+    #
+    # Only the target-directed rows are inspected. The 25 takeover-hold rows
+    # carry literal 0,0,0 (ControllerStatus defaults p_desired/p_current to
+    # Zero, unlike every other dead field), so a whole-column check would be
+    # fooled by them.
+    if not np.isfinite(pd_all[mask]).any() or not np.isfinite(p_all[mask]).any():
+        print("\nSKIPPING the Cartesian section: pd_*/p_* are not populated in "
+              "this log.\n"
+              "  The joint-trajectory reference source computes no Cartesian "
+              "pose (Controller.cpp\n"
+              "  takes the joint branch and returns before FK), so those "
+              "columns are NaN by design.\n"
+              "  Recover the tool path offline with tools/expand_run_poses, "
+              "which runs FK on the\n"
+              "  cmd_j*/meas_j* columns that ARE recorded.")
+        return
     t_cmd_all = cols["t_send_s"] if has_timestamps else cols["time_s"]
     pd = pd_all[mask]
     p = p_all[mask]

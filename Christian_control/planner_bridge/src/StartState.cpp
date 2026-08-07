@@ -79,7 +79,8 @@ std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
 }
 
 std::optional<std::string> FindLatestRunCsv(const std::string& runs_root,
-                                            std::string& error) {
+                                            std::string& error,
+                                            const std::string& filename_prefix) {
     error.clear();
     namespace fs = std::filesystem;
     std::error_code ec;
@@ -104,7 +105,7 @@ std::optional<std::string> FindLatestRunCsv(const std::string& runs_root,
             for (const auto& entry : fs::directory_iterator(day.path(), ec)) {
                 if (ec || !entry.is_regular_file(ec) || ec) continue;
                 const std::string name = entry.path().filename().string();
-                if (name.rfind("loop_log", 0) != 0 ||
+                if (name.rfind(filename_prefix, 0) != 0 ||
                     entry.path().extension() != ".csv")
                     continue;
                 const auto written = entry.last_write_time(ec);
@@ -120,6 +121,6 @@ std::optional<std::string> FindLatestRunCsv(const std::string& runs_root,
         // was found before the throw.
     }
     if (!newest)
-        error = "no loop_log*.csv under " + runs_root;
+        error = "no " + filename_prefix + "*.csv under " + runs_root;
     return newest;
 }

@@ -76,9 +76,10 @@ class TrackingController
 {
 public:
     // The model adapter is validated before any hardware connection and
-    // exposes only the selected right-arm 6x7 Jacobian. Every gain, term
-    // switch and tolerance comes straight from Config.h, read in the .cpp —
-    // there is nothing to pass in and nothing to forward.
+    // exposes only the CONTROLLED arm's 6x7 Jacobian (DualArmKinematics
+    // fixes which arm that is at construction). Every gain, term switch and
+    // tolerance comes straight from Config.h, read in the .cpp — there is
+    // nothing to pass in and nothing to forward.
     explicit TrackingController(DualArmKinematics& model);
     ~TrackingController();
 

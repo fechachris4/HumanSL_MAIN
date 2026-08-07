@@ -294,7 +294,7 @@ struct LoopLogSample {
     double dt_s = 0.0; // since previous cycle
     double t_send_s = 0.0; // just before cyclic.Send
     double t_recv_s = 0.0; // just after Send returned
-    double p_desired_m[3] = {0, 0, 0}; // right-arm base frame
+    double p_desired_m[3] = {0, 0, 0}; // CONTROLLED arm's base frame (leftbase_link on --arm left)
     double p_current_m[3] = {0, 0, 0}; // FK of this cycle's measured q
     JointVector commanded_deg{};   // integrated position command (sent)
     JointVector commanded_velocity_deg_s{}; // clipped q̇ fed to the integrator

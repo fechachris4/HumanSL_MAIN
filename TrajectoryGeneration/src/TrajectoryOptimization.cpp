@@ -1,5 +1,21 @@
 #include "TrajectoryOptimization.h"
 
+#include <set>
+#include <stdexcept>
+
+gtsam::SharedNoiseModel PoseNoiseModel(const Eigen::Vector3d& rotation_sigma_rad,
+                                       const Eigen::Vector3d& translation_sigma_m) {
+    // ROTATION FIRST. gpmp2::GaussianPriorWorkspacePose's error is
+    // des_pose.logmap(actual), and gtsam's Pose3 logmap returns
+    // [rotation; translation]. Swapping these is silent — six plausible
+    // numbers, a converging solve, and the wrong axes weighted — which is
+    // why this ordering is written once and pinned by
+    // test_pose_noise_ordering rather than trusted to a comment.
+    gtsam::Vector6 sigmas;
+    sigmas << rotation_sigma_rad, translation_sigma_m;
+    return gtsam::noiseModel::Diagonal::Sigmas(sigmas);
+}
+
 OptimizeTrajectory::OptimizeTrajectory() {}
 
 TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
@@ -13,24 +29,24 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     const JointLimits& vel_limits,
     const size_t total_time_step,
     const double total_time_sec,
-    const double target_dt, double y_pos_tolerance,
-    double y_rot_tolerance) {
-    
+    const OptimizerTuning& tuning,
+    const double target_dt) {
+
     std::cout << "Creating arm trajectory..." << std::endl;
-    
+
     std::vector<std::string> factor_keys;
     std::unordered_map<std::string, double> init_factor_costs;
     std::unordered_map<std::string, double> final_factor_costs;
 
     // Trajectory parameters
-    
+
     double delta_t = total_time_sec / total_time_step;
-    
+
     // GP and optimization parameters
-    gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7);
+    gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7) * tuning.qc_scale;
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
-    double collision_sigma = 0.0005;
-    double epsilon_dist = 0.05;
+    double collision_sigma = tuning.collision_sigma;
+    double epsilon_dist = tuning.epsilon_dist_m;
     auto pose_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.0005);
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
     
@@ -115,28 +131,28 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     // Add workspace constraints for final waypoint if specified
     gtsam::Symbol final_key('x', total_time_step);
     
-    gtsam::Vector6 pose_sigmas;
-    pose_sigmas << 0.01, y_rot_tolerance, 0.01,  // roll, pitch, yaw rotation weights 
-                   0.01, y_pos_tolerance, 0.01;        // x, y, z position weights
-    auto workspace_model = gtsam::noiseModel::Diagonal::Sigmas(pose_sigmas);
+    // Via PoseNoiseModel, so the [rotation; translation] ordering has one
+    // home shared with the path-following overload rather than two.
+    auto workspace_model = PoseNoiseModel(tuning.goal_rotation_sigma_rpy,
+                                          tuning.goal_position_sigma_xyz);
 
     graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
         final_key, arm_model, 6, target_pose, workspace_model));
     factor_keys.push_back("PoseFactor");
 
     for (size_t i = 0; i < graph.size(); ++i) {
-      
+
         double constraint_error = graph.at(i)->error(init_values);
 
-        init_factor_costs[factor_keys[i]] += constraint_error;    
+        init_factor_costs[factor_keys[i]] += constraint_error;
     }
-        
+
     // Setup optimizer
     gtsam::LevenbergMarquardtParams parameters;
     parameters.setVerbosity("none");
     parameters.setRelativeErrorTol(1e-6);
     parameters.setAbsoluteErrorTol(1e-6);
-    parameters.setMaxIterations(1000);
+    parameters.setMaxIterations(tuning.max_iterations);
     parameters.setlambdaInitial(1e-5);
     parameters.setlambdaFactor(10.0);
     parameters.setlambdaUpperBound(1e6);
@@ -173,64 +189,90 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     const gpmp2::ArmModel& arm_model,
     const gpmp2::SignedDistanceField& sdf,
     const gtsam::Values& init_values,
-    const std::deque<gtsam::Pose3>& pose_trajectory,
+    const std::vector<OptimisationWaypoint>& waypoints,
     const gtsam::Vector& start_config,
+    const std::vector<size_t>& zero_velocity_indices,
     const JointLimits& pos_limits,
     const JointLimits& vel_limits,
-    const size_t total_time_step,
     const double total_time_sec,
-    const double target_dt,
-    bool target_pose_only,
-    double y_pos_tolerance,
-    double y_rot_tolerance,
-    double z_rot_tolerance) {
-    
+    const OptimizerTuning& tuning,
+    const double target_dt) {
+
+    if (waypoints.size() < 2)
+        throw std::invalid_argument(
+            "optimizeTaskTrajectory needs at least two waypoints, got " +
+            std::to_string(waypoints.size()));
+    size_t bad_index = 0;
+    if (!WaypointTimesAreMonotonic(waypoints, &bad_index))
+        throw std::invalid_argument(
+            "optimizeTaskTrajectory waypoint times must start at zero and strictly "
+            "increase; first offending index " + std::to_string(bad_index));
+
+    // The last support state's index. Named for what it is rather than
+    // taken as a parameter, so it cannot disagree with `waypoints`.
+    const size_t total_time_step = waypoints.size() - 1;
+
     std::cout << "Creating arm trajectory..." << std::endl;
-    
+
     std::vector<std::string> factor_keys;
     std::unordered_map<std::string, double> init_factor_costs;
     std::unordered_map<std::string, double> final_factor_costs;
 
     // Trajectory parameters
-    
+
     double delta_t = total_time_sec / total_time_step;
-    
-    // GP and optimization parameters
-    gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7) * 1;
+
+    // GP and optimization parameters — from `tuning` (config/planner.yaml)
+    // rather than hardcoded, so the same file governs path plans and
+    // point-to-point plans. The defaults in OptimizerTuning are exactly the
+    // literals this function used before, so the plumbing change alone
+    // reproduces the previous behaviour.
+    gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7) * tuning.qc_scale;
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
-    double collision_sigma = 0.0005;
-    double epsilon_dist = 0.05;
+    const double collision_sigma = tuning.collision_sigma;
+    const double epsilon_dist = tuning.epsilon_dist_m;
     auto pose_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.0005);
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-    
-    gtsam::Vector start_vel = gtsam::Vector::Zero(7);
-    gtsam::Vector end_vel = gtsam::Vector::Zero(7);
+
+    const gtsam::Vector rest_vel = gtsam::Vector::Zero(7);
+
+    // Which support states are pinned to rest. Always the first and last;
+    // the caller adds the task-path start so the arm stops before it begins
+    // tracing rather than blending an arbitrary approach direction into the
+    // path tangent. A set, so a caller repeating an index is harmless.
+    std::set<size_t> rest_indices(zero_velocity_indices.begin(),
+                                  zero_velocity_indices.end());
+    rest_indices.insert(0);
+    rest_indices.insert(total_time_step);
 
     gtsam::Matrix self_collision_data(3, 4);  // 3 checks, 4 columns each
-    self_collision_data << 
+    self_collision_data <<
         0, 4, 0.03, collision_sigma,  // sphere 0 vs sphere 4
-        0, 6, 0.03, collision_sigma,  // sphere 0 vs sphere 6  
+        0, 6, 0.03, collision_sigma,  // sphere 0 vs sphere 6
         2, 6, 0.03, collision_sigma;  // sphere 2 vs sphere 6
-    
-    
+
+
     gtsam::NonlinearFactorGraph graph;
-    
+
     for (size_t i = 0; i <= total_time_step; ++i) {
         gtsam::Symbol key_pos('x', i);
         gtsam::Symbol key_vel('v', i);
-        
-        // Start/end priors
+
+        // The measured configuration is pinned stiffly at waypoint 0: the
+        // controller's splice guard rejects a block whose first point is
+        // more than 2 deg from where the arm actually is.
         if (i == 0) {
             graph.add(gtsam::PriorFactor<gtsam::Vector>(key_pos, start_config, pose_fix_model));
                     factor_keys.push_back("StartPosPrior");
-            graph.add(gtsam::PriorFactor<gtsam::Vector>(key_vel, start_vel, vel_fix_model));
-                    factor_keys.push_back("StartVelPrior");
-        
-        } else if (i == total_time_step) {
-            graph.add(gtsam::PriorFactor<gtsam::Vector>(key_vel, end_vel, vel_fix_model));
-                    factor_keys.push_back("EndVelPrior");
-        }           
-        
+        }
+        // Rest states. Hermite through a zero-velocity support state
+        // genuinely comes to a stop there, so no repeated waypoints (and no
+        // zero-duration wire segments) are needed to dwell.
+        if (rest_indices.count(i)) {
+            graph.add(gtsam::PriorFactor<gtsam::Vector>(key_vel, rest_vel, vel_fix_model));
+                    factor_keys.push_back("RestVelPrior");
+        }
+
         // Joint limits
         auto pos_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
         gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.2);
@@ -283,41 +325,32 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
         }
     }
     
-    gtsam::Vector6 pose_sigmas;
-    double y_rot_tolerance_final = min(0.1, y_rot_tolerance);
-    double y_pos_tolerance_final = min(0.1, y_pos_tolerance);
-
-    pose_sigmas << 0.01, y_rot_tolerance_final, z_rot_tolerance,  // x, y, z position weights (y is less punished)
-                   0.01, y_pos_tolerance_final, 0.01;  // roll, pitch, yaw rotation weights
-    auto workspace_model = gtsam::noiseModel::Diagonal::Sigmas(pose_sigmas);
-
-    gtsam::Vector6 pose_sigmas_intp;
-    pose_sigmas_intp << 0.01, y_rot_tolerance, z_rot_tolerance,  // x, y, z position weights (y is less punished)
-                   0.05, y_rot_tolerance, 0.05;  // roll, pitch, yaw rotation weights
-    auto workspace_model_intp = gtsam::noiseModel::Diagonal::Sigmas(pose_sigmas_intp);
-    
-    
-    if(target_pose_only){
-        gtsam::Symbol final_key('x', total_time_step);
+    // Pose priors, one per waypoint that asked for one. A waypoint with no
+    // prior is FREE: only smoothness, joint limits and obstacle avoidance
+    // shape it. That is what lets one graph hold an unconstrained approach
+    // and a constrained task path, which the previous all-or-nothing
+    // `target_pose_only` flag could not express.
+    //
+    // Every prior is built through PoseNoiseModel, so gpmp2's
+    // [rotation; translation] ordering lives in exactly one place.
+    size_t constrained_count = 0;
+    for (size_t i = 0; i <= total_time_step; i++) {
+        const auto& prior = waypoints[i].pose_prior;
+        if (!prior) continue;
         graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
-            final_key, arm_model, 6, pose_trajectory[total_time_step], workspace_model));
+            gtsam::Symbol('x', i), arm_model, 6,
+            gtsam::Pose3(gtsam::Rot3(prior->target.linear()),
+                         gtsam::Point3(prior->target.translation())),
+            PoseNoiseModel(prior->rotation_sigma_rad, prior->translation_sigma_m)));
         factor_keys.push_back("PoseFactor");
+        ++constrained_count;
     }
-    else{
-        for(size_t i = 0; i <= total_time_step; i++){
-            gtsam::Symbol key_pos('x', i);
-            if(i < total_time_step){
-                graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
-                    key_pos, arm_model, 6, pose_trajectory[i], workspace_model_intp));
-            }
-            else{
-                graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
-                    key_pos, arm_model, 6, pose_trajectory[i], workspace_model));
-            }
-            factor_keys.push_back("PoseFactor");
-        }
-    }
-        
+    if (constrained_count == 0)
+        throw std::invalid_argument(
+            "optimizeTaskTrajectory was given no pose priors at all — nothing "
+            "would pull the trajectory toward the requested path");
+
+
     for (size_t i = 0; i < graph.size(); ++i) {
       
         double constraint_error = graph.at(i)->error(init_values);

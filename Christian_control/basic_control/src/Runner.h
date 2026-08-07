@@ -62,4 +62,11 @@ LoopResult RunControlLoop(Kinova::Api::Base::BaseClient* base,
                           LoopLog& log, const std::atomic<bool>& stop,
                           std::chrono::microseconds period,
                           const JointVector& qdot_limit_deg_s,
-                          double following_error_limit_deg, bool robot_ready);
+                          double following_error_limit_deg, bool robot_ready,
+                          // The frame status.p_desired is expressed in — the
+                          // CONTROLLED arm's own base_link, which is
+                          // leftbase_link on a --arm left run. Passed in only
+                          // so the arrival notice can name it: an unlabelled
+                          // Cartesian triple is unreadable once more than one
+                          // frame exists. The loop does no kinematics with it.
+                          const char* base_frame);

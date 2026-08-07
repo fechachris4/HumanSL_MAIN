@@ -37,7 +37,7 @@ namespace
                                     const Eigen::Matrix<double, 7, 1>& q_rad)
     {
         KinematicsWorkspace workspace(model.dynamics());
-        return model.RightPoseAndJacobian(q_rad, workspace).position;
+        return model.ControlledPoseAndJacobian(q_rad, workspace).position;
     }
 
     // After a joint trajectory has moved the arm, the takeover hold pose is
@@ -54,7 +54,7 @@ namespace
     void TestHoldPoseReseatsAfterJointTracking()
     {
         Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-        DualArmKinematics model(dynamics, config::kLeftNominalRad,
+        DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
                                 config::kRightBaseFrame,
                                 config::kRightEndEffectorFrame);
         TrackingController controller(model);

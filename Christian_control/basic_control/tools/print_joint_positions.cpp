@@ -3,22 +3,24 @@
 // feedback reading, print each joint's live position, and exit. No motion,
 // no writes, no servoing change.
 //
-//   ./print_joint_positions
+//   ./print_joint_positions [--ip <address>]   (default: config::kRightRobotIp)
 //
 
 #include "Config.h"
 #include "Hardware.h"
+#include "ToolArgs.h"
 
 #include <iomanip>
 #include <iostream>
 
 namespace k_api = Kinova::Api;
 
-int main()
+int main(int argc, char** argv)
 {
+    const std::string ip = ParseIpArg(argc, argv, "print_joint_positions");
     try
     {
-        Connect connection(config::kRightRobotIp);
+        Connect connection(ip);
 
         // The ONLY RefreshFeedback call this tool makes. It pulls one
         // snapshot from the 1 kHz cyclic (UDP) channel; it does not open a

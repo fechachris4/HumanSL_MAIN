@@ -180,13 +180,25 @@ DHParameters createDHParams(const std::string& yaml_path);
 
 std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_path);
 
+// FK/IK via Pinocchio against the canonical URDF, NOT the dh argument
+// (kept only so legacy call sites compile — see the .cpp). end_effector_frame
+// and left_arm select WHICH chain Pinocchio evaluates: they must match the
+// arm the dh table was generated for, or every pose is offset by the
+// tool-vs-flange difference (~0.12 m — exactly the bug that produced the
+// constant "final goal error: 120 mm" on the first left-arm runs,
+// 2026-08-06). Defaults preserve every pre-left-arm call site: right arm,
+// mounted tool ("ConfiguredTool_Link").
 gtsam::Pose3 forwardKinematics(const DHParameters& dh,
-                               const gtsam::Vector& joint_angles, 
-                               const gtsam::Pose3& base_pose_in_world);
-                               
-gtsam::Pose3 inverseForwardKinematics(const DHParameters& dh, 
-                              const gtsam::Vector& joint_angles, 
-                              const gtsam::Pose3& ee_pose_in_world);
+                               const gtsam::Vector& joint_angles,
+                               const gtsam::Pose3& base_pose_in_world,
+                               const std::string& end_effector_frame = "ConfiguredTool_Link",
+                               bool left_arm = false);
+
+gtsam::Pose3 inverseForwardKinematics(const DHParameters& dh,
+                              const gtsam::Vector& joint_angles,
+                              const gtsam::Pose3& ee_pose_in_world,
+                              const std::string& end_effector_frame = "ConfiguredTool_Link",
+                              bool left_arm = false);
 
 std::vector<double> shiftAngle(std::vector<double>& q_cur);
 

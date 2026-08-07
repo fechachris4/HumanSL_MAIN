@@ -13,11 +13,13 @@
 
 #include <yaml-cpp/yaml.h>
 
+#include "PlannerConfig.h"
 #include "PlannerModel.h"
 #include "PlanSolver.h"
 #include "StartState.h"
 #include "TrajectoryEmit.h"
 #include "WorldSdf.h"
+#include "PathFrames.h"
 #include "PathValidation.h"
 #include "PinocchioKinematicsAdapter.h"
 #include "Config.h"   // basic_control — config::kReferenceFrame
@@ -25,7 +27,8 @@
 namespace {
 
 constexpr char kUsageText[] =
-    "usage: planner_bridge [--goal X Y Z | --goal-file PATH]\n"
+    "usage: planner_bridge --arm <right|left>\n"
+    "                       [--goal X Y Z | --goal-file PATH]\n"
     "                       [--state-csv PATH | --start-deg J1..J7]\n"
     "                       [--runs-root PATH] [--dh PATH]\n"
     "                       [--joint-limits PATH]\n"
@@ -38,19 +41,31 @@ constexpr char kUsageText[] =
     "  more rows than the controller accepts, so the block carries an\n"
     "  evenly spread subset of at most 1000 of those states.\n"
     "\n"
+    "  --arm <right|left>     Required — which physical arm this plan is\n"
+    "                         for. Selects the default DH file (right:\n"
+    "                         dh_params_tool.yaml, mounted-tool collision\n"
+    "                         model; left: dh_params_flange.yaml, bare-\n"
+    "                         flange collision model), which run log this\n"
+    "                         process reads the start state from, and which\n"
+    "                         arm's base frame --box must be given in. No\n"
+    "                         default: every run states its target arm.\n"
     "  --goal X Y Z           Target tool position, metres, in the\n"
     "                         compiled config::kReferenceFrame.\n"
-    "  --goal-file PATH       YAML goal file: `goal: [x, y, z]` metres,\n"
-    "                         plus an optional `frame:` (world, right_base\n"
-    "                         or left_base; default config::kReferenceFrame)\n"
-    "                         governing the whole file, and an optional `box:`\n"
-    "                         with\n"
-    "                         `center:` and `half_extent:` lists. When\n"
-    "                         neither --goal nor --goal-file is given, the\n"
-    "                         default config/goal.yaml beside the\n"
+    "  --goal-file PATH       YAML goal file, ARM-KEYED: a top-level `right:`\n"
+    "                         and/or `left:` block (only the one matching\n"
+    "                         --arm is read), each with its own `goal:\n"
+    "                         [x, y, z]` metres, an optional `frame:` (mount,\n"
+    "                         right_base or left_base; default\n"
+    "                         config::kReferenceFrame) governing that block\n"
+    "                         whole, and an optional `box:` with `center:`\n"
+    "                         and `half_extent:` lists. One file can hold\n"
+    "                         both arms' targets for a --arm both session\n"
+    "                         without either reading the other's numbers.\n"
+    "                         When neither --goal nor --goal-file is given,\n"
+    "                         the default config/goal.yaml beside the\n"
     "                         executable's parent directory is read — so\n"
     "                         editing that one file is the normal way to\n"
-    "                         choose where the arm goes.\n"
+    "                         choose where each arm goes.\n"
     "  --state-csv PATH       Start state: latest measured joint angles\n"
     "                         (meas_j1..meas_j7) read from a controller\n"
     "                         telemetry CSV.\n"
@@ -58,23 +73,35 @@ constexpr char kUsageText[] =
     "                         degrees, Kortex actuator order.\n"
     "  --runs-root PATH       Root of dated run-log directories to search\n"
     "                         when neither --state-csv nor --start-deg is\n"
-    "                         given. Default: <repo>/runs resolved\n"
-    "                         relative to the executable's directory.\n"
-    "  --dh PATH               DH/tool parameters YAML. Default: the\n"
+    "                         given (the newest loop_log_<arm>*.csv under\n"
+    "                         it, matching --arm). Default: <repo>/runs\n"
+    "                         resolved relative to the executable's\n"
+    "                         directory.\n"
+    "  --dh PATH               DH parameters YAML. Default: the\n"
     "                         build-generated config/dh_params_tool.yaml\n"
-    "                         beside the executable (derived from the URDF\n"
-    "                         at build time — do not hand-edit).\n"
+    "                         (--arm right) or config/dh_params_flange.yaml\n"
+    "                         (--arm left) beside the executable (derived\n"
+    "                         from the URDF at build time — do not\n"
+    "                         hand-edit).\n"
     "  --joint-limits PATH    Joint limits YAML. Default:\n"
     "                         TrajectoryGeneration/config/joint_limits.yaml\n"
     "                         resolved relative to the executable's\n"
     "                         directory (../../.. up to the repo root).\n"
+    "  --planner-config PATH  Planner tuning YAML: plan pacing and every\n"
+    "                         factor-graph weight. Default: config/\n"
+    "                         planner.yaml beside config/goal.yaml. Every\n"
+    "                         key is required and unknown keys are refused,\n"
+    "                         so a typo fails the run naming the key rather\n"
+    "                         than silently planning something else. The\n"
+    "                         effective values and the file's digest are\n"
+    "                         echoed here on every run.\n"
     "  --box CX CY CZ HX HY HZ  Optional axis-aligned obstacle box:\n"
-    "                         centre and half-extents, metres,\n"
-    "                         right_base only (see --goal-file).\n"
-    "                         Must lie fully inside the SDF grid volume\n"
-    "                         (WorldSdf.h WorldGridBounds()) or the run is\n"
-    "                         rejected — outside that volume gpmp2 silently\n"
-    "                         reports no obstacle.\n"
+    "                         centre and half-extents, metres, in the\n"
+    "                         --arm-selected arm's own base frame only\n"
+    "                         (see --goal-file). Must lie fully inside the\n"
+    "                         SDF grid volume (WorldSdf.h WorldGridBounds())\n"
+    "                         or the run is rejected — outside that volume\n"
+    "                         gpmp2 silently reports no obstacle.\n"
     "\n"
     "Exit codes: 0 targets emitted (also returned by --help), 1 bad\n"
     "arguments, 2 start-state unavailable, 3 solve failed, 4 validation\n"
@@ -94,11 +121,15 @@ std::string DescribeGridBounds(const GridBounds& bounds) {
 // inside `bounds`. Used to reject a --box before it is ever handed to
 // gpmp2, which returns zero obstacle cost for out-of-grid queries with no
 // warning of its own.
+// The upper comparison is STRICT. gpmp2 accepts a query landing exactly on
+// origin + (n-1)*cell but cannot interpolate there — it reads one sample past
+// the end (see WorldGridBounds in WorldSdf.cpp). The lower face has no such
+// problem, so only the upper one is exclusive.
 bool BoxWithinGridBounds(const AxisAlignedBox& box, const GridBounds& bounds) {
     const Eigen::Vector3d box_min = box.center - box.half_extent;
     const Eigen::Vector3d box_max = box.center + box.half_extent;
     return (box_min.array() >= bounds.min_m.array()).all() &&
-           (box_max.array() <= bounds.max_m.array()).all();
+           (box_max.array() < bounds.max_m.array()).all();
 }
 
 // Directory containing the running executable, via /proc/self/exe. Falls
@@ -117,16 +148,26 @@ std::string DefaultGoalPath() {
     return ExecutableDirectory() + "/../config/goal.yaml";
 }
 
-std::string DefaultDhPath() {
+std::string DefaultDhPath(bool left_arm) {
     // The DH YAML is GENERATED from the URDF at build time into the build
     // tree's config/ directory, beside the executable (see
     // generate_dh_params in CMakeLists.txt). There is no committed copy.
-    return ExecutableDirectory() + "/config/dh_params_tool.yaml";
+    // Two files, one per arm's own chain — dh_params_tool.yaml (right, ends
+    // at the mounted tool) and dh_params_flange.yaml (left, bare flange).
+    return ExecutableDirectory() + "/config/" +
+           (left_arm ? "dh_params_flange.yaml" : "dh_params_tool.yaml");
 }
 
 std::string DefaultJointLimitsPath() {
     return ExecutableDirectory() +
            "/../../../TrajectoryGeneration/config/joint_limits.yaml";
+}
+
+// Beside goal.yaml, and resolved the same way — from the executable, never
+// from the working directory, so which file configures a run never depends
+// on where it was started from (docs/decisions/runtime-config.md).
+std::string DefaultPlannerConfigPath() {
+    return ExecutableDirectory() + "/../config/planner.yaml";
 }
 
 std::string DefaultRunsRootPath() {
@@ -151,8 +192,21 @@ struct ParsedArgs {
     std::optional<std::string> goal_file;
     std::optional<std::string> state_csv;
     std::optional<std::array<double, 7>> start_deg;
-    std::string dh_path = DefaultDhPath();
+    // Required, no default: which physical arm this plan is for. unset ==
+    // --arm was never given, refused by RunBridge before anything else runs.
+    std::optional<bool> left_arm;
+    // Goal orientation as roll/pitch/yaw in the block's declared frame,
+    // before conversion. Unset = inherit the start pose's orientation.
+    std::optional<Eigen::Vector3d> goal_rpy_rad;
+    // A traced path instead of a point goal. Mutually exclusive with
+    // `goal` — a block naming both is refused rather than one silently
+    // winning, because which one won would not be visible in any output.
+    std::optional<CircleSpec> circle;
+    // unset == use DefaultDhPath(*left_arm), resolved once --arm is known
+    // (its default depends on left_arm, so it cannot be a member initializer).
+    std::optional<std::string> dh_path;
     std::string joint_limits_path = DefaultJointLimitsPath();
+    std::string planner_config_path = DefaultPlannerConfigPath();
     std::string runs_root = DefaultRunsRootPath();
     std::optional<AxisAlignedBox> box;
 };
@@ -162,12 +216,18 @@ struct ParsedArgs {
 // Frame boundary
 // ---------------------------------------------------------------
 //
-// The planner is base_link INTERNALLY and stays that way: the gpmp2 arm
-// model and the SDF are paired in one ObstacleSDFFactorArm, so they must
-// share a frame or every collision check is silently wrong. World-frame
-// input is therefore converted here, once, at the edge — and the transform
-// comes from the URDF through Pinocchio, never from a constant in this file,
-// so moving the world frame in dual_arm_mounting.yaml needs no code change.
+// The planner is `mount` INTERNALLY, everywhere: the gpmp2 arm model and the
+// SDF are paired in one ObstacleSDFFactorArm, so they must share a frame or
+// every collision check is silently wrong — and since PlannerModel builds the
+// arm at DhRootInMount(), that shared frame is mount for both arms. Input
+// written in an arm's base frame is therefore converted here, once, at the
+// edge; input already in mount passes through untouched.
+//
+// The transform comes from the URDF through Pinocchio, never from a constant
+// in this file, so surveying the rig and regenerating the URDF needs no code
+// change. A room frame, when one exists, composes ABOVE mount here
+// (T_room_mount, identity while the rig is bolted down) — mount is rigidly
+// attached to the arm bases and travels with them, so it is NOT that frame.
 
 const char* FrameName(config::ReferenceFrame frame) {
     return config::kReferenceFrameNames[static_cast<int>(frame)];
@@ -178,23 +238,44 @@ config::ReferenceFrame FrameFromName(const std::string& name) {
         if (name == config::kReferenceFrameNames[i])
             return static_cast<config::ReferenceFrame>(i);
     throw std::invalid_argument(
-        "unknown frame '" + name + "' (expected world, right_base or left_base)");
+        "unknown frame '" + name + "' (expected mount, right_base or left_base)");
 }
 
-// declared frame -> right base_link, the frame everything downstream uses.
-Eigen::Vector3d ToRightBase(const Eigen::Vector3d& point,
-                            config::ReferenceFrame frame) {
-    switch (frame) {
-    case config::ReferenceFrame::kRightBase:
+// declared frame -> mount, the one frame everything downstream uses.
+Eigen::Vector3d ToMount(const Eigen::Vector3d& point,
+                        config::ReferenceFrame frame) {
+    if (frame == config::ReferenceFrame::kMount)
         return point;
-    case config::ReferenceFrame::kWorld:
-        return pinocchio_kinematics_adapter::WorldFromBase(false).inverse() * point;
-    case config::ReferenceFrame::kLeftBase:
-        // Through world: T_rightbase_world * T_world_leftbase * p.
-        return pinocchio_kinematics_adapter::WorldFromBase(false).inverse() *
-               (pinocchio_kinematics_adapter::WorldFromBase(true) * point);
-    }
-    throw std::invalid_argument("unhandled reference frame");
+    const bool declared_left_arm = frame == config::ReferenceFrame::kLeftBase;
+    return pinocchio_kinematics_adapter::MountFromBase(declared_left_arm) * point;
+}
+
+// Rotation matrix from roll/pitch/yaw, R = Rz*Ry*Rx — the convention
+// FramePrint.h prints and the controller's orientation line uses, so a
+// number read off a diagnostic can be pasted straight into a goal file.
+Eigen::Matrix3d RotationFromRpy(const Eigen::Vector3d& rpy_rad) {
+    return (Eigen::AngleAxisd(rpy_rad.z(), Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(rpy_rad.y(), Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(rpy_rad.x(), Eigen::Vector3d::UnitX()))
+        .toRotationMatrix();
+}
+
+// The inverse of RotationFromRpy, so an orientation can be echoed back in
+// the frame it was converted INTO rather than the one it was written in.
+Eigen::Vector3d RpyFromRotation(const Eigen::Matrix3d& rotation) {
+    return rotation.eulerAngles(2, 1, 0).reverse();  // R = Rz*Ry*Rx
+}
+
+// declared frame -> mount, for an ORIENTATION. Unlike a point (ToMount), a
+// rotation carries no translation, so only the rotational parts compose.
+// Getting this wrong is silent — the goal still looks like a valid rotation.
+Eigen::Matrix3d RotationToMount(const Eigen::Matrix3d& rotation,
+                                config::ReferenceFrame frame) {
+    if (frame == config::ReferenceFrame::kMount)
+        return rotation;
+    const bool declared_left_arm = frame == config::ReferenceFrame::kLeftBase;
+    return pinocchio_kinematics_adapter::MountFromBase(declared_left_arm).linear() *
+           rotation;
 }
 
 // Reads a YAML sequence of exactly three finite numbers into a vector,
@@ -212,10 +293,15 @@ Eigen::Vector3d ReadVector3(const YAML::Node& node, const std::string& what) {
 }
 
 // Fills `parsed.goal` (and `parsed.box`, unless --box already set one) from
-// a YAML goal file. Any failure — missing file, wrong shape, non-numeric
-// value — throws std::invalid_argument naming the file, so a typo becomes
-// a refusal to plan rather than a coordinate the arm accepts.
-void LoadGoalFile(const std::string& path, ParsedArgs& parsed) {
+// a YAML goal file. Goal files are ARM-KEYED: one top-level block per arm
+// ("right:" and/or "left:"), each with its own goal/frame/box, so one file
+// can hold both arms' targets for a --arm both session without either
+// silently reading the other's numbers. This function reads only the block
+// matching `left_arm`; the other block (if present) is untouched. Any
+// failure — missing file, missing arm block, wrong shape, non-numeric value
+// — throws std::invalid_argument naming the file, so a typo becomes a
+// refusal to plan rather than a coordinate the arm accepts.
+void LoadGoalFile(const std::string& path, ParsedArgs& parsed, bool left_arm) {
     YAML::Node root;
     try {
         root = YAML::LoadFile(path);
@@ -223,18 +309,100 @@ void LoadGoalFile(const std::string& path, ParsedArgs& parsed) {
         throw std::invalid_argument("cannot read goal file " + path + ": " +
                                     error.what());
     }
+    const std::string arm_key = left_arm ? "left" : "right";
     try {
-        // One `frame:` governs the whole file — goal and box alike, so a file
-        // can never end up half-converted. Omitted means the compiled
-        // config::kReferenceFrame, which is also what a bare --goal uses.
-        if (root["frame"])
-            parsed.frame = FrameFromName(root["frame"].as<std::string>());
-        parsed.goal = ReadVector3(root["goal"], "goal");
-        if (root["box"] && !parsed.box) {
+        const YAML::Node arm_node = root[arm_key];
+        if (!arm_node)
+            throw std::invalid_argument(
+                "no '" + arm_key + ":' block — goal files are arm-keyed: a "
+                "top-level 'right:' and/or 'left:' block, each with its own "
+                "goal/frame/box");
+        // One `frame:` per arm block governs that block whole — goal and box
+        // alike, so a block can never end up half-converted. Omitted means
+        // the compiled config::kReferenceFrame, which is also what a bare
+        // --goal uses.
+        if (arm_node["frame"])
+            parsed.frame = FrameFromName(arm_node["frame"].as<std::string>());
+        // `goal:` and `path:` are mutually exclusive. Refusing both-present
+        // matters more than it looks: silently preferring one would make the
+        // arm trace something the file also appears to ask against.
+        const bool has_goal = static_cast<bool>(arm_node["goal"]);
+        const bool has_path = static_cast<bool>(arm_node["path"]);
+        if (has_goal && has_path)
+            throw std::invalid_argument(
+                "block has BOTH 'goal:' and 'path:' — they are mutually "
+                "exclusive; a point goal and a traced path are different "
+                "requests");
+        if (!has_goal && !has_path)
+            throw std::invalid_argument(
+                "block has neither 'goal:' nor 'path:' — one is required");
+
+        if (has_path) {
+            const YAML::Node path_node = arm_node["path"];
+            const std::string type =
+                path_node["type"] ? path_node["type"].as<std::string>() : "";
+            if (type != "circle")
+                throw std::invalid_argument(
+                    "path.type must be 'circle' (got '" + type +
+                    "'); other shapes use the same CartesianPath pipeline but "
+                    "have no generator yet");
+            CircleSpec circle;
+            circle.centre_m = ReadVector3(path_node["centre"], "path.centre");
+            circle.radius_m = path_node["radius_m"]
+                                  ? path_node["radius_m"].as<double>()
+                                  : throw std::invalid_argument("path.radius_m is required");
+            if (!(circle.radius_m > 0.0) || !std::isfinite(circle.radius_m))
+                throw std::invalid_argument("path.radius_m must be finite and positive");
+            circle.normal = ReadVector3(path_node["normal"], "path.normal");
+            if (circle.normal.norm() < 1e-9)
+                throw std::invalid_argument(
+                    "path.normal is degenerate — it cannot define a plane");
+            if (!path_node["duration_s"])
+                throw std::invalid_argument("path.duration_s is required");
+            circle.duration_s = path_node["duration_s"].as<double>();
+            if (!(circle.duration_s > 0.0) || !std::isfinite(circle.duration_s))
+                throw std::invalid_argument("path.duration_s must be finite and positive");
+            if (path_node["start_angle_deg"])
+                circle.start_angle_rad =
+                    path_node["start_angle_deg"].as<double>() * M_PI / 180.0;
+            const std::string orientation =
+                path_node["orientation"] ? path_node["orientation"].as<std::string>()
+                                         : "fixed";
+            if (orientation == "fixed") {
+                circle.orientation = OrientationPolicy::kFixed;
+                if (!path_node["orientation_rpy_deg"])
+                    throw std::invalid_argument(
+                        "path.orientation: fixed requires path.orientation_rpy_deg — "
+                        "inheriting the start orientation makes a traced shape's "
+                        "feasibility depend on where the arm was parked");
+                circle.fixed_rpy_rad =
+                    ReadVector3(path_node["orientation_rpy_deg"],
+                                "path.orientation_rpy_deg") * (M_PI / 180.0);
+            } else if (orientation == "radial") {
+                circle.orientation = OrientationPolicy::kRadialInward;
+            } else {
+                throw std::invalid_argument(
+                    "path.orientation must be 'fixed' or 'radial', got '" +
+                    orientation + "'");
+            }
+            circle.frame = parsed.frame;
+            parsed.circle = circle;
+        } else {
+            parsed.goal = ReadVector3(arm_node["goal"], "goal");
+        }
+        // Optional: the orientation to hold at the goal, degrees, same
+        // frame as the position. Omitting it inherits the start pose's
+        // orientation, which RunBridge reports rather than leaving silent.
+        if (arm_node["orientation_rpy_deg"]) {
+            const Eigen::Vector3d rpy_deg =
+                ReadVector3(arm_node["orientation_rpy_deg"], "orientation_rpy_deg");
+            parsed.goal_rpy_rad = rpy_deg * (M_PI / 180.0);
+        }
+        if (arm_node["box"] && !parsed.box) {
             AxisAlignedBox box;
-            box.center = ReadVector3(root["box"]["center"], "box center");
+            box.center = ReadVector3(arm_node["box"]["center"], "box center");
             box.half_extent =
-                ReadVector3(root["box"]["half_extent"], "box half_extent");
+                ReadVector3(arm_node["box"]["half_extent"], "box half_extent");
             parsed.box = box;
         }
     } catch (const std::exception& error) {
@@ -254,7 +422,13 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
     };
     while (i < args.size()) {
         const std::string flag = args[i++];
-        if (flag == "--goal") {
+        if (flag == "--arm") {
+            const std::string value = next();
+            if (value == "right") parsed.left_arm = false;
+            else if (value == "left") parsed.left_arm = true;
+            else throw std::invalid_argument(
+                "--arm must be 'right' or 'left' (got '" + value + "')");
+        } else if (flag == "--goal") {
             const double x = ParseDouble(next());
             const double y = ParseDouble(next());
             const double z = ParseDouble(next());
@@ -271,6 +445,8 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             parsed.dh_path = next();
         } else if (flag == "--joint-limits") {
             parsed.joint_limits_path = next();
+        } else if (flag == "--planner-config") {
+            parsed.planner_config_path = next();
         } else if (flag == "--runs-root") {
             parsed.runs_root = next();
         } else if (flag == "--box") {
@@ -284,12 +460,15 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             throw std::invalid_argument("unrecognized flag: '" + flag + "'");
         }
     }
+    if (!parsed.left_arm)
+        throw std::invalid_argument(
+            "--arm is required and must be 'right' or 'left'");
     if (parsed.goal && parsed.goal_file)
         throw std::invalid_argument(
             "at most one of --goal or --goal-file may be given");
     if (!parsed.goal)
         LoadGoalFile(parsed.goal_file ? *parsed.goal_file : DefaultGoalPath(),
-                     parsed);
+                     parsed, *parsed.left_arm);
     if (parsed.state_csv && parsed.start_deg)
         throw std::invalid_argument(
             "at most one of --state-csv or --start-deg may be given");
@@ -333,42 +512,65 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         return 1;
     }
 
-    // THE frame boundary. Everything below this point is right base_link:
-    // the grid-bounds check, the solve, and the SDF all share that frame.
+    const bool left_arm = *parsed.left_arm;
+
+    // THE frame boundary. Everything below this point is `mount`: the
+    // grid-bounds check, the solve, and the SDF all share that one frame.
     const config::ReferenceFrame declared_frame = parsed.frame;
     try {
         if (parsed.goal)
-            parsed.goal = ToRightBase(*parsed.goal, declared_frame);
+            parsed.goal = ToMount(*parsed.goal, declared_frame);
         if (parsed.box) {
-            parsed.box->center = ToRightBase(parsed.box->center, declared_frame);
-            // half_extent is a size, not a point — but the box is
-            // axis-aligned in its DECLARED frame, so a rotating conversion
-            // would not leave it axis-aligned in base_link. Refuse rather
-            // than silently shipping a box that is not the one asked for.
-            if (declared_frame != config::ReferenceFrame::kRightBase) {
-                diagnostics << "error: an obstacle box may only be given in "
-                               "right_base for now — an axis-aligned box in "
-                            << FrameName(declared_frame)
-                            << " is not axis-aligned in base_link, and the SDF "
-                               "grid only represents axis-aligned boxes\n";
-                return 1;
+            // A box declared in an arm's base frame is axis-aligned THERE,
+            // and the arm bases are rolled ~69 deg from mount, so the rotated
+            // box is not axis-aligned in the grid. The SDF can only represent
+            // axis-aligned boxes, so the rotated shape is replaced by its
+            // enclosing axis-aligned box: bigger than asked for, never
+            // smaller, which is the safe direction for obstacle avoidance.
+            // The inflation is printed rather than applied quietly.
+            const Eigen::Vector3d requested_half = parsed.box->half_extent;
+            parsed.box->center = ToMount(parsed.box->center, declared_frame);
+            if (parsed.goal && declared_frame != config::ReferenceFrame::kMount) {
+                const bool declared_left = declared_frame == config::ReferenceFrame::kLeftBase;
+                const Eigen::Matrix3d mount_R_declared =
+                    pinocchio_kinematics_adapter::MountFromBase(declared_left).linear();
+                // Enclosing AABB of a rotated box: |R| * half_extent, the
+                // standard result (each mount axis picks up every declared
+                // axis in proportion to |cos| of the angle between them).
+                parsed.box->half_extent = mount_R_declared.cwiseAbs() * requested_half;
+                diagnostics << "obstacle box: " << FrameName(declared_frame) << " -> "
+                            << FrameName(config::ReferenceFrame::kMount)
+                            << "; half-extent inflated to the enclosing axis-aligned "
+                            << "box, [" << requested_half.x() << ", " << requested_half.y()
+                            << ", " << requested_half.z() << "] -> ["
+                            << parsed.box->half_extent.x() << ", "
+                            << parsed.box->half_extent.y() << ", "
+                            << parsed.box->half_extent.z() << "] m\n";
             }
         }
     } catch (const std::exception& error) {
         diagnostics << "error: " << error.what() << "\n";
         return 1;
     }
-    if (declared_frame != config::ReferenceFrame::kRightBase)
-        diagnostics << "goal frame: " << FrameName(declared_frame)
-                    << " -> base_link [" << parsed.goal->x() << ", "
-                    << parsed.goal->y() << ", " << parsed.goal->z() << "]\n";
+    // Printed on every POINT-GOAL run, not only when a conversion happened:
+    // the goal the planner will actually aim at, in the one frame everything
+    // below uses. A traced-path run has no point goal — parsed.goal is unset
+    // there, and dereferencing it printed uninitialised memory.
+    if (parsed.goal) {
+        diagnostics << "goal: [" << parsed.goal->x() << ", " << parsed.goal->y() << ", "
+                    << parsed.goal->z() << "] m in "
+                    << FrameName(config::ReferenceFrame::kMount);
+        if (declared_frame != config::ReferenceFrame::kMount)
+            diagnostics << " (converted from " << FrameName(declared_frame) << ")";
+        diagnostics << "\n";
+    }
 
     if (parsed.box) {
         const GridBounds bounds = WorldGridBounds();
         if (!BoxWithinGridBounds(*parsed.box, bounds)) {
-            diagnostics << "error: --box extends outside the SDF grid volume ("
-                        << DescribeGridBounds(bounds) << "); gpmp2 reports no "
-                        << "obstacle for out-of-grid queries, so this box "
+            diagnostics << "error: obstacle box extends outside the SDF grid volume ("
+                        << DescribeGridBounds(bounds) << ", mount frame); gpmp2 reports "
+                        << "no obstacle for out-of-grid queries, so this box "
                         << "cannot be honoured\n";
             return 1;
         }
@@ -383,13 +585,20 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         if (parsed.state_csv) {
             state_csv = *parsed.state_csv;
         } else {
+            // config::ArmConfig::log_prefix (basic_control/src/Config.h) —
+            // a right-arm log is not evidence of the left arm's state, or
+            // vice versa, so this searches only the selected arm's own
+            // logs, never the generic "loop_log" prefix.
+            const std::string log_prefix = left_arm ? "loop_log_left" : "loop_log_right";
             std::string find_error;
             const std::optional<std::string> found =
-                FindLatestRunCsv(parsed.runs_root, find_error);
+                FindLatestRunCsv(parsed.runs_root, find_error, log_prefix);
             if (!found) {
-                diagnostics << "error: no run log found under " << parsed.runs_root
-                            << " — start the controller first (it creates the "
-                            << "log), or pass --state-csv/--start-deg\n";
+                diagnostics << "error: no " << log_prefix << "*.csv run log found "
+                            << "under " << parsed.runs_root << " — start the controller "
+                            << "(--arm " << (left_arm ? "left" : "right")
+                            << ") first (it creates the log), or pass "
+                            << "--state-csv/--start-deg\n";
                 return 2;
             }
             state_csv = *found;
@@ -404,6 +613,7 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         q_start_rad = *q;
     }
 
+    const std::string dh_path = parsed.dh_path.value_or(DefaultDhPath(left_arm));
     PlannerModel model;
     try {
         // Same reason as the solve below: constructing the model builds a
@@ -413,17 +623,138 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         // RunBridge — `targets` is std::cout in the real binary, so the
         // final block write must happen with std::cout restored.
         const CoutRedirectGuard cout_guard(diagnostics);
-        model = LoadPlannerModel(parsed.dh_path);
+        // has_tool = !left_arm: the right chain ends at the mounted tool,
+        // the left chain at a bare flange (GenerateArmModel.h has_tool).
+        model = LoadPlannerModel(dh_path, /*has_tool=*/!left_arm);
     } catch (const std::exception& error) {
         diagnostics << "error: solve failed: could not load planner model from "
-                    << parsed.dh_path << ": " << error.what() << "\n";
+                    << dh_path << ": " << error.what() << "\n";
         return 3;
+    }
+
+    // Loaded before the solve and echoed whole, so a session log records
+    // the tuning that produced its trajectory. A bad key fails here, with
+    // the arm still holding at start and nothing written to the pipe.
+    PlannerConfig planner_config;
+    try {
+        planner_config = LoadPlannerConfig(parsed.planner_config_path);
+    } catch (const std::exception& error) {
+        diagnostics << "error: " << error.what() << "\n";
+        return 1;
+    }
+    diagnostics << EffectiveConfigText(planner_config);
+
+    // ---------------------------------------------------------------
+    // Cartesian path following
+    // ---------------------------------------------------------------
+    // Taken before the point-to-point path below, and returning from
+    // inside, so point-to-point behaviour is reached by exactly the same
+    // code it always was.
+    if (parsed.circle) {
+        CircleSpec circle = *parsed.circle;
+        // Sample count from the geometry, not from a hand-picked number:
+        // a stated tolerance is meaningless if the chords between samples
+        // already miss the arc by more than it.
+        circle.samples = CircleSamplesForChordError(
+            circle.radius_m, planner_config.path_following.max_chord_error_m);
+
+        CartesianPath task_path;
+        try {
+            task_path = PathToMount(GenerateCircle(circle));
+        } catch (const std::exception& error) {
+            diagnostics << "error: " << error.what() << "\n";
+            return 1;
+        }
+        diagnostics << "path: circle, radius " << circle.radius_m << " m, "
+                    << circle.samples << " samples (chord error <= "
+                    << planner_config.path_following.max_chord_error_m * 1000.0
+                    << " mm), lap " << circle.duration_s << " s, declared in "
+                    << FrameName(declared_frame) << " -> "
+                    << FrameName(config::ReferenceFrame::kMount) << "\n";
+
+        ValidationInputs validation;
+        validation.circle_applicable = true;
+        validation.circle_centre = PoseToMount(
+            Eigen::Isometry3d(Eigen::Translation3d(circle.centre_m)),
+            declared_frame).translation();
+        validation.circle_normal =
+            PoseToMount(Eigen::Isometry3d(Eigen::Quaterniond::Identity()),
+                        declared_frame).linear() * circle.normal.normalized();
+        validation.circle_radius_m = circle.radius_m;
+
+        // The legacy optimiser prints progress straight to std::cout, and in
+        // the real binary std::cout IS the target pipe (main.cpp), read by
+        // the controller as wire input. Guarding the solve is not optional:
+        // without it "Creating arm trajectory..." is the first line of the
+        // emitted block (observed 2026-08-07).
+        PathPlanOutcome plan;
+        {
+            const CoutRedirectGuard cout_guard(diagnostics);
+            plan = SolveAlongPath(model, task_path, q_start_rad, parsed.box,
+                                  parsed.joint_limits_path, planner_config,
+                                  validation);
+        }
+        if (!plan.ok) {
+            diagnostics << "error: solve failed: " << plan.error << "\n";
+            return 3;
+        }
+
+        diagnostics << "continuation IK: largest joint step "
+                    << plan.maximum_joint_step_rad * 180.0 / M_PI
+                    << " deg, closure drift "
+                    << plan.closure_drift_rad * 180.0 / M_PI << " deg\n";
+        if (plan.time_scaling_passes > 1)
+            diagnostics << "time scaling: " << plan.time_scaling_passes
+                        << " pass(es), final duration " << plan.total_time_sec
+                        << " s" << (plan.time_scaling_settled
+                                        ? "\n"
+                                        : " — DID NOT SETTLE within the pass limit\n");
+        diagnostics << plan.report.Summary();
+
+        if (!plan.report.hardware_execution_allowed) {
+            // Not emitted. Every check the report lists is a MODELLED one,
+            // so a failure here is the strongest statement available that
+            // this trajectory should not reach the arm.
+            diagnostics << "error: plan rejected — one or more validity checks "
+                           "failed (see the report above). Nothing was emitted.\n";
+            return 4;
+        }
+        targets << plan.emitted_block;
+        diagnostics << "arm: " << (left_arm ? "left" : "right")
+                    << ", traced circle emitted, duration " << plan.total_time_sec
+                    << " s\n";
+        return 0;
     }
 
     PlanRequest request;
     request.q_start_rad = q_start_rad;
     request.goal_position_m = *parsed.goal;
     request.obstacle = parsed.box;
+    if (parsed.goal_rpy_rad) {
+        request.goal_rotation =
+            RotationToMount(RotationFromRpy(*parsed.goal_rpy_rad), declared_frame);
+        // Echoed in mount, like the goal position above — reporting one in
+        // the declared frame and the other post-conversion put two frames in
+        // one block and made them impossible to compare.
+        const Eigen::Vector3d rpy_mount = RpyFromRotation(*request.goal_rotation);
+        diagnostics << "goal orientation: explicit, rpy [" << rpy_mount.x() * 180.0 / M_PI
+                    << ", " << rpy_mount.y() * 180.0 / M_PI << ", "
+                    << rpy_mount.z() * 180.0 / M_PI << "] deg in "
+                    << FrameName(config::ReferenceFrame::kMount);
+        if (declared_frame != config::ReferenceFrame::kMount)
+            diagnostics << " (converted from " << FrameName(declared_frame) << ")";
+        diagnostics << "\n";
+    } else {
+        // Never silent. Inheriting means this goal's feasibility depends on
+        // where the arm was parked before the run — the same left-arm goal
+        // solved to 1.34 mm from one start and was unreachable from another
+        // on 2026-08-06, purely for this reason.
+        diagnostics << "goal orientation: INHERITED from the start pose (no "
+                       "orientation_rpy_deg in the goal block). Feasibility "
+                       "therefore depends on where the arm started; set it "
+                       "explicitly to make this goal mean the same thing "
+                       "every run.\n";
+    }
 
     // The legacy optimizer prints its own progress chatter straight to
     // std::cout. In the real binary `targets` IS std::cout (see main.cpp),
@@ -434,12 +765,46 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     PlanOutcome outcome;
     {
         const CoutRedirectGuard cout_guard(diagnostics);
-        outcome = SolveToPosition(model, request, parsed.joint_limits_path);
+        outcome = SolveToPosition(model, request, parsed.joint_limits_path,
+                                  planner_config);
     }
 
     if (!outcome.ok) {
         diagnostics << "error: solve failed: " << outcome.error << "\n";
         return 3;
+    }
+
+    // How the optimiser's starting sketch was built. Reported HERE, before
+    // validation and emission, because a degraded initialisation is most
+    // worth knowing about on the runs that go on to fail — printing it only
+    // on success would hide it exactly when it explains something. A
+    // solved pose says so in one word; the degraded cases give how far the
+    // IK landed from the requested pose, split into position and
+    // orientation, because that split identifies WHICH half was
+    // unreachable. This is a description, not a verdict: the plan is not
+    // refused for a poor initialisation, and the achieved goal error
+    // reported after emission is what the optimiser actually managed.
+    diagnostics << "plan initialisation: ";
+    switch (outcome.init_source) {
+    case InitSource::kSolvedIk:
+        diagnostics << "solved IK pose\n";
+        break;
+    case InitSource::kNearMiss:
+        diagnostics << "NEAR MISS — no IK pose passed; seeded from the closest "
+                       "one reached, "
+                    << (outcome.init_position_error_m * 1000.0) << " mm and "
+                    << (outcome.init_orientation_error_rad * 180.0 / M_PI)
+                    << " deg from the requested pose. The requested position "
+                       "may be reachable only with a different tool "
+                       "orientation; check the achieved goal error below.\n";
+        break;
+    case InitSource::kHeldStart:
+        diagnostics << "HELD START — IK produced no usable pose at all; every "
+                       "waypoint seeded at the start configuration and the "
+                       "optimiser pulled from there alone. Treat the achieved "
+                       "goal error below as the only statement of where this "
+                       "plan actually goes.\n";
+        break;
     }
 
     const std::optional<std::string> validation_error =
@@ -466,7 +831,8 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
                              kMaxTrajectoryBlockPoints);
     targets << buffered_targets.str();
 
-    diagnostics << "trajectory points: " << emitted_count
+    diagnostics << "arm: " << (left_arm ? "left" : "right")
+                << ", trajectory points: " << emitted_count
                 << ", solve: " << outcome.result.optimization_duration.count()
                 << " ms, final goal error: " << (outcome.final_goal_error_m * 1000.0)
                 << " mm\n";

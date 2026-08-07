@@ -1,42 +1,42 @@
 # Dual-arm mounting geometry — the source of truth for where the two Gen3
-# bases sit relative to the shared `world` frame.
+# bases sit relative to the shared `mount` frame.
 #
 # GEN3_dual_mounted.urdf's two mounting joints MUST agree with this file.
 # That agreement is enforced by tests/test_dual_arm_mounting.cpp (ctest name
 # `dual_arm_mounting`), which loads the URDF through Pinocchio and compares
-# the composed world->base transforms against the values below. Edit this
+# the composed mount->base transforms against the values below. Edit this
 # file first, then the URDF, then run the test — if they disagree the build's
 # test step fails and names the offending number.
 #
 # PROVENANCE — READ BEFORE TRUSTING THESE NUMBERS.
 # separation and tilt are INHERITED, NOT MEASURED. They arrived fully formed
 # in commit af116a5c ("basic_control: mounted dual-arm model, right-only
-# actuation") with no measurement note, and 0.16 m base-to-world was a round
+# actuation") with no measurement note, and 0.16 m base-to-mount was a round
 # number. They describe the mount's intended geometry, not a survey of the
 # physical rig. Replace them with measured values when the rig is surveyed;
 # nothing else in the codebase needs to change when you do.
 
-# Distance between the two arms' base_link origins, metres, along world +y.
-# Derived from the inherited 0.16 m base-to-world radius at the tilt below:
+# Distance between the two arms' base_link origins, metres, along mount +y.
+# Derived from the inherited 0.16 m base-to-mount radius at the tilt below:
 # 2 * 0.16 * sin(1.2085) = 0.113415.
 base_separation_m: 0.113415
 
-# Roll of each base about world X, radians. The right arm mounts at
+# Roll of each base about mount X, radians. The right arm mounts at
 # +mount_tilt_rad and the left at -mount_tilt_rad, so the pair is mirrored
-# about the world XZ plane and the relative rotation is Rx(-2 * tilt).
+# about the mount XZ plane and the relative rotation is Rx(-2 * tilt).
 # 1.2085 rad = 69.2419 deg.
 mount_tilt_rad: 1.2085
 
-# Where the world origin sits. `base_midpoint` puts it exactly halfway
+# Where the mount origin sits. `base_midpoint` puts it exactly halfway
 # between the two base_link origins, so each base is at
 # [0, -+base_separation_m/2, 0] with roll -+mount_tilt_rad.
 #
-# The previous model used a torso-apex origin instead: world sat 0.149614 m
+# The previous model used a torso-apex origin instead: mount sat 0.149614 m
 # ABOVE this midpoint, equidistant (0.16 m) from both bases. Chosen 2026-08-05
-# in favour of the midpoint so that world y and z read directly as "between
+# in favour of the midpoint so that mount y and z read directly as "between
 # the arms" and "at mount height" — see docs/decisions/custom-urdf.md.
 #
 # `base_midpoint` is the only value the URDF currently encodes; it is named
 # here so that a future change of convention is a visible edit rather than a
 # silent re-interpretation of the numbers above.
-world_origin: base_midpoint
+mount_origin: base_midpoint

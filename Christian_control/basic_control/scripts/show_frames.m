@@ -1,10 +1,10 @@
 % show_frames.m — the coordinate frames of the Stage 2 pipeline, drawn in
 % base_link: the frame goal.yaml, the controller prints, and pipe targets
 % still use. This is a base_link-only diagram and deliberately stays that
-% way; for the mounted pair and the world frame use show_dual_arm_frames.
+% way; for the mounted pair and the mount frame use show_dual_arm_frames.
 %
-% base_link is NOT the world frame. Since 2026-08-05 the model has a real
-% `world` root at the midpoint of the two arm bases, and a pipe target may
+% base_link is NOT the mount frame. Since 2026-08-05 the model has a real
+% `mount` root at the midpoint of the two arm bases, and a pipe target may
 % declare its frame ("WORLD x y z" or "BASE x y z", no prefix meaning
 % base_link) — see docs/decisions/custom-urdf.md. Everything drawn here is
 % base_link, so a WORLD target will NOT appear where these axes suggest.
@@ -62,9 +62,9 @@ end
 
 % Reads `goal:` and its `frame:` from goal.yaml, returning the point in
 % base_link. Mirrors the bridge: an omitted frame means the compiled
-% config::kReferenceFrame, which is world.
+% config::kReferenceFrame, which is mount.
 function [goal_base, frameName] = read_goal(goalFile, mountFile)
-    goal_base = []; frameName = 'world';
+    goal_base = []; frameName = 'mount';
     if ~isfile(goalFile), return, end
     txt = string(fileread(goalFile));
     lines = splitlines(txt);
@@ -82,17 +82,17 @@ function [goal_base, frameName] = read_goal(goalFile, mountFile)
     switch frameName
         case 'right_base'
             goal_base = goal;
-        case {'world', 'left_base'}
-            % T_world_rightbase from the mounting file — the same source of
+        case {'mount', 'left_base'}
+            % T_mount_rightbase from the mounting file — the same source of
             % truth the URDF is built from, so this cannot drift from it.
             sep = read_scalar(mountFile, 'base_separation_m');
             tilt = read_scalar(mountFile, 'mount_tilt_rad');
             Rr = rot_x(tilt);  tr = [0; -sep/2; 0];
             if strcmp(frameName, 'left_base')
                 Rl = rot_x(-tilt); tl = [0; sep/2; 0];
-                goal = Rl * goal + tl;                 % left_base -> world
+                goal = Rl * goal + tl;                 % left_base -> mount
             end
-            goal_base = Rr' * (goal - tr);             % world -> right_base
+            goal_base = Rr' * (goal - tr);             % mount -> right_base
         otherwise
             error('unknown frame ''%s'' in %s', frameName, goalFile);
     end

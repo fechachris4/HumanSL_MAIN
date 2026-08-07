@@ -1,6 +1,6 @@
 //
 // FramePrint — the dual-arm FK verification table: each arm's tool frame in
-// the world frame and in its own base_link, side by side, for one
+// the mount frame and in its own base_link, side by side, for one
 // configuration. Shared by the controller's startup print (Main.cpp) and the
 // hardware-free tools/print_dual_arm_fk.cpp so both report identically.
 //
@@ -18,11 +18,11 @@
 #include "Config.h"
 #include "Kinematics.h"
 
-// One arm's row pair. `world` and `base` describe the same tool point in two
+// One arm's row pair. `mount` and `base` describe the same tool point in two
 // frames, so a disagreement between them is a mounting-transform error and
 // nothing else.
 inline void PrintArmFrameRows(const char* arm_label, const char* tool_frame,
-                              const char* base_frame, const Pose& world,
+                              const char* base_frame, const Pose& mount,
                               const Pose& base)
 {
     const auto xyz = [](const Eigen::Vector3d& p) {
@@ -42,8 +42,8 @@ inline void PrintArmFrameRows(const char* arm_label, const char* tool_frame,
     };
 
     std::cout << "  " << arm_label << "  tool frame " << tool_frame << "\n"
-              << "    world      p " << xyz(world.position) << "   rpy "
-              << rpy(world.rotation) << "\n"
+              << "    mount      p " << xyz(mount.position) << "   rpy "
+              << rpy(mount.rotation) << "\n"
               << "    " << std::left << std::setw(10) << base_frame << std::right
               << " p " << xyz(base.position) << "   rpy " << rpy(base.rotation)
               << "\n";
@@ -65,13 +65,13 @@ inline void PrintDualArmFkTable(DualArmKinematics& model,
 
     const auto arm_rows = [&](Arm arm, const char* label, const char* tool_frame,
                               const char* base_frame) {
-        const Pose world = model.ToolPoseInWorld(arm, right_q_rad, left_q_rad);
-        // p_base = T_world_base^-1 * p_world — the legacy conversion, run
+        const Pose mount = model.ToolPoseInMount(arm, right_q_rad, left_q_rad);
+        // p_base = T_mount_base^-1 * p_mount — the legacy conversion, run
         // backwards. Nothing here recomputes FK.
-        const pinocchio::SE3& world_from_base = model.WorldFromBase(arm);
-        const Pose base{world_from_base.actInv(world.position),
-                        world_from_base.rotation().transpose() * world.rotation};
-        PrintArmFrameRows(label, tool_frame, base_frame, world, base);
+        const pinocchio::SE3& mount_from_base = model.MountFromBase(arm);
+        const Pose base{mount_from_base.actInv(mount.position),
+                        mount_from_base.rotation().transpose() * mount.rotation};
+        PrintArmFrameRows(label, tool_frame, base_frame, mount, base);
     };
 
     arm_rows(Arm::kRight, "right", config::kRightEndEffectorFrame,

@@ -7,13 +7,13 @@
 ArmModel::ArmModel(){};
 
 
-std::unique_ptr<gpmp2::ArmModel> ArmModel::createArmModel(const gtsam::Pose3& base_pose, const DHParameters& dh_params) {
+std::unique_ptr<gpmp2::ArmModel> ArmModel::createArmModel(const gtsam::Pose3& base_pose, const DHParameters& dh_params, bool has_tool) {
 
     // Create 7-DOF arms
     auto arm = std::make_unique<gpmp2::Arm>(7, dh_params.a, dh_params.alpha, dh_params.d,
                                                 base_pose, dh_params.theta);
 
-    auto arm_spheres = generateArmSpheres(0, 0.05, dh_params.d);
+    auto arm_spheres = generateArmSpheres(0, 0.05, dh_params.d, has_tool);
 
     // Create ArmModel instances
     auto arm_model = std::make_unique<gpmp2::ArmModel>(*arm, arm_spheres);
@@ -26,7 +26,8 @@ std::unique_ptr<gpmp2::ArmModel> ArmModel::createArmModel(const gtsam::Pose3& ba
 gpmp2::BodySphereVector ArmModel::generateArmSpheres(
     size_t arm_id_offset,
     double sphere_radius,
-    const gtsam::Vector& d) {
+    const gtsam::Vector& d,
+    bool has_tool) {
 
     // The station offsets below were authored against these d values (the
     // 2026-08-05 hand YAML). Each along-link station is scaled by the signed
@@ -108,19 +109,22 @@ gpmp2::BodySphereVector ArmModel::generateArmSpheres(
 
 
     // Gripper/End-effector spheres — finger spread (x) and the y bump are
-    // girth, absolute; the -z stations ride the link scale.
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.05, 0.0, 0.0));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.05, 0.0, 0.0));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.05, 0.0, -0.04 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.05, 0.0, -0.04 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.07, 0.0, -0.08 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.07, 0.0, -0.08 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.07, 0.0, -0.12 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.07, 0.0, -0.12 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.05, 0.0, -0.14 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.05, 0.0, -0.14 * scale[6]));
-    spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.8, gtsam::Point3(0.0, 0.05, -0.15 * scale[6]));
-
+    // girth, absolute; the -z stations ride the link scale. Right arm only:
+    // these model the mounted tool's physical footprint, which the left
+    // arm's bare flange does not have (see the .h comment on has_tool).
+    if (has_tool) {
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.05, 0.0, 0.0));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.05, 0.0, 0.0));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.05, 0.0, -0.04 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.05, 0.0, -0.04 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.07, 0.0, -0.08 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.07, 0.0, -0.08 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.07, 0.0, -0.12 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.07, 0.0, -0.12 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(0.05, 0.0, -0.14 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.6, gtsam::Point3(-0.05, 0.0, -0.14 * scale[6]));
+        spheres.emplace_back(arm_id_offset + 6, sphere_radius*0.8, gtsam::Point3(0.0, 0.05, -0.15 * scale[6]));
+    }
 
     return spheres;
 }

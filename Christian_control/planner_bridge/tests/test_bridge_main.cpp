@@ -56,7 +56,8 @@ static int CompleteBlocksIn(const std::string& text) {
 }
 
 int main(int argc, char** argv) {
-    assert(argc == 3 && "usage: test_bridge_main <dh_tool.yaml> <joint_limits.yaml>");
+    assert(argc == 4 &&
+          "usage: test_bridge_main <dh_tool.yaml> <joint_limits.yaml> <dh_flange.yaml>");
     // Zero-config tool position measured 2026-08-05: (0.0, -0.0246, 1.3073)
     // in base_link. (0.20, 0.35, 0.90) is 0.59 m away — unreachable from a
     // single-solve offset — so the goal below reuses the (0.15, 0.10, -0.10)
@@ -69,7 +70,7 @@ int main(int argc, char** argv) {
     // compiles and runs whatever config::kReferenceFrame is set to. Spelling
     // only two of them would turn a legal config into a build break.
     const char* const kGoalPerFrame[3][3] = {
-        {"0.15", "-1.158774", "0.497919"},   // kWorld
+        {"0.15", "-1.158774", "0.497919"},   // kMount
         {"0.15", "0.075", "1.207"},          // kRightBase
         {"0.15", "-0.896391", "-0.960105"},  // kLeftBase
     };
@@ -78,6 +79,7 @@ int main(int argc, char** argv) {
 
     std::string configured_frame_targets;
     const std::vector<std::string> args = {
+        "--arm", "right",
         "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
         kGoalInConfiguredFrame[2],
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
@@ -127,14 +129,30 @@ int main(int argc, char** argv) {
 
     // Bad arguments produce exit code 1 and NO target output.
     std::ostringstream empty_targets, ignored;
-    assert(RunBridge({"--goal", "not-a-number"}, empty_targets, ignored) == 1);
+    assert(RunBridge({"--arm", "right", "--goal", "not-a-number"}, empty_targets,
+                     ignored) == 1);
     assert(empty_targets.str().empty());
 
-    // A --box outside the SDF grid volume (z up to 1.6 m; this box sits at
-    // z=5 m) must be rejected before solving, not silently treated as "no
-    // obstacle" by gpmp2 — exit 1, no target output.
+    // --arm is required — refused before anything else runs.
+    std::ostringstream noarm_targets, noarm_diagnostics;
+    assert(RunBridge({"--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
+                      kGoalInConfiguredFrame[2]},
+                     noarm_targets, noarm_diagnostics) == 1);
+    assert(noarm_targets.str().empty());
+    assert(noarm_diagnostics.str().find("--arm is required") != std::string::npos);
+
+    // A --box outside the SDF grid volume (this one sits at z=5 m) must be
+    // rejected before solving, not silently treated as "no obstacle" by
+    // gpmp2 — exit 1, no target output.
+    //
+    // The diagnostic is asserted, not just the exit code. Before the planner
+    // moved into mount this case exited 1 for an entirely different reason —
+    // a box was only legal in the controlled arm's own base frame, so it was
+    // refused on frame grounds and never reached the grid check at all. An
+    // exit-code-only assertion cannot tell those apart.
     std::ostringstream box_targets, box_diagnostics;
     const std::vector<std::string> out_of_grid_box_args = {
+        "--arm", "right",
         "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
         kGoalInConfiguredFrame[2],
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
@@ -142,19 +160,57 @@ int main(int argc, char** argv) {
         "--box", "0", "0", "5.0", "0.05", "0.05", "0.05"};
     assert(RunBridge(out_of_grid_box_args, box_targets, box_diagnostics) == 1);
     assert(box_targets.str().empty());
+    assert(box_diagnostics.str().find("outside the SDF grid volume") !=
+           std::string::npos);
+
+    // A box declared in an arm's BASE frame is now accepted and converted
+    // into mount, with its half-extents inflated to the enclosing
+    // axis-aligned box (the bases are rolled ~69 deg, so the rotated box is
+    // not grid-aligned). This capability did not exist before the move — the
+    // frame rule was the other way round — so nothing else covers it.
+    //
+    // The box is placed well away from the arm so it cannot make the goal
+    // unreachable: this asserts the frame/inflation path, not avoidance.
+    {
+        std::ostringstream targets, diagnostics;
+        std::ofstream goal_yaml("tbm_goal_basebox.yaml");
+        goal_yaml << "right:\n"
+                  << "  frame: right_base\n"
+                  << "  goal: [" << kGoalPerFrame[1][0] << ", " << kGoalPerFrame[1][1]
+                  << ", " << kGoalPerFrame[1][2] << "]\n"
+                  << "  box:\n"
+                  << "    center: [-0.6, -0.6, 0.1]\n"
+                  << "    half_extent: [0.05, 0.05, 0.05]\n";
+        goal_yaml.close();
+        const std::vector<std::string> base_box_args = {
+            "--arm", "right", "--goal-file", "tbm_goal_basebox.yaml",
+            "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+            "--dh", argv[1], "--joint-limits", argv[2]};
+        assert(RunBridge(base_box_args, targets, diagnostics) == 0);
+        assert(!targets.str().empty());
+        // A cube rotated 69 deg must come out strictly larger on some axis;
+        // if the conversion silently kept the requested half-extents the
+        // obstacle would be smaller than asked for, the unsafe direction.
+        assert(diagnostics.str().find("half-extent inflated") != std::string::npos);
+        std::filesystem::remove("tbm_goal_basebox.yaml");
+    }
 
     // --runs-root auto-discovery: a fixture dated subdir with one valid
     // 13-column CSV (same shape as test_start_state's fixture, all joints
     // at 0 degrees) is found and used as the start state.
     std::filesystem::create_directories("tbm_tmp/2026-08-05");
     {
-        std::ofstream csv("tbm_tmp/2026-08-05/loop_log_x.csv");
+        // Prefix must match the arm-scoped search below (--arm right ->
+        // "loop_log_right"): a right-arm run never seeds a left-arm plan or
+        // vice versa (config::ArmConfig::log_prefix, basic_control/Config.h).
+        std::ofstream csv("tbm_tmp/2026-08-05/loop_log_right_x.csv");
         csv << "time_s,dt_s,meas_j1,extra,meas_j2,meas_j3,meas_j4,"
                "meas_j5,meas_j6,meas_j7,vel_j1,torque_j1,fault_j1\n";
         csv << "0.001,0.002,0,99,0,0,0,0,0,0,100,200,300\n";
     }
     std::ostringstream auto_targets, auto_diagnostics;
     const std::vector<std::string> auto_args = {
+        "--arm", "right",
         "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
         kGoalInConfiguredFrame[2],
         "--dh", argv[1], "--joint-limits", argv[2],
@@ -170,11 +226,13 @@ int main(int argc, char** argv) {
     {
         {
             std::ofstream frame_yaml("tbm_frame.yaml");
-            frame_yaml << "frame: right_base\n"
-                       << "goal: [0.15, 0.075, 1.207]\n";
+            frame_yaml << "right:\n"
+                       << "  frame: right_base\n"
+                       << "  goal: [0.15, 0.075, 1.207]\n";
         }
         std::ostringstream frame_targets, frame_diagnostics;
         const std::vector<std::string> frame_args = {
+            "--arm", "right",
             "--goal-file", "tbm_frame.yaml",
             "--start-deg", "0", "0", "0", "0", "0", "0", "0",
             "--dh", argv[1], "--joint-limits", argv[2]};
@@ -188,7 +246,7 @@ int main(int argc, char** argv) {
         // elbow posture; asserting on joints made this test flaky about 1 run
         // in 4. Compare where the tool ends up instead.
         //
-        // Tolerance: the world spelling carries 6 decimals, so it round-trips
+        // Tolerance: the mount spelling carries 6 decimals, so it round-trips
         // a micrometre off, and each solve converges to within its own ~3 mm
         // goal error — two independent solves can differ by roughly twice
         // that, so 10 mm is the honest bound here, not a slack one.
@@ -207,22 +265,24 @@ int main(int argc, char** argv) {
         std::filesystem::remove("tbm_frame.yaml");
 
         // The SAME physical point in every frame the constant accepts, so
-        // each conversion branch in ToRightBase is exercised — including
+        // each conversion branch in ToControlledBase is exercised — including
         // left_base, whose two-step composition
-        // (T_rightbase_world * T_world_leftbase) is the easiest to get
+        // (T_rightbase_mount * T_mount_leftbase) is the easiest to get
         // backwards and would otherwise ship untested because it is named in
         // config but never the default.
         for (int frame = 0; frame < 3; ++frame) {
             {
                 std::ofstream each_yaml("tbm_eachframe.yaml");
-                each_yaml << "frame: "
+                each_yaml << "right:\n"
+                          << "  frame: "
                           << config::kReferenceFrameNames[frame] << "\n"
-                          << "goal: [" << kGoalPerFrame[frame][0] << ", "
+                          << "  goal: [" << kGoalPerFrame[frame][0] << ", "
                           << kGoalPerFrame[frame][1] << ", "
                           << kGoalPerFrame[frame][2] << "]\n";
             }
             std::ostringstream each_targets, each_diagnostics;
             const std::vector<std::string> each_args = {
+                "--arm", "right",
                 "--goal-file", "tbm_eachframe.yaml",
                 "--start-deg", "0", "0", "0", "0", "0", "0", "0",
                 "--dh", argv[1], "--joint-limits", argv[2]};
@@ -241,15 +301,31 @@ int main(int argc, char** argv) {
     {
         {
             std::ofstream bad_yaml("tbm_badframe.yaml");
-            bad_yaml << "frame: torso\ngoal: [0.15, 0.075, 1.207]\n";
+            bad_yaml << "right:\n  frame: torso\n  goal: [0.15, 0.075, 1.207]\n";
         }
         std::ostringstream bad_targets, bad_diagnostics;
-        assert(RunBridge({"--goal-file", "tbm_badframe.yaml"}, bad_targets,
-                         bad_diagnostics) == 1);
+        assert(RunBridge({"--arm", "right", "--goal-file", "tbm_badframe.yaml"},
+                         bad_targets, bad_diagnostics) == 1);
         assert(bad_targets.str().empty());
         assert(bad_diagnostics.str().find("unknown frame 'torso'") !=
                std::string::npos);
         std::filesystem::remove("tbm_badframe.yaml");
+    }
+
+    // A goal file missing the block for the requested --arm is refused,
+    // naming which block is missing — not silently read as the other arm's
+    // numbers.
+    {
+        {
+            std::ofstream noblock_yaml("tbm_noblock.yaml");
+            noblock_yaml << "right:\n  frame: right_base\n  goal: [0.15, 0.075, 1.207]\n";
+        }
+        std::ostringstream noblock_targets, noblock_diagnostics;
+        assert(RunBridge({"--arm", "left", "--goal-file", "tbm_noblock.yaml"},
+                         noblock_targets, noblock_diagnostics) == 1);
+        assert(noblock_targets.str().empty());
+        assert(noblock_diagnostics.str().find("no 'left:' block") != std::string::npos);
+        std::filesystem::remove("tbm_noblock.yaml");
     }
 
     // Empty/missing runs root: exit 2, no target output, diagnostics point
@@ -257,6 +333,7 @@ int main(int argc, char** argv) {
     std::filesystem::create_directories("tbm_empty_tmp");
     std::ostringstream missing_targets, missing_diagnostics;
     const std::vector<std::string> missing_args = {
+        "--arm", "right",
         "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
         kGoalInConfiguredFrame[2],
         "--dh", argv[1], "--joint-limits", argv[2],
@@ -270,10 +347,11 @@ int main(int argc, char** argv) {
     // run needs no typed coordinates. Same proven-reachable goal as above.
     {
         std::ofstream goal_yaml("tbm_goal.yaml");
-        goal_yaml << "frame: right_base\ngoal: [0.15, 0.075, 1.207]\n";
+        goal_yaml << "right:\n  frame: right_base\n  goal: [0.15, 0.075, 1.207]\n";
     }
     std::ostringstream file_targets, file_diagnostics;
     const std::vector<std::string> file_args = {
+        "--arm", "right",
         "--goal-file", "tbm_goal.yaml",
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
         "--dh", argv[1], "--joint-limits", argv[2]};
@@ -285,13 +363,15 @@ int main(int argc, char** argv) {
     // the --box flag: exit 1, no target output.
     {
         std::ofstream goal_yaml("tbm_goal_box.yaml");
-        goal_yaml << "frame: right_base\ngoal: [0.15, 0.075, 1.207]\n";
-        goal_yaml << "box:\n";
-        goal_yaml << "  center: [0, 0, 5.0]\n";
-        goal_yaml << "  half_extent: [0.05, 0.05, 0.05]\n";
+        goal_yaml << "right:\n";
+        goal_yaml << "  frame: right_base\n  goal: [0.15, 0.075, 1.207]\n";
+        goal_yaml << "  box:\n";
+        goal_yaml << "    center: [0, 0, 5.0]\n";
+        goal_yaml << "    half_extent: [0.05, 0.05, 0.05]\n";
     }
     std::ostringstream fbox_targets, fbox_diagnostics;
     const std::vector<std::string> fbox_args = {
+        "--arm", "right",
         "--goal-file", "tbm_goal_box.yaml",
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
         "--dh", argv[1], "--joint-limits", argv[2]};
@@ -302,7 +382,8 @@ int main(int argc, char** argv) {
     // Giving both --goal and --goal-file is ambiguous — hard error, since a
     // silently-ignored file would hide which goal the arm is about to get.
     std::ostringstream both_targets, both_ignored;
-    assert(RunBridge({"--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
+    assert(RunBridge({"--arm", "right",
+                      "--goal", kGoalInConfiguredFrame[0], kGoalInConfiguredFrame[1],
         kGoalInConfiguredFrame[2],
                       "--goal-file", "tbm_goal.yaml"},
                      both_targets, both_ignored) == 1);
@@ -312,11 +393,61 @@ int main(int argc, char** argv) {
     // the diagnostics name the file that failed.
     std::ostringstream nofile_targets, nofile_diagnostics;
     const std::vector<std::string> nofile_args = {
+        "--arm", "right",
         "--goal-file", "tbm_absent.yaml",
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
         "--dh", argv[1], "--joint-limits", argv[2]};
     assert(RunBridge(nofile_args, nofile_targets, nofile_diagnostics) == 1);
     assert(nofile_targets.str().empty());
     assert(nofile_diagnostics.str().find("tbm_absent.yaml") != std::string::npos);
+
+    // --arm left, end to end, against the left/flange DH file. left_base is
+    // only reachable via a goal FILE (a bare --goal always reads
+    // config::kReferenceFrame; only --goal-file's frame: key can name it).
+    // The goal is the left arm's own zero-config tool position plus the
+    // same offset already proven solvable for the right arm above
+    // (~20.6 cm) — computed from the flange chain itself rather than a
+    // hand measurement, since no physical left-arm survey exists yet.
+    {
+        const Eigen::Vector3d left_zero_config_position =
+            pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+                Eigen::Matrix<double, 7, 1>::Zero(), config::kLeftEndEffectorFrame,
+                /*left_arm=*/true)
+                .position;
+        const Eigen::Vector3d left_goal =
+            left_zero_config_position + Eigen::Vector3d(0.15, 0.10, -0.10);
+        {
+            std::ofstream left_goal_yaml("tbm_left_goal.yaml");
+            left_goal_yaml << "left:\n  frame: left_base\n  goal: ["
+                          << left_goal.x() << ", " << left_goal.y() << ", "
+                          << left_goal.z() << "]\n";
+        }
+        std::ostringstream left_targets, left_diagnostics;
+        const std::vector<std::string> left_file_args = {
+            "--arm", "left",
+            "--goal-file", "tbm_left_goal.yaml",
+            "--start-deg", "0", "0", "0", "0", "0", "0", "0",
+            "--dh", argv[3], "--joint-limits", argv[2]};
+        assert(RunBridge(left_file_args, left_targets, left_diagnostics) == 0);
+        assert(CompleteBlocksIn(left_targets.str()) == 1);
+        assert(left_diagnostics.str().find("arm: left") != std::string::npos);
+
+        // Tripwire for the 2026-08-06 frame-mismatch bug: when any
+        // Pinocchio-backed evaluation in the solve (IK init, start pose,
+        // the error metric itself) queries the RIGHT arm's tool chain
+        // against the left/flange DH model, the reported final goal error
+        // lands at the tool-vs-flange offset — a constant ~120 mm. A
+        // healthy consistent-frame solve reports a few mm, so 50 mm cleanly
+        // separates the two. Parsed from the same diagnostics line the
+        // operator reads.
+        const std::string diag = left_diagnostics.str();
+        const std::string error_key = "final goal error: ";
+        const std::size_t error_at = diag.find(error_key);
+        assert(error_at != std::string::npos);
+        const double final_error_mm = std::stod(diag.substr(error_at + error_key.size()));
+        assert(final_error_mm < 50.0 &&
+               "left-arm final goal error must not carry the tool-vs-flange offset");
+        std::filesystem::remove("tbm_left_goal.yaml");
+    }
     return 0;
 }

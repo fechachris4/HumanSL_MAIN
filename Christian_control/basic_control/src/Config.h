@@ -27,9 +27,11 @@ using JointVector = std::array<double, 7>;
 
 namespace config
 {
-    // Right-only by design: the URDF models both mounted arms, but only
-    // this IP gets a connection and only its 7 joints reach the loop.
+    // Both arms are connectable, one process each: --arm selects which IP
+    // this run controls (Main.cpp). The URDF always models both mounted
+    // arms; only the selected 7 joints reach the loop and get a Connect.
     inline constexpr const char* kRightRobotIp = "192.168.1.10";
+    inline constexpr const char* kLeftRobotIp = "192.168.1.9";
     inline constexpr const char* kRightBaseFrame = "base_link";
     // ConfiguredTool_Link, not the bare flange (EndEffector_Link): the
     // right arm carries a mounted tool, so this is the frame that matches
@@ -38,9 +40,13 @@ namespace config
     // the reading this offset was taken from and when to refresh it.
     inline constexpr const char* kRightEndEffectorFrame = "ConfiguredTool_Link";
 
-    // The left arm is model-only: held here whenever the 14-joint
-    // configuration is assembled. No left connection, feedback or command.
+    // Assumed pose of whichever arm is NOT the one this process controls,
+    // held fixed whenever the 14-joint configuration is assembled — that
+    // arm has no connection, no feedback and no command in THIS process, so
+    // its mount-frame FK is model-only, not measured. See DualArmKinematics
+    // (Kinematics.h) for how the controlled/other split is wired.
     inline constexpr JointVector kLeftNominalRad = {0, 0, 0, 0, 0, 0, 0};
+    inline constexpr JointVector kRightNominalRad = {0, 0, 0, 0, 0, 0, 0};
     // ---------------------------------------------------------------
     // The pipeline's reference frame — ONE switch
     // ---------------------------------------------------------------
@@ -56,17 +62,27 @@ namespace config
     //
     // Deliberately does NOT apply to two places, because it cannot:
     //   - pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink, which
-    //     is permanently base_link — utils.cpp composes it with
-    //     DhRootInBaseLink().inverse(), and the GPMP2 arm model and the SDF
-    //     must share a frame or every collision check is silently wrong;
-    //   - tools/print_dual_arm_fk, which prints world AND base side by side
+    //     is permanently the queried arm's OWN base_link/leftbase_link (its
+    //     left_arm parameter, not this switch, selects which) — utils.cpp
+    //     composes it with DhRootInBaseLink().inverse(), and the GPMP2 arm
+    //     model and the SDF must share a frame or every collision check is
+    //     silently wrong;
+    //   - tools/print_dual_arm_fk, which prints mount AND base side by side
     //     because that comparison is what validates the mounting transform.
-    enum class ReferenceFrame { kWorld, kRightBase, kLeftBase };
-    inline constexpr ReferenceFrame kReferenceFrame = ReferenceFrame::kWorld;
+    //
+    // `mount` is the URDF root: the midpoint of the two arm bases, rigidly
+    // attached to both. It is NOT a room frame — it travels with the rig.
+    // A room frame belongs ABOVE it as T_room_mount, identity while the rig
+    // is bolted to a bench and supplied by motion capture once it is worn.
+    // That transform does not exist yet; when it does, it composes in
+    // BridgeMain's frame boundary and in DualArmKinematics::MountFromBase,
+    // and nothing else needs to move.
+    enum class ReferenceFrame { kMount, kRightBase, kLeftBase };
+    inline constexpr ReferenceFrame kReferenceFrame = ReferenceFrame::kMount;
 
     // The names accepted in a goal file's `frame:` key, in enum order.
     inline constexpr const char* kReferenceFrameNames[] = {
-        "world", "right_base", "left_base"
+        "mount", "right_base", "left_base"
     };
 
     // Left-arm frame names, for kinematics only. The left chain ends at the
@@ -76,6 +92,40 @@ namespace config
     // their poses as though they were.
     inline constexpr const char* kLeftBaseFrame = "leftbase_link";
     inline constexpr const char* kLeftEndEffectorFrame = "leftEndEffector_Link";
+
+    // ---------------------------------------------------------------
+    // Per-arm bring-up settings — everything --arm selects between
+    // ---------------------------------------------------------------
+    //
+    // One instance per physical arm. `other_arm_nominal_rad` is the OTHER
+    // arm's assumed pose (see the comment on kLeftNominalRad above) — for
+    // kRightArmConfig that's the left arm's nominal, and vice versa.
+    // target_pipe_path and log_prefix are per-arm so a --arm=both run keeps
+    // the two arms' trajectory input and telemetry apart; lock_path names
+    // the IP it guards, matching ProcessLock's existing per-run contract.
+    struct ArmConfig {
+        const char* name;
+        const char* ip;
+        const char* base_frame;
+        const char* end_effector_frame;
+        JointVector other_arm_nominal_rad;
+        const char* target_pipe_path;
+        const char* log_prefix;
+        const char* lock_path;
+    };
+
+    inline constexpr ArmConfig kRightArmConfig{
+        "right", kRightRobotIp, kRightBaseFrame, kRightEndEffectorFrame,
+        kLeftNominalRad,
+        "/tmp/humansl_bridge_targets_right", "loop_log_right",
+        "/tmp/basic_control-192.168.1.10.lock"
+    };
+    inline constexpr ArmConfig kLeftArmConfig{
+        "left", kLeftRobotIp, kLeftBaseFrame, kLeftEndEffectorFrame,
+        kRightNominalRad,
+        "/tmp/humansl_bridge_targets_left", "loop_log_left",
+        "/tmp/basic_control-192.168.1.9.lock"
+    };
 
     // Both right-arm sessions (TCP + UDP, Hardware.h). Timeouts are what
     // the base waits before dropping an idle session/connection.
@@ -112,10 +162,10 @@ namespace config
     static_assert(kTakeoverHoldDuration == kCyclePeriod * kTakeoverHoldCycles,
                   "takeover hold must be an exact number of cyclic periods");
 
-    // The named pipe the controller reads targets from. Created by Main at
-    // startup if missing. Writers (planner_bridge, echo) open/write/close per
-    // plan; the reader reopens after every EOF.
-    inline constexpr const char* kTargetPipePath = "/tmp/humansl_bridge_targets";
+    // The named pipe the controller reads targets from is per-arm
+    // (ArmConfig::target_pipe_path above). Created by Main at startup if
+    // missing. Writers (planner_bridge, echo) open/write/close per plan; the
+    // reader reopens after every EOF.
 
     // This controller's target contract is position-only: every target
     // preserves the orientation captured at takeover. The startup pose is

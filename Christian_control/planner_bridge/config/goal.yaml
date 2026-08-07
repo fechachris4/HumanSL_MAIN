@@ -1,19 +1,88 @@
-# Where the arm goes: tool position, metres, in the frame declared below.
-# This is the one file to edit before a run. The bridge reads it whenever
-# planner_bridge is invoked without --goal/--goal-file, validates the
-# planned path, and only then writes the trajectory block to the controller.
-# Which frame `goal` and `box` are written in: world, right_base or
-# left_base. Omitting this key means the compiled config::kReferenceFrame
-# (currently world), so it is stamped explicitly here — these numbers have
-# always been right-arm base_link, and reading them as world would move the
-# target 0.709 m.
-frame: world
-goal: [ 0.0, -0.4, 0.30 ]
+# Where each arm goes: tool position, metres, in the frame declared per
+# block below. This is the one file to edit before a run. The bridge reads
+# it whenever planner_bridge is invoked without --goal/--goal-file, reading
+# only the block matching --arm (right or left) — a right-arm run never
+# sees the left block's numbers, or vice versa. It validates the planned
+# path, and only then writes the trajectory block to the controller.
+#
+# Which frame `goal` and `box` are written in, per block: mount, right_base
+# or left_base. Omitting a block's `frame:` means the compiled
+# config::kReferenceFrame (currently mount).
+#
+# ORIENTATION. A goal is a POSE, not just a position — the planner needs an
+# orientation for the tool to hold when it arrives. Set it per block with
+#
+#   orientation_rpy_deg: [ roll, pitch, yaw ]
+#
+# in degrees, in that block's declared frame, using R = Rz*Ry*Rx (the same
+# convention the controller and tools/print_dual_arm_fk print, so a value
+# read off a diagnostic can be pasted straight in).
+#
+# Omitting it makes the planner INHERIT whatever orientation the arm happens
+# to hold at the start of the run. That is a trap and the bridge now warns on
+# every run that relies on it: the goal's feasibility then depends on where
+# the arm was parked beforehand. Measured 2026-08-06 — this exact left goal
+# planned to 1.34 mm from one start configuration and could not be reached at
+# all from another, purely because of the orientation it inherited. Stating
+# an orientation explicitly makes a goal mean the same thing every run.
+#
+# session_arms: right | left | both — which arm(s) scripts/run_session.sh
+# drives when it is not given an explicit --arm flag (that flag, if given,
+# always overrides this). Read as plain text by a small awk match, not a
+# YAML parser, so it must be an unindented top-level key exactly like this.
+# Not read by planner_bridge or controller themselves — only the session
+# script; each still needs its own --arm to know which arm it is.
+session_arms: both
 
-# Optional obstacle for the planner to avoid: axis-aligned box, metres.
-# right_base only — an axis-aligned box in another frame is not axis-aligned
-# in base_link, and the SDF grid can only represent axis-aligned boxes.
-# Must lie inside the SDF grid volume or the run is rejected.
-# box:
-#   center: [0.5, 0.0, 0.3]
-#   half_extent: [0.05, 0.05, 0.05]
+right:
+  # These numbers have always been right-arm base_link when frame said so;
+  # reading them as mount would move the target 0.709 m — stamped
+  # explicitly for that reason.
+  frame: mount
+  goal: [ 0.5, 0.0, 0.4 ]
+
+  # Optional obstacle for the planner to avoid: axis-aligned box, metres,
+  # in THIS block's arm's own base frame only — an axis-aligned box in
+  # another frame is not axis-aligned in base_link, and the SDF grid can
+  # only represent axis-aligned boxes. Must lie inside the SDF grid volume
+  # or the run is rejected.
+  # box:
+  #   center: [0.5, 0.0, 0.3]
+  #   half_extent: [0.05, 0.05, 0.05]
+
+left:
+  # UNVERIFIED placeholder (2026-08-06): a conservative offset from the
+  # left arm's own zero-configuration tool position in leftbase_link
+  # (-0.000000, -0.024860, 1.187385 — tools/print_dual_arm_fk), never run
+  # against physical hardware. Check reachability and clearance before the
+  # first real --arm left session; do not treat this as a proven target
+  # the way the right block's is.
+  # A traced circle instead of a point goal. `goal:` and `path:` are
+  # mutually exclusive — a block naming both is refused, because which one
+  # won would not be visible in any output. Swap back to `goal: [x, y, z]`
+  # for a point move; point-to-point behaviour is unchanged.
+  #
+  # The sample count is NOT set here: it is derived from planner.yaml's
+  # max_chord_error_m, because a stated tolerance is meaningless if the
+  # chords between samples already miss the arc by more than it.
+  frame: left_base
+  path:
+    type: circle
+    centre: [0.0239, -0.563535, 0.0235506]
+    radius_m: 0.03
+    normal: [0, 0, 1]
+    duration_s: 12.0
+    # fixed = hold one orientation for the whole trace (what drawing on a
+    # surface wants). radial = keep +z pointed at the circle's centre.
+    orientation: fixed
+    orientation_rpy_deg: [12.3, -63.0, 107.3]
+
+  # Uncomment to stop inheriting the start pose's orientation. The value
+  # below is NOT a recommendation — it is the orientation measured to be
+  # reachable at left_base [0.0239, -0.563535, 0.0235506] on 2026-08-06,
+  # kept as a worked example of the format and of a value that solves
+  # (0.06 mm). Pick one that suits the task, and note it is read in THIS
+  # block's declared frame — the `mount` above, not left_base.
+  # orientation_rpy_deg: [ 12.3, -63.0, 107.3 ]
+
+  # box: — same rule as the right block above, left_base only.

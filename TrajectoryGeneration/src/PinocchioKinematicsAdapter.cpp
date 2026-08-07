@@ -3,6 +3,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <utility>
 
 #include "Config.h"
 #include "Kinematics.h" // pinocchio types — isolated to this translation unit only
@@ -15,18 +16,29 @@ Dynamics& SharedDynamics() {
     return dynamics;
 }
 
-// One DualArmKinematics per end-effector frame requested — the frame is
-// fixed at construction. All instances share SharedDynamics()'s model/data;
-// safe because calls are sequential (never interleaved), each call reads
-// its result out of dynamics_.data_ before the next begins.
-DualArmKinematics& SharedKinematics(const std::string& end_effector_frame) {
-    static std::map<std::string, std::unique_ptr<DualArmKinematics>> instances;
-    auto it = instances.find(end_effector_frame);
+// One DualArmKinematics per (end-effector frame, controlled arm) requested
+// — both are fixed at construction. All instances share SharedDynamics()'s
+// model/data; safe because calls are sequential (never interleaved), each
+// call reads its result out of dynamics_.data_ before the next begins.
+DualArmKinematics& SharedKinematics(const std::string& end_effector_frame,
+                                    bool left_arm) {
+    static std::map<std::pair<std::string, bool>, std::unique_ptr<DualArmKinematics>>
+        instances;
+    const auto key = std::make_pair(end_effector_frame, left_arm);
+    auto it = instances.find(key);
     if (it == instances.end()) {
+        // end_effector_frame names a frame on the CONTROLLED arm's own
+        // chain, so it fills whichever of the constructor's two
+        // end-effector-frame slots that arm owns; the other slot gets the
+        // compiled default for a frame it never resolves through.
         auto kinematics = std::make_unique<DualArmKinematics>(
-            SharedDynamics(), config::kLeftNominalRad, config::kRightBaseFrame,
-            end_effector_frame);
-        it = instances.emplace(end_effector_frame, std::move(kinematics)).first;
+            SharedDynamics(), left_arm ? Arm::kLeft : Arm::kRight,
+            left_arm ? config::kRightNominalRad : config::kLeftNominalRad,
+            config::kRightBaseFrame,
+            left_arm ? config::kRightEndEffectorFrame : end_effector_frame,
+            config::kLeftBaseFrame,
+            left_arm ? end_effector_frame : config::kLeftEndEffectorFrame);
+        it = instances.emplace(key, std::move(kinematics)).first;
     }
     return *it->second;
 }
@@ -34,22 +46,24 @@ DualArmKinematics& SharedKinematics(const std::string& end_effector_frame) {
 } // namespace
 
 PoseAndJacobian ToolPoseAndJacobianInBaseLink(const Eigen::Matrix<double, 7, 1>& q_rad,
-                                              const std::string& end_effector_frame) {
+                                              const std::string& end_effector_frame,
+                                              bool left_arm) {
     static KinematicsWorkspace workspace(SharedDynamics());
     const PoseJacobian result =
-        SharedKinematics(end_effector_frame).RightPoseAndJacobian(q_rad, workspace);
+        SharedKinematics(end_effector_frame, left_arm)
+            .ControlledPoseAndJacobian(q_rad, workspace);
     return PoseAndJacobian{result.position, result.rotation, result.jacobian};
 }
 
-Eigen::Isometry3d WorldFromBase(bool left_arm)
+Eigen::Isometry3d MountFromBase(bool left_arm)
 {
     // Any DualArmKinematics instance carries the same mounting transforms —
-    // they come from the model, not the end-effector frame — so reuse the
-    // one already built for the configured tool frame rather than
-    // constructing another.
+    // they come from the model, not the end-effector frame or which arm is
+    // controlled — so reuse the one already built for the right arm's
+    // configured tool frame rather than constructing another.
     const pinocchio::SE3& mount =
-        SharedKinematics(config::kRightEndEffectorFrame)
-            .WorldFromBase(left_arm ? Arm::kLeft : Arm::kRight);
+        SharedKinematics(config::kRightEndEffectorFrame, /*left_arm=*/false)
+            .MountFromBase(left_arm ? Arm::kLeft : Arm::kRight);
     Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();
     transform.linear() = mount.rotation();
     transform.translation() = mount.translation();

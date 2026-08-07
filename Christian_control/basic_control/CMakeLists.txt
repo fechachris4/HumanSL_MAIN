@@ -63,6 +63,7 @@ include_directories(
 #     Dynamics class reused from TrajectoryExecution) ---
 add_executable(controller
         src/Main.cpp
+        src/MainArgs.cpp
         src/ProcessLock.cpp
         src/Runner.cpp
         src/Controller.cpp
@@ -292,6 +293,35 @@ target_link_libraries(make_synthetic_log
         pthread
 )
 
+# --- expand_run_poses: turns a run log into a Cartesian pose trace by running
+#     the SAME Pinocchio kinematics on the logged joint columns. The log's own
+#     Cartesian columns are NaN (the joint motion path computes no pose), so
+#     this recovers them offline rather than putting FK in the control loop.
+#     URDF + one CSV only — deliberately NOT linked against Kortex. ---
+add_executable(expand_run_poses
+        tools/expand_run_poses.cpp
+        src/Kinematics.cpp
+        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+)
+target_include_directories(expand_run_poses PRIVATE
+        src
+        ${HUMANSL_ROOT}/third_party/include
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+        ${HUMANSL_ROOT}/TrajectoryExecution/include
+)
+target_link_libraries(expand_run_poses
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+        pthread
+)
+set_target_properties(expand_run_poses PROPERTIES
+        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+)
+target_link_options(expand_run_poses PRIVATE
+        -Wl,--allow-shlib-undefined
+        -Wl,-z,lazy
+)
+
 # --- print_dual_arm_fk: both arms' FK in world and base_link, for checking
 #     the mounted model against the physical rig. URDF only — deliberately
 #     NOT linked against Kortex, so it cannot connect or command. Safe to run
@@ -367,6 +397,16 @@ target_include_directories(test_joint_trajectory PRIVATE
 )
 target_link_libraries(test_joint_trajectory pthread)
 add_test(NAME joint_trajectory COMMAND test_joint_trajectory)
+
+# --- test_main_args: hardware-free tests for the controller's --arm/--log
+#     command-line contract (src/MainArgs.cpp — pure string parsing). No
+#     Kortex, no Pinocchio, no robot — safe to run anywhere. ---
+add_executable(test_main_args
+        tests/test_main_args.cpp
+        src/MainArgs.cpp
+)
+target_include_directories(test_main_args PRIVATE src)
+add_test(NAME main_args COMMAND test_main_args)
 
 # Python-only regression coverage for offline log-format compatibility. The
 # interpreter is optional so portable C++ test configurations remain usable.

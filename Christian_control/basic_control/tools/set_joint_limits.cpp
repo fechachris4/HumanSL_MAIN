@@ -29,6 +29,7 @@
 //   ./set_joint_limits --apply
 //   ./set_joint_limits              (dry run: prints current values only)
 //   ./set_joint_limits --restore-degenerate --apply
+//   ./set_joint_limits --ip <address> --apply   (default: config::kRightRobotIp)
 //
 
 #include "Config.h"
@@ -77,12 +78,22 @@ int main(int argc, char** argv)
 {
     bool apply = false;
     bool restore_degenerate = false;
+    std::string ip = config::kRightRobotIp;
     for (int i = 1; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--apply") == 0)
             apply = true;
         else if (std::strcmp(argv[i], "--restore-degenerate") == 0)
             restore_degenerate = true;
+        else if (std::strcmp(argv[i], "--ip") == 0)
+        {
+            if (++i >= argc)
+            {
+                std::cerr << "--ip needs an address\n";
+                return 2;
+            }
+            ip = argv[i];
+        }
         else
         {
             std::cerr << "unknown argument: " << argv[i] << "\n";
@@ -104,7 +115,7 @@ int main(int argc, char** argv)
 
     try
     {
-        Connect connection(config::kRightRobotIp);
+        Connect connection(ip);
         k_api::DeviceConfig::DeviceConfigClient& device_config =
             *connection.device_config();
 

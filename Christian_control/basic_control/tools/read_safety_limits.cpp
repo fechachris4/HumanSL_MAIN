@@ -7,12 +7,13 @@
 // configured JOINT_LIMIT_HIGH / JOINT_LIMIT_LOW positions that latched
 // faults on joints 4 and 6 (runs 2026-08-03 13:39 and 14:05)?
 //
-//   ./read_safety_limits
+//   ./read_safety_limits [--ip <address>]   (default: config::kRightRobotIp)
 //
 
 #include "Config.h"
 #include "Hardware.h"
 #include "Safety.h" // DecodeBaseBank / DecodeActuatorBank
+#include "ToolArgs.h"
 
 #include <DeviceConfigClientRpc.h>
 #include <DeviceManagerClientRpc.h>
@@ -24,11 +25,12 @@
 
 namespace k_api = Kinova::Api;
 
-int main()
+int main(int argc, char** argv)
 {
+    const std::string ip = ParseIpArg(argc, argv, "read_safety_limits");
     try
     {
-        Connect connection(config::kRightRobotIp);
+        Connect connection(ip);
 
         // This is the same owned ControlConfig client and read-only
         // hard-speed verification used before controller takeover. It sends

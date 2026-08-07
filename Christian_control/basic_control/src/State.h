@@ -112,7 +112,7 @@ struct Twist {
 // today; a source that moves its target should fill it, or the law will
 // fight the motion it asked for.
 struct PoseReference {
-    Eigen::Vector3d p_desired;               // meters, right-arm base frame
+    Eigen::Vector3d p_desired;               // meters, CONTROLLED arm's base frame
     std::optional<Eigen::Matrix3d> rotation; // base frame; nullopt = hold
     Twist twist;                             // reference velocity, base frame
     std::uint64_t sequence = 0;

@@ -34,14 +34,15 @@ int main(int argc, char** argv)
         q_rad[i] = std::atof(argv[i + 1]) * M_PI / 180.0;
 
     Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-    DualArmKinematics model(dynamics, config::kLeftNominalRad,
+    DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
                             config::kRightBaseFrame,
                             config::kRightEndEffectorFrame);
     KinematicsWorkspace workspace(dynamics);
 
-    const PositionJacobian pj = model.RightPositionAndJacobian(q_rad, workspace);
-    const PoseJacobian pose = model.RightPoseAndJacobian(q_rad, workspace);
-    std::cout << "EE position: " << pj.position.transpose() << " m\n\n";
+    const PositionJacobian pj = model.ControlledPositionAndJacobian(q_rad, workspace);
+    const PoseJacobian pose = model.ControlledPoseAndJacobian(q_rad, workspace);
+    std::cout << "EE position: " << pj.position.transpose() << " m in "
+              << config::kRightBaseFrame << "\n\n";
 
     const struct { const char* name; Eigen::Vector3d v; } candidates[] = {
         {"+x", {1, 0, 0}}, {"-x", {-1, 0, 0}},

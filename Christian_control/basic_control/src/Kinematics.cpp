@@ -140,14 +140,16 @@ namespace
 } // namespace
 
 DualArmKinematics::DualArmKinematics(
-    Dynamics& dynamics, const JointVector& left_nominal_rad,
+    Dynamics& dynamics, Arm controlled_arm,
+    const JointVector& other_arm_nominal_rad,
     const std::string& right_base_frame,
     const std::string& right_end_effector_frame,
     const std::string& left_base_frame,
     const std::string& left_end_effector_frame)
-    : dynamics_(dynamics), right_base_frame_id_(0), right_frame_id_(0),
+    : dynamics_(dynamics), controlled_arm_(controlled_arm),
+      right_base_frame_id_(0), right_frame_id_(0),
       left_base_frame_id_(0), left_frame_id_(0),
-      left_nominal_rad_(left_nominal_rad),
+      other_arm_nominal_rad_(other_arm_nominal_rad),
       q_full_(pinocchio::neutral(dynamics.model_))
 {
     if (dynamics_.model_.nq != kFullConfigurationSize ||
@@ -182,40 +184,51 @@ DualArmKinematics::DualArmKinematics(
     left_base_frame_id_ = dynamics_.model_.getFrameId(left_base_frame);
     left_frame_id_ = dynamics_.model_.getFrameId(left_end_effector_frame);
 
-    // Both mounts are FIXED joints onto the `world` root, so each base frame's
+    // Both mounts are FIXED joints onto the `mount` root, so each base frame's
     // placement is the same for every configuration. Evaluate once here (at
     // the neutral configuration) and cache; nothing downstream has to redo FK
-    // just to convert a point between world and a base frame.
+    // just to convert a point between mount and a base frame.
     pinocchio::framesForwardKinematics(dynamics_.model_, dynamics_.data_,
                                        pinocchio::neutral(dynamics_.model_));
-    world_from_right_base_ = dynamics_.data_.oMf[right_base_frame_id_];
-    world_from_left_base_ = dynamics_.data_.oMf[left_base_frame_id_];
+    mount_from_right_base_ = dynamics_.data_.oMf[right_base_frame_id_];
+    mount_from_left_base_ = dynamics_.data_.oMf[left_base_frame_id_];
 
+    // Seed the OTHER (uncontrolled) arm's slots once; they are never
+    // touched again (no connection in this process). The controlled arm's
+    // slots stay at pinocchio::neutral() until the first
+    // FullConfigurationForControlled call, same as before this arm was
+    // configurable — the loop always makes that call before reading FK.
+    const std::array<int, 7>& other_q_indices =
+        controlled_arm_ == Arm::kRight ? left_q_indices_ : right_q_indices_;
+    const char* other_label = controlled_arm_ == Arm::kRight ? "left" : "right";
     for (int i = 0; i < 7; ++i) {
-        const double value = left_nominal_rad_[static_cast<std::size_t>(i)];
+        const double value = other_arm_nominal_rad_[static_cast<std::size_t>(i)];
         if (!std::isfinite(value))
-            throw std::runtime_error("left nominal configuration must be finite");
-        const int q_index = left_q_indices_[static_cast<std::size_t>(i)];
+            throw std::runtime_error(std::string(other_label) +
+                                     " nominal configuration must be finite");
+        const int q_index = other_q_indices[static_cast<std::size_t>(i)];
         const int q_size = kJointConfigurationSizes[static_cast<std::size_t>(i)];
         if (q_size == 1 &&
             (value < dynamics_.model_.lowerPositionLimit[q_index] ||
              value > dynamics_.model_.upperPositionLimit[q_index]))
             throw std::runtime_error(
-                "left nominal joint " + std::to_string(i + 1) +
-                " lies outside the dual URDF position limits");
+                std::string(other_label) + " nominal joint " +
+                std::to_string(i + 1) + " lies outside the dual URDF position limits");
         SetJointAngle(q_full_, q_index, q_size, value);
     }
 }
 
-const Eigen::VectorXd& DualArmKinematics::FullConfigurationForRight(
-    const Eigen::Matrix<double, 7, 1>& right_q_rad)
+const Eigen::VectorXd& DualArmKinematics::FullConfigurationForControlled(
+    const Eigen::Matrix<double, 7, 1>& controlled_q_rad)
 {
-    if (!right_q_rad.allFinite())
-        throw std::runtime_error("right measured joint configuration must be finite");
+    if (!controlled_q_rad.allFinite())
+        throw std::runtime_error("controlled-arm measured joint configuration must be finite");
+    const std::array<int, 7>& q_indices =
+        controlled_arm_ == Arm::kRight ? right_q_indices_ : left_q_indices_;
     for (int i = 0; i < 7; ++i) {
         const std::size_t joint = static_cast<std::size_t>(i);
-        SetJointAngle(q_full_, right_q_indices_[joint],
-                      kJointConfigurationSizes[joint], right_q_rad[i]);
+        SetJointAngle(q_full_, q_indices[joint],
+                      kJointConfigurationSizes[joint], controlled_q_rad[i]);
     }
     return q_full_;
 }
@@ -224,11 +237,18 @@ const Eigen::VectorXd& DualArmKinematics::FullConfiguration(
     const Eigen::Matrix<double, 7, 1>& right_q_rad,
     const Eigen::Matrix<double, 7, 1>& left_q_rad)
 {
+    // Both arms explicit — independent of controlled_arm_, unlike
+    // FullConfigurationForControlled. Writes both halves directly rather
+    // than routing through it, so this never depends on which arm this
+    // process happens to control.
+    if (!right_q_rad.allFinite())
+        throw std::runtime_error("right joint configuration must be finite");
     if (!left_q_rad.allFinite())
         throw std::runtime_error("left joint configuration must be finite");
-    FullConfigurationForRight(right_q_rad); // validates and writes the right half
     for (int i = 0; i < 7; ++i) {
         const std::size_t joint = static_cast<std::size_t>(i);
+        SetJointAngle(q_full_, right_q_indices_[joint],
+                      kJointConfigurationSizes[joint], right_q_rad[i]);
         SetJointAngle(q_full_, left_q_indices_[joint],
                       kJointConfigurationSizes[joint], left_q_rad[i]);
     }
@@ -239,106 +259,125 @@ const Eigen::VectorXd& DualArmKinematics::FullConfiguration(
 // World frame
 // ---------------------------------------------------------------
 
-const pinocchio::SE3& DualArmKinematics::WorldFromBase(Arm arm) const
+const pinocchio::SE3& DualArmKinematics::MountFromBase(Arm arm) const
 {
-    return arm == Arm::kRight ? world_from_right_base_ : world_from_left_base_;
+    return arm == Arm::kRight ? mount_from_right_base_ : mount_from_left_base_;
 }
 
-Eigen::Vector3d DualArmKinematics::PointBaseToWorld(
+Eigen::Vector3d DualArmKinematics::PointBaseToMount(
     Arm arm, const Eigen::Vector3d& p_base) const
 {
-    return WorldFromBase(arm).act(p_base);
+    return MountFromBase(arm).act(p_base);
 }
 
-Eigen::Vector3d DualArmKinematics::PointWorldToBase(
-    Arm arm, const Eigen::Vector3d& p_world) const
+Eigen::Vector3d DualArmKinematics::PointMountToBase(
+    Arm arm, const Eigen::Vector3d& p_mount) const
 {
-    return WorldFromBase(arm).actInv(p_world);
+    return MountFromBase(arm).actInv(p_mount);
 }
 
-Pose DualArmKinematics::ToolPoseInWorld(
+Pose DualArmKinematics::ToolPoseInMount(
     Arm arm, const Eigen::Matrix<double, 7, 1>& right_q_rad,
     const Eigen::Matrix<double, 7, 1>& left_q_rad)
 {
     const Eigen::VectorXd& q = FullConfiguration(right_q_rad, left_q_rad);
     pinocchio::framesForwardKinematics(dynamics_.model_, dynamics_.data_, q);
-    // oMf is already the world-frame placement: `world` is the model root.
-    const pinocchio::SE3& world_M_tool =
+    // oMf is already the mount-frame placement: `mount` is the model root.
+    const pinocchio::SE3& mount_M_tool =
         dynamics_.data_.oMf[arm == Arm::kRight ? right_frame_id_ : left_frame_id_];
-    return Pose{world_M_tool.translation(), world_M_tool.rotation()};
+    return Pose{mount_M_tool.translation(), mount_M_tool.rotation()};
 }
 
-Pose DualArmKinematics::ToolPoseInWorld(
-    Arm arm, const Eigen::Matrix<double, 7, 1>& right_q_rad)
+Pose DualArmKinematics::ToolPoseInMount(
+    Arm arm, const Eigen::Matrix<double, 7, 1>& controlled_q_rad)
 {
-    Eigen::Matrix<double, 7, 1> left_q_rad;
+    Eigen::Matrix<double, 7, 1> other_q_rad;
     for (int i = 0; i < 7; ++i)
-        left_q_rad[i] = left_nominal_rad_[static_cast<std::size_t>(i)];
-    return ToolPoseInWorld(arm, right_q_rad, left_q_rad);
+        other_q_rad[i] = other_arm_nominal_rad_[static_cast<std::size_t>(i)];
+    if (controlled_arm_ == Arm::kRight)
+        return ToolPoseInMount(arm, controlled_q_rad, other_q_rad);
+    return ToolPoseInMount(arm, other_q_rad, controlled_q_rad);
 }
 
 void DualArmKinematics::UpdateFullKinematics(
-    const Eigen::Matrix<double, 7, 1>& right_q_rad,
+    const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
     KinematicsWorkspace& workspace)
 {
-    const Eigen::VectorXd& q = FullConfigurationForRight(right_q_rad);
+    const Eigen::VectorXd& q = FullConfigurationForControlled(controlled_q_rad);
     pinocchio::computeJointJacobians(dynamics_.model_, dynamics_.data_, q);
     pinocchio::updateFramePlacements(dynamics_.model_, dynamics_.data_);
     workspace.jacobian_full.setZero();
+    const pinocchio::FrameIndex controlled_frame_id =
+        controlled_arm_ == Arm::kRight ? right_frame_id_ : left_frame_id_;
+    const pinocchio::FrameIndex controlled_base_frame_id =
+        controlled_arm_ == Arm::kRight ? right_base_frame_id_ : left_base_frame_id_;
     pinocchio::getFrameJacobian(
-        dynamics_.model_, dynamics_.data_, right_frame_id_,
+        dynamics_.model_, dynamics_.data_, controlled_frame_id,
         pinocchio::LOCAL_WORLD_ALIGNED, workspace.jacobian_full);
 
     // LOCAL_WORLD_ALIGNED gives the tool-point twist in model-root axes.
-    // Rotate both linear and angular rows into right-base axes. The point is
-    // unchanged (the tool origin), so no translational adjoint term applies.
-    const Eigen::Matrix3d base_R_world =
-        dynamics_.data_.oMf[right_base_frame_id_].rotation().transpose();
+    // Rotate both linear and angular rows into the controlled arm's base
+    // axes. The point is unchanged (the tool origin), so no translational
+    // adjoint term applies.
+    const Eigen::Matrix3d base_R_mount =
+        dynamics_.data_.oMf[controlled_base_frame_id].rotation().transpose();
     for (int col = 0; col < workspace.jacobian_full.cols(); ++col) {
-        const Eigen::Vector3d linear_world =
+        const Eigen::Vector3d linear_mount =
             workspace.jacobian_full.template block<3, 1>(0, col);
-        const Eigen::Vector3d angular_world =
+        const Eigen::Vector3d angular_mount =
             workspace.jacobian_full.template block<3, 1>(3, col);
         workspace.jacobian_full.template block<3, 1>(0, col) =
-            base_R_world * linear_world;
+            base_R_mount * linear_mount;
         workspace.jacobian_full.template block<3, 1>(3, col) =
-            base_R_world * angular_world;
+            base_R_mount * angular_mount;
     }
 }
 
-PositionJacobian DualArmKinematics::RightPositionAndJacobian(
-    const Eigen::Matrix<double, 7, 1>& right_q_rad,
+PositionJacobian DualArmKinematics::ControlledPositionAndJacobian(
+    const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
     KinematicsWorkspace& workspace)
 {
-    UpdateFullKinematics(right_q_rad, workspace);
+    UpdateFullKinematics(controlled_q_rad, workspace);
+    const pinocchio::FrameIndex controlled_frame_id =
+        controlled_arm_ == Arm::kRight ? right_frame_id_ : left_frame_id_;
+    const pinocchio::FrameIndex controlled_base_frame_id =
+        controlled_arm_ == Arm::kRight ? right_base_frame_id_ : left_base_frame_id_;
+    const std::array<int, 7>& controlled_v_indices =
+        controlled_arm_ == Arm::kRight ? right_v_indices_ : left_v_indices_;
     const pinocchio::SE3 base_M_tool =
-        dynamics_.data_.oMf[right_base_frame_id_].inverse() *
-        dynamics_.data_.oMf[right_frame_id_];
+        dynamics_.data_.oMf[controlled_base_frame_id].inverse() *
+        dynamics_.data_.oMf[controlled_frame_id];
     PositionJacobian result;
     result.position = base_M_tool.translation();
     result.rotation = base_M_tool.rotation();
     for (int i = 0; i < 7; ++i)
         result.jacobian_p.col(i) =
             workspace.jacobian_full.topRows<3>().col(
-                right_v_indices_[static_cast<std::size_t>(i)]);
+                controlled_v_indices[static_cast<std::size_t>(i)]);
     return result;
 }
 
-PoseJacobian DualArmKinematics::RightPoseAndJacobian(
-    const Eigen::Matrix<double, 7, 1>& right_q_rad,
+PoseJacobian DualArmKinematics::ControlledPoseAndJacobian(
+    const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
     KinematicsWorkspace& workspace)
 {
-    UpdateFullKinematics(right_q_rad, workspace);
+    UpdateFullKinematics(controlled_q_rad, workspace);
+    const pinocchio::FrameIndex controlled_frame_id =
+        controlled_arm_ == Arm::kRight ? right_frame_id_ : left_frame_id_;
+    const pinocchio::FrameIndex controlled_base_frame_id =
+        controlled_arm_ == Arm::kRight ? right_base_frame_id_ : left_base_frame_id_;
+    const std::array<int, 7>& controlled_v_indices =
+        controlled_arm_ == Arm::kRight ? right_v_indices_ : left_v_indices_;
     const pinocchio::SE3 base_M_tool =
-        dynamics_.data_.oMf[right_base_frame_id_].inverse() *
-        dynamics_.data_.oMf[right_frame_id_];
+        dynamics_.data_.oMf[controlled_base_frame_id].inverse() *
+        dynamics_.data_.oMf[controlled_frame_id];
     PoseJacobian result;
     result.position = base_M_tool.translation();
     result.rotation = base_M_tool.rotation();
     for (int i = 0; i < 7; ++i)
         result.jacobian.col(i) =
             workspace.jacobian_full.col(
-                right_v_indices_[static_cast<std::size_t>(i)]);
+                controlled_v_indices[static_cast<std::size_t>(i)]);
     return result;
 }
 

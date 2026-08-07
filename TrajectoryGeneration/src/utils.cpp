@@ -1,4 +1,5 @@
 #include "utils.h"
+#include <string_view>
 #include <tuple>
 #include "Config.h"
 #include "PinocchioKinematicsAdapter.h"
@@ -307,16 +308,21 @@ gtsam::Pose3 ToGtsamPose(const Eigen::Isometry3d& transform) {
     return gtsam::Pose3(gtsam::Rot3(transform.rotation()), gtsam::Point3(transform.translation()));
 }
 
-// DH-root frame to tool: DhRootInBaseLink()^-1 * base_link_M_tool(joints),
-// via Pinocchio/URDF. The DH-root-to-tool transform every DH chain in this
-// file used to compute directly; now computed through the canonical URDF
-// instead (see PinocchioKinematicsAdapter.h for why base_link_M_tool has
-// to be composed with DhRootInBaseLink() rather than used directly).
-Eigen::Isometry3d DhRootToTool(const gtsam::Vector& joint_angles) {
+// DH-root frame to end-effector: DhRootInBaseLink()^-1 *
+// base_link_M_tool(joints), via Pinocchio/URDF. The DH-root-to-tool
+// transform every DH chain in this file used to compute directly; now
+// computed through the canonical URDF instead (see
+// PinocchioKinematicsAdapter.h for why base_link_M_tool has to be composed
+// with DhRootInBaseLink() rather than used directly). end_effector_frame /
+// left_arm select which arm's chain — see the forwardKinematics comment in
+// utils.h.
+Eigen::Isometry3d DhRootToTool(const gtsam::Vector& joint_angles,
+                               const std::string& end_effector_frame,
+                               bool left_arm) {
     Eigen::Matrix<double, 7, 1> q;
     for (int i = 0; i < 7; ++i) q(i) = joint_angles(i);
     const auto pose_jacobian = pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
-        q, config::kRightEndEffectorFrame);
+        q, end_effector_frame, left_arm);
     Eigen::Isometry3d base_link_M_tool = Eigen::Isometry3d::Identity();
     base_link_M_tool.linear() = pose_jacobian.rotation;
     base_link_M_tool.translation() = pose_jacobian.position;
@@ -330,19 +336,33 @@ Eigen::Isometry3d DhRootToTool(const gtsam::Vector& joint_angles) {
 // (config::kRightEndEffectorFrame) instead of a hand-rolled DH chain; dh is
 // unused but kept in the signature so every existing caller (PlannerModel.cpp,
 // TrajectoryInitiation.cpp) needs no changes.
+// utils.h defaults its end_effector_frame parameters with a string literal
+// (it deliberately does not include basic_control's Config.h); this pins
+// that literal to the one canonical constant so they can never drift apart.
+static_assert(std::string_view("ConfiguredTool_Link") ==
+                  config::kRightEndEffectorFrame,
+              "utils.h's default end-effector frame must equal "
+              "config::kRightEndEffectorFrame");
+
 gtsam::Pose3 forwardKinematics(const DHParameters& dh,
                                const gtsam::Vector& joint_angles,
-                               const gtsam::Pose3& base_pose_in_world) {
+                               const gtsam::Pose3& base_pose_in_world,
+                               const std::string& end_effector_frame,
+                               bool left_arm) {
     (void)dh;
-    return ToGtsamPose(ToEigenIsometry(base_pose_in_world) * DhRootToTool(joint_angles));
+    return ToGtsamPose(ToEigenIsometry(base_pose_in_world) *
+                       DhRootToTool(joint_angles, end_effector_frame, left_arm));
 }
 
 // Inverse kinematics: ee_pose_in_world * inverse(T_base_to_ee) -> base_pose_in_world.
 gtsam::Pose3 inverseForwardKinematics(const DHParameters& dh,
                               const gtsam::Vector& joint_angles,
-                              const gtsam::Pose3& ee_pose_in_world) {
+                              const gtsam::Pose3& ee_pose_in_world,
+                              const std::string& end_effector_frame,
+                              bool left_arm) {
     (void)dh;
-    return ToGtsamPose(ToEigenIsometry(ee_pose_in_world) * DhRootToTool(joint_angles).inverse());
+    return ToGtsamPose(ToEigenIsometry(ee_pose_in_world) *
+                       DhRootToTool(joint_angles, end_effector_frame, left_arm).inverse());
 }
 
 std::vector<double> shiftAngle(std::vector<double>& q_cur) {

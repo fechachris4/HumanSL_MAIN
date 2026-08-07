@@ -7,7 +7,7 @@
     kortex_description/arms/gen3/7dof/urdf/
     GEN3-7DOF-VISION_ARM_URDF_V12.urdf
 
-    The shared world root, fixed mounting transforms, dual-arm naming, and
+    The shared `mount` root, fixed mounting transforms, dual-arm naming, and
     omission of camera frames are project-specific. URDF limits are model
     metadata; installed firmware/configured soft limits remain separate.
 
@@ -29,23 +29,29 @@
     tests/test_dual_arm_mounting.cpp enforces the agreement and fails the
     test step naming the offending number. Edit the YAML first.
 
-    world sits at the MIDPOINT of the two base_link origins, so each base is
-    at [0, -+separation/2, 0] with roll -+tilt about world X:
+    `mount` sits at the MIDPOINT of the two base_link origins, so each base
+    is at [0, -+separation/2, 0] with roll -+tilt about mount X:
 
-      separation 0.113415 m  ->  -+0.0567075 m along world y
+      separation 0.113415 m  ->  -+0.0567075 m along mount y
       tilt       1.2085 rad  =  -+69.2419 deg
+
+    The frame is called `mount`, not `world`, because it is rigidly attached
+    to both bases — it is the rig, and it travels with the rig. A room frame
+    would be a parent ABOVE this one (T_room_mount, identity while the rig is
+    bolted down, from motion capture once it is worn); naming this one
+    `world` would collide with that the day it appears.
 
     A URDF <origin> composes as Trans(xyz) then Rot(rpy), so one fixed joint
     per arm expresses this directly. (This replaced a two-joint
     rotate-then-translate chain through intermediate base_linktras /
-    leftbase_linktras links, which placed world 0.149614 m above the
+    leftbase_linktras links, which placed the root 0.149614 m above the
     midpoint; the links carried no geometry and are gone.)
   -->
-  <link name="world"/>
+  <link name="mount"/>
 
   <joint name="right_base_mount" type="fixed">
     <origin rpy="1.2085 0 0" xyz="0 -0.0567075 0"/>
-    <parent link="world"/>
+    <parent link="mount"/>
     <child link="base_link"/>
   </joint>
 
@@ -316,7 +322,7 @@
   <!-- Left mount: mirror of right_base_mount. See the mounting block above. -->
   <joint name="left_base_mount" type="fixed">
     <origin rpy="-1.2085 0 0" xyz="0 0.0567075 0"/>
-    <parent link="world"/>
+    <parent link="mount"/>
     <child link="leftbase_link"/>
   </joint>
 

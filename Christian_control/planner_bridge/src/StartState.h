@@ -19,8 +19,14 @@ struct StartStateResult {
 std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
     const std::string& csv_path, std::string& error);
 
-// Newest loop_log*.csv by modification time under <runs_root>/<subdir>/
-// (the controller's dated-directory layout). nullopt + error when the
-// root is missing or holds no matching file.
+// Newest <filename_prefix>*.csv by modification time under
+// <runs_root>/<subdir>/ (the controller's dated-directory layout).
+// filename_prefix defaults to "loop_log" (every run, either arm); pass
+// "loop_log_right" or "loop_log_left" (config::ArmConfig::log_prefix,
+// Christian_control/basic_control/src/Config.h) to find only that arm's
+// own logs — a right-arm log is not evidence of the left arm's state, or
+// vice versa. nullopt + error when the root is missing or holds no
+// matching file; the error names the prefix searched for.
 std::optional<std::string> FindLatestRunCsv(const std::string& runs_root,
-                                            std::string& error);
+                                            std::string& error,
+                                            const std::string& filename_prefix = "loop_log");

@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 import runlog
-from analyze_run import load, measurement_times, parse_preamble
+from analyze_run import load, measurement_times, parse_preamble, tracking_mask
 
 # Below 5 mm the step is too small to separate from FK noise reliably.
 MIN_STEP_M = 0.005
@@ -62,6 +62,33 @@ def main():
     p = np.column_stack([cols["p_x"], cols["p_y"], cols["p_z"]])
     t_cmd = cols["t_send_s"] if has_timestamps else cols["time_s"]
     t_meas = measurement_times(cols, has_timestamps)
+
+    # Refuse a log with no Cartesian data, naming the reason. Without this the
+    # step detector below sees NaN != 0.0 as True on nearly every row and
+    # reports "N target changes found", which reads as an operator mistake
+    # rather than as an absent column.
+    #
+    # Only the target-directed rows are inspected: the 25 takeover-hold rows
+    # carry literal 0,0,0 rather than NaN (ControllerStatus defaults
+    # p_desired/p_current to Zero, unlike every other dead field), so a
+    # whole-column isfinite check is satisfied by rows that measured nothing.
+    #
+    # This script is obsolete in a second way worth stating: it measures the
+    # step response to ONE typed Cartesian target, and that input path was
+    # retired in stage 2 (docs/decisions/stage2-joint-trajectory-following.md).
+    # The pipe accepts only TRAJ_BEGIN blocks now, so the calibration run its
+    # README describes can no longer be performed.
+    live = tracking_mask(cols)
+    if not np.isfinite(pd[live]).any() or not np.isfinite(p[live]).any():
+        sys.exit("REFUSED: pd_*/p_* are not populated in this log.\n"
+                 "  The joint-trajectory reference source computes no "
+                 "Cartesian pose, so those columns\n"
+                 "  are NaN by design. This script also measures a step "
+                 "response to a single typed\n"
+                 "  Cartesian target, an input path retired in stage 2 — the "
+                 "pipe accepts only\n"
+                 "  TRAJ_BEGIN blocks. Delay against a joint trajectory is a "
+                 "different measurement.")
 
     # A clean calibration run has exactly one target change.
     changed = np.any(np.diff(pd, axis=0) != 0.0, axis=1)
