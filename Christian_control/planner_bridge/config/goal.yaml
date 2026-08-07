@@ -32,7 +32,7 @@
 # YAML parser, so it must be an unindented top-level key exactly like this.
 # Not read by planner_bridge or controller themselves — only the session
 # script; each still needs its own --arm to know which arm it is.
-session_arms: both
+session_arms: left
 
 right:
   # These numbers have always been right-arm base_link when frame said so;
@@ -65,17 +65,17 @@ left:
   # The sample count is NOT set here: it is derived from planner.yaml's
   # max_chord_error_m, because a stated tolerance is meaningless if the
   # chords between samples already miss the arc by more than it.
-  frame: left_base
+  frame: mount
   path:
     type: circle
-    centre: [0.0239, -0.563535, 0.0235506]
-    radius_m: 0.03
-    normal: [0, 0, 1]
+    centre: [ 0.3100, 0.386, 0.5213 ]
+    radius_m: 0.1
+    normal: [ 1, 0, 0 ]
     duration_s: 12.0
     # fixed = hold one orientation for the whole trace (what drawing on a
     # surface wants). radial = keep +z pointed at the circle's centre.
     orientation: fixed
-    orientation_rpy_deg: [12.3, -63.0, 107.3]
+    orientation_rpy_deg: [ 90, 0, 90 ]
 
   # Uncomment to stop inheriting the start pose's orientation. The value
   # below is NOT a recommendation — it is the orientation measured to be
