@@ -24,6 +24,10 @@
 # ...except machine-local Claude Code state
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+# Agent worktrees are live checkouts of this repository (each carries its own
+# .git file and is registered in `git worktree list`). They are transient
+# local state, never source.
+.claude/worktrees/
 !docs/
 !docs/**
 
