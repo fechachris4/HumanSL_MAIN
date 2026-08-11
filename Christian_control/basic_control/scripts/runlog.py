@@ -49,4 +49,4 @@ def has_exchange_timestamps(meta, columns):
         log_format = int(meta.get("log_format"))
     except (AttributeError, TypeError, ValueError):
         return False
-    return 2 <= log_format <= 10 and "t_send_s" in columns and "t_recv_s" in columns
+    return 2 <= log_format <= 11 and "t_send_s" in columns and "t_recv_s" in columns

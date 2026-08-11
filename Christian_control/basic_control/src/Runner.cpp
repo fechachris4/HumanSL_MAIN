@@ -74,6 +74,11 @@ namespace
         s.joint_traj_start_error_deg = status.joint_traj_start_error_deg;
         s.joint_following_error_stop = status.joint_following_error_stop;
         s.joint_following_error_deg = status.joint_following_error_deg;
+        s.posture_error_deg = status.posture_error_deg;
+        s.base_comp_m = status.base_comp_m;
+        s.base_estimate_fresh = status.base_estimate_fresh;
+        s.joint_limit_margin_deg = status.joint_limit_margin_deg;
+        s.replan_advised = status.replan_advised;
         s.command_frame_id = command_frame_id;
         s.feedback_frame_id = fb.frame_id();
         s.arm_state = fb.base().active_state();
@@ -384,24 +389,12 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             else
                 counters.nonfinite = 0;
 
-            // Arrival notice (edge-triggered data from the controller; the
-            // print lives out here — controllers do no I/O).
+            // Arrival edge: the mailbox advance stays here (pure state, no
+            // I/O). The notices themselves print in the post-exchange slack
+            // below, with the trajectory edges — a print must never sit
+            // between this cycle's compute and its Send.
             if (status.arrived_edge)
-            {
-                std::cout << "target reached: " << status.p_desired[0] << " "
-                    << status.p_desired[1] << " " << status.p_desired[2]
-                    << " m in " << base_frame
-                    << ", within " << status.arrival_error_m * 1000.0
-                    << " mm — holding\n";
                 reference.OnArrivalEdge(status);
-            }
-            else if (status.not_reached_edge)
-            {
-                std::cout << "target NOT reached: "
-                    << status.arrival_error_m * 1000.0 << " mm short after "
-                    << config::kTargetHoldS
-                    << " s (holding; Ctrl+C to abort)\n";
-            }
 
             // Per-joint clamp — the program's single speed limit — then the
             // actuation integrates and produces this cycle's setpoints.
@@ -512,6 +505,24 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             }
             log.push(sample);
 
+            // Arrival notices (edge-triggered by the controller above;
+            // controllers do no I/O, and the print waits for this slack).
+            if (status.arrived_edge)
+            {
+                std::cout << "target reached: " << status.p_desired[0] << " "
+                    << status.p_desired[1] << " " << status.p_desired[2]
+                    << " m in " << base_frame
+                    << ", within " << status.arrival_error_m * 1000.0
+                    << " mm — holding\n";
+            }
+            else if (status.not_reached_edge)
+            {
+                std::cout << "target NOT reached: "
+                    << status.arrival_error_m * 1000.0 << " mm short after "
+                    << config::kTargetHoldS
+                    << " s (holding; Ctrl+C to abort)\n";
+            }
+
             // Joint-trajectory edges: one bounded line each, edge-triggered
             // by the source. Printed here, in the slack after the exchange
             // and the log push, for the same reason as the status line below
@@ -601,16 +612,12 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 ex.getErrorInfo().getError().error_sub_code()))
             << ")\n";
     }
-    catch (std::runtime_error& ex)
-    {
-        reason = LoopStop::kCommunication;
-        sample.refresh_ok = false;
-        log.push(sample);
-        std::cout << "communication error: " << ex.what() << "\n";
-    }
-    // Catch-alls: an exception of any other type (Pinocchio logic_error,
-    // bad_alloc, ...) must not skip the report — the ServoingGuard destructor
-    // retries its restore during unwinding if needed.
+    // Catch-alls: any other exception type (Kinematics' runtime_error
+    // validity checks, Pinocchio logic_error, bad_alloc, ...) must not skip
+    // the report — the ServoingGuard destructor retries its restore during
+    // unwinding if needed. Transport failures are KDetailedException above;
+    // a bare runtime_error mid-loop is an internal failure, not the link, so
+    // it must not report as "communication" and send diagnosis at the network.
     catch (std::exception& ex)
     {
         reason = LoopStop::kInternalError;

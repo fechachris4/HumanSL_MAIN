@@ -400,6 +400,8 @@ void WriteCsvHeader(std::ostream& csv)
     csv << ",null_leak_mps";
     csv << ",traj_activated,traj_rejected,traj_complete,traj_start_error_deg"
         << ",joint_follow_stop,joint_follow_error_deg";
+    csv << ",posture_error_deg";
+    csv << ",base_comp_m,base_fresh,joint_margin_deg,replan_advised";
     csv << "\n";
 }
 
@@ -456,6 +458,10 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
         << s.joint_traj_start_error_deg << ","
         << (s.joint_following_error_stop ? 1 : 0) << ","
         << s.joint_following_error_deg;
+    csv << "," << s.posture_error_deg;
+    csv << "," << s.base_comp_m << "," << (s.base_estimate_fresh ? 1 : 0)
+        << "," << s.joint_limit_margin_deg << ","
+        << (s.replan_advised ? 1 : 0);
     csv << "\n";
 }
 

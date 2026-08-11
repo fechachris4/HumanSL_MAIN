@@ -7,8 +7,10 @@
 //   2. twist error        e_v, e_w = reference twist − J·q̇
 //   3. task twist         ẋ = Kp·e_pose + Kd·e_twist
 //   4. damped least sq.   q̇_task = Jᵀ(JJᵀ + λ²I₆)⁻¹ ẋ
-//   5. joint-limit avoidance (deadband)
-//   6. null-space proj.   q̇_raw = q̇_task + N q̇_null
+//   5. null-space objectives: joint-limit avoidance (deadband) plus,
+//      when a nominal joint state is supplied, posture guidance
+//      q̇_nom + kq·wrap(q_nom − q)
+//   6. null-space proj.   q̇_raw = q̇_task + N (q̇_limit + q̇_posture)
 //
 // Header-only, Eigen-only, fixed-size, no allocation — no robot, no
 // Pinocchio, so tests/test_reactive_law.cpp cross-validates it against the
@@ -32,7 +34,7 @@
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 
-#include "State.h" // Twist — the reference velocity equation 2 subtracts
+#include "State.h" // Twist (equation 2), JointReference + wrap (equation 5b)
 
 // Gains and term switches. Disabled terms contribute exactly zero, so the
 // staged bring-up (P-only, then Kd, then limit avoidance) is configuration.
@@ -42,11 +44,13 @@ struct ReactivePoseGains {
     double kd_position = 0.0;       // unitless on the linear-velocity error
     double kd_rotation = 0.0;       // unitless on the angular-velocity error
     double limit_avoid_gain_s_inv = 0.0; // 1/s on the zone excess
+    double posture_gain_s_inv = 0.0; // 1/s on the wrapped nominal-posture error
     double dls_lambda = 0.0;        // DLS damping λ (also damps the projector)
     bool position_enabled = true;
     bool orientation_enabled = true;
     bool velocity_enabled = false;
     bool null_space_enabled = false;
+    bool posture_enabled = false; // nominal-posture guidance (needs null space)
 };
 
 // Startup multiplier for a secondary objective: the task-space law is
@@ -128,24 +132,22 @@ DampedLeastSquares(const Eigen::Matrix<double, 3, 7>& jacobian_position,
     return jacobian_position.transpose() * jjt.ldlt().solve(v_desired);
 }
 
-// Equations 5-6: deadband joint-limit avoidance projected into the
-// Jacobian null space. `limit_rad` holds each joint's software-limit
-// magnitude (applied symmetrically, ±limit); 0 marks an unbounded joint.
-// The objective is EXACTLY zero until a bounded joint's wrapped position
-// enters the activation zone [limit − zone, limit], then pushes inward
-// with gain · excess. Replaced wrap-to-midpoint centering on 2026-08-05:
-// centering fought the task from everywhere and the damped projector
-// leaked it into task space (218 mm stall equilibrium) — see
+// Equation 5a: the deadband joint-limit-avoidance objective. `limit_rad`
+// holds each joint's software-limit magnitude (applied symmetrically,
+// ±limit); 0 marks an unbounded joint. The objective is EXACTLY zero until
+// a bounded joint's wrapped position enters the activation zone
+// [limit − zone, limit], then pushes inward with gain · excess. Wrapped to
+// (−π, π] because Kortex reports positions in [0, 360). Replaced
+// wrap-to-midpoint centering on 2026-08-05: centering fought the task from
+// everywhere and the damped projector leaked it into task space (218 mm
+// stall equilibrium) — see
 // docs/superpowers/specs/2026-08-05-null-space-limit-avoidance-design.md.
 inline Eigen::Matrix<double, 7, 1>
-LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
-                       const Eigen::Matrix<double, 7, 1>& q_rad,
-                       const Eigen::Matrix<double, 7, 1>& limit_rad,
-                       double zone_rad,
-                       const ReactivePoseGains& gains)
+LimitAvoidanceObjective(const Eigen::Matrix<double, 7, 1>& q_rad,
+                        const Eigen::Matrix<double, 7, 1>& limit_rad,
+                        double zone_rad,
+                        const ReactivePoseGains& gains)
 {
-    // Equation 5: the deadband objective (wrapped to (−π, π] because
-    // Kortex reports positions in [0, 360)).
     Eigen::Matrix<double, 7, 1> objective;
     for (int i = 0; i < 7; ++i) {
         objective[i] = 0.0;
@@ -158,14 +160,64 @@ LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
             objective[i] = -gains.limit_avoid_gain_s_inv * excess *
                            (signed_rad < 0.0 ? -1.0 : 1.0);
     }
+    return objective;
+}
 
-    // Equation 6: N = I₇ − Jᵀ(JJᵀ + λ²I₆)⁻¹J, the damped projector.
+// Equation 5b: nominal-posture guidance — the planner's nominal joint state
+// entering the null space as a SECONDARY objective,
+//
+//     q̇_nom + kq · wrap(q_nom − q).
+//
+// The wrap is the same short-way-round rule as WrappedJointError (State.h):
+// Kortex reports positions on [0, 360) while a planner's nominal is signed,
+// so an unwrapped error near zero would command a full-turn correction.
+// Non-finite guidance degrades to NO guidance (exactly zero) rather than
+// letting a NaN reach the command — a bad hint must never be worse than no
+// hint. With ~1 redundant DoF against a 6-DoF task this is guidance, never
+// tracking; the gain stays far below the task Kp because the DAMPED
+// projector leaks (the 2026-08-05 stall equilibrium).
+inline Eigen::Matrix<double, 7, 1>
+PostureObjective(const Eigen::Matrix<double, 7, 1>& q_rad,
+                 const JointReference& nominal,
+                 const ReactivePoseGains& gains)
+{
+    if (!gains.posture_enabled)
+        return Eigen::Matrix<double, 7, 1>::Zero();
+    if (!nominal.q_rad.allFinite() || !nominal.qdot_rad_s.allFinite())
+        return Eigen::Matrix<double, 7, 1>::Zero();
+    return nominal.qdot_rad_s +
+           gains.posture_gain_s_inv * WrappedJointError(nominal.q_rad, q_rad);
+}
+
+// Equation 6: N = I₇ − Jᵀ(JJᵀ + λ²I₆)⁻¹J, the damped projector, applied to
+// one summed objective. Projection is linear, so summing before projecting
+// equals projecting each term — but the solve projects ONCE so the leak
+// telemetry accounts for the whole null command, not one term of it.
+inline Eigen::Matrix<double, 7, 1>
+ProjectToNullSpace(const Eigen::Matrix<double, 6, 7>& jacobian,
+                   const Eigen::Matrix<double, 7, 1>& objective,
+                   double lambda)
+{
     Eigen::Matrix<double, 6, 6> jjt = jacobian * jacobian.transpose();
-    jjt.diagonal().array() += gains.dls_lambda * gains.dls_lambda;
+    jjt.diagonal().array() += lambda * lambda;
     const Eigen::Matrix<double, 7, 7> projector =
         Eigen::Matrix<double, 7, 7>::Identity() -
         jacobian.transpose() * jjt.ldlt().solve(jacobian);
     return projector * objective;
+}
+
+// Equations 5a+6 composed for limit avoidance alone — the pre-posture shape
+// of the law, kept because tests and tools exercise it directly.
+inline Eigen::Matrix<double, 7, 1>
+LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
+                       const Eigen::Matrix<double, 7, 1>& q_rad,
+                       const Eigen::Matrix<double, 7, 1>& limit_rad,
+                       double zone_rad,
+                       const ReactivePoseGains& gains)
+{
+    return ProjectToNullSpace(
+        jacobian, LimitAvoidanceObjective(q_rad, limit_rad, zone_rad, gains),
+        gains.dls_lambda);
 }
 
 // The solved velocity split into its two objectives, plus the leak the
@@ -183,6 +235,10 @@ struct ReactiveSolution {
 
 // Equations 3-6 composed, decomposition preserved. The total command is
 // qdot_task_rad_s + qdot_null_rad_s (SolveReactiveVelocity below).
+// `nominal` is the OPTIONAL posture guidance (equation 5b): pass the
+// planner's nominal joint state to bias the redundant motion toward it, or
+// nullptr for the plain law — every pre-slice caller compiles and computes
+// unchanged.
 inline ReactiveSolution
 SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
                               const Eigen::Vector3d& e_pos, const Eigen::Vector3d& e_rot,
@@ -190,7 +246,8 @@ SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
                               const Eigen::Matrix<double, 7, 1>& q_rad,
                               const Eigen::Matrix<double, 7, 1>& limit_rad,
                               double zone_rad,
-                              const ReactivePoseGains& gains)
+                              const ReactivePoseGains& gains,
+                              const JointReference* nominal = nullptr)
 {
     const Eigen::Matrix<double, 6, 1> twist =
         TaskTwist(e_pos, e_rot, e_v, e_w, gains);
@@ -198,9 +255,12 @@ SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
     solution.qdot_task_rad_s =
         DampedLeastSquares6(jacobian, twist, gains.dls_lambda);
     if (gains.null_space_enabled) {
-        solution.qdot_null_rad_s = LimitAvoidanceVelocity(jacobian, q_rad,
-                                                          limit_rad, zone_rad,
-                                                          gains);
+        Eigen::Matrix<double, 7, 1> objective =
+            LimitAvoidanceObjective(q_rad, limit_rad, zone_rad, gains);
+        if (nominal != nullptr)
+            objective += PostureObjective(q_rad, *nominal, gains);
+        solution.qdot_null_rad_s =
+            ProjectToNullSpace(jacobian, objective, gains.dls_lambda);
         solution.leak_twist = jacobian * solution.qdot_null_rad_s;
     } else {
         solution.qdot_null_rad_s.setZero();
@@ -218,9 +278,11 @@ SolveReactiveVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
                       const Eigen::Matrix<double, 7, 1>& q_rad,
                       const Eigen::Matrix<double, 7, 1>& limit_rad,
                       double zone_rad,
-                      const ReactivePoseGains& gains)
+                      const ReactivePoseGains& gains,
+                      const JointReference* nominal = nullptr)
 {
     const ReactiveSolution solution = SolveReactiveVelocityDetailed(
-        jacobian, e_pos, e_rot, e_v, e_w, q_rad, limit_rad, zone_rad, gains);
+        jacobian, e_pos, e_rot, e_v, e_w, q_rad, limit_rad, zone_rad, gains,
+        nominal);
     return solution.qdot_task_rad_s + solution.qdot_null_rad_s;
 }

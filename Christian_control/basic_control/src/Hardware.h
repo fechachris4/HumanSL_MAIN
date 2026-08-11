@@ -219,7 +219,7 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 9; WriteCsvRow is the authority):
+// CSV column order (log_format = 11; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -230,7 +230,9 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   ack_unchanged_j1..7, taskvel_j1..7, nullvel_j1..7,
 //   null_leak_mps, traj_activated, traj_rejected, traj_complete,
 //   traj_start_error_deg, joint_follow_stop,
-//   joint_follow_error_deg                                (141 columns)
+//   joint_follow_error_deg, posture_error_deg,
+//   base_comp_m, base_fresh, joint_margin_deg,
+//   replan_advised                                        (146 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -255,6 +257,17 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // joint_follow_error_deg is the worst joint's WRAPPED reference error every
 // tracking cycle, and joint_follow_stop is 1 on a row whose error passed
 // config::kTrajFollowingErrorStopDeg — the row that stopped the loop.
+// Format 10 (2026-08-10) appends posture_error_deg: the worst joint's
+// wrapped |q_nom - q_measured| on a pose cycle that ran with null-space
+// posture guidance (Reference.posture) — the graded plan-deviation measure
+// of pose-primary trajectory following, NaN when no guidance ran.
+// Format 11 (2026-08-10) appends the world-frame and supervision evidence:
+// base_comp_m (distance the pose reference moved in the base frame to hold
+// its world pose against base motion; NaN when no compensation ran),
+// base_fresh (0 on a compensated row whose base estimate was invalid, so
+// compensation froze), joint_margin_deg (worst bounded joint's distance to
+// its software limit), and replan_advised (the debounced graded-feasibility
+// advisory level — advisory only, motion is never altered by it).
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -363,6 +376,16 @@ struct LoopLogSample {
     bool joint_following_error_stop = false;
     double joint_following_error_deg = // NaN: this cycle ran no joint tracking
         std::numeric_limits<double>::quiet_NaN();
+
+    // Posture-guidance deviation (log_format 10). See the column note above.
+    double posture_error_deg = // NaN: this cycle ran no posture guidance
+        std::numeric_limits<double>::quiet_NaN();
+
+    // World-frame compensation and feasibility (log_format 11). See above.
+    double base_comp_m = std::numeric_limits<double>::quiet_NaN();
+    bool base_estimate_fresh = true;
+    double joint_limit_margin_deg = std::numeric_limits<double>::quiet_NaN();
+    bool replan_advised = false;
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully

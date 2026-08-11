@@ -44,7 +44,7 @@ int main()
     Check(Throws({"--log", "foo.csv"}), "--log alone refuses (missing --arm)");
 
     // The three valid values, each round-tripping into ParsedMainArgs.
-    for (const std::string& arm : {"right", "left", "both"}) {
+    for (const std::string arm : {"right", "left", "both"}) {
         const ParsedMainArgs parsed = ParseMainArgs({"--arm", arm});
         Check(parsed.arm == arm, "--arm " + arm + " is accepted and recorded");
         Check(parsed.log_file.empty(), "--arm " + arm + " alone leaves log_file empty");

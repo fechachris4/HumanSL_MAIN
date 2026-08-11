@@ -82,6 +82,33 @@ struct ControllerStatus {
     double joint_following_error_deg =
         std::numeric_limits<double>::quiet_NaN();
 
+    // Worst-joint wrapped |q_nom - q_measured|, degrees, when a pose cycle
+    // ran with posture guidance (Reference.posture). NaN convention as
+    // above: no posture ran, or its nominal was non-finite (the law then
+    // ignored it).
+    double posture_error_deg = std::numeric_limits<double>::quiet_NaN();
+
+    // World-frame base compensation applied to this cycle's pose reference
+    // (slice 3): the distance the reference moved in the arm's base frame to
+    // hold its world pose against base motion. NaN = no compensation ran
+    // (joint mode, hold, or no provider). 0.0 with a static provider.
+    double base_comp_m = std::numeric_limits<double>::quiet_NaN();
+    // Base-estimate freshness: false on a pose cycle whose provider estimate
+    // was invalid/stale, so compensation FROZE at the last good value (the
+    // graded degradation, never a stop). True when the estimate was fresh.
+    // Meaningless (default true) on cycles that ran no compensation.
+    bool base_estimate_fresh = true;
+
+    // Feasibility supervision (slice 4) — graded measures, never vetoes.
+    // The worst bounded joint's distance to its software limit; NaN before
+    // the first pose cycle computes it.
+    double joint_limit_margin_deg = std::numeric_limits<double>::quiet_NaN();
+    // True on a cycle whose graded measures crossed the advisory thresholds
+    // (Config.h kReplan*): the plan is degrading and an asynchronous replan
+    // is advised. Advisory only — motion continues; the layer with context
+    // (operator, session script, UI) decides.
+    bool replan_advised = false;
+
     // MEASURED tool orientation, flange frame in the right-arm base frame.
     // Hamilton convention, hemisphere-fixed to w >= 0 so logs never jump
     // sign. Telemetry only.
@@ -151,13 +178,57 @@ struct JointReference {
     Eigen::Matrix<double, 7, 1> qdot_rad_s;
 };
 
-// What a source hands the controller each cycle: one channel, never both.
-// The pose channel goes to the reactive law, the joint channel to the joint
-// tracking law. Neither set means "no reference": the controller holds the
-// takeover pose.
+// Where the robot's mount is in the WORLD frame (slice 3 of the world-frame
+// architecture). "World" is whatever external frame the provider measures in
+// — the Vicon lab frame once a Vicon provider exists; for the static
+// provider it is simply the mount frame itself. The controller never talks
+// to a sensor SDK: it sees only this estimate.
+struct BaseMotionEstimate {
+    Eigen::Isometry3d world_from_mount = Eigen::Isometry3d::Identity();
+    double t_s = 0.0;   // provider's timestamp, seconds on the loop clock
+    bool valid = false; // false = no usable estimate this instant
+};
+
+// The seam a base-motion sensor plugs into. Latest() is called from the
+// control loop: implementations must not block, allocate, or do I/O there —
+// a sensor-fed implementation buffers off-thread and hands over the newest
+// estimate. Providers: StaticBaseMotionSource below (no sensor, world ==
+// mount), a Vicon-fed source (future), a replay source (future).
+class BaseMotionSource
+{
+public:
+    virtual ~BaseMotionSource() = default;
+    virtual BaseMotionEstimate Latest() = 0;
+};
+
+// No sensor: the mount IS the world origin, always valid. With this
+// provider the world-frame compensation is exactly zero, so behaviour is
+// identical to having no provider — the regression tests pin that.
+class StaticBaseMotionSource : public BaseMotionSource
+{
+public:
+    BaseMotionEstimate Latest() override
+    {
+        BaseMotionEstimate estimate;
+        estimate.valid = true;
+        return estimate;
+    }
+};
+
+// What a source hands the controller each cycle: one PRIMARY channel, never
+// both. The pose channel goes to the reactive law, the joint channel to the
+// joint tracking law. Neither set means "no reference": the controller holds
+// the takeover pose.
+//
+// `posture` is SECONDARY, not a third channel: a nominal joint state (the
+// planner's q_nom/qdot_nom) that biases the redundant motion through the
+// reactive law's null space (ReactiveLaw.h PostureObjective). It is consumed
+// only on pose-channel (and hold) cycles and ignored on joint-channel
+// cycles, where the joint tracking law already owns every joint.
 struct Reference {
     std::optional<PoseReference> pose;
     std::optional<JointReference> joint;
+    std::optional<JointReference> posture;
 };
 
 // What the Runner requires of a reference source, so the loop is written once

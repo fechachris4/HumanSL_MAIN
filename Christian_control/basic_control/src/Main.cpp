@@ -43,6 +43,7 @@
 #include "Safety.h"
 #include "State.h"
 #include "Targets.h"
+#include "TrajectoryPoseSource.h"
 
 namespace k_api = Kinova::Api;
 
@@ -90,10 +91,22 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("orientation_enabled", config::kOrientationEnabled ? "true" : "false");
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");
-    // The measured takeover state the run starts from. Kept in the preamble
-    // even though there is now only one source, so every CSV keeps saying
-    // which motion path produced it.
-    line("reference_source", "joint_trajectory");
+    // Which motion path produced this run — the two trajectory-following
+    // modes share the wire format, so only this line and the config flag
+    // say which law owned the command.
+    line("reference_source", config::kTrajectoryPosePrimary
+                                 ? "pose_primary_trajectory"
+                                 : "joint_trajectory");
+    line("posture_enabled", config::kPostureEnabled ? "true" : "false");
+    line("posture_gain", FormatDouble(config::kPostureGain));
+    // Slice 3/4: which base-motion estimate fed the world anchoring, and
+    // the graded-feasibility advisory thresholds active during the run.
+    line("base_motion_source", "static");
+    line("replan_sigma_min", FormatDouble(config::kReplanSigmaMin));
+    line("replan_joint_margin_deg", FormatDouble(config::kReplanJointMarginDeg));
+    line("replan_posture_error_deg", FormatDouble(config::kReplanPostureErrorDeg));
+    line("replan_position_error_m", FormatDouble(config::kReplanPositionErrorM));
+    line("replan_advise_cycles", std::to_string(config::kReplanAdviseCycles));
     line("startup_hold", "measured_q");
     // The joint path's three settings: tracking gain, the activation splice
     // guard, and the joint-space following-error stop.
@@ -136,7 +149,7 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
 void WriteCsvPreamble(const std::string& log_file, const config::ArmConfig& arm_config,
                       std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 9 (compiled)\n";
+    csv << "# log_format = 11 (compiled)\n";
     csv << "# arm = " << arm_config.name << " (" << arm_config.ip << ")\n";
     WriteConfigLines(log_file, csv, "# ");
 }
@@ -461,11 +474,24 @@ namespace
                       << startup_mount.z() << " m in mount (goal-file frame)"
                       << "; the arm will hold here\n";
             // The arm holds the measured takeover q until the first validated
-            // trajectory block arrives. Joint trajectories are the only motion
-            // path: the Cartesian pose source was retired in stage 2.
+            // trajectory block arrives. Planner trajectory blocks are the only
+            // input; kTrajectoryPosePrimary selects which law owns the command
+            // while following one (Config.h). Both sources are constructed —
+            // they are cheap and only the selected one ever polls the mailbox.
             JointTrajectoryMailbox trajectory_targets;
             JointTrajectorySource joint_reference(q_now_rad, trajectory_targets);
-            ReferenceSource& reference = joint_reference;
+            // Slice 3 seam: the static provider (world == mount) makes the
+            // world anchoring exactly identity — swap in a Vicon-fed
+            // provider here when one exists; nothing else changes.
+            StaticBaseMotionSource base_motion;
+            TrajectoryPoseSource pose_primary_reference(q_now_rad,
+                                                        trajectory_targets,
+                                                        controlled_model,
+                                                        &base_motion);
+            ReferenceSource& reference =
+                config::kTrajectoryPosePrimary
+                    ? static_cast<ReferenceSource&>(pose_primary_reference)
+                    : static_cast<ReferenceSource&>(joint_reference);
             PositionIntegration actuation(config::kCommandLeadLimitDeg);
 
             std::cout << tag << "HOLD AT START: the arm holds the measured startup "

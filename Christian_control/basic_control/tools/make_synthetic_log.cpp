@@ -1,5 +1,5 @@
 //
-// make_synthetic_log: write a SYNTHETIC log_format 7 run CSV, with no robot
+// make_synthetic_log: write a SYNTHETIC log_format 11 run CSV, with no robot
 // and no Kortex connection, so the telemetry schema and the plotting script
 // can be exercised on a hardware-free machine.
 //
@@ -57,7 +57,7 @@ namespace
 int main(int argc, char** argv)
 {
     const std::string out_path =
-        argc > 1 ? argv[1] : "SYNTHETIC_loop_log_format7.csv";
+        argc > 1 ? argv[1] : "SYNTHETIC_loop_log_format11.csv";
 
     std::ofstream csv(out_path);
     if (!csv)
@@ -72,7 +72,7 @@ int main(int argc, char** argv)
            "tools/make_synthetic_log.cpp with no hardware connected.\n"
         << "# Every row below is computed, not measured. Do not cite this "
            "file as evidence of robot behaviour.\n"
-        << "# log_format = 7 (compiled)\n"
+        << "# log_format = 11 (compiled)\n"
         << "# data_source = synthetic\n"
         << "# control_dt_s = " << kDtS << " (synthetic)\n"
         << "# command_lead_limit_deg = " << kLeadLimitDeg << " (synthetic)\n"

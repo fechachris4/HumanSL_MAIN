@@ -120,11 +120,114 @@ namespace
         }
     }
 
+    // Slice 1: Reference.posture is SECONDARY guidance for the reactive
+    // law's null space — consumed on pose/hold cycles, ignored on joint
+    // cycles, and inert while config::kPostureEnabled is false (the
+    // compiled default until a source actually publishes it). The branches
+    // below test whichever way the flag is currently compiled, so this
+    // test stays meaningful when slice 2 turns the term on.
+    void TestPostureGuidanceComposition()
+    {
+        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
+        DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
+                                config::kRightBaseFrame,
+                                config::kRightEndEffectorFrame);
+        TrackingController controller(model);
+
+        Eigen::Matrix<double, 7, 1> q_start = Eigen::Matrix<double, 7, 1>::Zero();
+        q_start(1) = 0.3;
+        q_start(3) = -0.6;
+        Eigen::Matrix<double, 7, 1> q_now = q_start;
+        q_now(1) = 0.4;
+        q_now(3) = -0.7;
+
+        controller.Reset(StateAt(q_start));
+
+        // The arm has drifted from the hold pose, and the null ramp is over:
+        // the task term is active and any null-space term is at full gain.
+        RobotState drifted = StateAt(q_now);
+        drifted.t_s = config::kNullRampDurationS + 1.0;
+
+        JointReference nominal;
+        nominal.q_rad = q_start;
+        nominal.qdot_rad_s.setZero();
+
+        Reference plain; // hold cycle, no guidance
+        Reference guided = plain;
+        guided.posture = nominal;
+
+        ControllerStatus s_plain, s_guided;
+        const auto qdot_plain =
+            controller.DesiredVelocity(drifted, plain, 0.002, s_plain);
+        const auto qdot_guided =
+            controller.DesiredVelocity(drifted, guided, 0.002, s_guided);
+
+        // Telemetry reports the guidance error whenever guidance was
+        // supplied on a pose cycle, and stays NaN when none was.
+        Check(std::isnan(s_plain.posture_error_deg),
+              "no posture supplied -> posture error telemetry stays NaN");
+        Check(std::isfinite(s_guided.posture_error_deg),
+              "posture supplied on a pose cycle -> posture error reported");
+        const double kDeg = M_PI / 180.0;
+        const double expected_error_deg =
+            WrappedJointError(nominal.q_rad, q_now).cwiseAbs().maxCoeff() /
+            kDeg;
+        Check(std::abs(s_guided.posture_error_deg - expected_error_deg) < 1e-9,
+              "posture error telemetry is the worst-joint wrapped error");
+
+        if (config::kPostureEnabled) {
+            // Guidance biases the redundant motion but never the task part.
+            Check((s_guided.qdot_task_rad_s - s_plain.qdot_task_rad_s).norm()
+                      == 0.0,
+                  "posture guidance leaves the task solution untouched");
+            Check((qdot_guided - qdot_plain).norm() > 0.0,
+                  "posture guidance produces null-space motion at full ramp");
+
+            // Before the ramp, the guidance contributes nothing: takeover
+            // can never begin with a projected posture transient.
+            RobotState at_takeover = StateAt(q_now); // t_s = 0
+            ControllerStatus s_ramp_plain, s_ramp_guided;
+            const auto ramp_plain = controller.DesiredVelocity(
+                at_takeover, plain, 0.002, s_ramp_plain);
+            const auto ramp_guided = controller.DesiredVelocity(
+                at_takeover, guided, 0.002, s_ramp_guided);
+            Check((ramp_guided - ramp_plain).norm() == 0.0,
+                  "posture guidance is fully ramped out at takeover");
+        } else {
+            // Compiled off: supplying guidance changes NOTHING — the
+            // behaviour-preservation proof for the current configuration.
+            Check((qdot_guided - qdot_plain).norm() == 0.0,
+                  "kPostureEnabled=false -> guidance leaves the command "
+                  "bit-identical");
+        }
+
+        // On a joint-channel cycle the joint tracking law owns every joint:
+        // posture guidance is ignored regardless of configuration.
+        Reference joint_ref;
+        JointReference joint;
+        joint.q_rad = q_now;
+        joint.qdot_rad_s.setZero();
+        joint_ref.joint = joint;
+        Reference joint_guided = joint_ref;
+        joint_guided.posture = nominal;
+
+        ControllerStatus s_joint, s_joint_guided;
+        const auto qdot_joint = controller.DesiredVelocity(
+            StateAt(q_start), joint_ref, 0.002, s_joint);
+        const auto qdot_joint_guided = controller.DesiredVelocity(
+            StateAt(q_start), joint_guided, 0.002, s_joint_guided);
+        Check((qdot_joint_guided - qdot_joint).norm() == 0.0,
+              "the joint channel ignores posture guidance");
+        Check(std::isnan(s_joint_guided.posture_error_deg),
+              "no posture telemetry on a joint-channel cycle");
+    }
+
 } // namespace
 
 int main()
 {
     TestHoldPoseReseatsAfterJointTracking();
+    TestPostureGuidanceComposition();
     if (failures == 0) {
         std::cout << "all controller tests passed\n";
         return 0;

@@ -12,7 +12,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif ()
-add_definitions(-D_OS_UNIX -w)
+add_definitions(-D_OS_UNIX)
+# Warnings on for first-party code; vendor headers (Kortex, Pinocchio, Eigen)
+# are SYSTEM includes below, so their noise is suppressed without -w.
+add_compile_options(-Wall -Wextra)
 
 # compile_commands.json, so clang-tidy (or an editor) knows the include paths.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -51,7 +54,7 @@ set(GEN3_DUAL_URDF
         "${CMAKE_CURRENT_SOURCE_DIR}/config/GEN3_dual_mounted.urdf")
 add_compile_definitions(GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
 
-include_directories(
+include_directories(SYSTEM
         ${KORTEX_DIR}/include
         ${KORTEX_DIR}/include/client
         ${KORTEX_DIR}/include/common
@@ -59,8 +62,41 @@ include_directories(
         ${KORTEX_DIR}/include/client_stubs
 )
 
+# The bundled Eigen, as a SYSTEM include so -Wall stays quiet inside it.
+function(add_bundled_eigen_to target)
+    target_include_directories(${target} SYSTEM PRIVATE
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+    )
+endfunction()
+
+# One call wires a target to the bundled Pinocchio: SYSTEM include paths,
+# the Dynamics wrapper's include dir, the two .so files, the runtime RPATH,
+# and the lazy-binding link options. libpinocchio_parsers.so references
+# collision symbols (coal) that are not bundled and that we never call (we
+# only build the model, no collision geometry); --allow-shlib-undefined
+# leaves them unresolved and -z lazy keeps the loader from looking them up
+# at startup.
+function(add_pinocchio_to target)
+    target_include_directories(${target} SYSTEM PRIVATE
+            ${HUMANSL_ROOT}/third_party/include
+            ${HUMANSL_ROOT}/third_party/include/eigen3
+    )
+    target_link_libraries(${target}
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+            pthread
+    )
+    set_target_properties(${target} PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
+    )
+    target_link_options(${target} PRIVATE
+            -Wl,--allow-shlib-undefined
+            -Wl,-z,lazy
+    )
+endfunction()
+
 # --- controller: Kortex + bundled Pinocchio (dynamics/kinematics via the
-#     Dynamics class reused from TrajectoryExecution) ---
+#     Dynamics class, our copy of TrajectoryExecution's model wrapper) ---
 add_executable(controller
         src/Main.cpp
         src/MainArgs.cpp
@@ -68,46 +104,24 @@ add_executable(controller
         src/Runner.cpp
         src/Controller.cpp
         src/Targets.cpp
+        src/TrajectoryPoseSource.cpp
         src/JointTrajectory.cpp
         src/Actuation.cpp
         src/Kinematics.cpp
         src/Hardware.cpp
         src/Safety.cpp
-        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+        src/Dynamics.cpp
 )
 
 # src/ is the include root. One file per job, named for that job:
 # State/ReactiveLaw/Controller/Targets/Actuation are pure Eigen,
 # Kinematics adds Pinocchio, Hardware adds Kortex, Runner is the loop,
 # Main the program, Config the settings.
-target_include_directories(controller PRIVATE
-        src
-        third_party
-        ${HUMANSL_ROOT}/third_party/include
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-        ${HUMANSL_ROOT}/TrajectoryExecution/include
-)
-
+target_include_directories(controller PRIVATE src)
 target_link_libraries(controller
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-        pthread
 )
-
-# Let the executable find the bundled .so files at runtime.
-set_target_properties(controller PROPERTIES
-        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-)
-
-# libpinocchio_parsers.so references collision symbols (coal) that are not
-# bundled and that we never call (we only build the model, no collision
-# geometry). Allow them to stay unresolved, and bind lazily so the loader
-# doesn't look them up at startup either.
-target_link_options(controller PRIVATE
-        -Wl,--allow-shlib-undefined
-        -Wl,-z,lazy
-)
+add_pinocchio_to(controller)
 
 # --- clear_faults: supported whole-arm fault recovery (Base::ClearFaults),
 #     read-verify only, no motion. Kortex, no Pinocchio. ---
@@ -116,10 +130,8 @@ add_executable(clear_faults
         src/Hardware.cpp
         src/Safety.cpp
 )
-target_include_directories(clear_faults PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(clear_faults PRIVATE src)
+add_bundled_eigen_to(clear_faults)
 target_link_libraries(clear_faults
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
@@ -130,26 +142,10 @@ target_link_libraries(clear_faults
 add_executable(probe_direction
         tools/probe_direction.cpp
         src/Kinematics.cpp
-        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+        src/Dynamics.cpp
 )
-target_include_directories(probe_direction PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-        ${HUMANSL_ROOT}/TrajectoryExecution/include
-)
-target_link_libraries(probe_direction
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-        pthread
-)
-set_target_properties(probe_direction PROPERTIES
-        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-)
-target_link_options(probe_direction PRIVATE
-        -Wl,--allow-shlib-undefined
-        -Wl,-z,lazy
-)
+target_include_directories(probe_direction PRIVATE src)
+add_pinocchio_to(probe_direction)
 
 # --- set_joint_limits: WRITES the joint 2/4/6 firmware JOINT_LIMIT
 #     thresholds (joint-position enforcement). No motion. ---
@@ -157,10 +153,8 @@ add_executable(set_joint_limits
         tools/set_joint_limits.cpp
         src/Hardware.cpp
 )
-target_include_directories(set_joint_limits PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(set_joint_limits PRIVATE src)
+add_bundled_eigen_to(set_joint_limits)
 target_link_libraries(set_joint_limits
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
@@ -174,10 +168,8 @@ add_executable(read_safety_limits
         src/Safety.cpp   # DecodeBaseBank / DecodeActuatorBank
 )
 
-target_include_directories(read_safety_limits PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(read_safety_limits PRIVATE src)
+add_bundled_eigen_to(read_safety_limits)
 target_link_libraries(read_safety_limits
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
@@ -190,10 +182,8 @@ add_executable(print_joint_positions
         src/Hardware.cpp
 )
 
-target_include_directories(print_joint_positions PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(print_joint_positions PRIVATE src)
+add_bundled_eigen_to(print_joint_positions)
 target_link_libraries(print_joint_positions
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
@@ -206,28 +196,14 @@ add_executable(print_end_effector_pose
         tools/print_end_effector_pose.cpp
         src/Kinematics.cpp
         src/Hardware.cpp
-        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+        src/Dynamics.cpp
 )
 
-target_include_directories(print_end_effector_pose PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-        ${HUMANSL_ROOT}/TrajectoryExecution/include
-)
+target_include_directories(print_end_effector_pose PRIVATE src)
 target_link_libraries(print_end_effector_pose
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-        pthread
 )
-set_target_properties(print_end_effector_pose PROPERTIES
-        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-)
-target_link_options(print_end_effector_pose PRIVATE
-        -Wl,--allow-shlib-undefined
-        -Wl,-z,lazy
-)
+add_pinocchio_to(print_end_effector_pose)
 
 # --- compare_end_effector_pose: READ-ONLY diagnostic — firmware tool_pose
 #     (what the web app shows) vs our Pinocchio FK, from one shared
@@ -236,28 +212,14 @@ add_executable(compare_end_effector_pose
         tools/compare_end_effector_pose.cpp
         src/Kinematics.cpp
         src/Hardware.cpp
-        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+        src/Dynamics.cpp
 )
 
-target_include_directories(compare_end_effector_pose PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-        ${HUMANSL_ROOT}/TrajectoryExecution/include
-)
+target_include_directories(compare_end_effector_pose PRIVATE src)
 target_link_libraries(compare_end_effector_pose
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-        pthread
 )
-set_target_properties(compare_end_effector_pose PROPERTIES
-        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-)
-target_link_options(compare_end_effector_pose PRIVATE
-        -Wl,--allow-shlib-undefined
-        -Wl,-z,lazy
-)
+add_pinocchio_to(compare_end_effector_pose)
 
 # --- print_tool_configuration: READ-ONLY dump of the robot's configured
 #     Tool Frame (ControlConfig::GetToolConfiguration) — the offset firmware
@@ -267,10 +229,8 @@ add_executable(print_tool_configuration
         src/Hardware.cpp
 )
 
-target_include_directories(print_tool_configuration PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(print_tool_configuration PRIVATE src)
+add_bundled_eigen_to(print_tool_configuration)
 target_link_libraries(print_tool_configuration
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
@@ -284,10 +244,8 @@ add_executable(make_synthetic_log
         tools/make_synthetic_log.cpp
         src/Hardware.cpp
 )
-target_include_directories(make_synthetic_log PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(make_synthetic_log PRIVATE src)
+add_bundled_eigen_to(make_synthetic_log)
 target_link_libraries(make_synthetic_log
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
         pthread
@@ -301,26 +259,10 @@ target_link_libraries(make_synthetic_log
 add_executable(expand_run_poses
         tools/expand_run_poses.cpp
         src/Kinematics.cpp
-        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+        src/Dynamics.cpp
 )
-target_include_directories(expand_run_poses PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-        ${HUMANSL_ROOT}/TrajectoryExecution/include
-)
-target_link_libraries(expand_run_poses
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-        pthread
-)
-set_target_properties(expand_run_poses PROPERTIES
-        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-)
-target_link_options(expand_run_poses PRIVATE
-        -Wl,--allow-shlib-undefined
-        -Wl,-z,lazy
-)
+target_include_directories(expand_run_poses PRIVATE src)
+add_pinocchio_to(expand_run_poses)
 
 # --- print_dual_arm_fk: both arms' FK in world and base_link, for checking
 #     the mounted model against the physical rig. URDF only — deliberately
@@ -329,26 +271,10 @@ target_link_options(expand_run_poses PRIVATE
 add_executable(print_dual_arm_fk
         tools/print_dual_arm_fk.cpp
         src/Kinematics.cpp
-        ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+        src/Dynamics.cpp
 )
-target_include_directories(print_dual_arm_fk PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-        ${HUMANSL_ROOT}/TrajectoryExecution/include
-)
-target_link_libraries(print_dual_arm_fk
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-        pthread
-)
-set_target_properties(print_dual_arm_fk PROPERTIES
-        BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-)
-target_link_options(print_dual_arm_fk PRIVATE
-        -Wl,--allow-shlib-undefined
-        -Wl,-z,lazy
-)
+target_include_directories(print_dual_arm_fk PRIVATE src)
+add_pinocchio_to(print_dual_arm_fk)
 
 # --- test_control_logic: hardware-free tests for the controller's pure
 #     logic (DLS resolution, cycle-dt clamp, PositionIntegration). No
@@ -360,10 +286,8 @@ add_executable(test_control_logic
         src/Targets.cpp
         src/JointTrajectory.cpp
 )
-target_include_directories(test_control_logic PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(test_control_logic PRIVATE src)
+add_bundled_eigen_to(test_control_logic)
 target_link_libraries(test_control_logic pthread)
 add_test(NAME control_logic COMMAND test_control_logic)
 
@@ -377,10 +301,8 @@ add_executable(test_reactive_law
         src/Targets.cpp
         src/JointTrajectory.cpp
 )
-target_include_directories(test_reactive_law PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(test_reactive_law PRIVATE src)
+add_bundled_eigen_to(test_reactive_law)
 target_link_libraries(test_reactive_law pthread)
 add_test(NAME reactive_law COMMAND test_reactive_law)
 
@@ -391,10 +313,8 @@ add_executable(test_joint_trajectory
         tests/test_joint_trajectory.cpp
         src/JointTrajectory.cpp
 )
-target_include_directories(test_joint_trajectory PRIVATE
-        src
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
+target_include_directories(test_joint_trajectory PRIVATE src)
+add_bundled_eigen_to(test_joint_trajectory)
 target_link_libraries(test_joint_trajectory pthread)
 add_test(NAME joint_trajectory COMMAND test_joint_trajectory)
 
@@ -407,6 +327,16 @@ add_executable(test_main_args
 )
 target_include_directories(test_main_args PRIVATE src)
 add_test(NAME main_args COMMAND test_main_args)
+
+# --- test_feasibility: hardware-free tests for the graded feasibility
+#     supervision (src/Feasibility.h — pure Eigen). No Kortex, no
+#     Pinocchio — safe to run anywhere. ---
+add_executable(test_feasibility
+        tests/test_feasibility.cpp
+)
+target_include_directories(test_feasibility PRIVATE src)
+add_bundled_eigen_to(test_feasibility)
+add_test(NAME feasibility COMMAND test_feasibility)
 
 # Python-only regression coverage for offline log-format compatibility. The
 # interpreter is optional so portable C++ test configurations remain usable.
@@ -444,10 +374,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             tests/test_supervisor.cpp
             src/Safety.cpp
     )
-    target_include_directories(test_supervisor PRIVATE
-            src
-            ${HUMANSL_ROOT}/third_party/include/eigen3
-    )
+    target_include_directories(test_supervisor PRIVATE src)
+    add_bundled_eigen_to(test_supervisor)
     target_link_libraries(test_supervisor
             ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
             pthread
@@ -458,26 +386,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(test_dual_arm_model
             tests/test_dual_arm_model.cpp
             src/Kinematics.cpp
-            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+            src/Dynamics.cpp
     )
-    target_include_directories(test_dual_arm_model PRIVATE
-            src
-            ${HUMANSL_ROOT}/third_party/include
-            ${HUMANSL_ROOT}/third_party/include/eigen3
-            ${HUMANSL_ROOT}/TrajectoryExecution/include
-    )
-    target_link_libraries(test_dual_arm_model
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-            pthread
-    )
-    set_target_properties(test_dual_arm_model PROPERTIES
-            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-    )
-    target_link_options(test_dual_arm_model PRIVATE
-            -Wl,--allow-shlib-undefined
-            -Wl,-z,lazy
-    )
+    target_include_directories(test_dual_arm_model PRIVATE src)
+    add_pinocchio_to(test_dual_arm_model)
     add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
 
     # The URDF's mounting block against config/dual_arm_mounting.yaml, which
@@ -486,26 +398,10 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(test_dual_arm_mounting
             tests/test_dual_arm_mounting.cpp
             src/Kinematics.cpp
-            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+            src/Dynamics.cpp
     )
-    target_include_directories(test_dual_arm_mounting PRIVATE
-            src
-            ${HUMANSL_ROOT}/third_party/include
-            ${HUMANSL_ROOT}/third_party/include/eigen3
-            ${HUMANSL_ROOT}/TrajectoryExecution/include
-    )
-    target_link_libraries(test_dual_arm_mounting
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-            pthread
-    )
-    set_target_properties(test_dual_arm_mounting PROPERTIES
-            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-    )
-    target_link_options(test_dual_arm_mounting PRIVATE
-            -Wl,--allow-shlib-undefined
-            -Wl,-z,lazy
-    )
+    target_include_directories(test_dual_arm_mounting PRIVATE src)
+    add_pinocchio_to(test_dual_arm_mounting)
     add_test(NAME dual_arm_mounting COMMAND test_dual_arm_mounting
              "${CMAKE_CURRENT_SOURCE_DIR}/config/dual_arm_mounting.yaml")
 
@@ -515,10 +411,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             tests/test_log_schema.cpp
             src/Hardware.cpp
     )
-    target_include_directories(test_log_schema PRIVATE
-            src
-            ${HUMANSL_ROOT}/third_party/include/eigen3
-    )
+    target_include_directories(test_log_schema PRIVATE src)
+    add_bundled_eigen_to(test_log_schema)
     target_link_libraries(test_log_schema
             ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
             pthread
@@ -531,27 +425,25 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
             tests/test_controller.cpp
             src/Controller.cpp
             src/Kinematics.cpp
-            ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+            src/Dynamics.cpp
     )
-    target_include_directories(test_controller PRIVATE
-            src
-            ${HUMANSL_ROOT}/third_party/include
-            ${HUMANSL_ROOT}/third_party/include/eigen3
-            ${HUMANSL_ROOT}/TrajectoryExecution/include
-    )
-    target_link_libraries(test_controller
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-            ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-            pthread
-    )
-    set_target_properties(test_controller PROPERTIES
-            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
-    )
-    target_link_options(test_controller PRIVATE
-            -Wl,--allow-shlib-undefined
-            -Wl,-z,lazy
-    )
+    target_include_directories(test_controller PRIVATE src)
+    add_pinocchio_to(test_controller)
     add_test(NAME controller COMMAND test_controller)
+
+    # The pose-primary trajectory source: FK/Jacobian of the sampled nominal,
+    # cross-checked against the model directly. No robot.
+    add_executable(test_trajectory_pose
+            tests/test_trajectory_pose.cpp
+            src/TrajectoryPoseSource.cpp
+            src/Targets.cpp
+            src/JointTrajectory.cpp
+            src/Kinematics.cpp
+            src/Dynamics.cpp
+    )
+    target_include_directories(test_trajectory_pose PRIVATE src)
+    add_pinocchio_to(test_trajectory_pose)
+    add_test(NAME trajectory_pose COMMAND test_trajectory_pose)
 
 endif ()
 
