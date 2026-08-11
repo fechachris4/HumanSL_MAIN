@@ -1,3 +1,12 @@
+# LEGACY — retired 2026-08-09, renamed from CMakeLists.txt so CMake no longer
+# offers a root build that cannot configure: add_subdirectory(TrajectoryRealTime)
+# points at a directory with no CMakeLists.txt, TrajectoryExecution lists the
+# deleted Connect.cpp, and main.cpp includes headers (core.h, move.h,
+# task_parameters.h) that no longer exist. The buildable projects are
+# Christian_control/basic_control and Christian_control/planner_bridge, each
+# standalone. Kept for reference until the legacy Vicon stack is replaced
+# (docs/superpowers/specs/2026-08-08-vicon-integration-design.md).
+
 cmake_minimum_required(VERSION 3.12)
 project(HumanSL_Masters_Project_2025)
 

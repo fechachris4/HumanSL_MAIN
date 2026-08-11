@@ -1,5 +1,16 @@
 # Human - Supernumerary Limb Collaboration Project
 
+> **Build status (2026-08-09):** the root CMake project is retired — it cannot
+> configure (missing `TrajectoryRealTime/CMakeLists.txt`, deleted
+> `Connect.cpp`, and `main.cpp` includes headers that no longer exist) and has
+> been renamed to `CMakeLists.txt.legacy`. The buildable projects are
+> [`Christian_control/basic_control`](Christian_control/basic_control) and
+> [`Christian_control/planner_bridge`](Christian_control/planner_bridge), each
+> standalone with its own README and `ctest` suite. The description below
+> documents the legacy pipeline this repository grew from; the legacy Vicon
+> stack's replacement is designed in
+> `docs/superpowers/specs/2026-08-08-vicon-integration-design.md`.
+
 Dual Kinova Gen3 7-DoF robotic arm system for human-robot collaborative pipe/tube manipulation, driven by real-time Vicon motion capture feedback.
 
 ## What It Does
