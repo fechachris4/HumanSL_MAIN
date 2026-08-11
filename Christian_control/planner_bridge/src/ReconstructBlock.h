@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -41,6 +42,12 @@ struct ReconstructedTrajectory {
 // `dt_s` intervals with the controller's cubic-Hermite sampler.
 ReconstructedTrajectory ReconstructEmittedBlock(const std::string& block, double dt_s);
 
-// One sample at an arbitrary instant, for comparing the reconstruction
-// against the GP-dense trajectory at the GP's own timestamps.
-ReconstructedSample SampleReconstructed(const std::string& block, double t_s);
+// Samples at arbitrary instants, for comparing the reconstruction against
+// the GP-dense trajectory at the GP's own timestamps. The block is parsed
+// ONCE, by the controller's own parser, when the sampler is made; each call
+// then only interpolates. (Sampling per call used to re-parse the full
+// block — quadratic in trajectory length, ~20 s for a 16 s circle plan.)
+// An unparseable block yields a sampler that returns zeroed samples, same
+// as the per-call form did.
+std::function<ReconstructedSample(double)> MakeReconstructionSampler(
+    const std::string& block);

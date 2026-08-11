@@ -259,9 +259,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                 outcome.error = "emitted block did not parse: " + reconstructed.error;
                 return outcome;
             }
-            const auto sample_at = [&block](double t) {
-                return SampleReconstructed(block, t);
-            };
+            const auto sample_at = MakeReconstructionSampler(block);
             const PathValidationReport report = ValidatePlannedPath(
                 model, reconstructed, solved.trajectory_pos, duration_s, sample_at,
                 sdf, sdf_contents, inputs, /*optimiser_converged=*/true);

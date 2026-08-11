@@ -4,6 +4,7 @@
 
 #include "ReconstructBlock.h"
 
+#include <memory>
 #include <sstream>
 
 #include "JointTrajectory.h"  // basic_control — the controller's own types
@@ -61,14 +62,20 @@ ReconstructedTrajectory ReconstructEmittedBlock(const std::string& block,
     return out;
 }
 
-ReconstructedSample SampleReconstructed(const std::string& block, double t_s) {
-    ReconstructedSample entry;
-    entry.t_s = t_s;
-    ::JointTrajectory parsed;
+std::function<ReconstructedSample(double)> MakeReconstructionSampler(
+    const std::string& block) {
+    // shared_ptr so the parsed trajectory lives exactly as long as the
+    // returned std::function (which must be copyable).
+    auto parsed = std::make_shared<::JointTrajectory>();
     std::string error;
-    if (!ParseBlock(block, parsed, error) || parsed.points.empty()) return entry;
-    const JointTrajectorySample sample = SampleJointTrajectory(parsed, t_s);
-    entry.q_rad = sample.q_rad;
-    entry.qdot_rad_s = sample.qdot_rad_s;
-    return entry;
+    const bool ok = ParseBlock(block, *parsed, error) && !parsed->points.empty();
+    return [parsed, ok](double t_s) {
+        ReconstructedSample entry;
+        entry.t_s = t_s;
+        if (!ok) return entry;
+        const JointTrajectorySample sample = SampleJointTrajectory(*parsed, t_s);
+        entry.q_rad = sample.q_rad;
+        entry.qdot_rad_s = sample.qdot_rad_s;
+        return entry;
+    };
 }
