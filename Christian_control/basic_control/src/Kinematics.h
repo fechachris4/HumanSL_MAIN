@@ -15,7 +15,7 @@
 
 #include "Config.h"
 #include "State.h"
-#include "Dynamics.h" // TrajectoryExecution's Pinocchio model wrapper
+#include "Dynamics.h" // Pinocchio model wrapper (our copy of TrajectoryExecution's)
 
 // ---------------------------------------------------------------
 // Kinematics — generic Pinocchio FK and Jacobian

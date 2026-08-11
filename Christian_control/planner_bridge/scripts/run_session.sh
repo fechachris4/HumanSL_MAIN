@@ -56,6 +56,7 @@ fresh_or_die() { # $1 binary, $2 source dir
 }
 fresh_or_die "$CONTROLLER" "$REPO/Christian_control/basic_control/src"
 fresh_or_die "$BRIDGE"     "$REPO/Christian_control/planner_bridge/src"
+fresh_or_die "$BRIDGE"     "$REPO/Christian_control/planner_bridge/trajectory_generation"
 
 # The bridge's DH YAML is generated from the URDF at build time. If the URDF
 # was edited and the build not rerun (or it failed at the generator), the

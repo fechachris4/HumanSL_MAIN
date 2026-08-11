@@ -19,7 +19,8 @@
 #include "Config.h"
 #include "State.h"
 
-// Declared, not included: TrajectoryGeneration/include/utils.h defines a
+// Declared, not included: planner_bridge/trajectory_generation/include/
+// utils.h defines a
 // different global struct of this name, and planner_bridge translation units
 // include both that and this header. Callers that touch the trajectory's
 // contents include JointTrajectory.h themselves.

@@ -41,7 +41,7 @@ struct PlanOutcome {
     double init_orientation_error_rad = 0.0;
 };
 
-// joint_limits_yaml: TrajectoryGeneration/config/joint_limits.yaml.
+// joint_limits_yaml: planner_bridge/config/joint_limits.yaml.
 // config: the run's tuning, from planner_bridge/config/planner.yaml — plan
 // pacing and every factor-graph weight (PlannerConfig.h). It is a parameter
 // rather than part of PlanRequest because it is ambient policy for the run,

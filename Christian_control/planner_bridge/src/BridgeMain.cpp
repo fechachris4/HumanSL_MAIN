@@ -84,9 +84,9 @@ constexpr char kUsageText[] =
     "                         from the URDF at build time — do not\n"
     "                         hand-edit).\n"
     "  --joint-limits PATH    Joint limits YAML. Default:\n"
-    "                         TrajectoryGeneration/config/joint_limits.yaml\n"
-    "                         resolved relative to the executable's\n"
-    "                         directory (../../.. up to the repo root).\n"
+    "                         config/joint_limits.yaml beside\n"
+    "                         config/goal.yaml, resolved relative to the\n"
+    "                         executable's directory.\n"
     "  --planner-config PATH  Planner tuning YAML: plan pacing and every\n"
     "                         factor-graph weight. Default: config/\n"
     "                         planner.yaml beside config/goal.yaml. Every\n"
@@ -159,8 +159,7 @@ std::string DefaultDhPath(bool left_arm) {
 }
 
 std::string DefaultJointLimitsPath() {
-    return ExecutableDirectory() +
-           "/../../../TrajectoryGeneration/config/joint_limits.yaml";
+    return ExecutableDirectory() + "/../config/joint_limits.yaml";
 }
 
 // Beside goal.yaml, and resolved the same way — from the executable, never

@@ -1,5 +1,5 @@
 // Guard on the collision-sphere <-> DH coupling in generateArmSpheres
-// (TrajectoryGeneration/src/GenerateArmModel.cpp): along-link sphere
+// (trajectory_generation/src/GenerateArmModel.cpp): along-link sphere
 // stations must scale with the generated d values (signed ratio against the
 // authored lengths), lateral girth offsets must not, and the sign-flip /
 // collapsed-link guards must throw instead of silently rescaling. Without

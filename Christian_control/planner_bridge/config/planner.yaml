@@ -13,7 +13,7 @@
 # tuning produced its trajectory.
 #
 # NOT here, deliberately:
-#   joint limits         -> TrajectoryGeneration/config/joint_limits.yaml.
+#   joint limits         -> config/joint_limits.yaml (beside this file).
 #                           Kinova table values; they already have a file.
 #   SDF grid extent      -> WorldSdf.h. Not a preference: the grid must
 #                           contain the arm's reachable envelope, because

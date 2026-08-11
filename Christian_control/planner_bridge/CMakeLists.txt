@@ -22,27 +22,32 @@ set(GEN3_DUAL_URDF
     "${HUMANSL_ROOT}/Christian_control/basic_control/config/GEN3_dual_mounted.urdf")
 add_compile_definitions(GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
 
-# TrajectoryGeneration sources compiled directly — this project must not
-# depend on the (currently broken) root build. Dynamics.cpp/Kinematics.cpp
-# are basic_control's already-Pinocchio-based URDF model and FK/Jacobian
-# adapter, reused by source path (PinocchioKinematicsAdapter.cpp wraps them
-# for utils.cpp/analytical_ik.h — see TrajectoryGeneration/include).
+# trajectory_generation/ is this project's own copy of the GPMP2 pipeline,
+# taken from the inherited TrajectoryGeneration tree on 2026-08-10. The
+# upstream tree is frozen and no longer compiled from; this copy is the live
+# one. Dynamics.cpp/Kinematics.cpp are basic_control's Pinocchio-based URDF
+# model and FK/Jacobian adapter, reused by source path
+# (PinocchioKinematicsAdapter.cpp wraps them for utils.cpp/analytical_ik.h —
+# see trajectory_generation/include).
 set(TG_SOURCES
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/utils.cpp
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/GenerateArmModel.cpp
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryInitiation.cpp
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/TrajectoryOptimization.cpp
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/OptimisationWaypoint.cpp
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/PinocchioKinematicsAdapter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/utils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/GenerateArmModel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/TrajectoryInitiation.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/TrajectoryOptimization.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/OptimisationWaypoint.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/PinocchioKinematicsAdapter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/GenerateTrajectory.cpp
-    ${HUMANSL_ROOT}/TrajectoryExecution/src/Dynamics.cpp
+    ${HUMANSL_ROOT}/Christian_control/basic_control/src/Dynamics.cpp
     ${HUMANSL_ROOT}/Christian_control/basic_control/src/Kinematics.cpp
 )
 
+# The planner's joint-limits table, also this project's own copy (the root
+# and TrajectoryGeneration copies are frozen with the inherited tree).
+set(JOINT_LIMITS_YAML "${CMAKE_CURRENT_SOURCE_DIR}/config/joint_limits.yaml")
+
 add_library(bridge_core STATIC ${TG_SOURCES})
 target_include_directories(bridge_core PUBLIC
-    ${HUMANSL_ROOT}/TrajectoryGeneration/include
-    ${HUMANSL_ROOT}/TrajectoryExecution/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/include
     ${HUMANSL_ROOT}/Christian_control/basic_control/src
     ${HUMANSL_ROOT}/third_party/include
     ${HUMANSL_ROOT}/third_party/include/eigen3
@@ -153,11 +158,11 @@ add_executable(test_path_assembly
     tests/test_path_assembly.cpp
     src/CartesianPath.cpp
     src/PathAssembly.cpp
-    ${HUMANSL_ROOT}/TrajectoryGeneration/src/OptimisationWaypoint.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/OptimisationWaypoint.cpp
 )
 target_include_directories(test_path_assembly PRIVATE
     src
-    ${HUMANSL_ROOT}/TrajectoryGeneration/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/include
     ${HUMANSL_ROOT}/Christian_control/basic_control/src
     ${HUMANSL_ROOT}/third_party/include/eigen3
 )
@@ -218,7 +223,7 @@ set_target_properties(test_grid_coverage PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME grid_coverage COMMAND test_grid_coverage
          ${DH_PARAMS_TOOL_YAML}
          ${DH_PARAMS_FLANGE_YAML}
-         ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml)
+         ${JOINT_LIMITS_YAML})
 
 # The planner's tuning file, read by planner_bridge on every run. Its
 # default path is resolved from the executable (config/ beside the build
@@ -236,7 +241,7 @@ set_target_properties(test_circle_plan PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_dependencies(test_circle_plan dh_params_flange)
 add_test(NAME circle_plan COMMAND test_circle_plan
          ${DH_PARAMS_FLANGE_YAML}
-         ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml
+         ${JOINT_LIMITS_YAML}
          ${PLANNER_CONFIG_YAML})
 
 target_sources(bridge_core PRIVATE src/PlannerConfig.cpp)
@@ -254,7 +259,7 @@ target_link_libraries(test_plan_solver PRIVATE bridge_core)
 set_target_properties(test_plan_solver PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME plan_solver COMMAND test_plan_solver
          ${DH_PARAMS_TOOL_YAML}
-         ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml
+         ${JOINT_LIMITS_YAML}
          ${PLANNER_CONFIG_YAML})
 
 target_sources(bridge_core PRIVATE src/PathValidation.cpp)
@@ -289,7 +294,7 @@ target_link_libraries(test_bridge_main PRIVATE bridge_core)
 set_target_properties(test_bridge_main PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME bridge_main COMMAND test_bridge_main
          ${DH_PARAMS_TOOL_YAML}
-         ${HUMANSL_ROOT}/TrajectoryGeneration/config/joint_limits.yaml
+         ${JOINT_LIMITS_YAML}
          ${DH_PARAMS_FLANGE_YAML})
 
 # Every consumer of the generated YAML depends on the generating target, so
