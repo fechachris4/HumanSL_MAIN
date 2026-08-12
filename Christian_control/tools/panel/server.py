@@ -30,8 +30,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from . import (build, config_file, dh, diagnose, paths, plan, runs, session,
-               telemetry)
+from . import (build, config_file, dh, diagnose, paths, plan, planner_config,
+               runs, session, telemetry)
 
 # Set by serve(); read by the handler. Plain module state rather than a class
 # attribute so the handler stays a thin dispatcher.
@@ -217,6 +217,11 @@ class _Handler(BaseHTTPRequestHandler):
                            "text/plain; charset=utf-8")
             elif route == "/api/build/status":
                 self._json(build.build_status())
+            elif route == "/api/planner-config":
+                self._json({
+                    "planner": planner_config.read_planner_knobs(),
+                    "joint_limits": planner_config.read_joint_limits_file(),
+                })
             elif route == "/api/session/status":
                 self._json(session.status())
             elif route == "/api/stream":
@@ -257,6 +262,12 @@ class _Handler(BaseHTTPRequestHandler):
                 ok, message = plan.write_goal(str(self._body().get("text", "")))
                 self._json({"ok": True} if ok else {"error": message},
                            200 if ok else 400)
+            elif route == "/api/goal/fields":
+                req = self._body()
+                ok, message = plan.write_goal_fields(
+                    str(req.get("arm", "")), req.get("fields") or {})
+                self._json({"ok": True} if ok else {"error": message},
+                           200 if ok else 400)
             elif route == "/api/plan/solve":
                 req = self._body()
                 self._json(plan.solve(str(req.get("arm", "right")),
@@ -278,6 +289,19 @@ class _Handler(BaseHTTPRequestHandler):
                 # hour.
                 result = session.stop()
                 self._json(result, 200 if result.get("ok") else 400)
+            elif route == "/api/planner-config/set":
+                req = self._body()
+                if req.get("file") == "joint_limits":
+                    ok, message = planner_config.write_joint_limit(
+                        str(req.get("section", "")),
+                        str(req.get("actuator", "")),
+                        str(req.get("bound", "")),
+                        req.get("value"))
+                else:
+                    ok, message = planner_config.write_planner_knob(
+                        str(req.get("name", "")), req.get("value"))
+                self._json({"ok": True, "value": message} if ok
+                           else {"error": message}, 200 if ok else 400)
             else:
                 self._json({"error": f"no such endpoint: {route}"}, 404)
         except Exception as exc:

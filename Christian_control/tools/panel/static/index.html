@@ -203,6 +203,30 @@
 
     <section class="card">
       <div class="card-head">
+        <h2>Planner tuning</h2>
+        <span class="card-note">editable · written to planner.yaml · applies at the next solve — no rebuild</span>
+      </div>
+      <div id="planner-knob-table" class="knob-table"></div>
+      <p class="card-foot" id="planner-config-error"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Planner joint limits</h2>
+        <span class="card-note">editable · written to joint_limits.yaml · Kinova table values feeding the planner's dynamics checks</span>
+      </div>
+      <div id="joint-limit-edit-table" class="knob-table"></div>
+      <p class="card-foot">
+        Every field here is a safety-relevant table value — the planner's
+        joint-limit and dynamics validation reads them. Radians and rad/s;
+        the panel checks only that lower stays below upper. The file's
+        acceleration table is not shown because the planner never reads it:
+        it derives each acceleration bound from the velocity limits.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
         <h2>Thresholds</h2>
         <span class="card-note">read only · named by what they do</span>
       </div>
@@ -225,7 +249,11 @@
         <h2>Goal</h2>
         <span class="card-note">planner_bridge/config/goal.yaml · comments are part of the file and are kept</span>
       </div>
-      <textarea id="goal-text" class="code-area" spellcheck="false" rows="20"></textarea>
+      <div id="goal-cards" class="goal-cards"></div>
+      <details id="goal-raw-details">
+        <summary>advanced — raw goal.yaml</summary>
+        <textarea id="goal-text" class="code-area" spellcheck="false" rows="20"></textarea>
+      </details>
       <div class="button-row">
         <button type="button" id="goal-save" class="action">SAVE GOAL</button>
         <button type="button" id="plan-solve" class="action">SOLVE AND PREVIEW</button>

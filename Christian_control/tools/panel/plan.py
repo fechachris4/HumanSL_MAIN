@@ -32,7 +32,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from . import paths, telemetry
+from . import paths, telemetry, yaml_text
 
 # A goal file names arms exactly as the bridge's --arm does.
 _ARM_KEYS = paths.ARMS
@@ -77,36 +77,8 @@ _LAST_PLAN: dict[str, dict[str, Any]] = {}
 # ---- goal.yaml ---------------------------------------------------------
 
 
-def _strip_comment(line: str) -> str:
-    """Remove a YAML comment.
-
-    '#' only opens a comment at the start of a line or after whitespace, so a
-    '#' inside a value is left alone.
-    """
-    if line.lstrip().startswith("#"):
-        return ""
-    for marker in (" #", "\t#"):
-        cut = line.find(marker)
-        if cut >= 0:
-            line = line[:cut]
-    return line
-
-
-def _scalar(raw: str) -> Any:
-    """A goal-file value as the UI wants it: numbers as floats, lists as lists.
-
-    A value that is not a number stays a string, because `frame: mount` and
-    `orientation: fixed` mean what they say and guessing further would only
-    invent structure the bridge does not read.
-    """
-    text = raw.strip()
-    if text.startswith("[") and text.endswith("]"):
-        inner = text[1:-1]
-        return [_scalar(part) for part in inner.split(",") if part.strip()]
-    try:
-        return float(text)
-    except ValueError:
-        return text
+_strip_comment = yaml_text.strip_comment
+_scalar = yaml_text.scalar
 
 
 def parse_goal(text: str) -> dict[str, Any]:
@@ -219,13 +191,7 @@ def validate_goal(text: str) -> list[str]:
 
 
 def _backup_of(target: Path) -> Path:
-    """goal.yaml -> goal.yaml.panel.bak, beside the original.
-
-    Same shape as config_file's Config.h.panel.bak, and written once only, so
-    the backup holds the file as it was before the panel first touched it
-    rather than the state one edit ago.
-    """
-    return target.with_name(target.name + ".panel.bak")
+    return paths.panel_backup(target)
 
 
 def write_goal(text: str, path: Path | None = None) -> tuple[bool, str]:
@@ -240,6 +206,158 @@ def write_goal(text: str, path: Path | None = None) -> tuple[bool, str]:
         return False, "; ".join(problems)
     if not target.parent.is_dir():
         return False, f"{target.parent} does not exist"
+    backup = _backup_of(target)
+    if target.is_file() and not backup.exists():
+        shutil.copy2(target, backup)
+    target.write_text(text)
+    return True, str(target)
+
+
+# The order path keys are (re)built in, matching the file's own layout.
+_PATH_KEYS = ("type", "centre", "radius_m", "normal", "duration_s",
+              "orientation", "orientation_rpy_deg")
+_BOX_KEYS = ("center", "half_extent")
+
+
+def _set_key(text: str, path_t: tuple[str, ...], value: Any) -> str | None:
+    """Replace the key's value, or insert the key at its parent's block end.
+    Insertion is how a commented-out example key (invisible to the parser)
+    becomes real."""
+    if isinstance(value, (list, tuple)):
+        value = [float(v) if isinstance(v, (int, float)) and
+                  not isinstance(v, bool) else v for v in value]
+    rendered = yaml_text.render(value)
+    replaced = yaml_text.replace_value(text, path_t, rendered)
+    if replaced is not None:
+        return replaced
+    return yaml_text.insert_key(text, path_t[:-1], path_t[-1], rendered)
+
+
+def _set_block(text: str, parent: tuple[str, ...], key: str, keys: tuple,
+               values: dict) -> str | None:
+    """Ensure `parent.key:` exists, then set each of `keys` present in
+    `values` under it, in order."""
+    if yaml_text.locate(text.split("\n"), parent + (key,)) is None:
+        text = yaml_text.insert_key(text, parent, key, "")
+        if text is None:
+            return None
+    for k in keys:
+        if k in values and values[k] is not None:
+            text = _set_key(text, parent + (key, k), values[k])
+            if text is None:
+                return None
+    return text
+
+
+def _is_filled(value: Any) -> bool:
+    """A field the operator actually typed something into. An empty string
+    survives every `is not None` test and writes `radius_m:` with no value
+    after it — a file the bridge cannot read."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(_is_filled(v) for v in value)
+    return True
+
+
+def _missing_circle_field(path_fields: dict) -> str | None:
+    """The first circle field left blank, or None.
+
+    validate_goal deliberately checks no path keys — planning judgements are
+    the bridge's — so nothing else would catch a blank radius before the file
+    was saved with a success message and the next solve failed on it.
+    """
+    for key in ("type", "centre", "radius_m", "normal", "duration_s",
+                "orientation"):
+        if not _is_filled(path_fields.get(key)):
+            return key
+    orientation = str(path_fields.get("orientation", "")).strip()
+    if orientation == "fixed" and not _is_filled(
+            path_fields.get("orientation_rpy_deg")):
+        return "orientation_rpy_deg"
+    return None
+
+
+def write_goal_fields(arm: str, fields: dict,
+                      path: Path | None = None) -> tuple[bool, str]:
+    """Edit one arm's block of the goal file in place from structured fields.
+
+    Applies the edits to the text, then runs the SAME validate_goal gate the
+    raw editor goes through — one gate, not two opinions — and only a text
+    that passes replaces the file. mode decides which of goal/path survives,
+    so the bridge's "mutually exclusive" refusal is unreachable from here.
+    """
+    if arm not in paths.ARMS:
+        return False, f"unknown arm {arm!r}"
+    mode = fields.get("mode")
+    if mode not in ("point", "circle"):
+        return False, "mode must be point or circle"
+    target = path or paths.GOAL_YAML
+    if not target.is_file():
+        return False, f"{target} does not exist"
+    text = target.read_text()
+    if yaml_text.locate(text.split("\n"), (arm,)) is None:
+        return False, f"{target.name} has no {arm}: block"
+
+    def step(new_text: str | None, what: str) -> str:
+        if new_text is None:
+            raise ValueError(f"could not {what}")
+        return new_text
+
+    try:
+        if mode == "point":
+            if yaml_text.locate(text.split("\n"), (arm, "path")) is not None:
+                text = step(yaml_text.remove_key(text, (arm, "path")),
+                            "remove the path block")
+            if fields.get("goal") is not None:
+                text = step(_set_key(text, (arm, "goal"), fields["goal"]),
+                            "set the goal")
+        else:
+            path_fields = fields.get("path") or {}
+            blank = _missing_circle_field(path_fields)
+            if blank is not None:
+                return False, (
+                    f"{arm}: the circle needs {blank} — it was left blank, and "
+                    "a path missing it cannot be planned")
+            if yaml_text.locate(text.split("\n"), (arm, "goal")) is not None:
+                text = step(yaml_text.remove_key(text, (arm, "goal")),
+                            "remove the goal key")
+            text = step(_set_block(text, (arm,), "path", _PATH_KEYS,
+                                   path_fields), "build the path block")
+
+        if "frame" in fields and fields["frame"] is not None:
+            text = step(_set_key(text, (arm, "frame"), fields["frame"]),
+                        "set the frame")
+
+        if "orientation_rpy_deg" in fields:
+            rpy = fields["orientation_rpy_deg"]
+            if rpy is None:
+                if yaml_text.locate(text.split("\n"),
+                                    (arm, "orientation_rpy_deg")) is not None:
+                    text = step(yaml_text.remove_key(
+                        text, (arm, "orientation_rpy_deg")),
+                        "remove the orientation")
+            else:
+                text = step(_set_key(text, (arm, "orientation_rpy_deg"), rpy),
+                            "set the orientation")
+
+        if "box" in fields:
+            box = fields["box"]
+            if box is None:
+                if yaml_text.locate(text.split("\n"), (arm, "box")) is not None:
+                    text = step(yaml_text.remove_key(text, (arm, "box")),
+                                "remove the box")
+            else:
+                text = step(_set_block(text, (arm,), "box", _BOX_KEYS, box),
+                            "build the box block")
+    except ValueError as exc:
+        return False, str(exc)
+
+    problems = validate_goal(text)
+    if problems:
+        return False, "; ".join(problems)
     backup = _backup_of(target)
     if target.is_file() and not backup.exists():
         shutil.copy2(target, backup)

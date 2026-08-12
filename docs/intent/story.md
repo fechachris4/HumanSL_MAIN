@@ -52,6 +52,18 @@ commit.
   Implemented 2026-08-12; 237/237 panel tests pass. (Cited to raw-log
   entry ~15:03 and the three confirming AskUserQuestion exchanges that
   followed it.)
+- The browser panel is the one place run configuration is edited: planner
+  tuning (`planner.yaml`) and the planner's joint-limit tables
+  (`joint_limits.yaml`, danger-flagged by explicit choice) become editable,
+  and each arm's goal is edited through structured forms rather than raw
+  YAML, with the raw file kept as a collapsed advanced view. The why
+  Christian gave: tuning the planner from the browser was impossible and
+  the goal editor was "too much" — the whole per-run surface belongs in
+  one place, for both arms. Panel edits stay value-replacements in the
+  file's own text, so hand editing and comments survive. (Prompt: session
+  transcript, 2026-08-12 ~16:19 (mid-turn message, predates hook capture
+  for that turn); design approved the same session — spec at
+  Christian_control/docs/superpowers/specs/2026-08-12-planner-config-panel-design.md.)
 
 ## Interpretations (hypotheses)
 

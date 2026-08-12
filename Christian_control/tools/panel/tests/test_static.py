@@ -208,5 +208,26 @@ class NaNIsNeverZero(unittest.TestCase):
         self.assertIn("Number.isFinite(value) ? value : null", JS)
 
 
+class PlannerEndpoints(unittest.TestCase):
+    def test_planner_config_endpoints_exist_in_server(self):
+        self.assertIn('"/api/planner-config"', SERVER)
+        self.assertIn('"/api/planner-config/set"', SERVER)
+
+    def test_goal_fields_endpoint_exists_in_server(self):
+        self.assertIn('"/api/goal/fields"', SERVER)
+
+    def test_planner_config_ui_hooks_exist(self):
+        ids = html_ids(HTML)
+        for element in ("planner-knob-table", "planner-config-error",
+                        "joint-limit-edit-table"):
+            self.assertIn(element, ids, element)
+
+    def test_goal_cards_ui_hooks_exist(self):
+        ids = html_ids(HTML)
+        self.assertIn("goal-cards", ids)
+        self.assertIn("goal-raw-details", ids)
+        self.assertIn("goal-text", ids)   # the raw editor survives, collapsed
+
+
 if __name__ == "__main__":
     unittest.main()

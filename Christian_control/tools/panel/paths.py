@@ -25,6 +25,7 @@ BRIDGE_BUILD = PLANNER_BRIDGE / "build"
 BRIDGE_BIN = BRIDGE_BUILD / "planner_bridge"
 GOAL_YAML = PLANNER_BRIDGE / "config" / "goal.yaml"
 PLANNER_YAML = PLANNER_BRIDGE / "config" / "planner.yaml"
+JOINT_LIMITS_YAML = PLANNER_BRIDGE / "config" / "joint_limits.yaml"
 RUN_SESSION_SH = PLANNER_BRIDGE / "scripts" / "run_session.sh"
 
 URDF = BASIC_CONTROL / "config" / "GEN3_dual_mounted.urdf"
@@ -61,3 +62,9 @@ def target_pipe(arm: str) -> Path:
     Mirrors config::ArmConfig::target_pipe_path.
     """
     return Path(f"/tmp/humansl_bridge_targets_{arm}")
+
+
+def panel_backup(target: Path) -> Path:
+    """file.yaml -> file.yaml.panel.bak, beside the original. Written once,
+    before the panel's first edit, so it holds the pre-panel state."""
+    return target.with_name(target.name + ".panel.bak")

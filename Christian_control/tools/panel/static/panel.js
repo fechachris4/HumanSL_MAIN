@@ -156,6 +156,7 @@ const state = {
   stopping: false,        // a stop was requested and the loop has not exited
   status: null,
   config: null,
+  plannerConfig: null,    // /api/planner-config: planner knobs + joint_limits.yaml table
   readoutsFrom: null,     // the config the error rows and joint bars were built from
   frame: null,            // newest telemetry payload for the selected arm
   frameAt: 0,             // performance.now() when it arrived
@@ -969,6 +970,19 @@ async function refreshConfig() {
   renderReadOnlyTable('threshold-table', state.config.thresholds, 'These are the numbers the controller enforces. Change one through its knob above, then rebuild.');
   renderReadOnlyTable('joint-limit-table', state.config.joints, 'Firmware and software boundaries. Only J2, J4 and J6 are bounded; the others turn continuously.');
   renderRun();
+
+  // Separate try/catch and its own notice element (planner-config-error):
+  // planner.yaml and joint_limits.yaml are read from a different endpoint
+  // than Config.h, so a failure here should not blank out the knobs above,
+  // which just loaded fine.
+  try {
+    state.plannerConfig = await getJSON('/api/planner-config');
+  } catch (err) {
+    setNotice('planner-config-error', `could not read the planner configuration: ${err.message}`, 'is-stop');
+    return;
+  }
+  renderPlannerKnobs();
+  renderJointLimitEditor();
 }
 
 function renderKnobs() {
@@ -1101,6 +1115,233 @@ async function commitKnob(name, input) {
   } catch (err) {
     input.classList.add('is-rejected');
     setNotice('config-error', `${name} was not written: ${err.message}`, 'is-stop');
+  }
+}
+
+// Planner tuning rows, modelled on renderKnobs() above: same grid, same
+// is-dirty/is-rejected styling, same commit-on-change. Grouped by yaml
+// section (the part of the dotted name before the first '.') so the table
+// reads like the file, with a knob-section heading between groups.
+function renderPlannerKnobs() {
+  const host = $('planner-knob-table');
+  host.textContent = '';
+  const knobs = state.plannerConfig?.planner || {};
+  let section = null;
+
+  for (const [name, entry] of Object.entries(knobs)) {
+    const head = name.split('.')[0];
+    if (head !== section) {
+      section = head;
+      const heading = document.createElement('div');
+      heading.className = 'knob-section';
+      heading.textContent = section;
+      host.append(heading);
+    }
+
+    const label = document.createElement('label');
+    label.className = 'knob-name';
+    label.textContent = name.split('.').slice(1).join('.');
+    label.htmlFor = `planner-knob-${name}`;
+
+    const note = document.createElement('span');
+    note.className = 'knob-doc';
+    note.textContent = entry.doc || '';
+
+    if (entry.type === 'vec3') {
+      const values = Array.isArray(entry.value) ? entry.value : [null, null, null];
+      const row = document.createElement('div');
+      row.className = 'vector-knob-row';
+      const inputs = [];
+      for (let i = 0; i < 3; i++) {
+        const input = document.createElement('input');
+        input.className = 'knob-input num';
+        input.type = 'text';
+        const value = values[i];
+        input.value = value === null || value === undefined ? '' : String(value);
+        input.dataset.committed = input.value;
+        input.addEventListener('input', () => {
+          input.classList.toggle('is-dirty', input.value !== input.dataset.committed);
+          input.classList.remove('is-rejected');
+        });
+        input.addEventListener('change', () => commitPlannerVec3(name, inputs));
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') input.blur();
+        });
+        inputs.push(input);
+        row.append(input);
+      }
+      host.append(label, row, note);
+    } else if (entry.type === 'bool') {
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = `planner-knob-${name}`;
+      input.checked = entry.value === true || entry.value === 'true';
+      input.addEventListener('change', () => commitPlannerBool(name, input));
+      host.append(label, input, note);
+    } else {
+      const input = document.createElement('input');
+      input.className = 'knob-input num';
+      input.id = `planner-knob-${name}`;
+      input.type = 'text';
+      input.value = entry.value === null || entry.value === undefined ? '' : String(entry.value);
+      input.dataset.committed = input.value;
+      input.addEventListener('input', () => {
+        input.classList.toggle('is-dirty', input.value !== input.dataset.committed);
+        input.classList.remove('is-rejected');
+      });
+      input.addEventListener('change', () => commitPlannerKnob(name, input));
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') input.blur();
+      });
+      host.append(label, input, note);
+    }
+  }
+}
+
+async function commitPlannerKnob(name, input) {
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'planner', name, value: input.value.trim() });
+    if (result.error) {
+      // The server's message already names the knob (write_planner_knob
+      // returns "name: reason"); pass it through rather than re-prefixing.
+      // The field itself must not keep showing the rejected text, so it
+      // reverts to whatever is actually on disk.
+      setNotice('planner-config-error', result.error, 'is-stop');
+      state.plannerConfig = await getJSON('/api/planner-config');
+      renderPlannerKnobs();
+      return;
+    }
+    input.value = String(result.value ?? input.value);
+    input.dataset.committed = input.value;
+    input.classList.remove('is-dirty', 'is-rejected');
+    setNotice('planner-config-error',
+      `${name} written to planner.yaml. Applies at the next solve.`, 'is-warn');
+  } catch (err) {
+    input.classList.add('is-rejected');
+    setNotice('planner-config-error', `${name}: ${err.message}`, 'is-stop');
+  }
+}
+
+async function commitPlannerVec3(name, inputs) {
+  const raw = inputs.map((input) => input.value.trim());
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'planner', name, value: raw });
+    if (result.error) {
+      // Same as commitPlannerKnob: the server already names the knob, and
+      // every input reverts to disk truth rather than keeping the typed,
+      // rejected values.
+      setNotice('planner-config-error', result.error, 'is-stop');
+      state.plannerConfig = await getJSON('/api/planner-config');
+      renderPlannerKnobs();
+      return;
+    }
+    const written = Array.isArray(result.value) ? result.value : raw;
+    inputs.forEach((input, i) => {
+      input.value = String(written[i] ?? input.value);
+      input.dataset.committed = input.value;
+      input.classList.remove('is-dirty', 'is-rejected');
+    });
+    setNotice('planner-config-error',
+      `${name} written to planner.yaml. Applies at the next solve.`, 'is-warn');
+  } catch (err) {
+    inputs.forEach((input) => input.classList.add('is-rejected'));
+    setNotice('planner-config-error', `${name}: ${err.message}`, 'is-stop');
+  }
+}
+
+async function commitPlannerBool(name, input) {
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'planner', name, value: input.checked });
+    if (result.error) {
+      // Already reverts: flipping the checkbox back is disk truth for a
+      // two-state field, no re-fetch needed. Server message passed through
+      // unmodified, as above.
+      input.checked = !input.checked;
+      setNotice('planner-config-error', result.error, 'is-stop');
+      return;
+    }
+    setNotice('planner-config-error',
+      `${name} written to planner.yaml. Applies at the next solve.`, 'is-warn');
+  } catch (err) {
+    input.checked = !input.checked;
+    setNotice('planner-config-error', `${name}: ${err.message}`, 'is-stop');
+  }
+}
+
+// Joint-limit rows: one per actuator per section. Every field the server
+// sends back is dangerous=true by construction (these are Kinova's table
+// values, feeding the planner's own dynamics validation), so styling is
+// unconditional here rather than read off a per-row flag.
+function renderJointLimitEditor() {
+  const host = $('joint-limit-edit-table');
+  host.textContent = '';
+  const table = state.plannerConfig?.joint_limits || {};
+
+  for (const [section, actuators] of Object.entries(table)) {
+    const heading = document.createElement('div');
+    heading.className = 'knob-section knob-danger';
+    heading.textContent = section;
+    host.append(heading);
+
+    for (const [actuator, entry] of Object.entries(actuators)) {
+      const label = document.createElement('span');
+      label.className = 'knob-name knob-danger';
+      label.textContent = `${actuator} ${entry.unit || ''}`;
+
+      const row = document.createElement('div');
+      row.className = 'vector-knob-row';
+      for (const bound of ['lower_limit', 'upper_limit']) {
+        const input = document.createElement('input');
+        input.className = 'knob-input num knob-danger';
+        input.type = 'text';
+        input.title = bound;
+        const value = entry[bound];
+        input.value = value === null || value === undefined ? '' : String(value);
+        input.dataset.committed = input.value;
+        input.addEventListener('input', () => {
+          input.classList.toggle('is-dirty', input.value !== input.dataset.committed);
+          input.classList.remove('is-rejected');
+        });
+        input.addEventListener('change',
+          () => commitJointLimit(section, actuator, bound, input));
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') input.blur();
+        });
+        row.append(input);
+      }
+
+      const note = document.createElement('span');
+      note.className = 'knob-doc';
+      host.append(label, row, note);
+    }
+  }
+}
+
+async function commitJointLimit(section, actuator, bound, input) {
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'joint_limits', section, actuator, bound, value: input.value.trim() });
+    if (result.error) {
+      // write_joint_limit already prefixes its lower/upper-ordering errors
+      // with "section/actuator: "; pass the message through as-is. This is
+      // a safety-relevant table, so the field reverts to disk truth on any
+      // rejection rather than keeping the rejected text on screen.
+      setNotice('planner-config-error', result.error, 'is-stop');
+      state.plannerConfig = await getJSON('/api/planner-config');
+      renderJointLimitEditor();
+      return;
+    }
+    input.value = String(result.value ?? input.value);
+    input.dataset.committed = input.value;
+    input.classList.remove('is-dirty', 'is-rejected');
+    setNotice('planner-config-error',
+      `${section}/${actuator}/${bound} written to joint_limits.yaml.`, 'is-warn');
+  } catch (err) {
+    input.classList.add('is-rejected');
+    setNotice('planner-config-error', `${section}/${actuator}: ${err.message}`, 'is-stop');
   }
 }
 
@@ -1264,11 +1505,266 @@ async function refreshStartStates() {
   onStartStateChange();
 }
 
+/* -------------------------------------------------------------- goal cards
+   One card per arm, built from the parsed goal so the operator edits a form
+   instead of the raw file. Every value lives under a card-scoped
+   data-field attribute, so ids never need to be unique across the two
+   cards — no global lookup by id reaches into them, and test_static's
+   id-presence check does not need to know about them. */
+
+const GOAL_FRAMES = ['mount', 'right_base', 'left_base'];
+
+function goalField(card, name) {
+  return card.querySelector(`[data-field="${name}"]`);
+}
+
+function numberInput(field, value) {
+  const input = document.createElement('input');
+  input.className = 'knob-input num';
+  input.dataset.field = field;
+  input.value = value ?? '';
+  return input;
+}
+
+function vecInputs(host, field, values) {
+  const three = [];
+  for (let i = 0; i < 3; i++) {
+    const input = numberInput(`${field}-${i}`, Array.isArray(values) ? values[i] : '');
+    three.push(input);
+    host.appendChild(input);
+  }
+  return three;
+}
+
+function vecValue(card, field) {
+  return [0, 1, 2].map((i) => goalField(card, `${field}-${i}`).value.trim());
+}
+
+// One card per arm, rebuilt from the parsed goal whenever it loads. The
+// wall of YAML is still there (below, collapsed) but this is what an
+// operator edits day to day.
+function renderGoalCards() {
+  const host = $('goal-cards');
+  host.innerHTML = '';
+  const arms = state.goal?.arms || {};
+  for (const arm of ['right', 'left']) {
+    const block = arms[arm] || {};
+    const isCircle = 'path' in block;
+    const card = document.createElement('section');
+    card.className = 'card goal-card';
+    card.dataset.arm = arm;
+
+    const head = document.createElement('div');
+    head.className = 'card-head';
+    head.innerHTML = `<h2>${arm.toUpperCase()} ARM</h2>`;
+    card.appendChild(head);
+
+    // frame
+    const frameRow = document.createElement('div');
+    frameRow.className = 'goal-row';
+    frameRow.append('frame ');
+    const frame = document.createElement('select');
+    frame.dataset.field = 'frame';
+    for (const f of GOAL_FRAMES) {
+      const opt = document.createElement('option');
+      opt.value = f; opt.textContent = f;
+      opt.selected = (block.frame || 'mount') === f;
+      frame.appendChild(opt);
+    }
+    frameRow.appendChild(frame);
+    card.appendChild(frameRow);
+
+    // point pane, built before the mode row so its listener can reach both
+    // panes and the point-only orientation row below.
+    const point = document.createElement('div');
+    point.dataset.pane = 'point';
+    point.hidden = isCircle;
+    const goalRow = document.createElement('div');
+    goalRow.className = 'goal-row';
+    goalRow.append('goal xyz, m ');
+    vecInputs(goalRow, 'goal', block.goal);
+    point.appendChild(goalRow);
+
+    // circle pane
+    const circle = document.createElement('div');
+    circle.dataset.pane = 'circle';
+    circle.hidden = !isCircle;
+    const p = block.path || {};
+    const centreRow = document.createElement('div');
+    centreRow.className = 'goal-row';
+    centreRow.append('centre xyz, m ');
+    vecInputs(centreRow, 'centre', p.centre);
+    circle.appendChild(centreRow);
+    const geomRow = document.createElement('div');
+    geomRow.className = 'goal-row';
+    geomRow.append('radius, m ');
+    geomRow.appendChild(numberInput('radius_m', p.radius_m));
+    geomRow.append(' duration, s ');
+    geomRow.appendChild(numberInput('duration_s', p.duration_s));
+    circle.appendChild(geomRow);
+    const normalRow = document.createElement('div');
+    normalRow.className = 'goal-row';
+    normalRow.append('normal ');
+    vecInputs(normalRow, 'normal', p.normal);
+    circle.appendChild(normalRow);
+    const circOrientRow = document.createElement('div');
+    circOrientRow.className = 'goal-row';
+    circOrientRow.append('orientation ');
+    const circOrient = document.createElement('select');
+    circOrient.dataset.field = 'path-orientation';
+    for (const mode of ['fixed', 'radial']) {
+      const opt = document.createElement('option');
+      opt.value = mode; opt.textContent = mode;
+      opt.selected = (p.orientation || 'fixed') === mode;
+      circOrient.appendChild(opt);
+    }
+    circOrientRow.appendChild(circOrient);
+    circOrientRow.append(' rpy, deg ');
+    vecInputs(circOrientRow, 'path-rpy', p.orientation_rpy_deg);
+    circle.appendChild(circOrientRow);
+
+    // arm-level orientation: inherit or state. Point mode only — a circle's
+    // orientation lives entirely in the path block above (fixed/radial +
+    // its own rpy), so this row would be a second, conflicting place to set
+    // it in circle mode and is hidden there instead.
+    const orientRow = document.createElement('div');
+    orientRow.className = 'goal-row';
+    orientRow.hidden = isCircle;
+    const inherit = document.createElement('input');
+    inherit.type = 'checkbox';
+    inherit.dataset.field = 'inherit';
+    inherit.checked = !('orientation_rpy_deg' in block);
+    const inheritLabel = document.createElement('label');
+    inheritLabel.append(inherit, ' inherit orientation at start');
+    orientRow.appendChild(inheritLabel);
+    orientRow.append(' rpy, deg ');
+    const rpy = vecInputs(orientRow, 'rpy', block.orientation_rpy_deg);
+    const warn = document.createElement('p');
+    warn.className = 'goal-warn';
+    warn.textContent = 'Inheriting makes the goal depend on where the arm was '
+      + 'parked — the same goal can plan from one start and fail from another. '
+      + 'Stating an orientation makes it mean the same thing every run.';
+    const syncInherit = () => {
+      rpy.forEach((i) => { i.disabled = inherit.checked; });
+      warn.hidden = isCircle || !inherit.checked;
+    };
+    inherit.addEventListener('change', syncInherit);
+
+    // mode radio — point vs. traced circle. Switches which pane is shown
+    // and whether the point-only orientation row above applies.
+    const modeRow = document.createElement('div');
+    modeRow.className = 'goal-row';
+    for (const mode of ['point', 'circle']) {
+      const label = document.createElement('label');
+      const radio = document.createElement('input');
+      radio.type = 'radio';
+      radio.name = `goal-mode-${arm}`;
+      radio.value = mode;
+      radio.checked = isCircle ? mode === 'circle' : mode === 'point';
+      radio.addEventListener('change', () => {
+        const circleNow = mode === 'circle';
+        point.hidden = mode !== 'point';
+        circle.hidden = mode !== 'circle';
+        orientRow.hidden = circleNow;
+        warn.hidden = circleNow || !inherit.checked;
+      });
+      label.append(radio, ` ${mode === 'point' ? 'point goal' : 'traced circle'}`);
+      modeRow.appendChild(label);
+    }
+
+    card.appendChild(modeRow);
+    card.appendChild(point);
+    card.appendChild(circle);
+    card.appendChild(orientRow);
+    card.appendChild(warn);
+
+    // obstacle box
+    const boxRow = document.createElement('div');
+    boxRow.className = 'goal-row';
+    const boxOn = document.createElement('input');
+    boxOn.type = 'checkbox';
+    boxOn.dataset.field = 'box-on';
+    boxOn.checked = 'box' in block;
+    const boxLabel = document.createElement('label');
+    boxLabel.append(boxOn, ` obstacle box (axis-aligned, ${arm}_base frame)`);
+    boxRow.appendChild(boxLabel);
+    card.appendChild(boxRow);
+    const boxPane = document.createElement('div');
+    boxPane.dataset.pane = 'box';
+    boxPane.hidden = !boxOn.checked;
+    const boxCentreRow = document.createElement('div');
+    boxCentreRow.className = 'goal-row';
+    boxCentreRow.append('center ');
+    vecInputs(boxCentreRow, 'box-center', block.box?.center);
+    boxPane.appendChild(boxCentreRow);
+    const boxExtentRow = document.createElement('div');
+    boxExtentRow.className = 'goal-row';
+    boxExtentRow.append('half extent ');
+    vecInputs(boxExtentRow, 'box-half', block.box?.half_extent);
+    boxPane.appendChild(boxExtentRow);
+    boxOn.addEventListener('change', () => { boxPane.hidden = !boxOn.checked; });
+    card.appendChild(boxPane);
+
+    // save
+    const saveRow = document.createElement('div');
+    saveRow.className = 'goal-row';
+    const save = document.createElement('button');
+    save.type = 'button';
+    save.className = 'action';
+    save.textContent = `SAVE ${arm.toUpperCase()} GOAL`;
+    save.addEventListener('click', () => saveGoalCard(card, arm));
+    saveRow.appendChild(save);
+    card.appendChild(saveRow);
+
+    syncInherit();
+    host.appendChild(card);
+  }
+}
+
+// Reads one arm's card and writes it through /api/goal/fields. In circle
+// mode the top-level orientation_rpy_deg is always sent as null: the path
+// block above already carries its own orientation (fixed/radial + rpy), so
+// leaving the top-level key set would write a second, unused orientation
+// beside the path. The inherit checkbox and its rpy row apply to point mode
+// only.
+async function saveGoalCard(card, arm) {
+  const mode = card.querySelector(`input[name="goal-mode-${arm}"]:checked`).value;
+  const fields = { mode, frame: goalField(card, 'frame').value };
+  if (mode === 'point') {
+    fields.goal = vecValue(card, 'goal');
+    fields.orientation_rpy_deg = goalField(card, 'inherit').checked
+      ? null : vecValue(card, 'rpy');
+  } else {
+    fields.path = {
+      type: 'circle',
+      centre: vecValue(card, 'centre'),
+      radius_m: goalField(card, 'radius_m').value.trim(),
+      normal: vecValue(card, 'normal'),
+      duration_s: goalField(card, 'duration_s').value.trim(),
+      orientation: goalField(card, 'path-orientation').value,
+      orientation_rpy_deg: vecValue(card, 'path-rpy'),
+    };
+    fields.orientation_rpy_deg = null;
+  }
+  fields.box = goalField(card, 'box-on').checked
+    ? { center: vecValue(card, 'box-center'),
+        half_extent: vecValue(card, 'box-half') }
+    : null;
+  const result = await postJSON('/api/goal/fields', { arm, fields });
+  if (result.error) {
+    setNotice('goal-status', `${arm}: ${result.error}`, 'is-stop');
+    return;
+  }
+  setNotice('goal-status', `${arm} goal saved. Solve to see what it produces.`, null);
+  await refreshGoal();   // the existing /api/goal fetch — repopulates text AND cards
+}
+
 async function refreshGoal() {
   try {
     const goal = await getJSON('/api/goal');
     $('goal-text').value = goal.text ?? '';
     state.goal = goal.parsed || null;
+    renderGoalCards();
     drawObstacle();
   } catch (err) {
     setNotice('goal-status', `could not read goal.yaml: ${err.message}`, 'is-stop');
