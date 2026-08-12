@@ -11,6 +11,13 @@ indents, `key: value` lines, inline `[a, b, c]` lists, `#` comments. Key
 names are assumed unique within the block being searched (true of all three
 files). No PyYAML — the panel is stdlib-only.
 
+Because the indent is exactly two spaces per level, a path step matches only
+the block's DIRECT children: a key at the parent's indent plus two, never a
+grandchild deeper down. The first step is the same rule with no parent, so
+it matches only indent 0. Without that, `(left, orientation_rpy_deg)` would
+find `left.path.orientation_rpy_deg` and the panel would edit — or delete —
+a key the operator never named.
+
 One deliberate loss: an inline comment on the exact line whose value the
 panel changed is dropped, because it described the old value (joint_limits
 annotates radians with degrees) and keeping it would make the file lie.
@@ -19,6 +26,10 @@ Comments on their own lines always survive.
 
 import re
 from typing import Any
+
+# One nesting level, in spaces. The three files use two-space indents
+# throughout, and locate() relies on that to tell a child from a grandchild.
+_INDENT = 2
 
 _KEY_RE = re.compile(r"^(\s*)([A-Za-z_]\w*):(.*)$")
 _VALUE_LINE_RE = re.compile(r"^(\s*[A-Za-z_]\w*:\s*)([^#]*?)(\s*#.*)?$")
@@ -75,21 +86,24 @@ def _block_end(lines: list[str], start: int, indent: int) -> int:
 
 
 def locate(lines: list[str], path: tuple[str, ...]) -> int | None:
-    """Line index of the key `path` names, or None. Each step searches only
-    inside the previous key's block."""
-    start, parent_indent = 0, -1
+    """Line index of the key `path` names, or None.
+
+    Each step searches only inside the previous key's block, and matches only
+    that block's direct children — indent exactly two deeper than the parent.
+    The first step starts from a notional parent at indent -2, which is the
+    same rule saying a top-level key sits at indent 0.
+    """
+    start, parent_indent = 0, -_INDENT
     index: int | None = None
     for name in path:
-        first = parent_indent < 0
-        end = len(lines) if first else _block_end(lines, start, parent_indent)
+        end = _block_end(lines, start, parent_indent)
         index = None
         for i in range(start, end):
             m = _key_match(lines[i])
             if not m or m.group(2) != name:
                 continue
-            depth = len(m.group(1))
-            if (depth == 0) if first else (depth > parent_indent):
-                index, parent_indent, start = i, depth, i + 1
+            if len(m.group(1)) == parent_indent + _INDENT:
+                index, parent_indent, start = i, parent_indent + _INDENT, i + 1
                 break
         if index is None:
             return None
@@ -128,7 +142,7 @@ def insert_key(text: str, parent: tuple[str, ...], key: str,
             return None
         parent_indent = len(_key_match(lines[p]).group(1))
         end = _block_end(lines, p + 1, parent_indent)
-        indent = parent_indent + 2
+        indent = parent_indent + _INDENT
     else:
         end, indent = len(lines), 0
     while end > 0 and _key_match(lines[end - 1]) is None:

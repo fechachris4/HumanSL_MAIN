@@ -47,6 +47,30 @@ class Locate(unittest.TestCase):
     def test_absent_key_is_none(self):
         self.assertIsNone(yaml_text.locate(DOC.split("\n"), ("nowhere",)))
 
+    def test_a_step_never_matches_a_grandchild(self):
+        # goal.yaml's left block carries orientation_rpy_deg INSIDE path and
+        # none of its own. Asking for the block's own key must come back None,
+        # not the nested one: the panel deleted the path's orientation this
+        # way, and the next solve failed on the missing key.
+        doc = ("left:\n"
+               "  frame: mount\n"
+               "  path:\n"
+               "    orientation: fixed\n"
+               "    orientation_rpy_deg: [ 90, 0, 90 ]\n")
+        lines = doc.split("\n")
+        self.assertIsNone(
+            yaml_text.locate(lines, ("left", "orientation_rpy_deg")))
+        # The nested one is still reachable by its real path.
+        self.assertEqual(
+            yaml_text.locate(lines, ("left", "path", "orientation_rpy_deg")), 4)
+
+    def test_remove_key_cannot_reach_a_grandchild(self):
+        doc = ("left:\n"
+               "  path:\n"
+               "    orientation_rpy_deg: [ 90, 0, 90 ]\n")
+        self.assertIsNone(
+            yaml_text.remove_key(doc, ("left", "orientation_rpy_deg")))
+
     def test_top_level_search_never_matches_a_nested_key(self):
         # A single-element path names a top-level key. It must not match a
         # same-named key nested under something else, even if that nested

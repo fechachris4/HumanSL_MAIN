@@ -13,6 +13,7 @@ No test here runs planner_bridge: solve() takes its subprocess call as a seam.
 
 from __future__ import annotations
 
+import re
 import shutil
 import tempfile
 import unittest
@@ -471,6 +472,16 @@ class WriteGoalFields(unittest.TestCase):
         self.assertTrue(ok)
         self.assertNotIn("box", self.read()["arms"]["right"])
 
+    def test_editing_one_arm_leaves_the_other_block_byte_identical(self):
+        before = self.yaml.read_text()
+        left_before = block_text(before, "left")
+        ok, why = plan.write_goal_fields(
+            "right", {"mode": "point", "goal": ["0.4", "0.1", "0.3"],
+                      "frame": "mount", "orientation_rpy_deg": None,
+                      "box": None}, self.yaml)
+        self.assertTrue(ok, why)
+        self.assertEqual(block_text(self.yaml.read_text(), "left"), left_before)
+
     def test_a_bad_edit_leaves_the_file_byte_identical(self):
         before = self.yaml.read_text()
         ok, why = plan.write_goal_fields(
@@ -481,6 +492,73 @@ class WriteGoalFields(unittest.TestCase):
         ok, _ = plan.write_goal_fields("middle", {"mode": "point"}, self.yaml)
         self.assertFalse(ok)
         self.assertEqual(self.yaml.read_text(), before)
+
+
+def block_text(text: str, arm: str) -> str:
+    """One top-level block's own lines, so a test can say the other arm's
+    text did not move by a single byte."""
+    lines = text.split("\n")
+    start = next(i for i, line in enumerate(lines)
+                 if line.startswith(f"{arm}:"))
+    top_level = re.compile(r"^[A-Za-z_]\w*:")
+    end = next((i for i in range(start + 1, len(lines))
+                if top_level.match(lines[i])), len(lines))
+    return "\n".join(lines[start:end])
+
+
+# What saveGoalCard actually posts in circle mode: every field a STRING (the
+# browser reads input.value), the path's own orientation inside the path
+# block, and a top-level orientation_rpy_deg of null because the path carries
+# the orientation instead. Written out here rather than built from a helper,
+# so this test breaks if the browser's payload and the writer drift apart.
+CIRCLE_PAYLOAD = {
+    "mode": "circle",
+    "frame": "mount",
+    "path": {
+        "type": "circle",
+        "centre": ["0.3100", "0.386", "0.5213"],
+        "radius_m": "0.1",
+        "normal": ["1", "0", "0"],
+        "duration_s": "12.0",
+        "orientation": "fixed",
+        "orientation_rpy_deg": ["90", "0", "90"],
+    },
+    "orientation_rpy_deg": None,
+    "box": None,
+}
+
+
+class CircleSaveAgainstTheRealGoalFile(unittest.TestCase):
+    """The bug this class exists for: a top-level orientation_rpy_deg of null
+    used to delete the PATH's orientation_rpy_deg, because the removal step
+    found the nested key. validate_goal has no path checks, so the file saved
+    "successfully" and the next solve failed on the missing key."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="panel_goal_real_"))
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.yaml = self.tmp / "goal.yaml"
+        shutil.copy2(paths.GOAL_YAML, self.yaml)
+
+    def test_the_paths_orientation_survives_a_circle_save(self):
+        before = self.yaml.read_text()
+        self.assertIn("orientation_rpy_deg",
+                      plan.parse_goal(before)["arms"]["left"]["path"])
+        ok, why = plan.write_goal_fields("left", CIRCLE_PAYLOAD, self.yaml)
+        self.assertTrue(ok, why)
+        left = plan.parse_goal(self.yaml.read_text())["arms"]["left"]
+        self.assertEqual(left["path"]["orientation_rpy_deg"],
+                         [90.0, 0.0, 90.0])
+        self.assertEqual(left["path"]["orientation"], "fixed")
+        self.assertEqual(left["path"]["radius_m"], 0.1)
+        self.assertNotIn("orientation_rpy_deg", left)   # none of its own
+
+    def test_the_right_block_is_byte_identical_afterwards(self):
+        right_before = block_text(self.yaml.read_text(), "right")
+        ok, why = plan.write_goal_fields("left", CIRCLE_PAYLOAD, self.yaml)
+        self.assertTrue(ok, why)
+        self.assertEqual(block_text(self.yaml.read_text(), "right"),
+                         right_before)
 
 
 if __name__ == "__main__":
