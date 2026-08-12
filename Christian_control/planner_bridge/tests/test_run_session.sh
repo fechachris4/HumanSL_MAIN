@@ -39,6 +39,7 @@ make_fake_repo() {
              "$root/Christian_control/basic_control/config" \
              "$root/Christian_control/planner_bridge/build/config" \
              "$root/Christian_control/planner_bridge/src" \
+             "$root/Christian_control/planner_bridge/trajectory_generation" \
              "$root/Christian_control/planner_bridge/config" \
              "$root/Christian_control/planner_bridge/scripts" \
              "$root/runs"
@@ -47,8 +48,13 @@ make_fake_repo() {
     chmod +x "$root/Christian_control/planner_bridge/scripts/run_session.sh"
 
     # Sources must be OLDER than the binaries or fresh_or_die refuses to run.
+    # Every directory fresh_or_die is pointed at must EXIST, too: it runs
+    # `find` under `set -euo pipefail`, so a missing directory aborts the whole
+    # script before it does anything — which is how this file silently stopped
+    # testing what it is for when trajectory_generation moved here.
     echo "int main(){}" > "$root/Christian_control/basic_control/src/x.cpp"
     echo "int main(){}" > "$root/Christian_control/planner_bridge/src/x.cpp"
+    echo "int main(){}" > "$root/Christian_control/planner_bridge/trajectory_generation/x.cpp"
     printf 'frame: mount\n' > "$root/Christian_control/basic_control/config/GEN3_dual_mounted.urdf"
     printf 'session_arms: right\nright:\n  frame: mount\n  goal: [0,0,0]\n' \
         > "$root/Christian_control/planner_bridge/config/goal.yaml"
