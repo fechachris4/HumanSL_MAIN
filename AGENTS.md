@@ -69,3 +69,34 @@ For implementation requests:
 - Run all relevant hardware-free tests.
 - Report added and removed production files, classes and concepts.
 - Do not commit, push or operate hardware unless explicitly requested.
+
+## The intended outcome is the source of truth
+
+Treat Christian's intended outcome as the source of truth, not the
+implementation plan. Autonomy covers implementation details, never
+redefining the goal.
+
+- Before making an important decision, ask: "Which option best achieves
+  what Christian is actually trying to achieve?"
+- Do not choose an approach merely because it is easier to implement,
+  easier to test, requires fewer changes, or makes existing tests pass.
+- If the easiest implementation conflicts with the intended behaviour or
+  architecture, choose the implementation that satisfies the intended
+  behaviour.
+- Existing code, tests, documentation and previous decisions are evidence
+  about the system, not absolute authority. If they conflict with the
+  stated goal, identify the conflict rather than designing around it.
+
+### Never validate a change only with evidence the change created
+
+Never use evidence created by your own implementation as the sole proof
+that the implementation is correct. A test you added saying your new
+behaviour works is not sufficient by itself.
+
+Where possible, validate against behaviour that existed before the change,
+observable system behaviour, independent interfaces, real execution,
+existing requirements, git history, or direct inspection.
+
+For every acceptance criterion ask: "Could my implementation be
+fundamentally wrong and still pass this check?" If yes, the check is
+insufficient.
