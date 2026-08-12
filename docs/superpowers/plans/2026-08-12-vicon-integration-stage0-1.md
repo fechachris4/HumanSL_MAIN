@@ -1150,6 +1150,18 @@ std::vector<std::string> SplitCsvLine(const std::string& line) {
     while (std::getline(stream, field, ',')) {
         fields.push_back(field);
     }
+    // getline stops yielding fields once the stream hits EOF having
+    // consumed zero characters -- which is exactly the state reached
+    // right after the trailing comma on a line ending in ",". Every
+    // ViconRecorder entity row ends this way whenever invalid_reason is
+    // empty (i.e. every valid marker/segment), so without this, a normal
+    // valid row parses one field short. One trailing comma can only ever
+    // eat the single rightmost field (interior commas each still end on a
+    // delimiter, so getline reads them as empty fields correctly), so
+    // appending exactly one empty field is both necessary and sufficient.
+    if (!line.empty() && line.back() == ',') {
+        fields.push_back("");
+    }
     return fields;
 }
 
