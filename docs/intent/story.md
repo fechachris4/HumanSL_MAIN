@@ -10,6 +10,9 @@ The interpretation layer over `raw-prompt-log.md`. Rules:
   concretely is imagination captured too early.
 - Christian reviews *diffs* of this file (git history is the audit trail),
   batched at session boundaries, not the whole document each time.
+- Christian's live word outranks everything in this file. Conflicts earn
+  at most one plain-English question, then compliance and a recorded
+  supersession. This file is memory, never authority.
 
 ## Approved goals
 

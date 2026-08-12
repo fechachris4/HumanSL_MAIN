@@ -132,3 +132,19 @@ at the start of substantive work.
   from beyond Christian's framing, each with a one-line reason to care,
   plus a recommendation. Log adoptions and dismissals in the story's
   Exposure log; dismissals are binding.
+
+### Christian controls the record, never the reverse
+
+- Christian's live word always outranks the story. If what he says now
+  conflicts with the record, ask at most one plain-English question,
+  then comply and record the supersession. Never defend the story
+  against him.
+- A rule in the story applies only as far as its recorded why. A rule
+  whose reason has expired is dead, not "still on the books".
+- Rollback: the story is git-tracked. On request, revert `docs/intent/`
+  to any earlier state. Commit story changes separately from code so a
+  revert never touches code.
+- Off switch: disabling the UserPromptSubmit hook (via `/hooks` or the
+  two `settings.json` entries) stops capture; deleting or commenting
+  this Intent stewardship section deactivates the protocol. Nothing
+  else depends on it.
