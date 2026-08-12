@@ -29,6 +29,19 @@ commit.
   Christian's evidence that alignment is working. (Confirmed via
   interactive question, 2026-08-12 ~14:50. Cited to the session
   transcript: the prompt predates hook capture in that session.)
+- Vicon integration into controller and planner, staged. Christian wants
+  live Vicon data (the five Nexus segments, markers as diagnostics, and
+  the Vicon-world origin related to the robot's mount frame) feeding both
+  the controller and the planner, delivered as small separately-approved
+  stages: verify + capture, snapshot/record/replay, calibration, the
+  controller's world-frame hold (chicken-head), then plan-time frame
+  conversion in the planner. The why he confirmed: the wearer moves, so a
+  live world-frame estimate of the mount is the missing input on both
+  sides — base compensation is control, plan-frame conversion is
+  planning. (Prompt: raw-prompt-log 2026-08-12 15:21. Reading and scope
+  confirmed via interactive questions the same session; design approved
+  as presented — spec at
+  docs/superpowers/specs/2026-08-12-vicon-controller-planner-integration-design.md.)
 - The control panel edits velocity limits (`kModelVelocityLimitsDegS`,
   never the `kQdotLimitDegS` alias) and all four guard overrides
   (`kStopOnFault`, `kAllowUnverifiedActuators`, `kSkipStartupGates`,
@@ -93,3 +106,12 @@ and why. Dismissals are binding — do not re-pitch.
   nudge beside every prompt). Dismissed — "CLAUDE.md is enough". Re-open
   condition named by the dismissal itself: only if sessions visibly
   forget to why-check new intent.
+- 2026-08-12 (Vicon design session): three transport options for getting
+  Vicon into the controller were shown. Adopted: provider seam + replay
+  (live/replay/static implementations behind one interface). Dismissed
+  for the control path: a separate sensing process feeding the controller
+  (extra latency hop + serialization format) — it survives only as panel
+  diagnostics per the 2026-08-11 monitor spec; and a seamless in-process
+  SDK link (untestable without the lab). Also adopted: planner scope
+  limited to plan-time frame conversion (replanning deferred), and
+  minimal recorder+replay infrastructure in stage 1.
