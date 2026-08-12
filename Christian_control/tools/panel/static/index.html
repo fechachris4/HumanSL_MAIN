@@ -219,7 +219,9 @@
       <p class="card-foot">
         Every field here is a safety-relevant table value — the planner's
         joint-limit and dynamics validation reads them. Radians and rad/s;
-        the panel checks only that lower stays below upper.
+        the panel checks only that lower stays below upper. The file's
+        acceleration table is not shown because the planner never reads it:
+        it derives each acceleration bound from the velocity limits.
       </p>
     </section>
 

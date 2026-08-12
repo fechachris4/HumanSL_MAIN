@@ -141,7 +141,14 @@ def write_planner_knob(name: str, value: object,
 # official table values and they feed the planner's dynamics validation, so
 # a wrong number weakens a real check. Editable by Christian's explicit
 # choice (2026-08-12); the flag is what the UI styles the warning from.
-LIMIT_SECTIONS = ("position_limits", "velocity_limits", "acceleration_limits")
+#
+# joint_limits.yaml also holds an acceleration_limits section, and the panel
+# deliberately does not offer it: createJointLimits (trajectory_generation/
+# src/utils.cpp) reads position_limits and velocity_limits only, and
+# PlanSolver.cpp derives every acceleration bound as velocity upper x 2. An
+# editable table nothing reads is how "I changed it and nothing happened"
+# starts. The section stays in the file untouched.
+LIMIT_SECTIONS = ("position_limits", "velocity_limits")
 ACTUATORS = tuple(f"actuator_{i}" for i in range(1, 8))
 _BOUNDS = ("lower_limit", "upper_limit")
 

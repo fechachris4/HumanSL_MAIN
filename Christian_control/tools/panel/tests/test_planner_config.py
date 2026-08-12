@@ -125,6 +125,15 @@ class JointLimitsRead(unittest.TestCase):
                 self.assertIsNotNone(entry["upper_limit"], (section, actuator))
                 self.assertTrue(entry["dangerous"], (section, actuator))
 
+    def test_acceleration_is_not_offered_because_nothing_reads_it(self):
+        # createJointLimits (trajectory_generation/src/utils.cpp) reads
+        # position_limits and velocity_limits only; PlanSolver.cpp sets each
+        # acceleration bound to velocity upper x 2. Offering the file's
+        # acceleration table would be an edit with no effect.
+        self.assertNotIn("acceleration_limits", planner_config.LIMIT_SECTIONS)
+        self.assertNotIn("acceleration_limits",
+                         planner_config.read_joint_limits_file())
+
     def test_known_values(self):
         table = planner_config.read_joint_limits_file()
         self.assertAlmostEqual(
