@@ -22,12 +22,10 @@ ReactivePoseGains ConfiguredGains()
     gains.kd_position = config::kKdPosition;
     gains.kd_rotation = config::kKdRotation;
     gains.limit_avoid_gain_s_inv = config::kLimitAvoidGain;
-    gains.posture_gain_s_inv = config::kPostureGain;
     gains.dls_lambda = config::kDlsLambda;
     gains.orientation_enabled = config::kOrientationEnabled;
     gains.velocity_enabled = config::kVelocityTermEnabled;
     gains.null_space_enabled = config::kNullSpaceEnabled;
-    gains.posture_enabled = config::kPostureEnabled;
     return gains;
 }
 } // namespace
@@ -37,16 +35,11 @@ TrackingController::TrackingController(DualArmKinematics& model)
       workspace_(std::make_unique<KinematicsWorkspace>(model.dynamics())),
       gains_(ConfiguredGains()),
       arrival_monitor_(config::kArrivalDwellS),
-      timeout_monitor_(config::kTargetHoldS),
-      replan_advisor_(config::kReplanAdviseCycles)
+      timeout_monitor_(config::kTargetHoldS)
 {
     for (int i = 0; i < 7; ++i)
         limit_rad_[i] = config::kJointSoftwareLimitDeg[i] * kDegToRad;
     zone_rad_ = config::kLimitAvoidZoneDeg * kDegToRad;
-    feasibility_.sigma_min = config::kReplanSigmaMin;
-    feasibility_.joint_margin_rad = config::kReplanJointMarginDeg * kDegToRad;
-    feasibility_.posture_error_rad = config::kReplanPostureErrorDeg * kDegToRad;
-    feasibility_.position_error_m = config::kReplanPositionErrorM;
 }
 
 TrackingController::~TrackingController() = default;
@@ -84,13 +77,6 @@ TrackingController::DesiredVelocity(const RobotState& state,
         const double not_computed = std::numeric_limits<double>::quiet_NaN();
         status.p_desired.setConstant(not_computed);
         status.p_current.setConstant(not_computed);
-        // Feasibility (slice 4): only the joint-limit margin is computable
-        // on a joint cycle; the NaN measures abstain (Feasibility.h).
-        status.joint_limit_margin_deg =
-            JointLimitMarginRad(state.q_rad, limit_rad_) / kDegToRad;
-        status.replan_advised = replan_advisor_.Update(FeasibilityDegraded(
-            status.sigma_min, status.joint_limit_margin_deg * kDegToRad,
-            not_computed, not_computed, feasibility_));
         return command.qdot_rad_s;
     }
 
@@ -189,42 +175,13 @@ TrackingController::DesiredVelocity(const RobotState& state,
     // decomposition goes out through status so the Runner can print and log
     // the two terms that the summed command hides.
     ReactivePoseGains ramped_gains = gains_;
-    const double null_ramp = UnitRamp(state.t_s, config::kNullRampDurationS);
-    ramped_gains.limit_avoid_gain_s_inv *= null_ramp;
-    ramped_gains.posture_gain_s_inv *= null_ramp;
-
-    // Posture guidance (Reference.posture): the WHOLE objective rides the
-    // null ramp — the gain through ramped_gains above, the nominal-velocity
-    // feedforward by scaling the copy here — so takeover cannot begin with
-    // a projected posture transient any more than a limit-avoidance one.
-    JointReference ramped_nominal;
-    const JointReference* nominal = nullptr;
-    if (reference.posture) {
-        ramped_nominal = *reference.posture;
-        ramped_nominal.qdot_rad_s *= null_ramp;
-        nominal = &ramped_nominal;
-        const Eigen::Matrix<double, 7, 1> posture_error =
-            WrappedJointError(reference.posture->q_rad, state.q_rad);
-        if (posture_error.allFinite())
-            status.posture_error_deg =
-                posture_error.cwiseAbs().maxCoeff() / kDegToRad;
-    }
-
+    ramped_gains.limit_avoid_gain_s_inv *=
+        UnitRamp(state.t_s, config::kNullRampDurationS);
     const ReactiveSolution solution = SolveReactiveVelocityDetailed(
         ee.jacobian, e_pos, e_rot, e_twist.linear_m_s, e_twist.angular_rad_s,
-        state.q_rad, limit_rad_, zone_rad_, ramped_gains, nominal);
+        state.q_rad, limit_rad_, zone_rad_, ramped_gains);
     status.qdot_task_rad_s = solution.qdot_task_rad_s;
     status.qdot_null_rad_s = solution.qdot_null_rad_s;
     status.null_leak_m_s = solution.leak_twist.head<3>().norm();
-
-    // Feasibility (slice 4): every graded measure this cycle computed votes;
-    // a sustained degradation raises the advisory level in the status. It
-    // changes NO command — the advice goes to the layer with context.
-    status.joint_limit_margin_deg =
-        JointLimitMarginRad(state.q_rad, limit_rad_) / kDegToRad;
-    status.replan_advised = replan_advisor_.Update(FeasibilityDegraded(
-        status.sigma_min, status.joint_limit_margin_deg * kDegToRad,
-        status.posture_error_deg * kDegToRad, e_pos.norm(), feasibility_));
-
     return solution.qdot_task_rad_s + solution.qdot_null_rad_s;
 }

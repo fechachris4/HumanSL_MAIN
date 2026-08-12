@@ -74,11 +74,6 @@ namespace
         s.joint_traj_start_error_deg = status.joint_traj_start_error_deg;
         s.joint_following_error_stop = status.joint_following_error_stop;
         s.joint_following_error_deg = status.joint_following_error_deg;
-        s.posture_error_deg = status.posture_error_deg;
-        s.base_comp_m = status.base_comp_m;
-        s.base_estimate_fresh = status.base_estimate_fresh;
-        s.joint_limit_margin_deg = status.joint_limit_margin_deg;
-        s.replan_advised = status.replan_advised;
         s.command_frame_id = command_frame_id;
         s.feedback_frame_id = fb.frame_id();
         s.arm_state = fb.base().active_state();
@@ -612,12 +607,16 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 ex.getErrorInfo().getError().error_sub_code()))
             << ")\n";
     }
-    // Catch-alls: any other exception type (Kinematics' runtime_error
-    // validity checks, Pinocchio logic_error, bad_alloc, ...) must not skip
-    // the report — the ServoingGuard destructor retries its restore during
-    // unwinding if needed. Transport failures are KDetailedException above;
-    // a bare runtime_error mid-loop is an internal failure, not the link, so
-    // it must not report as "communication" and send diagnosis at the network.
+    catch (std::runtime_error& ex)
+    {
+        reason = LoopStop::kCommunication;
+        sample.refresh_ok = false;
+        log.push(sample);
+        std::cout << "communication error: " << ex.what() << "\n";
+    }
+    // Catch-alls: an exception of any other type (Pinocchio logic_error,
+    // bad_alloc, ...) must not skip the report — the ServoingGuard destructor
+    // retries its restore during unwinding if needed.
     catch (std::exception& ex)
     {
         reason = LoopStop::kInternalError;

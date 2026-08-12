@@ -104,7 +104,6 @@ add_executable(controller
         src/Runner.cpp
         src/Controller.cpp
         src/Targets.cpp
-        src/TrajectoryPoseSource.cpp
         src/JointTrajectory.cpp
         src/Actuation.cpp
         src/Kinematics.cpp
@@ -328,16 +327,6 @@ add_executable(test_main_args
 target_include_directories(test_main_args PRIVATE src)
 add_test(NAME main_args COMMAND test_main_args)
 
-# --- test_feasibility: hardware-free tests for the graded feasibility
-#     supervision (src/Feasibility.h — pure Eigen). No Kortex, no
-#     Pinocchio — safe to run anywhere. ---
-add_executable(test_feasibility
-        tests/test_feasibility.cpp
-)
-target_include_directories(test_feasibility PRIVATE src)
-add_bundled_eigen_to(test_feasibility)
-add_test(NAME feasibility COMMAND test_feasibility)
-
 # Python-only regression coverage for offline log-format compatibility. The
 # interpreter is optional so portable C++ test configurations remain usable.
 find_package(Python3 COMPONENTS Interpreter QUIET)
@@ -430,20 +419,6 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_include_directories(test_controller PRIVATE src)
     add_pinocchio_to(test_controller)
     add_test(NAME controller COMMAND test_controller)
-
-    # The pose-primary trajectory source: FK/Jacobian of the sampled nominal,
-    # cross-checked against the model directly. No robot.
-    add_executable(test_trajectory_pose
-            tests/test_trajectory_pose.cpp
-            src/TrajectoryPoseSource.cpp
-            src/Targets.cpp
-            src/JointTrajectory.cpp
-            src/Kinematics.cpp
-            src/Dynamics.cpp
-    )
-    target_include_directories(test_trajectory_pose PRIVATE src)
-    add_pinocchio_to(test_trajectory_pose)
-    add_test(NAME trajectory_pose COMMAND test_trajectory_pose)
 
 endif ()
 

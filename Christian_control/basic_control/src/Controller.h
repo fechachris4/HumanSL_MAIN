@@ -7,10 +7,6 @@
 //   no reference   -> the reactive law toward the pose captured at Reset,
 //                     i.e. "hold here": a silent source never causes motion
 //
-// Reference.posture (secondary, optional) rides along on pose/hold cycles:
-// the planner's nominal joint state enters the reactive law's null space as
-// guidance (PostureObjective). Joint cycles ignore it.
-//
 // This file contains composition only. It does no frame conversion, command
 // integration, timing, hardware access, printing, or allocation. The
 // equations live in ReactiveLaw.h; the reference sources
@@ -29,7 +25,6 @@
 #include <Eigen/Dense>
 
 #include "Arrival.h"
-#include "Feasibility.h"
 #include "ReactiveLaw.h"
 #include "State.h"
 
@@ -130,9 +125,4 @@ private:
     // (this header stays Config-free). Declared last so init order matches.
     ArrivalSettlingMonitor arrival_monitor_;
     ArrivalTimeoutMonitor timeout_monitor_;
-
-    // Slice 4: graded feasibility supervision (Feasibility.h) — measures
-    // and a debounced replan advisory in the status, never a stop.
-    FeasibilityThresholds feasibility_;
-    ReplanAdvisor replan_advisor_;
 };

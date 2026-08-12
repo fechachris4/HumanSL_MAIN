@@ -279,39 +279,6 @@ namespace config
     inline constexpr double kLimitAvoidZoneDeg = 20.0;
     inline constexpr double kLimitAvoidGain = 2.0;
 
-    // Null-space nominal-posture guidance (ReactiveLaw.h PostureObjective):
-    // a planner's q_nom/qdot_nom supplied through Reference.posture biases
-    // the redundant motion as qdot_nom + kPostureGain * wrap(q_nom - q).
-    // Guidance, never a competitor: the gain is kept twenty times below
-    // kKpCartesian because the DAMPED projector leaks secondary objectives
-    // into task space — on 2026-08-05 a null-space gain of 23 balanced the
-    // task term and froze the arm 218 mm short of its target. Disabled
-    // until a reference source actually publishes posture (slice 2 of the
-    // world-frame architecture); like every disabled term it contributes
-    // exactly zero.
-    inline constexpr double kPostureGain = 0.5; // 1/s on the wrapped error
-    inline constexpr bool kPostureEnabled = true;
-
-    // Which channel owns the command while following a planner trajectory.
-    // false = joint mode, today's behaviour: the joint tracking law follows
-    // q_nom(t) directly. true = pose-primary mode (TrajectoryPoseSource):
-    // the reactive Cartesian law tracks FK(q_nom(t)) with twist J·q̇_nom,
-    // and q_nom guides the redundancy through the null space instead of
-    // owning the command. Compile-time like every staging switch; the CSV
-    // preamble records which mode produced a run. First hardware run of
-    // pose-primary mode requires its own supervised bring-up.
-    inline constexpr bool kTrajectoryPosePrimary = false;
-
-    // Feasibility advisories (Feasibility.h) — graded supervision, slice 4.
-    // ADVISORY ONLY: crossing a threshold raises the replan_advised level in
-    // the status/CSV after kReplanAdviseCycles consecutive degraded cycles;
-    // nothing stops or slows. The stops that do exist are unchanged.
-    inline constexpr double kReplanSigmaMin = 0.02;        // σ_min(J) below
-    inline constexpr double kReplanJointMarginDeg = 5.0;   // limit margin below
-    inline constexpr double kReplanPostureErrorDeg = 15.0; // plan deviation above
-    inline constexpr double kReplanPositionErrorM = 0.05;  // tracking error above
-    inline constexpr int kReplanAdviseCycles = 250;        // ~0.5 s at 2 ms
-
     // Validation runs stop automatically on any live base or actuator fault.
     // Compile-time only, never runtime-settable.
     inline constexpr bool kStopOnFault = true;

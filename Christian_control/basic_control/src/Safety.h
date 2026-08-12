@@ -34,12 +34,11 @@ namespace k_api = Kinova::Api;
 // every other reason is a failure and exits nonzero. kFollowingError: a
 // joint's command-measurement gap exceeded the configured limit (the arm
 // stopped following the integrated command — fault, stall, or limit).
-// kInternalError: a non-Kortex exception escaped the cycle (including the
-// runtime_error validity checks in Kinematics) — caught by the loop's
-// catch-all so the servoing restore still runs. kCommunication is reserved
-// for Kortex transport errors (KDetailedException). kJointLimitWarning
-// holds the last safe full command frame before a bounded joint's outward
-// warning crossing can be transmitted. kStaleFeedback stops when one actuator's cyclic command
+// kInternalError: an exception that is neither a Kortex error nor a
+// runtime_error escaped the cycle — caught by the loop's catch-all so the
+// servoing restore still runs. kJointLimitWarning holds the last safe full
+// command frame before a bounded joint's outward warning crossing can be
+// transmitted. kStaleFeedback stops when one actuator's cyclic command
 // acknowledgement has not advanced for the configured number of completed
 // feedback replies. The last two are the decision-12 consecutive-cycle
 // counters: non-finite controller output (held, never integrated) and cycle
