@@ -56,6 +56,7 @@ set_target_properties(vicon_interface PROPERTIES
 
 add_library(vicon_snapshot STATIC
         src/SnapshotBuilder.cpp
+        src/ViconRecorder.cpp
 )
 target_include_directories(vicon_snapshot PUBLIC src)
 target_include_directories(vicon_snapshot SYSTEM PUBLIC
@@ -86,4 +87,9 @@ if (BUILD_TESTING)
     target_link_libraries(test_snapshot_builder PRIVATE vicon_snapshot)
     enable_assertions_for(test_snapshot_builder)
     add_test(NAME vicon_snapshot_builder COMMAND test_snapshot_builder)
+
+    add_executable(test_vicon_recorder tests/test_vicon_recorder.cpp)
+    target_link_libraries(test_vicon_recorder PRIVATE vicon_snapshot)
+    enable_assertions_for(test_vicon_recorder)
+    add_test(NAME vicon_recorder COMMAND test_vicon_recorder)
 endif ()
