@@ -57,6 +57,7 @@ set_target_properties(vicon_interface PROPERTIES
 add_library(vicon_snapshot STATIC
         src/SnapshotBuilder.cpp
         src/ViconRecorder.cpp
+        src/ViconReplaySource.cpp
 )
 target_include_directories(vicon_snapshot PUBLIC src)
 target_include_directories(vicon_snapshot SYSTEM PUBLIC
@@ -92,4 +93,9 @@ if (BUILD_TESTING)
     target_link_libraries(test_vicon_recorder PRIVATE vicon_snapshot)
     enable_assertions_for(test_vicon_recorder)
     add_test(NAME vicon_recorder COMMAND test_vicon_recorder)
+
+    add_executable(test_vicon_replay tests/test_vicon_replay.cpp)
+    target_link_libraries(test_vicon_replay PRIVATE vicon_snapshot)
+    enable_assertions_for(test_vicon_replay)
+    add_test(NAME vicon_replay COMMAND test_vicon_replay)
 endif ()
