@@ -29,6 +29,16 @@ commit.
   Christian's evidence that alignment is working. (Confirmed via
   interactive question, 2026-08-12 ~14:50. Cited to the session
   transcript: the prompt predates hook capture in that session.)
+- The control panel edits velocity limits (`kModelVelocityLimitsDegS`,
+  never the `kQdotLimitDegS` alias) and all four guard overrides
+  (`kStopOnFault`, `kAllowUnverifiedActuators`, `kSkipStartupGates`,
+  `kDisableFollowingErrorStop`) from the browser, same edit-then-rebuild
+  flow as the existing knobs, type-checked validation only. Position
+  limits and warn/error thresholds stay read-only — out of scope, not
+  forgotten. See "Superseded decisions" for the guard-override reversal.
+  Implemented 2026-08-12; 237/237 panel tests pass. (Cited to raw-log
+  entry ~15:03 and the three confirming AskUserQuestion exchanges that
+  followed it.)
 
 ## Interpretations (hypotheses)
 
