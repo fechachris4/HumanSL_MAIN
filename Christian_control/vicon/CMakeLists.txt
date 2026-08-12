@@ -54,6 +54,15 @@ set_target_properties(vicon_interface PROPERTIES
         BUILD_RPATH "${VICON_SDK}/lib"
 )
 
+add_library(vicon_snapshot STATIC
+        src/SnapshotBuilder.cpp
+)
+target_include_directories(vicon_snapshot PUBLIC src)
+target_include_directories(vicon_snapshot SYSTEM PUBLIC
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_link_libraries(vicon_snapshot PUBLIC vicon_interface)
+
 add_executable(connect_vicon tools/connect_vicon.cpp)
 target_link_libraries(connect_vicon PRIVATE vicon_interface)
 set_target_properties(connect_vicon PROPERTIES
@@ -72,4 +81,9 @@ if (BUILD_TESTING)
     add_bundled_eigen_to(test_vicon_snapshot)
     add_test(NAME vicon_snapshot COMMAND test_vicon_snapshot)
     enable_assertions_for(test_vicon_snapshot)
+
+    add_executable(test_snapshot_builder tests/test_snapshot_builder.cpp)
+    target_link_libraries(test_snapshot_builder PRIVATE vicon_snapshot)
+    enable_assertions_for(test_snapshot_builder)
+    add_test(NAME vicon_snapshot_builder COMMAND test_snapshot_builder)
 endif ()
