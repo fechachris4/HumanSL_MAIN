@@ -32,7 +32,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
-from . import paths, telemetry
+from . import paths, telemetry, yaml_text
 
 # A goal file names arms exactly as the bridge's --arm does.
 _ARM_KEYS = paths.ARMS
@@ -77,36 +77,8 @@ _LAST_PLAN: dict[str, dict[str, Any]] = {}
 # ---- goal.yaml ---------------------------------------------------------
 
 
-def _strip_comment(line: str) -> str:
-    """Remove a YAML comment.
-
-    '#' only opens a comment at the start of a line or after whitespace, so a
-    '#' inside a value is left alone.
-    """
-    if line.lstrip().startswith("#"):
-        return ""
-    for marker in (" #", "\t#"):
-        cut = line.find(marker)
-        if cut >= 0:
-            line = line[:cut]
-    return line
-
-
-def _scalar(raw: str) -> Any:
-    """A goal-file value as the UI wants it: numbers as floats, lists as lists.
-
-    A value that is not a number stays a string, because `frame: mount` and
-    `orientation: fixed` mean what they say and guessing further would only
-    invent structure the bridge does not read.
-    """
-    text = raw.strip()
-    if text.startswith("[") and text.endswith("]"):
-        inner = text[1:-1]
-        return [_scalar(part) for part in inner.split(",") if part.strip()]
-    try:
-        return float(text)
-    except ValueError:
-        return text
+_strip_comment = yaml_text.strip_comment
+_scalar = yaml_text.scalar
 
 
 def parse_goal(text: str) -> dict[str, Any]:
@@ -219,13 +191,7 @@ def validate_goal(text: str) -> list[str]:
 
 
 def _backup_of(target: Path) -> Path:
-    """goal.yaml -> goal.yaml.panel.bak, beside the original.
-
-    Same shape as config_file's Config.h.panel.bak, and written once only, so
-    the backup holds the file as it was before the panel first touched it
-    rather than the state one edit ago.
-    """
-    return target.with_name(target.name + ".panel.bak")
+    return paths.panel_backup(target)
 
 
 def write_goal(text: str, path: Path | None = None) -> tuple[bool, str]:
