@@ -472,6 +472,42 @@ class WriteGoalFields(unittest.TestCase):
         self.assertTrue(ok)
         self.assertNotIn("box", self.read()["arms"]["right"])
 
+    def test_a_blank_circle_field_is_refused_by_name(self):
+        # An empty string is not None, so it used to reach the file as
+        # "radius_m:" with nothing after it, saved with a success message.
+        before = self.yaml.read_text()
+        circle = dict(CIRCLE_PAYLOAD["path"], radius_m="  ")
+        ok, why = plan.write_goal_fields(
+            "left", {"mode": "circle", "path": circle,
+                     "orientation_rpy_deg": None}, self.yaml)
+        self.assertFalse(ok)
+        self.assertIn("radius_m", why)
+        self.assertEqual(self.yaml.read_text(), before)
+
+    def test_a_fixed_orientation_without_its_angles_is_refused(self):
+        before = self.yaml.read_text()
+        circle = dict(CIRCLE_PAYLOAD["path"])
+        circle["orientation_rpy_deg"] = ["", "", ""]
+        ok, why = plan.write_goal_fields(
+            "left", {"mode": "circle", "path": circle}, self.yaml)
+        self.assertFalse(ok)
+        self.assertIn("orientation_rpy_deg", why)
+        self.assertEqual(self.yaml.read_text(), before)
+
+        circle.pop("orientation_rpy_deg")
+        ok, why = plan.write_goal_fields(
+            "left", {"mode": "circle", "path": circle}, self.yaml)
+        self.assertFalse(ok)
+        self.assertIn("orientation_rpy_deg", why)
+        self.assertEqual(self.yaml.read_text(), before)
+
+    def test_a_radial_circle_needs_no_angles(self):
+        circle = dict(CIRCLE_PAYLOAD["path"], orientation="radial")
+        circle.pop("orientation_rpy_deg")
+        ok, why = plan.write_goal_fields(
+            "left", {"mode": "circle", "path": circle}, self.yaml)
+        self.assertTrue(ok, why)
+
     def test_editing_one_arm_leaves_the_other_block_byte_identical(self):
         before = self.yaml.read_text()
         left_before = block_text(before, "left")

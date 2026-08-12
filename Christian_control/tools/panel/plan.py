@@ -249,6 +249,37 @@ def _set_block(text: str, parent: tuple[str, ...], key: str, keys: tuple,
     return text
 
 
+def _is_filled(value: Any) -> bool:
+    """A field the operator actually typed something into. An empty string
+    survives every `is not None` test and writes `radius_m:` with no value
+    after it — a file the bridge cannot read."""
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return bool(value) and all(_is_filled(v) for v in value)
+    return True
+
+
+def _missing_circle_field(path_fields: dict) -> str | None:
+    """The first circle field left blank, or None.
+
+    validate_goal deliberately checks no path keys — planning judgements are
+    the bridge's — so nothing else would catch a blank radius before the file
+    was saved with a success message and the next solve failed on it.
+    """
+    for key in ("type", "centre", "radius_m", "normal", "duration_s",
+                "orientation"):
+        if not _is_filled(path_fields.get(key)):
+            return key
+    orientation = str(path_fields.get("orientation", "")).strip()
+    if orientation == "fixed" and not _is_filled(
+            path_fields.get("orientation_rpy_deg")):
+        return "orientation_rpy_deg"
+    return None
+
+
 def write_goal_fields(arm: str, fields: dict,
                       path: Path | None = None) -> tuple[bool, str]:
     """Edit one arm's block of the goal file in place from structured fields.
@@ -284,10 +315,15 @@ def write_goal_fields(arm: str, fields: dict,
                 text = step(_set_key(text, (arm, "goal"), fields["goal"]),
                             "set the goal")
         else:
+            path_fields = fields.get("path") or {}
+            blank = _missing_circle_field(path_fields)
+            if blank is not None:
+                return False, (
+                    f"{arm}: the circle needs {blank} — it was left blank, and "
+                    "a path missing it cannot be planned")
             if yaml_text.locate(text.split("\n"), (arm, "goal")) is not None:
                 text = step(yaml_text.remove_key(text, (arm, "goal")),
                             "remove the goal key")
-            path_fields = fields.get("path") or {}
             text = step(_set_block(text, (arm,), "path", _PATH_KEYS,
                                    path_fields), "build the path block")
 
