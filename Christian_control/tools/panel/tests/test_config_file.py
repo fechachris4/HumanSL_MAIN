@@ -137,9 +137,16 @@ class VectorKnobWhitelist(unittest.TestCase):
         self.assertIn("kModelVelocityLimitsDegS", config_file.VECTOR_KNOBS)
 
     def test_the_real_constant_reads_back(self):
+        # Compare against the constant as written in Config.h, not a pinned
+        # number: the velocity limit is a knob the panel is designed to edit,
+        # so a legitimate edit must not break this test. What it guards is
+        # that read_vector_knobs returns exactly what the file holds.
+        source = config_file.parse_joint_vector(
+            paths.CONFIG_H.read_text(), "kModelVelocityLimitsDegS",
+            alias_depth=0)
+        self.assertIsNotNone(source)
         knobs = config_file.read_vector_knobs()
-        self.assertEqual(
-            knobs["kModelVelocityLimitsDegS"]["value"], [45.0] * 7)
+        self.assertEqual(knobs["kModelVelocityLimitsDegS"]["value"], source)
 
 
 class WriteVectorAgainstACopy(unittest.TestCase):
@@ -312,7 +319,12 @@ class JointLimits(unittest.TestCase):
             self.assertEqual(len(self.limits[key]), 7, key)
 
     def test_velocity_limit_comes_through_the_alias(self):
-        self.assertEqual(self.limits["velocity_limit_deg_s"], [45.0] * 7)
+        # The alias kQdotLimitDegS must resolve to the same seven numbers as
+        # the source constant — whatever they currently are.
+        source = config_file.parse_joint_vector(
+            paths.CONFIG_H.read_text(), "kModelVelocityLimitsDegS",
+            alias_depth=0)
+        self.assertEqual(self.limits["velocity_limit_deg_s"], source)
 
     def test_an_unparseable_config_leaves_everything_unbounded(self):
         # The safe direction to fail in: draw no limit rather than a guess.
