@@ -63,7 +63,7 @@ commit.
   file's own text, so hand editing and comments survive. (Prompt: session
   transcript, 2026-08-12 ~16:19 (mid-turn message, predates hook capture
   for that turn); design approved the same session — spec at
-  docs/superpowers/specs/2026-08-12-planner-config-panel-design.md.)
+  Christian_control/docs/superpowers/specs/2026-08-12-planner-config-panel-design.md.)
 
 ## Interpretations (hypotheses)
 
