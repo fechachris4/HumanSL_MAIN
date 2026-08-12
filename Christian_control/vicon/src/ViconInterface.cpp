@@ -82,6 +82,17 @@ double ViconInterface::getFrameRate() const {
     return 0.0;
 }
 
+double ViconInterface::getLatencyTotal() const {
+    if (!connected_) return 0.0;
+
+    Output_GetLatencyTotal latencyOutput = client_->GetLatencyTotal();
+    if (latencyOutput.Result == Result::Success) {
+        return latencyOutput.Total;
+    }
+
+    return 0.0;
+}
+
 MarkerData ViconInterface::getMarkerPosition(const std::string& markerName) {
     MarkerData marker;
     marker.name = markerName;

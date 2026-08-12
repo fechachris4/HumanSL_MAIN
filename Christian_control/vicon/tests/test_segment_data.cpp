@@ -10,5 +10,6 @@ int main() {
 
     ViconInterface vicon;
     assert(vicon.getSegmentPoses().empty());
+    assert(vicon.getLatencyTotal() == 0.0);
     return 0;
 }

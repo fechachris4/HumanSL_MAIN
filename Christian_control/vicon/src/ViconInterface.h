@@ -63,6 +63,11 @@ public:
     // Camera system frame rate in Hz, as reported by the server.
     double getFrameRate() const;
 
+    // Cumulative Vicon-reported latency for the current frame, in
+    // seconds (sum of the SDK's own latency breakdown). 0.0 when not
+    // connected or the SDK could not report it.
+    double getLatencyTotal() const;
+
     void getForcePlateVector(std::vector<double>& fplate_left, std::vector<double>& fplate_right);
 
 private:
