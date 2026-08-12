@@ -262,6 +262,12 @@ class _Handler(BaseHTTPRequestHandler):
                 ok, message = plan.write_goal(str(self._body().get("text", "")))
                 self._json({"ok": True} if ok else {"error": message},
                            200 if ok else 400)
+            elif route == "/api/goal/fields":
+                req = self._body()
+                ok, message = plan.write_goal_fields(
+                    str(req.get("arm", "")), req.get("fields") or {})
+                self._json({"ok": True} if ok else {"error": message},
+                           200 if ok else 400)
             elif route == "/api/plan/solve":
                 req = self._body()
                 self._json(plan.solve(str(req.get("arm", "right")),

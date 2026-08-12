@@ -13,6 +13,7 @@ No test here runs planner_bridge: solve() takes its subprocess call as a seam.
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -380,6 +381,106 @@ class StartState(ScratchIsolated):
         self.assertIn("--start-deg", seen["command"])
         self.assertEqual(result["plan"]["start_source"],
                          "start_deg given by the panel")
+
+
+GOAL_DOC = """\
+session_arms: left
+
+right:
+  # right's comment survives every edit
+  frame: mount
+  goal: [ 0.5, 0.0, 0.4 ]
+
+left:
+  frame: mount
+  path:
+    type: circle
+    centre: [ 0.31, 0.386, 0.5213 ]
+    radius_m: 0.1
+    normal: [ 1, 0, 0 ]
+    duration_s: 12.0
+    orientation: fixed
+    orientation_rpy_deg: [ 90, 0, 90 ]
+"""
+
+
+class WriteGoalFields(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="panel_goal_"))
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.yaml = self.tmp / "goal.yaml"
+        self.yaml.write_text(GOAL_DOC)
+
+    def read(self):
+        return plan.parse_goal(self.yaml.read_text())
+
+    def test_point_edit_changes_values_in_place(self):
+        ok, why = plan.write_goal_fields(
+            "right", {"mode": "point", "goal": [0.4, 0.1, 0.3],
+                      "frame": "mount"}, self.yaml)
+        self.assertTrue(ok, why)
+        self.assertEqual(self.read()["arms"]["right"]["goal"], [0.4, 0.1, 0.3])
+        self.assertIn("# right's comment survives every edit",
+                      self.yaml.read_text())
+
+    def test_orientation_none_means_inherit_and_removes_the_key(self):
+        ok, _ = plan.write_goal_fields(
+            "right", {"mode": "point", "goal": [0.5, 0.0, 0.4],
+                      "orientation_rpy_deg": [10.0, 20.0, 30.0]}, self.yaml)
+        self.assertTrue(ok)
+        self.assertEqual(self.read()["arms"]["right"]["orientation_rpy_deg"],
+                         [10.0, 20.0, 30.0])
+        ok, _ = plan.write_goal_fields(
+            "right", {"mode": "point", "goal": [0.5, 0.0, 0.4],
+                      "orientation_rpy_deg": None}, self.yaml)
+        self.assertTrue(ok)
+        self.assertNotIn("orientation_rpy_deg", self.read()["arms"]["right"])
+
+    def test_switching_left_to_point_removes_the_path_block(self):
+        ok, why = plan.write_goal_fields(
+            "left", {"mode": "point", "goal": [0.3, 0.4, 0.5]}, self.yaml)
+        self.assertTrue(ok, why)
+        left = self.read()["arms"]["left"]
+        self.assertEqual(left["goal"], [0.3, 0.4, 0.5])
+        self.assertNotIn("path", left)
+
+    def test_switching_right_to_circle_removes_goal_and_builds_path(self):
+        circle = {"type": "circle", "centre": [0.3, 0.3, 0.5],
+                  "radius_m": 0.05, "normal": [0.0, 0.0, 1.0],
+                  "duration_s": 10.0, "orientation": "fixed",
+                  "orientation_rpy_deg": [90.0, 0.0, 90.0]}
+        ok, why = plan.write_goal_fields(
+            "right", {"mode": "circle", "path": circle}, self.yaml)
+        self.assertTrue(ok, why)
+        right = self.read()["arms"]["right"]
+        self.assertNotIn("goal", right)
+        self.assertEqual(right["path"]["centre"], [0.3, 0.3, 0.5])
+        self.assertEqual(right["path"]["orientation"], "fixed")
+
+    def test_box_add_and_remove(self):
+        ok, _ = plan.write_goal_fields(
+            "right", {"mode": "point", "goal": [0.5, 0.0, 0.4],
+                      "box": {"center": [0.5, 0.0, 0.3],
+                              "half_extent": [0.05, 0.05, 0.05]}}, self.yaml)
+        self.assertTrue(ok)
+        self.assertEqual(self.read()["arms"]["right"]["box"]["center"],
+                         [0.5, 0.0, 0.3])
+        ok, _ = plan.write_goal_fields(
+            "right", {"mode": "point", "goal": [0.5, 0.0, 0.4],
+                      "box": None}, self.yaml)
+        self.assertTrue(ok)
+        self.assertNotIn("box", self.read()["arms"]["right"])
+
+    def test_a_bad_edit_leaves_the_file_byte_identical(self):
+        before = self.yaml.read_text()
+        ok, why = plan.write_goal_fields(
+            "right", {"mode": "point", "goal": [0.5, "x", 0.4]}, self.yaml)
+        self.assertFalse(ok)
+        self.assertTrue(why)
+        self.assertEqual(self.yaml.read_text(), before)
+        ok, _ = plan.write_goal_fields("middle", {"mode": "point"}, self.yaml)
+        self.assertFalse(ok)
+        self.assertEqual(self.yaml.read_text(), before)
 
 
 if __name__ == "__main__":

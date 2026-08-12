@@ -213,6 +213,9 @@ class PlannerEndpoints(unittest.TestCase):
         self.assertIn('"/api/planner-config"', SERVER)
         self.assertIn('"/api/planner-config/set"', SERVER)
 
+    def test_goal_fields_endpoint_exists_in_server(self):
+        self.assertIn('"/api/goal/fields"', SERVER)
+
 
 if __name__ == "__main__":
     unittest.main()
