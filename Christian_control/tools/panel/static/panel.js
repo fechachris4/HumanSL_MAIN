@@ -1203,8 +1203,13 @@ async function commitPlannerKnob(name, input) {
     const result = await postJSON('/api/planner-config/set',
       { file: 'planner', name, value: input.value.trim() });
     if (result.error) {
-      input.classList.add('is-rejected');
-      setNotice('planner-config-error', `${name}: ${result.error}`, 'is-stop');
+      // The server's message already names the knob (write_planner_knob
+      // returns "name: reason"); pass it through rather than re-prefixing.
+      // The field itself must not keep showing the rejected text, so it
+      // reverts to whatever is actually on disk.
+      setNotice('planner-config-error', result.error, 'is-stop');
+      state.plannerConfig = await getJSON('/api/planner-config');
+      renderPlannerKnobs();
       return;
     }
     input.value = String(result.value ?? input.value);
@@ -1224,8 +1229,12 @@ async function commitPlannerVec3(name, inputs) {
     const result = await postJSON('/api/planner-config/set',
       { file: 'planner', name, value: raw });
     if (result.error) {
-      inputs.forEach((input) => input.classList.add('is-rejected'));
-      setNotice('planner-config-error', `${name}: ${result.error}`, 'is-stop');
+      // Same as commitPlannerKnob: the server already names the knob, and
+      // every input reverts to disk truth rather than keeping the typed,
+      // rejected values.
+      setNotice('planner-config-error', result.error, 'is-stop');
+      state.plannerConfig = await getJSON('/api/planner-config');
+      renderPlannerKnobs();
       return;
     }
     const written = Array.isArray(result.value) ? result.value : raw;
@@ -1247,8 +1256,11 @@ async function commitPlannerBool(name, input) {
     const result = await postJSON('/api/planner-config/set',
       { file: 'planner', name, value: input.checked });
     if (result.error) {
+      // Already reverts: flipping the checkbox back is disk truth for a
+      // two-state field, no re-fetch needed. Server message passed through
+      // unmodified, as above.
       input.checked = !input.checked;
-      setNotice('planner-config-error', `${name}: ${result.error}`, 'is-stop');
+      setNotice('planner-config-error', result.error, 'is-stop');
       return;
     }
     setNotice('planner-config-error',
@@ -1313,8 +1325,13 @@ async function commitJointLimit(section, actuator, bound, input) {
     const result = await postJSON('/api/planner-config/set',
       { file: 'joint_limits', section, actuator, bound, value: input.value.trim() });
     if (result.error) {
-      input.classList.add('is-rejected');
-      setNotice('planner-config-error', `${section}/${actuator}: ${result.error}`, 'is-stop');
+      // write_joint_limit already prefixes its lower/upper-ordering errors
+      // with "section/actuator: "; pass the message through as-is. This is
+      // a safety-relevant table, so the field reverts to disk truth on any
+      // rejection rather than keeping the rejected text on screen.
+      setNotice('planner-config-error', result.error, 'is-stop');
+      state.plannerConfig = await getJSON('/api/planner-config');
+      renderJointLimitEditor();
       return;
     }
     input.value = String(result.value ?? input.value);
