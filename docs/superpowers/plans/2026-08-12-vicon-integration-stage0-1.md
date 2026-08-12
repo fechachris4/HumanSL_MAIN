@@ -642,6 +642,20 @@ frame_number,kind,subject,name,x_m,y_m,z_m,qx,qy,qz,qw,valid,invalid_reason
 `kind` is `marker` or `segment`. Markers leave `qx,qy,qz,qw` blank (no
 orientation). `valid` is `1`/`0`.
 
+**Precision policy (decided by Christian, 2026-08-12, after Task 4's first
+attempt):** every numeric field is written fixed-point to 4 decimal
+places (`std::fixed << std::setprecision(4)`), not the exact-round-trip
+`max_digits10` (17 significant digits) the design originally specified.
+This is a deliberate, bounded precision loss — 4 decimal places is
+0.1 mm for a metre-valued position, well inside Vicon's own measurement
+noise, and far more readable than 17-digit doubles like
+`0.070000000000000007`. Consequence for Task 5: round-trip equality
+(`==`) holds only for values whose true precision doesn't exceed 4
+decimal places — which is true for every fixture value used in this
+plan's tests, but would NOT be true of an arbitrary real Vicon recording.
+Record this bound in mind for any future consumer that needs finer
+precision than 4 decimal places.
+
 - [ ] **Step 1: Write the failing test**
 
 Create `Christian_control/vicon/tests/test_vicon_recorder.cpp`:
@@ -696,14 +710,16 @@ int main() {
     assert(frames_text.find("# vicon_format = 1") != std::string::npos);
     assert(frames_text.find("frame_number,host_time_s,frame_rate_hz,latency_total_s") !=
            std::string::npos);
-    assert(frames_text.find("7,0.07,100,0.015") != std::string::npos);
+    assert(frames_text.find("7,0.0700,100.0000,0.0150") != std::string::npos);
 
     const std::string entities_text = entities_out.str();
     assert(entities_text.find(
                "frame_number,kind,subject,name,x_m,y_m,z_m,qx,qy,qz,qw,valid,"
                "invalid_reason") != std::string::npos);
-    assert(entities_text.find("7,marker,,M1,1,2,3,,,,,1,") != std::string::npos);
-    assert(entities_text.find("7,segment,Dr Octopus Christian,Mount,0.01,0.02,0.03") !=
+    assert(entities_text.find("7,marker,,M1,1.0000,2.0000,3.0000,,,,,1,") !=
+           std::string::npos);
+    assert(entities_text.find(
+               "7,segment,Dr Octopus Christian,Mount,0.0100,0.0200,0.0300") !=
            std::string::npos);
 
     return 0;
@@ -783,17 +799,20 @@ Create `Christian_control/vicon/src/ViconRecorder.cpp`:
 #include "ViconRecorder.h"
 
 #include <iomanip>
-#include <limits>
 #include <sstream>
 
 namespace {
 
 constexpr int kViconFormat = 1;
-constexpr int kDoublePrecision = std::numeric_limits<double>::max_digits10;
+// Fixed-point, not exact round-trip: 4 decimal places is 0.1 mm for a
+// metre-valued position, well inside Vicon's own measurement noise, and
+// far more readable than a 17-significant-digit double. See the
+// "Precision policy" note above Task 4 Step 1 for the full rationale.
+constexpr int kDecimalPlaces = 4;
 
 std::string QuaternionField(double value) {
     std::ostringstream oss;
-    oss << std::setprecision(kDoublePrecision) << value;
+    oss << std::fixed << std::setprecision(kDecimalPlaces) << value;
     return oss.str();
 }
 
@@ -814,8 +833,8 @@ ViconRecorder::ViconRecorder(std::ostream& frames_csv, std::ostream& entities_cs
                               std::string host, std::string subject)
     : frames_csv_(frames_csv), entities_csv_(entities_csv),
       host_(std::move(host)), subject_(std::move(subject)) {
-    frames_csv_ << std::setprecision(kDoublePrecision);
-    entities_csv_ << std::setprecision(kDoublePrecision);
+    frames_csv_ << std::fixed << std::setprecision(kDecimalPlaces);
+    entities_csv_ << std::fixed << std::setprecision(kDecimalPlaces);
 }
 
 void ViconRecorder::WriteHeader() {
