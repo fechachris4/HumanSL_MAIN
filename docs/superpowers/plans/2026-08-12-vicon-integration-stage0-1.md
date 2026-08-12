@@ -2,6 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+Status: Tasks 1–6 implemented, reviewed, and committed 2026-08-12
+(185161a0..809ad94a, subagent-driven-development, one fix round each on
+Tasks 4/5's plan corrections plus one final-review fix wave — see the
+ledger at `.superpowers/sdd/2026-08-12-vicon-integration-stage0-1/progress.md`
+for the full task-by-task record, since that directory is git-ignored and
+this status line is the durable summary). Task 7's Steps 1–2 (the
+decision-record template) are committed; Step 3 (the actual lab session)
+is Christian's own physical action and remains outstanding — the
+individual checkboxes below are left unchecked for that reason, not
+because the plan's automated portion is incomplete.
+
 **Goal:** Build the minimal Vicon snapshot/recorder/replay layer (Stage 1)
 and the tool it takes to run the lab verification and capture the two
 recordings Stage 0 needs — so everything after this plan (calibration, the
