@@ -23,6 +23,12 @@ commit.
   interpretation, active pursuit of the why behind every want, exposure to
   options beyond what he asks for. (Approved in the 2026-08-12 design
   session; principles committed to CLAUDE.md in 3c2a5687.)
+- Misreadings must be caught before work starts, not after: when a prompt
+  carries new intent, the agent proposes its reading of the why and gets
+  confirmation before acting. The visible check is the point — it is
+  Christian's evidence that alignment is working. (Confirmed via
+  interactive question, 2026-08-12 ~14:50. Cited to the session
+  transcript: the prompt predates hook capture in that session.)
 
 ## Interpretations (hypotheses)
 
@@ -49,4 +55,7 @@ These become acceptance criteria in Christian's words.
 Options shown to Christian from beyond his request: adopted or dismissed,
 and why. Dismissals are binding — do not re-pitch.
 
-*(none yet)*
+- 2026-08-12: per-prompt steward reminder injected by hook (mechanical
+  nudge beside every prompt). Dismissed — "CLAUDE.md is enough". Re-open
+  condition named by the dismissal itself: only if sessions visibly
+  forget to why-check new intent.
