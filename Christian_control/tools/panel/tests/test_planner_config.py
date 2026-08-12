@@ -113,3 +113,61 @@ class WriteAgainstACopy(unittest.TestCase):
             self.assertFalse(ok, f"{name}={bad!r} should be refused")
             self.assertTrue(why, name)
         self.assert_unchanged()
+
+
+class JointLimitsRead(unittest.TestCase):
+    def test_all_sections_actuators_and_bounds_are_present(self):
+        table = planner_config.read_joint_limits_file()
+        for section in planner_config.LIMIT_SECTIONS:
+            for actuator in planner_config.ACTUATORS:
+                entry = table[section][actuator]
+                self.assertIsNotNone(entry["lower_limit"], (section, actuator))
+                self.assertIsNotNone(entry["upper_limit"], (section, actuator))
+                self.assertTrue(entry["dangerous"], (section, actuator))
+
+    def test_known_values(self):
+        table = planner_config.read_joint_limits_file()
+        self.assertAlmostEqual(
+            table["position_limits"]["actuator_2"]["upper_limit"], 2.2515)
+        self.assertAlmostEqual(
+            table["velocity_limits"]["actuator_1"]["lower_limit"], -0.8727)
+        self.assertEqual(
+            table["position_limits"]["actuator_2"]["unit"], '"radians"')
+
+
+class JointLimitsWrite(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="panel_jl_"))
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.yaml = self.tmp / "joint_limits.yaml"
+        shutil.copy2(paths.JOINT_LIMITS_YAML, self.yaml)
+        self.original = self.yaml.read_text()
+
+    def test_round_trip_touches_one_section_only(self):
+        ok, value = planner_config.write_joint_limit(
+            "velocity_limits", "actuator_3", "upper_limit", "1.0", self.yaml)
+        self.assertTrue(ok)
+        self.assertEqual(value, 1.0)
+        table = planner_config.read_joint_limits_file(self.yaml)
+        self.assertEqual(
+            table["velocity_limits"]["actuator_3"]["upper_limit"], 1.0)
+        # The same actuator's POSITION limit is untouched — the sections
+        # repeat actuator names, so this is the aliasing bug to guard.
+        self.assertAlmostEqual(
+            table["position_limits"]["actuator_3"]["lower_limit"], -1e20)
+
+    def test_lower_must_stay_below_upper(self):
+        ok, why = planner_config.write_joint_limit(
+            "velocity_limits", "actuator_3", "lower_limit", "2.0", self.yaml)
+        self.assertFalse(ok)
+        self.assertIn("upper", why)
+        self.assertEqual(self.yaml.read_text(), self.original)
+
+    def test_bad_names_and_values_refused(self):
+        for args in [("speed_limits", "actuator_1", "lower_limit", "1"),
+                     ("velocity_limits", "actuator_9", "lower_limit", "1"),
+                     ("velocity_limits", "actuator_1", "unit", "x"),
+                     ("velocity_limits", "actuator_1", "lower_limit", "slow")]:
+            ok, _ = planner_config.write_joint_limit(*args, self.yaml)
+            self.assertFalse(ok, args)
+        self.assertEqual(self.yaml.read_text(), self.original)

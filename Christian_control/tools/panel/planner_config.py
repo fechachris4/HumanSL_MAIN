@@ -135,3 +135,63 @@ def write_planner_knob(name: str, value: object,
         shutil.copy2(target, backup)
     target.write_text(replaced)
     return True, coerced
+
+
+# Every joint-limit field is dangerous by construction: these are Kinova's
+# official table values and they feed the planner's dynamics validation, so
+# a wrong number weakens a real check. Editable by Christian's explicit
+# choice (2026-08-12); the flag is what the UI styles the warning from.
+LIMIT_SECTIONS = ("position_limits", "velocity_limits", "acceleration_limits")
+ACTUATORS = tuple(f"actuator_{i}" for i in range(1, 8))
+_BOUNDS = ("lower_limit", "upper_limit")
+
+
+def read_joint_limits_file(path: Path | None = None) -> dict[str, dict]:
+    target = path or paths.JOINT_LIMITS_YAML
+    text = target.read_text() if target.is_file() else ""
+    out: dict[str, dict] = {}
+    for section in LIMIT_SECTIONS:
+        out[section] = {}
+        for actuator in ACTUATORS:
+            entry: dict[str, object] = {"dangerous": True}
+            for field in (*_BOUNDS, "unit"):
+                entry[field] = yaml_text.read_value(
+                    text, (section, actuator, field))
+            out[section][actuator] = entry
+    return out
+
+
+def write_joint_limit(section: str, actuator: str, bound: str, value: object,
+                      path: Path | None = None) -> tuple[bool, object]:
+    """Rewrite one bound in joint_limits.yaml, keeping lower < upper."""
+    if section not in LIMIT_SECTIONS:
+        return False, f"unknown section {section!r}"
+    if actuator not in ACTUATORS:
+        return False, f"unknown actuator {actuator!r}"
+    if bound not in _BOUNDS:
+        return False, "only lower_limit and upper_limit are writable"
+    try:
+        number = float(str(value).strip())
+    except ValueError:
+        return False, "not a number"
+    target = path or paths.JOINT_LIMITS_YAML
+    if not target.is_file():
+        return False, f"{target} does not exist"
+    text = target.read_text()
+    other_name = "upper_limit" if bound == "lower_limit" else "lower_limit"
+    other = yaml_text.read_value(text, (section, actuator, other_name))
+    if isinstance(other, float):
+        lower, upper = ((number, other) if bound == "lower_limit"
+                        else (other, number))
+        if lower >= upper:
+            return False, (f"{section}/{actuator}: lower_limit must stay "
+                           f"below upper_limit ({lower} >= {upper})")
+    replaced = yaml_text.replace_value(
+        text, (section, actuator, bound), yaml_text.render(number))
+    if replaced is None:
+        return False, f"{section}/{actuator}/{bound} not found in {target.name}"
+    backup = paths.panel_backup(target)
+    if not backup.exists():
+        shutil.copy2(target, backup)
+    target.write_text(replaced)
+    return True, number
