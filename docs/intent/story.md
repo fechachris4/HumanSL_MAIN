@@ -36,6 +36,30 @@ commit.
 
 *(none yet — capture began 2026-08-12)*
 
+## Superseded decisions
+
+Past decisions Christian has explicitly overridden. The old decision and
+its reasoning stay recorded — never deleted — so the history of why the
+system's guardrails are what they are is never lost, only superseded.
+
+- **Guard-override editability, 2026-08-12.** Prior decision (2026-08-05,
+  `compiled-config-guard-overrides` session memory; encoded in
+  `tools/panel/config_file.py`'s `GUARD_OVERRIDES` tuple and docstring:
+  "safety policy must not be one click away"): `kStopOnFault`,
+  `kAllowUnverifiedActuators`, `kSkipStartupGates`,
+  `kDisableFollowingErrorStop` are excluded from the panel's write
+  whitelist. Superseded: Christian confirmed (via two interactive
+  questions, once for the group of three explicitly-labelled "Guard
+  overrides," once specifically for `kStopOnFault` after I surfaced that
+  its Config.h wording — "never runtime-settable" — and its placement
+  outside the labelled Guard-overrides comment block made it a possibly
+  harder line) that all four should become editable from the panel. No
+  why was volunteered beyond wanting full config control from the UI;
+  none was pressed for, per "ask at most one plain-English question, then
+  comply." If a future session needs the reasoning behind this
+  supersession and it is not recorded elsewhere, ask Christian directly
+  rather than assume.
+
 ## Open questions
 
 Unconfirmed whys and ambiguities, ranked by (chance I'm wrong) x (cost if
