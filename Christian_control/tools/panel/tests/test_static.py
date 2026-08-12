@@ -208,5 +208,11 @@ class NaNIsNeverZero(unittest.TestCase):
         self.assertIn("Number.isFinite(value) ? value : null", JS)
 
 
+class PlannerEndpoints(unittest.TestCase):
+    def test_planner_config_endpoints_exist_in_server(self):
+        self.assertIn('"/api/planner-config"', SERVER)
+        self.assertIn('"/api/planner-config/set"', SERVER)
+
+
 if __name__ == "__main__":
     unittest.main()
