@@ -77,13 +77,19 @@ int main(int argc, char* argv[]) {
 
     unsigned int frames_written = 0;
     int prev_frame_number = -1;
+    bool ended_early = false;
     while (std::chrono::steady_clock::now() < deadline) {
+        if (!vicon.getFrame()) {
+            std::cerr << "getFrame() failed after " << frames_written
+                       << " frames -- capture ended early\n";
+            ended_early = true;
+            break;
+        }
         const int frame_number = vicon.getFrameNumber();
         if (frame_number == prev_frame_number) {
             std::this_thread::sleep_for(std::chrono::milliseconds(2));
             continue;
         }
-        if (!vicon.getFrame()) break;
         prev_frame_number = frame_number;
 
         const double host_time_s =
@@ -99,6 +105,17 @@ int main(int argc, char* argv[]) {
     }
 
     vicon.disconnect();
+
+    if (frames_written == 0) {
+        std::cerr << "record_vicon: wrote 0 frames to " << dir.string()
+                   << " -- capture failed\n";
+        return 1;
+    }
+    if (ended_early) {
+        std::cerr << "record_vicon: capture ended early -- wrote " << frames_written
+                   << " frames (partial) to " << dir.string() << "\n";
+        return 1;
+    }
     std::cout << "Wrote " << frames_written << " frames to " << dir.string()
               << "\n";
     return 0;

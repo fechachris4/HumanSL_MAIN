@@ -35,6 +35,21 @@ function(enable_assertions_for target)
     target_compile_options(${target} PRIVATE -UNDEBUG)
 endfunction()
 
+# One helper for every test target so enable_assertions_for can never be
+# forgotten on a new one (it was, once, earlier in this project, and had
+# to be fixed retroactively). test_name is the ctest test name (kept
+# distinct from the executable target name, matching this project's
+# existing convention); extra arguments after `source` are libraries to
+# link PRIVATE, omitted for a test with no library dependency.
+function(add_vicon_test test_name target source)
+    add_executable(${target} ${source})
+    if (ARGN)
+        target_link_libraries(${target} PRIVATE ${ARGN})
+    endif ()
+    enable_assertions_for(${target})
+    add_test(NAME ${test_name} COMMAND ${target})
+endfunction()
+
 # Repository root, two levels up: Christian_control/vicon -> HumanSL_MAIN.
 get_filename_component(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(VICON_SDK "${HUMANSL_ROOT}/third_party/vicon_api")
@@ -79,29 +94,23 @@ set_target_properties(record_vicon PROPERTIES
 
 include(CTest)
 if (BUILD_TESTING)
-    add_executable(test_segment_data tests/test_segment_data.cpp)
-    target_link_libraries(test_segment_data PRIVATE vicon_interface)
-    add_test(NAME vicon_segment_data COMMAND test_segment_data)
-    enable_assertions_for(test_segment_data)
+    add_vicon_test(vicon_segment_data test_segment_data
+            tests/test_segment_data.cpp vicon_interface)
 
-    add_executable(test_vicon_snapshot tests/test_vicon_snapshot.cpp)
+    # No library to link -- it only needs the bundled Eigen headers and src/
+    # for the snapshot struct definitions, so the shared helper is called
+    # with no trailing libraries and the include lines stay alongside it.
+    add_vicon_test(vicon_snapshot test_vicon_snapshot
+            tests/test_vicon_snapshot.cpp)
     target_include_directories(test_vicon_snapshot PRIVATE src)
     add_bundled_eigen_to(test_vicon_snapshot)
-    add_test(NAME vicon_snapshot COMMAND test_vicon_snapshot)
-    enable_assertions_for(test_vicon_snapshot)
 
-    add_executable(test_snapshot_builder tests/test_snapshot_builder.cpp)
-    target_link_libraries(test_snapshot_builder PRIVATE vicon_snapshot)
-    enable_assertions_for(test_snapshot_builder)
-    add_test(NAME vicon_snapshot_builder COMMAND test_snapshot_builder)
+    add_vicon_test(vicon_snapshot_builder test_snapshot_builder
+            tests/test_snapshot_builder.cpp vicon_snapshot)
 
-    add_executable(test_vicon_recorder tests/test_vicon_recorder.cpp)
-    target_link_libraries(test_vicon_recorder PRIVATE vicon_snapshot)
-    enable_assertions_for(test_vicon_recorder)
-    add_test(NAME vicon_recorder COMMAND test_vicon_recorder)
+    add_vicon_test(vicon_recorder test_vicon_recorder
+            tests/test_vicon_recorder.cpp vicon_snapshot)
 
-    add_executable(test_vicon_replay tests/test_vicon_replay.cpp)
-    target_link_libraries(test_vicon_replay PRIVATE vicon_snapshot)
-    enable_assertions_for(test_vicon_replay)
-    add_test(NAME vicon_replay COMMAND test_vicon_replay)
+    add_vicon_test(vicon_replay test_vicon_replay
+            tests/test_vicon_replay.cpp vicon_snapshot)
 endif ()
