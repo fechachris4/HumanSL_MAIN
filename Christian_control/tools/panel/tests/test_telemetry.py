@@ -256,19 +256,18 @@ class AggregatorTest(unittest.TestCase):
 
     def rows(self) -> list[dict]:
         return [
-            {"dt_s": 0.002, "rot_error_rad": 0.01, "joint_margin_deg": 12.0,
-             "posture_error_deg": 1.0, "cmd_j1": 0.0, "meas_j1": 0.5,
+            {"dt_s": 0.002, "rot_error_rad": 0.01,
+             "cmd_j1": 0.0, "meas_j1": 0.5,
              "pd_x": 0.0, "pd_y": 0.0, "pd_z": 0.0,
              "p_x": 0.01, "p_y": 0.0, "p_z": 0.0},
-            # The spike: worst error and worst (smallest) margin, one row wide.
-            {"dt_s": 0.005, "rot_error_rad": 0.09, "joint_margin_deg": 3.0,
-             "posture_error_deg": 4.0, "cmd_j4": 0.0, "meas_j4": 2.5,
+            # The spike: worst error, one row wide.
+            {"dt_s": 0.005, "rot_error_rad": 0.09,
+             "cmd_j4": 0.0, "meas_j4": 2.5,
              "pd_x": 0.0, "pd_y": 0.0, "pd_z": 0.0,
              "p_x": 0.04, "p_y": 0.0, "p_z": 0.0,
-             "traj_rejected": 1.0, "traj_start_error_deg": 4.1,
-             "replan_advised": 2.0},
-            {"dt_s": 0.002, "rot_error_rad": 0.02, "joint_margin_deg": 11.0,
-             "posture_error_deg": 1.5, "cmd_j1": 0.0, "meas_j1": 0.4,
+             "traj_rejected": 1.0, "traj_start_error_deg": 4.1},
+            {"dt_s": 0.002, "rot_error_rad": 0.02,
+             "cmd_j1": 0.0, "meas_j1": 0.4,
              "pd_x": 0.0, "pd_y": 0.0, "pd_z": 0.0,
              "p_x": 0.02, "p_y": 0.0, "p_z": 0.0},
         ]
@@ -279,14 +278,12 @@ class AggregatorTest(unittest.TestCase):
             aggregator.add(row)
         return aggregator.take()
 
-    def test_keeps_the_maximum_error_and_the_minimum_margin(self) -> None:
+    def test_keeps_the_maximum_error(self) -> None:
         worst = self.worst_of(self.rows())
         self.assertAlmostEqual(worst["pos_err_m"], 0.04)
         self.assertAlmostEqual(worst["rot_error_rad"], 0.09)
-        self.assertAlmostEqual(worst["posture_error_deg"], 4.0)
         self.assertAlmostEqual(worst["follow_err_deg"], 2.5)
         self.assertEqual(worst["follow_err_joint"], 4)
-        self.assertAlmostEqual(worst["joint_margin_deg"], 3.0)
         self.assertEqual(worst["rows"], 3)
 
     def test_a_single_cycle_edge_flag_survives_the_window(self) -> None:
@@ -295,8 +292,6 @@ class AggregatorTest(unittest.TestCase):
         self.assertFalse(worst["traj_activated"])
         self.assertFalse(worst["joint_follow_stop"])
         self.assertAlmostEqual(worst["traj_start_error_deg"], 4.1)
-        self.assertTrue(worst["replan_advised"])
-        self.assertAlmostEqual(worst["replan_advised_max"], 2.0)
 
     def test_late_cycles_are_counted_against_the_nominal_period(self) -> None:
         self.assertEqual(self.worst_of(self.rows())["overruns"], 1)
@@ -312,16 +307,15 @@ class AggregatorTest(unittest.TestCase):
         aggregator.take()
         empty = aggregator.take()
         self.assertIsNone(empty["pos_err_m"])
-        self.assertIsNone(empty["joint_margin_deg"])
+        self.assertIsNone(empty["rot_error_rad"])
         self.assertFalse(empty["traj_rejected"])
         self.assertEqual(empty["rows"], 0)
 
     def test_missing_values_never_pull_the_worst_towards_zero(self) -> None:
         aggregator = telemetry.Aggregator()
-        aggregator.add({"joint_margin_deg": 6.0, "rot_error_rad": 0.5})
-        aggregator.add({"joint_margin_deg": None, "rot_error_rad": None})
+        aggregator.add({"rot_error_rad": 0.5})
+        aggregator.add({"rot_error_rad": None})
         worst = aggregator.take()
-        self.assertAlmostEqual(worst["joint_margin_deg"], 6.0)
         self.assertAlmostEqual(worst["rot_error_rad"], 0.5)
 
     def test_a_real_run_aggregates_to_a_finite_worst_case(self) -> None:
@@ -333,7 +327,6 @@ class AggregatorTest(unittest.TestCase):
             previous = row
         worst = aggregator.take()
         self.assertEqual(worst["rows"], SMALL_RUN_ROWS)
-        self.assertAlmostEqual(worst["joint_margin_deg"], 17.8973, places=4)
         self.assertTrue(math.isfinite(worst["follow_err_deg"]))
         self.assertLess(worst["follow_err_deg"], 3.0)  # under the stop limit
 
@@ -503,7 +496,6 @@ class LiveSourceTest(unittest.TestCase):
         source.stop()
         self.assertEqual(event, "telemetry")
         self.assertAlmostEqual(payload["worst"]["follow_err_deg"], 2.0)
-        self.assertAlmostEqual(payload["worst"]["joint_margin_deg"], 19.0)
         self.assertEqual(payload["rows_seen"], 2)
 
     def test_it_finds_the_newest_run_when_given_no_path(self) -> None:

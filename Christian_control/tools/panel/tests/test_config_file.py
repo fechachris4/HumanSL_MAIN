@@ -18,15 +18,14 @@ from Christian_control.tools.panel import config_file, paths
 class KnobWhitelist(unittest.TestCase):
     def test_every_knob_is_found_in_the_real_config(self):
         knobs = config_file.read_knobs()
-        self.assertEqual(len(knobs), 23)
+        self.assertEqual(len(knobs), 15)
         missing = [name for name, knob in knobs.items() if knob["value"] is None]
         self.assertEqual(missing, [], "knob(s) no longer match Config.h")
 
     def test_known_values_read_back(self):
         knobs = config_file.read_knobs()
         self.assertEqual(knobs["kKpCartesian"]["value"], "10.0")
-        self.assertEqual(knobs["kTrajectoryPosePrimary"]["value"], "false")
-        self.assertEqual(knobs["kReplanAdviseCycles"]["value"], "250")
+        self.assertEqual(knobs["kOrientationEnabled"]["value"], "true")
 
     def test_guard_overrides_are_not_on_the_whitelist(self):
         for name in config_file.GUARD_OVERRIDES:
@@ -72,28 +71,21 @@ class WriteAgainstACopy(unittest.TestCase):
 
     def test_bool_knob_takes_true_false_and_json_booleans(self):
         ok, rendered = config_file.write_knob(
-            "kPostureEnabled", "false", self.config)
+            "kOrientationEnabled", "false", self.config)
         self.assertTrue(ok)
         self.assertEqual(rendered, "false")
         ok, rendered = config_file.write_knob(
-            "kPostureEnabled", True, self.config)
+            "kOrientationEnabled", True, self.config)
         self.assertTrue(ok)
         self.assertEqual(rendered, "true")
         self.assertEqual(
-            config_file.read_knobs(self.config)["kPostureEnabled"]["value"],
+            config_file.read_knobs(self.config)["kOrientationEnabled"]["value"],
             "true")
 
     def test_bool_knob_rejects_a_number(self):
-        ok, message = config_file.write_knob("kPostureEnabled", 1, self.config)
+        ok, message = config_file.write_knob("kOrientationEnabled", 1, self.config)
         self.assertFalse(ok)
         self.assertIn("true or false", message)
-        self.assert_unchanged()
-
-    def test_int_knob_rejects_a_fraction(self):
-        ok, message = config_file.write_knob(
-            "kReplanAdviseCycles", "2.5", self.config)
-        self.assertFalse(ok)
-        self.assertIn("integer", message)
         self.assert_unchanged()
 
     def test_double_knob_rejects_text(self):
@@ -137,10 +129,7 @@ class Thresholds(unittest.TestCase):
             thresholds["kTrajFollowingErrorStopDeg"]["value"], 8.0)
         self.assertAlmostEqual(
             thresholds["kTrajStartToleranceDeg"]["value"], 2.0)
-        self.assertAlmostEqual(thresholds["kReplanSigmaMin"]["value"], 0.02)
         self.assertAlmostEqual(thresholds["kControlDtS"]["value"], 0.002)
-        self.assertEqual(thresholds["kReplanAdviseCycles"]["value"], 250)
-        self.assertIsInstance(thresholds["kReplanAdviseCycles"]["value"], int)
 
     def test_orientation_tolerance_is_not_labelled_as_a_stop(self):
         band = config_file.read_thresholds()["kArrivalOrientationToleranceRad"]

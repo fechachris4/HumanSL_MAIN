@@ -35,15 +35,12 @@ _RUN_NAME_RE = re.compile(r"^loop_log_([A-Za-z]+)_")
 _WORST_MAX = (
     "rot_error_rad",
     "joint_follow_error_deg",
-    "posture_error_deg",
-    "base_comp_m",
     "null_leak_mps",
 )
 
-# Quantities where the worst case is the smallest — a margin and a
-# conditioning measure, both of which get worse as they shrink.
+# Quantities where the worst case is the smallest — a conditioning measure
+# that gets worse as it shrinks.
 _WORST_MIN = (
-    "joint_margin_deg",
     "sigma_min",
 )
 
@@ -208,7 +205,6 @@ def summarize_run(rel: str, runs_root: Path | None = None) -> dict[str, Any]:
     worst["position_error_m"] = None
     worst["following_error_deg"] = None
     worst["following_error_joint"] = None
-    replan_advised_rows = 0
     edges: list[dict[str, Any]] = []
     edges_truncated = False
 
@@ -272,8 +268,6 @@ def summarize_run(rel: str, runs_root: Path | None = None) -> dict[str, Any]:
                     worst["following_error_deg"] = gap
                     worst["following_error_joint"] = joint
 
-            if "replan_advised" in at and parts[at["replan_advised"]].strip() == "1":
-                replan_advised_rows += 1
             for name, column in edge_wanted:
                 if parts[column].strip() != "1":
                     continue
@@ -312,7 +306,6 @@ def summarize_run(rel: str, runs_root: Path | None = None) -> dict[str, Any]:
         "rows": rows,
         "duration_s": duration_s,
         "worst": worst,
-        "replan_advised_rows": replan_advised_rows,
         "trajectory_edges": edges,
         "trajectory_edges_truncated": edges_truncated,
         "session": str(session.relative_to(root.resolve())) if session else None,

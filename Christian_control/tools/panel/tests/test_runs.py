@@ -75,13 +75,10 @@ class SummarizeRun(unittest.TestCase):
         # Jacobian and no plan: sigma_min, the rotation error and the margins
         # are 'nan' in every row. Reporting 0.0 would read as perfect.
         worst = self.summary["worst"]
-        for name in ("sigma_min", "rot_error_rad", "posture_error_deg",
-                     "base_comp_m", "null_leak_mps"):
+        for name in ("sigma_min", "rot_error_rad", "null_leak_mps"):
             self.assertIsNone(worst[name], name)
-        # The two exceptions need only the measured angles and the joint
-        # reference, so they are real from the first row. The margin's worst
-        # case is the smallest value seen, not the largest.
-        self.assertAlmostEqual(worst["joint_margin_deg"], 17.8973, places=3)
+        # The exception needs only the measured angles and the joint
+        # reference, so it is real from the first row.
         self.assertLess(worst["joint_follow_error_deg"], 0.001)
 
     def test_the_following_error_is_the_guards_own_quantity(self):
@@ -106,7 +103,6 @@ class SummarizeRun(unittest.TestCase):
     def test_no_trajectory_was_ever_activated(self):
         self.assertEqual(self.summary["trajectory_edges"], [])
         self.assertFalse(self.summary["trajectory_edges_truncated"])
-        self.assertEqual(self.summary["replan_advised_rows"], 0)
 
     def test_the_summary_is_json_serialisable(self):
         # The panel returns this straight down the wire, and a stray NaN

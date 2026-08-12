@@ -568,13 +568,9 @@ function renderConnection() {
 function errorRowSpecs() {
   const t = (name) => scalarOf(pick(state.config?.thresholds || {}, name));
   const arrivalM = t('kArrivalToleranceM');
-  const replanM = t('kReplanPositionErrorM');
   const arrivalRad = t('kArrivalOrientationToleranceRad');
   const followDeg = t('kFollowingErrorLimitDeg');
   const trajStopDeg = t('kTrajFollowingErrorStopDeg');
-  const marginDeg = t('kReplanJointMarginDeg');
-  const postureDeg = t('kReplanPostureErrorDeg');
-  const sigmaMin = t('kReplanSigmaMin');
 
   return [
     {
@@ -585,7 +581,7 @@ function errorRowSpecs() {
       chars: 7,
       read: (row) => scale(positionErrorM(row), 1000),
       worst: (worst) => scale(numOrNull(pick(worst, 'pos_err_m')), 1000),
-      bands: band([[arrivalM, 'arrival', 1000], [replanM, 'replan advised', 1000]]),
+      bands: band([[arrivalM, 'arrival', 1000]]),
     },
     {
       key: 'orientation',
@@ -623,51 +619,17 @@ function errorRowSpecs() {
       bands: band([[trajStopDeg, 'stop', 1]]),
     },
     {
-      key: 'posture',
-      label: 'Posture',
-      unit: 'deg',
-      decimals: 1,
-      chars: 6,
-      read: (row) => numOrNull(row.posture_error_deg),
-      worst: (worst) => numOrNull(pick(worst, 'posture_error_deg')),
-      bands: band([[postureDeg, 'replan advised', 1]]),
-    },
-    {
-      key: 'margin',
-      label: 'Limit margin',
-      unit: 'deg',
-      decimals: 1,
-      chars: 6,
-      // Small is bad here and for sigma_min: the severity test flips, the
-      // drawing does not.
-      worseWhen: 'below',
-      read: (row) => numOrNull(row.joint_margin_deg),
-      worst: (worst) => numOrNull(pick(worst, 'joint_margin_deg')),
-      bands: band([[marginDeg, 'replan advised', 1]]),
-    },
-    {
       key: 'sigma_min',
       label: 'Sigma min',
       unit: '',
       decimals: 3,
       chars: 6,
+      // Small is bad here: the severity test flips, the drawing does not.
       worseWhen: 'below',
       read: (row) => numOrNull(row.sigma_min),
       worst: (worst) => numOrNull(pick(worst, 'sigma_min')),
-      bands: band([[sigmaMin, 'replan advised', 1]]),
-      note: 'how close the arm is to a direction it cannot move in',
-    },
-    {
-      key: 'base_comp',
-      label: 'Base motion, world frame',
-      unit: 'mm',
-      decimals: 1,
-      chars: 7,
-      full: 50,
-      read: (row) => scale(numOrNull(row.base_comp_m), 1000),
-      worst: (worst) => scale(numOrNull(pick(worst, 'base_comp_m')), 1000),
       bands: [],
-      note: 'exactly zero while the mount is the world origin',
+      note: 'how close the arm is to a direction it cannot move in',
     },
   ];
 }
@@ -734,10 +696,9 @@ function jointLimits() {
       error_deg: error[index] ?? null,
       software_limit_deg: software[index] ?? null,
       velocity_limit_deg_s: velocity[index] ?? null,
-      // Passed so the bar colours from the compiled thresholds rather than
+      // Passed so the bar colours from the compiled threshold rather than
       // inventing its own.
       follow_error_stop_deg: threshold('kFollowingErrorLimitDeg'),
-      replan_margin_deg: threshold('kReplanJointMarginDeg'),
     },
   }));
 }
@@ -892,13 +853,12 @@ function renderOtherArm() {
   }
   const row = frame.row || {};
   const following = followingErrorDeg(row);
-  const margin = numOrNull(row.joint_margin_deg);
   const fault = numOrNull(row.base_fault) || [1, 2, 3, 4, 5, 6, 7]
     .some((j) => numOrNull(row[`fault_j${j}`]));
 
   node.textContent = fault
     ? `${otherArm()} arm reports a fault`
-    : `${otherArm()} arm · worst following ${fmt(following, 2)} deg · limit margin ${fmt(margin, 1)} deg`;
+    : `${otherArm()} arm · worst following ${fmt(following, 2)} deg`;
   node.className = `worst-line${fault ? ' is-stop' : (following !== null && following > 2 ? ' is-warn' : '')}`;
 }
 
@@ -1442,7 +1402,6 @@ function renderRunSummary(summary) {
     columns: summary.columns ?? '—',
     'duration (s)': summary.duration_s === null || summary.duration_s === undefined
       ? '—' : Number(summary.duration_s).toFixed(1),
-    'replan advised rows': summary.replan_advised_rows ?? '—',
     session: summary.session ?? '—',
   }, '');
 

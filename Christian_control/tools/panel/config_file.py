@@ -27,9 +27,6 @@ from . import paths
 
 # name -> (type, one-line meaning). Ported unchanged from tools/control_panel.py.
 KNOBS: dict[str, tuple[str, str]] = {
-    "kTrajectoryPosePrimary": ("bool", "Trajectory mode: true = pose-primary (Cartesian law owns the command, plan guides the posture), false = joint mode (today's joint tracking)"),
-    "kPostureEnabled": ("bool", "Null-space posture guidance toward the planner's q_nom"),
-    "kPostureGain": ("double", "1/s pull toward q_nom; keep well below kKpCartesian (leak!)"),
     "kKpCartesian": ("double", "1/s on the Cartesian position error"),
     "kKpRotation": ("double", "1/s on the rotation-log error"),
     "kKdPosition": ("double", "Gain on the linear-velocity error (damping/feedforward)"),
@@ -37,7 +34,7 @@ KNOBS: dict[str, tuple[str, str]] = {
     "kDlsLambda": ("double", "DLS damping; larger = slower but safer near singularities"),
     "kOrientationEnabled": ("bool", "Track orientation as well as position"),
     "kVelocityTermEnabled": ("bool", "Kd term (twist error) on/off"),
-    "kNullSpaceEnabled": ("bool", "Null-space objectives (limit avoidance + posture) on/off"),
+    "kNullSpaceEnabled": ("bool", "Null-space joint-limit avoidance on/off"),
     "kLimitAvoidZoneDeg": ("double", "Zone before a software limit where avoidance wakes up"),
     "kLimitAvoidGain": ("double", "1/s push per degree of zone intrusion"),
     "kKpJointTracking": ("double", "1/s on joint error (joint mode only)"),
@@ -45,11 +42,6 @@ KNOBS: dict[str, tuple[str, str]] = {
     "kTrajFollowingErrorStopDeg": ("double", "Joint-mode plan-deviation stop (deg)"),
     "kArrivalToleranceM": ("double", "Arrival position tolerance (m)"),
     "kArrivalOrientationToleranceRad": ("double", "Arrival orientation tolerance (rad)"),
-    "kReplanSigmaMin": ("double", "Advise replan when sigma_min(J) falls below this"),
-    "kReplanJointMarginDeg": ("double", "Advise replan when a joint's limit margin falls below this"),
-    "kReplanPostureErrorDeg": ("double", "Advise replan when plan deviation exceeds this"),
-    "kReplanPositionErrorM": ("double", "Advise replan when tracking error exceeds this"),
-    "kReplanAdviseCycles": ("int", "Consecutive degraded cycles before the advisory raises"),
 }
 
 # Each of these trades away an automatic stop. They are absent from KNOBS, so
@@ -76,12 +68,7 @@ THRESHOLDS: dict[str, tuple[str, str, str]] = {
     "kFollowingErrorLimitDeg": ("double", "deg", "stop — commanded minus measured, any joint"),
     "kTrajFollowingErrorStopDeg": ("double", "deg", "stop — measured against the plan's joint reference"),
     "kTrajStartToleranceDeg": ("double", "deg", "plan rejected at activation (splice guard)"),
-    "kReplanSigmaMin": ("double", "", "replan advised"),
-    "kReplanJointMarginDeg": ("double", "deg", "replan advised"),
-    "kReplanPostureErrorDeg": ("double", "deg", "replan advised"),
-    "kReplanPositionErrorM": ("double", "m", "replan advised"),
-    "kReplanAdviseCycles": ("int", "cycles", "consecutive degraded cycles before the advisory raises"),
-    "kControlDtS": ("double", "s", "control period — how long one cycle of the advisory count is"),
+    "kControlDtS": ("double", "s", "control period"),
     "kJointSoftwareLimitMarginDeg": ("double", "deg", "how far inside the model range the software limit sits"),
 }
 

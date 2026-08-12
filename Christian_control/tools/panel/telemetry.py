@@ -69,10 +69,10 @@ def parse_preamble(lines: Iterable[str]) -> dict[str, str]:
     """Read the '#' key = value lines the controller writes around its data.
 
     The preamble is authoritative for that run: it records the compiled
-    reference source, the replan thresholds, the arrival tolerances,
-    following_error_limit_deg and the guard override states as they were in
-    the binary that produced these rows. Config.h may have moved on since,
-    so anything shown against a recorded run should come from here.
+    reference source, the arrival tolerances, following_error_limit_deg and
+    the guard override states as they were in the binary that produced these
+    rows. Config.h may have moved on since, so anything shown against a
+    recorded run should come from here.
 
     Values are returned as text and left uncoerced, because the preamble
     mixes numbers, booleans, enum names and whole vectors, and the caller
@@ -348,8 +348,7 @@ class Aggregator:
 
     The panel draws at about 20 Hz and the loop runs at 500, so 25 rows
     pass per frame and the newest one is not the interesting one. This
-    keeps the maximum of every error and the MINIMUM of joint_margin_deg
-    — it is a margin, so small is bad — plus whether any single-cycle edge
+    keeps the maximum of every error, plus whether any single-cycle edge
     flag fired inside the window, since those are 1 for exactly one row and
     sampling would miss them entirely.
 
@@ -371,12 +370,9 @@ class Aggregator:
             "pos_err_m": None,
             "rot_error_rad": None,
             "follow_err_deg": None,
-            "posture_error_deg": None,
             "joint_follow_error_deg": None,
-            "replan_advised": None,
         }
         self._follow_err_joint: Optional[int] = None
-        self._min_joint_margin_deg: Optional[float] = None
         self._traj_start_error_deg: Optional[float] = None
         self._flags: dict[str, bool] = {name: False for name in EDGE_FLAGS}
         self._overruns = 0
@@ -392,9 +388,7 @@ class Aggregator:
             ("pos_err_m", derived),
             ("follow_err_deg", derived),
             ("rot_error_rad", row),
-            ("posture_error_deg", row),
             ("joint_follow_error_deg", row),
-            ("replan_advised", row),
         ):
             value = _num(source, key)
             if value is None:
@@ -404,11 +398,6 @@ class Aggregator:
                 self._max[key] = value
                 if key == "follow_err_deg":
                     self._follow_err_joint = derived.get("follow_err_joint")
-
-        margin = _num(row, "joint_margin_deg")
-        if margin is not None:
-            if self._min_joint_margin_deg is None or margin < self._min_joint_margin_deg:
-                self._min_joint_margin_deg = margin
 
         for name in EDGE_FLAGS:
             value = _num(row, name)
@@ -425,20 +414,13 @@ class Aggregator:
 
     def snapshot(self) -> dict:
         """The window so far, without ending it."""
-        advised = self._max["replan_advised"]
         return {
             "pos_err_m": self._max["pos_err_m"],
             "rot_error_rad": self._max["rot_error_rad"],
             "follow_err_deg": self._max["follow_err_deg"],
             "follow_err_joint": self._follow_err_joint,
             "joint_follow_error_deg": self._max["joint_follow_error_deg"],
-            "posture_error_deg": self._max["posture_error_deg"],
-            "joint_margin_deg": self._min_joint_margin_deg,
             "traj_start_error_deg": self._traj_start_error_deg,
-            # replan_advised is a graded advisory level, so the window keeps
-            # how high it got as well as whether it fired at all.
-            "replan_advised": bool(advised),
-            "replan_advised_max": advised,
             "overruns": self._overruns,
             "rows": self._rows,
             **{name: self._flags[name] for name in EDGE_FLAGS},
