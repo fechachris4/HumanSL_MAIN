@@ -222,6 +222,12 @@ class PlannerEndpoints(unittest.TestCase):
                         "joint-limit-edit-table"):
             self.assertIn(element, ids, element)
 
+    def test_goal_cards_ui_hooks_exist(self):
+        ids = html_ids(HTML)
+        self.assertIn("goal-cards", ids)
+        self.assertIn("goal-raw-details", ids)
+        self.assertIn("goal-text", ids)   # the raw editor survives, collapsed
+
 
 if __name__ == "__main__":
     unittest.main()
