@@ -1,17 +1,20 @@
 #include "ViconRecorder.h"
 
 #include <iomanip>
-#include <limits>
 #include <sstream>
 
 namespace {
 
 constexpr int kViconFormat = 1;
-constexpr int kDoublePrecision = std::numeric_limits<double>::max_digits10;
+// Fixed-point, not exact round-trip: 4 decimal places is 0.1 mm for a
+// metre-valued position, well inside Vicon's own measurement noise, and
+// far more readable than a 17-significant-digit double. See the
+// "Precision policy" note above Task 4 Step 1 for the full rationale.
+constexpr int kDecimalPlaces = 4;
 
 std::string QuaternionField(double value) {
     std::ostringstream oss;
-    oss << std::setprecision(kDoublePrecision) << value;
+    oss << std::fixed << std::setprecision(kDecimalPlaces) << value;
     return oss.str();
 }
 
@@ -32,6 +35,8 @@ ViconRecorder::ViconRecorder(std::ostream& frames_csv, std::ostream& entities_cs
                               std::string host, std::string subject)
     : frames_csv_(frames_csv), entities_csv_(entities_csv),
       host_(std::move(host)), subject_(std::move(subject)) {
+    frames_csv_ << std::fixed << std::setprecision(kDecimalPlaces);
+    entities_csv_ << std::fixed << std::setprecision(kDecimalPlaces);
 }
 
 void ViconRecorder::WriteHeader() {

@@ -47,14 +47,16 @@ int main() {
     assert(frames_text.find("# vicon_format = 1") != std::string::npos);
     assert(frames_text.find("frame_number,host_time_s,frame_rate_hz,latency_total_s") !=
            std::string::npos);
-    assert(frames_text.find("7,0.07,100,0.015") != std::string::npos);
+    assert(frames_text.find("7,0.0700,100.0000,0.0150") != std::string::npos);
 
     const std::string entities_text = entities_out.str();
     assert(entities_text.find(
                "frame_number,kind,subject,name,x_m,y_m,z_m,qx,qy,qz,qw,valid,"
                "invalid_reason") != std::string::npos);
-    assert(entities_text.find("7,marker,,M1,1,2,3,,,,,1,") != std::string::npos);
-    assert(entities_text.find("7,segment,Dr Octopus Christian,Mount,0.01,0.02,0.03") !=
+    assert(entities_text.find("7,marker,,M1,1.0000,2.0000,3.0000,,,,,1,") !=
+           std::string::npos);
+    assert(entities_text.find(
+               "7,segment,Dr Octopus Christian,Mount,0.0100,0.0200,0.0300") !=
            std::string::npos);
 
     return 0;
