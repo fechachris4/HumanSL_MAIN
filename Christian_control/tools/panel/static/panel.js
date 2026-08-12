@@ -156,6 +156,7 @@ const state = {
   stopping: false,        // a stop was requested and the loop has not exited
   status: null,
   config: null,
+  plannerConfig: null,    // /api/planner-config: planner knobs + joint_limits.yaml table
   readoutsFrom: null,     // the config the error rows and joint bars were built from
   frame: null,            // newest telemetry payload for the selected arm
   frameAt: 0,             // performance.now() when it arrived
@@ -969,6 +970,19 @@ async function refreshConfig() {
   renderReadOnlyTable('threshold-table', state.config.thresholds, 'These are the numbers the controller enforces. Change one through its knob above, then rebuild.');
   renderReadOnlyTable('joint-limit-table', state.config.joints, 'Firmware and software boundaries. Only J2, J4 and J6 are bounded; the others turn continuously.');
   renderRun();
+
+  // Separate try/catch and its own notice element (planner-config-error):
+  // planner.yaml and joint_limits.yaml are read from a different endpoint
+  // than Config.h, so a failure here should not blank out the knobs above,
+  // which just loaded fine.
+  try {
+    state.plannerConfig = await getJSON('/api/planner-config');
+  } catch (err) {
+    setNotice('planner-config-error', `could not read the planner configuration: ${err.message}`, 'is-stop');
+    return;
+  }
+  renderPlannerKnobs();
+  renderJointLimitEditor();
 }
 
 function renderKnobs() {
@@ -1101,6 +1115,216 @@ async function commitKnob(name, input) {
   } catch (err) {
     input.classList.add('is-rejected');
     setNotice('config-error', `${name} was not written: ${err.message}`, 'is-stop');
+  }
+}
+
+// Planner tuning rows, modelled on renderKnobs() above: same grid, same
+// is-dirty/is-rejected styling, same commit-on-change. Grouped by yaml
+// section (the part of the dotted name before the first '.') so the table
+// reads like the file, with a knob-section heading between groups.
+function renderPlannerKnobs() {
+  const host = $('planner-knob-table');
+  host.textContent = '';
+  const knobs = state.plannerConfig?.planner || {};
+  let section = null;
+
+  for (const [name, entry] of Object.entries(knobs)) {
+    const head = name.split('.')[0];
+    if (head !== section) {
+      section = head;
+      const heading = document.createElement('div');
+      heading.className = 'knob-section';
+      heading.textContent = section;
+      host.append(heading);
+    }
+
+    const label = document.createElement('label');
+    label.className = 'knob-name';
+    label.textContent = name.split('.').slice(1).join('.');
+    label.htmlFor = `planner-knob-${name}`;
+
+    const note = document.createElement('span');
+    note.className = 'knob-doc';
+    note.textContent = entry.doc || '';
+
+    if (entry.type === 'vec3') {
+      const values = Array.isArray(entry.value) ? entry.value : [null, null, null];
+      const row = document.createElement('div');
+      row.className = 'vector-knob-row';
+      const inputs = [];
+      for (let i = 0; i < 3; i++) {
+        const input = document.createElement('input');
+        input.className = 'knob-input num';
+        input.type = 'text';
+        const value = values[i];
+        input.value = value === null || value === undefined ? '' : String(value);
+        input.dataset.committed = input.value;
+        input.addEventListener('input', () => {
+          input.classList.toggle('is-dirty', input.value !== input.dataset.committed);
+          input.classList.remove('is-rejected');
+        });
+        input.addEventListener('change', () => commitPlannerVec3(name, inputs));
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') input.blur();
+        });
+        inputs.push(input);
+        row.append(input);
+      }
+      host.append(label, row, note);
+    } else if (entry.type === 'bool') {
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.id = `planner-knob-${name}`;
+      input.checked = entry.value === true || entry.value === 'true';
+      input.addEventListener('change', () => commitPlannerBool(name, input));
+      host.append(label, input, note);
+    } else {
+      const input = document.createElement('input');
+      input.className = 'knob-input num';
+      input.id = `planner-knob-${name}`;
+      input.type = 'text';
+      input.value = entry.value === null || entry.value === undefined ? '' : String(entry.value);
+      input.dataset.committed = input.value;
+      input.addEventListener('input', () => {
+        input.classList.toggle('is-dirty', input.value !== input.dataset.committed);
+        input.classList.remove('is-rejected');
+      });
+      input.addEventListener('change', () => commitPlannerKnob(name, input));
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') input.blur();
+      });
+      host.append(label, input, note);
+    }
+  }
+}
+
+async function commitPlannerKnob(name, input) {
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'planner', name, value: input.value.trim() });
+    if (result.error) {
+      input.classList.add('is-rejected');
+      setNotice('planner-config-error', `${name}: ${result.error}`, 'is-stop');
+      return;
+    }
+    input.value = String(result.value ?? input.value);
+    input.dataset.committed = input.value;
+    input.classList.remove('is-dirty', 'is-rejected');
+    setNotice('planner-config-error',
+      `${name} written to planner.yaml. Applies at the next solve.`, 'is-warn');
+  } catch (err) {
+    input.classList.add('is-rejected');
+    setNotice('planner-config-error', `${name}: ${err.message}`, 'is-stop');
+  }
+}
+
+async function commitPlannerVec3(name, inputs) {
+  const raw = inputs.map((input) => input.value.trim());
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'planner', name, value: raw });
+    if (result.error) {
+      inputs.forEach((input) => input.classList.add('is-rejected'));
+      setNotice('planner-config-error', `${name}: ${result.error}`, 'is-stop');
+      return;
+    }
+    const written = Array.isArray(result.value) ? result.value : raw;
+    inputs.forEach((input, i) => {
+      input.value = String(written[i] ?? input.value);
+      input.dataset.committed = input.value;
+      input.classList.remove('is-dirty', 'is-rejected');
+    });
+    setNotice('planner-config-error',
+      `${name} written to planner.yaml. Applies at the next solve.`, 'is-warn');
+  } catch (err) {
+    inputs.forEach((input) => input.classList.add('is-rejected'));
+    setNotice('planner-config-error', `${name}: ${err.message}`, 'is-stop');
+  }
+}
+
+async function commitPlannerBool(name, input) {
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'planner', name, value: input.checked });
+    if (result.error) {
+      input.checked = !input.checked;
+      setNotice('planner-config-error', `${name}: ${result.error}`, 'is-stop');
+      return;
+    }
+    setNotice('planner-config-error',
+      `${name} written to planner.yaml. Applies at the next solve.`, 'is-warn');
+  } catch (err) {
+    input.checked = !input.checked;
+    setNotice('planner-config-error', `${name}: ${err.message}`, 'is-stop');
+  }
+}
+
+// Joint-limit rows: one per actuator per section. Every field the server
+// sends back is dangerous=true by construction (these are Kinova's table
+// values, feeding the planner's own dynamics validation), so styling is
+// unconditional here rather than read off a per-row flag.
+function renderJointLimitEditor() {
+  const host = $('joint-limit-edit-table');
+  host.textContent = '';
+  const table = state.plannerConfig?.joint_limits || {};
+
+  for (const [section, actuators] of Object.entries(table)) {
+    const heading = document.createElement('div');
+    heading.className = 'knob-section knob-danger';
+    heading.textContent = section;
+    host.append(heading);
+
+    for (const [actuator, entry] of Object.entries(actuators)) {
+      const label = document.createElement('span');
+      label.className = 'knob-name knob-danger';
+      label.textContent = `${actuator} ${entry.unit || ''}`;
+
+      const row = document.createElement('div');
+      row.className = 'vector-knob-row';
+      for (const bound of ['lower_limit', 'upper_limit']) {
+        const input = document.createElement('input');
+        input.className = 'knob-input num knob-danger';
+        input.type = 'text';
+        input.title = bound;
+        const value = entry[bound];
+        input.value = value === null || value === undefined ? '' : String(value);
+        input.dataset.committed = input.value;
+        input.addEventListener('input', () => {
+          input.classList.toggle('is-dirty', input.value !== input.dataset.committed);
+          input.classList.remove('is-rejected');
+        });
+        input.addEventListener('change',
+          () => commitJointLimit(section, actuator, bound, input));
+        input.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter') input.blur();
+        });
+        row.append(input);
+      }
+
+      const note = document.createElement('span');
+      note.className = 'knob-doc';
+      host.append(label, row, note);
+    }
+  }
+}
+
+async function commitJointLimit(section, actuator, bound, input) {
+  try {
+    const result = await postJSON('/api/planner-config/set',
+      { file: 'joint_limits', section, actuator, bound, value: input.value.trim() });
+    if (result.error) {
+      input.classList.add('is-rejected');
+      setNotice('planner-config-error', `${section}/${actuator}: ${result.error}`, 'is-stop');
+      return;
+    }
+    input.value = String(result.value ?? input.value);
+    input.dataset.committed = input.value;
+    input.classList.remove('is-dirty', 'is-rejected');
+    setNotice('planner-config-error',
+      `${section}/${actuator}/${bound} written to joint_limits.yaml.`, 'is-warn');
+  } catch (err) {
+    input.classList.add('is-rejected');
+    setNotice('planner-config-error', `${section}/${actuator}: ${err.message}`, 'is-stop');
   }
 }
 

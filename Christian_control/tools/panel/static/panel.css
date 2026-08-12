@@ -406,9 +406,23 @@ main {
 .knob-input.knob-danger { border-color: var(--stop); }
 .knob-doc.knob-danger { color: var(--stop); }
 
-#vector-knob-table { grid-template-columns: 22ch minmax(0, 1fr) 1fr; }
+#vector-knob-table,
+#planner-knob-table,
+#joint-limit-edit-table { grid-template-columns: 22ch minmax(0, 1fr) 1fr; }
 .vector-knob-row { display: flex; flex-wrap: wrap; gap: 4px; }
 .vector-knob-row .knob-input { width: 7ch; flex: 0 0 auto; }
+
+/* One heading per yaml section, spanning the full row so it does not throw
+   off the label/input/doc column count the rows above and below rely on. */
+.knob-section {
+  grid-column: 1 / -1;
+  font-weight: 600;
+  margin-top: 0.6em;
+  text-transform: uppercase;
+  font-size: 0.85em;
+  color: var(--ink-dim);
+}
+.knob-section.knob-danger { color: var(--stop); }
 
 .kv-table { display: grid; grid-template-columns: 28ch 1fr; gap: 3px 12px; align-items: baseline; }
 .kv-key { font-size: 11px; color: var(--ink-dim); }

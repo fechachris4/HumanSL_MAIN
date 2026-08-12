@@ -216,6 +216,12 @@ class PlannerEndpoints(unittest.TestCase):
     def test_goal_fields_endpoint_exists_in_server(self):
         self.assertIn('"/api/goal/fields"', SERVER)
 
+    def test_planner_config_ui_hooks_exist(self):
+        ids = html_ids(HTML)
+        for element in ("planner-knob-table", "planner-config-error",
+                        "joint-limit-edit-table"):
+            self.assertIn(element, ids, element)
+
 
 if __name__ == "__main__":
     unittest.main()

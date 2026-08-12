@@ -203,6 +203,28 @@
 
     <section class="card">
       <div class="card-head">
+        <h2>Planner tuning</h2>
+        <span class="card-note">editable · written to planner.yaml · applies at the next solve — no rebuild</span>
+      </div>
+      <div id="planner-knob-table" class="knob-table"></div>
+      <p class="card-foot" id="planner-config-error"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Planner joint limits</h2>
+        <span class="card-note">editable · written to joint_limits.yaml · Kinova table values feeding the planner's dynamics checks</span>
+      </div>
+      <div id="joint-limit-edit-table" class="knob-table"></div>
+      <p class="card-foot">
+        Every field here is a safety-relevant table value — the planner's
+        joint-limit and dynamics validation reads them. Radians and rad/s;
+        the panel checks only that lower stays below upper.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
         <h2>Thresholds</h2>
         <span class="card-note">read only · named by what they do</span>
       </div>
