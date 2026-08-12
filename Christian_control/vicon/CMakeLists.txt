@@ -26,6 +26,15 @@ function(add_bundled_eigen_to target)
     )
 endfunction()
 
+# Test binaries must catch real assertion failures regardless of
+# CMAKE_BUILD_TYPE (this project defaults to Release, whose -DNDEBUG
+# strips assert() to a no-op). -UNDEBUG re-enables it for tests only;
+# production/tool targets (vicon_interface, connect_vicon, etc.) keep
+# their release optimisation untouched.
+function(enable_assertions_for target)
+    target_compile_options(${target} PRIVATE -UNDEBUG)
+endfunction()
+
 # Repository root, two levels up: Christian_control/vicon -> HumanSL_MAIN.
 get_filename_component(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(VICON_SDK "${HUMANSL_ROOT}/third_party/vicon_api")
@@ -56,9 +65,11 @@ if (BUILD_TESTING)
     add_executable(test_segment_data tests/test_segment_data.cpp)
     target_link_libraries(test_segment_data PRIVATE vicon_interface)
     add_test(NAME vicon_segment_data COMMAND test_segment_data)
+    enable_assertions_for(test_segment_data)
 
     add_executable(test_vicon_snapshot tests/test_vicon_snapshot.cpp)
     target_include_directories(test_vicon_snapshot PRIVATE src)
     add_bundled_eigen_to(test_vicon_snapshot)
     add_test(NAME vicon_snapshot COMMAND test_vicon_snapshot)
+    enable_assertions_for(test_vicon_snapshot)
 endif ()
