@@ -80,13 +80,16 @@ def locate(lines: list[str], path: tuple[str, ...]) -> int | None:
     start, parent_indent = 0, -1
     index: int | None = None
     for name in path:
-        end = (len(lines) if parent_indent < 0
-               else _block_end(lines, start, parent_indent))
+        first = parent_indent < 0
+        end = len(lines) if first else _block_end(lines, start, parent_indent)
         index = None
         for i in range(start, end):
             m = _key_match(lines[i])
-            if m and len(m.group(1)) > parent_indent and m.group(2) == name:
-                index, parent_indent, start = i, len(m.group(1)), i + 1
+            if not m or m.group(2) != name:
+                continue
+            depth = len(m.group(1))
+            if (depth == 0) if first else (depth > parent_indent):
+                index, parent_indent, start = i, depth, i + 1
                 break
         if index is None:
             return None

@@ -47,6 +47,14 @@ class Locate(unittest.TestCase):
     def test_absent_key_is_none(self):
         self.assertIsNone(yaml_text.locate(DOC.split("\n"), ("nowhere",)))
 
+    def test_top_level_search_never_matches_a_nested_key(self):
+        # A single-element path names a top-level key. It must not match a
+        # same-named key nested under something else, even if that nested
+        # key appears earlier in the file than any top-level match (or than
+        # any match at all, as here).
+        doc = "top:\n  actuator_1:\n    x: 1\nother_actuator_1: 5\n"
+        self.assertIsNone(yaml_text.locate(doc.split("\n"), ("actuator_1",)))
+
 
 class ReadValue(unittest.TestCase):
     def test_scalars_lists_and_strings(self):
