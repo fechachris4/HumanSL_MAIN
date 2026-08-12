@@ -110,6 +110,38 @@ For every acceptance criterion ask: "Could my implementation be
 fundamentally wrong and still pass this check?" If yes, the check is
 insufficient.
 
+# Intent stewardship
+
+`docs/intent/` is a persistent record of what Christian is trying to
+achieve, built to outlive any single session. Read `docs/intent/story.md`
+at the start of substantive work.
+
+- `docs/intent/raw-prompt-log.md` is ground truth. A hook appends every
+  prompt verbatim; never edit its entries, by hand or by model. Later
+  prompts can supersede earlier ones — note supersession in the story,
+  never by rewriting the log. Raw prompts are evidence about intent, not
+  intent itself.
+- `docs/intent/story.md` is the interpretation layer. Every claim in it
+  cites the log entries it rests on; uncited claims are suspect. Entries
+  are hypotheses until Christian confirms them.
+- Record goals as outcomes, never methods ("the arm must never reach
+  joint limits near a person", not "add a repulsive null-space term").
+  Intent captured too concretely is imagination captured too early.
+- Actively seek the why behind each new goal or change of direction.
+  Propose rather than interrogate ("I think this is because Y — right?"),
+  mine the repo, git history and docs before spending Christian's time,
+  and keep unconfirmed whys under Open questions. Proceeding on an
+  unconfirmed why must be stated out loud, never a silent default.
+- When a request conflicts with the story, ask why in plain English
+  before implementing.
+- At session end, or before a large piece of work, show Christian the
+  diff of the story since he last approved it and fold in his
+  corrections. Git history of the story is the audit trail.
+- At significant decision points, include one or two credible options
+  from beyond Christian's framing, each with a one-line reason to care,
+  plus a recommendation. Log adoptions and dismissals in the story's
+  Exposure log; dismissals are binding.
+
 # Debugging, Diagnosis and Student Learning Protocol
 
 This project is MSc work. Christian must be able to explain and defend every
