@@ -71,6 +71,12 @@ set_target_properties(connect_vicon PROPERTIES
         BUILD_RPATH "${VICON_SDK}/lib"
 )
 
+add_executable(record_vicon tools/record_vicon.cpp)
+target_link_libraries(record_vicon PRIVATE vicon_snapshot vicon_interface)
+set_target_properties(record_vicon PROPERTIES
+        BUILD_RPATH "${VICON_SDK}/lib"
+)
+
 include(CTest)
 if (BUILD_TESTING)
     add_executable(test_segment_data tests/test_segment_data.cpp)
