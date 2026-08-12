@@ -3,7 +3,7 @@
 // exit. Success (exit 0) means the link works end to end — TCP connect,
 // streaming enabled, frames arriving, marker data readable.
 //
-// Usage: connect_vicon [host:port]   (default 192.168.128.210:801)
+// Usage: connect_vicon [host:port]   (default 192.168.128.206:801)
 
 #include "ViconInterface.h"
 
@@ -14,7 +14,7 @@
 #include <thread>
 
 int main(int argc, char* argv[]) {
-    const std::string host = (argc > 1) ? argv[1] : "192.168.128.210:801";
+    const std::string host = (argc > 1) ? argv[1] : "192.168.128.206:801";
 
     ViconInterface vicon;
     if (!vicon.connect(host)) {
@@ -43,9 +43,20 @@ int main(int argc, char* argv[]) {
         // Empty prefix matches every labeled marker of every subject.
         const auto labeled = vicon.getMarkerPositions(std::string(""));
         const auto unlabeled = vicon.getUnlabeledMarkers();
+        const auto segments = vicon.getSegmentPoses();
 
         std::cout << "frame " << frame_number << ": " << labeled.size()
-                  << " labeled, " << unlabeled.size() << " unlabeled\n";
+                  << " labeled, " << unlabeled.size() << " unlabeled, "
+                  << segments.size() << " segments\n";
+        for (const auto& s : segments) {
+            std::cout << "  segment " << s.subject_name << "/" << s.segment_name
+                      << std::fixed << std::setprecision(1)
+                      << " pos=(" << s.x << ", " << s.y << ", " << s.z << ") mm"
+                      << std::setprecision(4)
+                      << " q=(" << s.qx << ", " << s.qy << ", " << s.qz << ", " << s.qw
+                      << ")"
+                      << (s.occluded ? "  (occluded)" : "") << "\n";
+        }
         for (const auto& m : labeled) {
             std::cout << "  " << std::left << std::setw(16) << m.name
                       << std::right << std::fixed << std::setprecision(1)

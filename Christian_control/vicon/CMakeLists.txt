@@ -42,3 +42,10 @@ target_link_libraries(connect_vicon PRIVATE vicon_interface)
 set_target_properties(connect_vicon PROPERTIES
         BUILD_RPATH "${VICON_SDK}/lib"
 )
+
+include(CTest)
+if (BUILD_TESTING)
+    add_executable(test_segment_data tests/test_segment_data.cpp)
+    target_link_libraries(test_segment_data PRIVATE vicon_interface)
+    add_test(NAME vicon_segment_data COMMAND test_segment_data)
+endif ()

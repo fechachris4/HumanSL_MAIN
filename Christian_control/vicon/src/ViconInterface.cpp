@@ -29,6 +29,7 @@ bool ViconInterface::connect(const std::string& hostname) {
 
     connected_ = true;
 
+    client_->EnableSegmentData();
     client_->EnableMarkerData();
     client_->EnableUnlabeledMarkerData();
     client_->EnableDeviceData();
@@ -183,6 +184,48 @@ std::vector<UnlabeledMarkerData> ViconInterface::getUnlabeledMarkers() {
     }
 
     return unlabeledMarkers;
+}
+
+std::vector<SegmentData> ViconInterface::getSegmentPoses() {
+    std::vector<SegmentData> segments;
+    if (!connected_) return segments;
+
+    const auto subject_count = client_->GetSubjectCount();
+    if (subject_count.Result != Result::Success) return segments;
+
+    for (unsigned int subject_index = 0; subject_index < subject_count.SubjectCount; ++subject_index) {
+        const auto subject = client_->GetSubjectName(subject_index);
+        if (subject.Result != Result::Success) continue;
+
+        const auto segment_count = client_->GetSegmentCount(subject.SubjectName);
+        if (segment_count.Result != Result::Success) continue;
+
+        for (unsigned int segment_index = 0; segment_index < segment_count.SegmentCount; ++segment_index) {
+            const auto segment_name = client_->GetSegmentName(subject.SubjectName, segment_index);
+            if (segment_name.Result != Result::Success) continue;
+
+            const auto translation =
+                client_->GetSegmentGlobalTranslation(subject.SubjectName, segment_name.SegmentName);
+            const auto rotation =
+                client_->GetSegmentGlobalRotationQuaternion(subject.SubjectName, segment_name.SegmentName);
+            if (translation.Result != Result::Success || rotation.Result != Result::Success) continue;
+
+            SegmentData segment;
+            segment.subject_name = subject.SubjectName;
+            segment.segment_name = segment_name.SegmentName;
+            segment.x = translation.Translation[0];
+            segment.y = translation.Translation[1];
+            segment.z = translation.Translation[2];
+            segment.qx = rotation.Rotation[0];
+            segment.qy = rotation.Rotation[1];
+            segment.qz = rotation.Rotation[2];
+            segment.qw = rotation.Rotation[3];
+            segment.occluded = translation.Occluded || rotation.Occluded;
+            segments.push_back(segment);
+        }
+    }
+
+    return segments;
 }
 
 void ViconInterface::getForcePlateVector(std::vector<double>& fplate_left, std::vector<double>& fplate_right) {
