@@ -43,3 +43,6 @@ __pycache__/
 
 # clangd index cache
 .cache/
+
+# Playwright MCP scratch (screenshots, snapshots) from UI checks
+.playwright-mcp/

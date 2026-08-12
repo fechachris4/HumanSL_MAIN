@@ -1,0 +1,600 @@
+/*
+  The panel's design system: a machine readout, not a dashboard.
+
+  Two rules the whole sheet obeys:
+
+  1. Colour is reserved for abnormal states. A healthy screen is ink on a pale
+     instrument ground with hairline rules, and nothing else. If red, amber or
+     the one blue appears, it means something. A dark, colourful display buries
+     the single alarm that matters, which is the failure this avoids.
+  2. Values do not move the layout. Every number sits in a fixed-width slot in
+     tabular figures, so a digit growing wider changes nothing on screen.
+     Movement then means the robot moved, not that the text reflowed.
+
+  Deviation from the design document: the spec called for one variable font
+  vendored locally, carrying a condensed face for labels and a true tabular
+  monospace for numbers. This panel installs with no dependencies and the
+  workstation has no network to fetch a font from, so system stacks are the
+  honest substitute — a condensed system sans where one exists, and the
+  platform monospace with font-variant-numeric: tabular-nums for every number.
+*/
+
+:root {
+  --ground:  #DCDFD8;  /* the page: pale instrument grey-green */
+  --panel:   #E8EAE4;  /* raised faces */
+  --ink:     #14171A;  /* text, and the measured arm */
+  --ink-dim: #5A625E;  /* labels, units, secondary text */
+  --rule:    #A8AEA4;  /* hairlines and bar tracks */
+  --ask:     #2E6E8E;  /* "what was asked for" — the commanded pose, nothing else */
+  --warn:    #C46A00;  /* abnormal */
+  --stop:    #B3161C;  /* stop and fault only */
+
+  --label-font: ui-sans-serif, "Roboto Condensed", "Liberation Sans Narrow",
+                "Helvetica Neue", Arial, sans-serif;
+  --num-font: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", Menlo,
+              Consolas, monospace;
+
+  --bar-h: 44px;      /* the fixed top strip */
+  --tabs-h: 34px;
+  --foot-h: 26px;
+  --gap: 12px;
+}
+
+* { box-sizing: border-box; }
+
+/* Several regions are shown and hidden with the hidden attribute, and a
+   display rule of our own would otherwise win over the browser's default for
+   it — a hidden view would stay on screen. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--label-font);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+/* Every number, everywhere, in the same figures at the same width. */
+.num, input.num, code.num, .kv-value {
+  font-family: var(--num-font);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+h1, h2, h3 {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+/* Keyboard focus must be obvious: the stop control has to be reachable and
+   visibly reached without a mouse. */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ bar -- */
+
+.safety-bar {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: var(--bar-h);
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--rule);
+  z-index: 10;
+}
+
+.wordmark {
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  font-size: 13px;
+}
+
+.hardware-mark {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  padding: 2px 7px;
+  border: 1px solid var(--rule);
+  color: var(--ink-dim);
+}
+
+/* Replay is the one normal state that gets colour, because a page that looks
+   live but is not is the single most misleading thing this panel could do. */
+.replay-mark {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  padding: 2px 7px;
+  border: 1px solid var(--warn);
+  color: var(--warn);
+}
+
+/* Which arms are being driven. Present only while a session runs, because a
+   permanent label would stop being read. "Both" is the one worth catching the
+   eye: it is the case where the arm you are not looking at is also moving. */
+.driving-mark {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  padding: 2px 7px;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+}
+.driving-mark.is-both { border-color: var(--warn); color: var(--warn); font-weight: 600; }
+/* The server has not confirmed this recently, so it is shown as a last known
+   value rather than as a fact. */
+.driving-mark.is-unverified { border-style: dashed; opacity: 0.65; }
+
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.link-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  background: transparent;
+}
+
+.link.is-live .link-dot { background: var(--ink); border-color: var(--ink); }
+.link.is-live .link-text { color: var(--ink); }
+
+/* The hard visual break at 2 s. Everything downstream of it is marked not
+   current; this is the one place staleness is allowed to shout. */
+.link.is-stale .link-dot { background: var(--warn); border-color: var(--warn); }
+.link.is-stale .link-text,
+.link.is-stale .link-age { color: var(--warn); font-weight: 600; }
+
+.link-age { min-width: 5.5ch; text-align: right; }
+
+.stop-button {
+  margin-left: auto;
+  font-family: var(--label-font);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #fff;
+  background: var(--stop);
+  border: 1px solid var(--stop);
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.stop-button:hover { background: #8f1116; }
+.stop-button:active { transform: translateY(1px); }
+
+/* ----------------------------------------------------------------- tabs -- */
+
+.tabs {
+  position: fixed;
+  top: var(--bar-h); left: 0; right: 0;
+  height: var(--tabs-h);
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  padding: 0 8px;
+  background: var(--ground);
+  border-bottom: 1px solid var(--rule);
+  z-index: 9;
+}
+
+.tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-family: var(--label-font);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--ink-dim);
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.tab[aria-selected="true"] {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+  font-weight: 600;
+}
+
+.tabs-spacer { flex: 1; }
+
+.connection {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--ink-dim);
+  padding-right: 8px;
+}
+.connection.is-lost { color: var(--warn); font-weight: 600; }
+
+/* ----------------------------------------------------------------- page -- */
+
+main {
+  padding: calc(var(--bar-h) + var(--tabs-h) + var(--gap)) var(--gap)
+           calc(var(--foot-h) + var(--gap));
+}
+
+.estop-line {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  height: var(--foot-h);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--rule);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-dim);
+  z-index: 10;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  padding: 10px 12px 12px;
+  margin-bottom: var(--gap);
+}
+
+.card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding-bottom: 6px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.card-note, .card-foot, .hint {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.card-foot { margin: 8px 0 0; }
+.card-foot.is-warn { color: var(--warn); }
+.card-foot.is-stop { color: var(--stop); }
+
+.prose { font-size: 13px; margin: 0 0 8px; max-width: 70ch; }
+
+/* ------------------------------------------------------------ run view -- */
+
+.banner-host { margin-bottom: var(--gap); }
+
+.scalar-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 26px;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  padding: 7px 12px;
+  margin-bottom: var(--gap);
+}
+/* readouts.js names its own parts; the strip only says how they sit. */
+.scalar-strip .ro-slot { align-items: baseline; }
+
+/* The run screen fits the viewport, on a MacBook first.
+   Everything on it is meant to be read at a glance while an arm is moving, so
+   nothing here may require scrolling the page to find. The scene takes
+   whatever height is left after the banner and the scalar strip, and the
+   readout column scrolls inside itself if the joint bars need more room than
+   the window has. */
+#view-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  height: calc(100vh - var(--bar-h) - var(--tabs-h) - var(--foot-h)
+               - 2 * var(--gap));
+  min-height: 420px;
+}
+
+/* The flex gap already separates these; their own margins would double it and
+   cost the scene the height. Restored at the narrow breakpoint below, where
+   the column falls back to block layout and the margins do the work. */
+#view-run > .banner-host,
+#view-run > .scalar-strip { margin-bottom: 0; }
+
+.run-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 430px;
+  gap: var(--gap);
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;   /* without this a grid child refuses to shrink */
+}
+
+.scene-card { display: flex; flex-direction: column; min-height: 0; }
+
+.scene-holder {
+  position: relative;
+  width: 100%;
+  flex: 1 1 auto;
+  min-height: 200px;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+}
+
+.scene { display: block; width: 100%; height: 100%; }
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+
+.swatch { width: 14px; height: 3px; display: inline-block; }
+.swatch-meas { background: var(--ink); }
+.swatch-ask  { background: var(--ask); }
+.swatch-plan { background: var(--rule); }
+
+.readout-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;   /* the column scrolls, never the page */
+}
+
+.worst-line { margin: 0; font-size: 12px; color: var(--ink-dim); }
+.worst-line.is-warn { color: var(--warn); }
+.worst-line.is-stop { color: var(--stop); font-weight: 600; }
+
+/* ------------------------------------------------- the view modules' names --
+
+   scene.js and readouts.js read this stylesheet's own custom properties —
+   --ink, --rule, --ask and the rest — each with a built-in fallback colour in
+   case one is missing. That fallback is why the two extra tokens below are
+   defined here rather than left out: a token panel.css forgets does not fail
+   loudly, it quietly draws in a colour nobody chose. Everything visible in the
+   panel therefore takes its colour from the palette at the top of this file,
+   and changing --ask moves the commanded pose in the scene, the ghost tick on
+   the joint bars and the legend swatch together. */
+
+:root {
+  /* The unfilled part of a bar track: one step darker than the ground, so a
+     track reads as a groove rather than as a second colour. */
+  --track: #CFD3CB;
+  /* The only tinted background in the panel, and only for the staleness
+     break — desaturated enough to sit beside ink, and used nowhere else. */
+  --stop-wash: #F0DCDA;
+}
+
+/* Not current: the live regions grey out at the 2 s break so nothing on
+   screen goes on claiming to be true. The safety bar and the stop control are
+   deliberately not among them. */
+.readout-column.is-stale,
+.banner-host.is-stale,
+.scalar-strip.is-stale { opacity: 0.55; }
+
+/* --------------------------------------------------------- tables etc. -- */
+
+.knob-table { display: grid; grid-template-columns: 22ch 12ch 1fr; gap: 4px 12px; align-items: baseline; }
+.knob-name { font-size: 12px; }
+.knob-doc { font-size: 11px; color: var(--ink-dim); }
+.knob-input {
+  font-family: var(--num-font);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  width: 100%;
+  padding: 2px 4px;
+  background: var(--ground);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+}
+.knob-input.is-dirty { border-color: var(--warn); }
+.knob-input.is-rejected { border-color: var(--stop); }
+
+.kv-table { display: grid; grid-template-columns: 28ch 1fr; gap: 3px 12px; align-items: baseline; }
+.kv-key { font-size: 11px; color: var(--ink-dim); }
+.kv-value { font-size: 13px; }
+.kv-note { grid-column: 1 / -1; font-size: 11px; color: var(--ink-dim); }
+
+.sub-head {
+  margin: 14px 0 5px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--rule);
+  color: var(--ink-dim);
+}
+
+.freshness-card { border-color: var(--rule); }
+.freshness-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+.freshness-state {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+/* Stale is the state that made this panel necessary, so it is one of the few
+   places colour is spent. */
+.freshness-state.is-stale { color: var(--warn); }
+.freshness-detail { font-size: 11px; color: var(--ink-dim); }
+
+.action {
+  appearance: none;
+  font-family: var(--label-font);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  background: var(--ground);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.action:hover { background: var(--panel); }
+.action:disabled { color: var(--ink-dim); border-color: var(--rule); cursor: not-allowed; }
+.action-strong { font-weight: 700; }
+
+.link-button {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--ink);
+  color: var(--ink);
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+
+.button-row { display: flex; align-items: center; gap: 12px; margin-top: 10px; flex-wrap: wrap; }
+
+.field.inline { display: inline-flex; align-items: center; gap: 6px; }
+.field-label { font-size: 11px; letter-spacing: 0.08em; color: var(--ink-dim); text-transform: uppercase; }
+
+select, input[type="text"] {
+  font-family: var(--label-font);
+  font-size: 13px;
+  background: var(--ground);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  padding: 3px 6px;
+}
+
+.go-input { width: 6ch; text-transform: uppercase; }
+
+.code-area {
+  width: 100%;
+  font-family: var(--num-font);
+  font-size: 12.5px;
+  line-height: 1.5;
+  background: var(--ground);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  padding: 8px;
+  resize: vertical;
+}
+
+.log-pane {
+  margin: 10px 0 0;
+  max-height: 260px;
+  overflow: auto;
+  font-family: var(--num-font);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  background: var(--ground);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  padding: 8px;
+}
+
+/* On the run screen the log shares a scrolling column with the joint bars, so
+   it takes a fixed slice rather than growing without bound. */
+.log-pane--short { max-height: 130px; }
+
+/* The one card allowed to draw attention on an otherwise healthy screen: the
+   controller has said something that reads like an explanation. */
+#run-log-card.has-notice { border-color: var(--warn); }
+#run-log-card.has-notice h2 { color: var(--warn); }
+
+/* Which measured configuration a solve plans from. */
+.start-state {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.field-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.field { display: inline-flex; align-items: center; gap: 6px; }
+
+.start-deg-input { width: 46ch; max-width: 100%; }
+
+.runs-grid { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: var(--gap); align-items: start; }
+
+.runs-list { display: flex; flex-direction: column; max-height: 60vh; overflow: auto; }
+
+.run-item {
+  display: grid;
+  grid-template-columns: 1fr 8ch 12ch;
+  gap: 8px;
+  align-items: baseline;
+  text-align: left;
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--rule);
+  padding: 5px 2px;
+  font: inherit;
+  color: var(--ink);
+  cursor: pointer;
+}
+.run-item:hover { background: var(--ground); }
+.run-item[aria-current="true"] { background: var(--ground); font-weight: 600; }
+.run-item .run-file { font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+
+.copy-row { display: flex; align-items: center; gap: 10px; }
+.copy-text {
+  flex: 1;
+  background: var(--ground);
+  border: 1px solid var(--rule);
+  padding: 6px 8px;
+  font-size: 13px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* Empty states are invitations, so they carry the action that moves forward
+   rather than an apology. */
+.empty {
+  border: 1px dashed var(--rule);
+  padding: 18px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  background: var(--panel);
+}
+.empty p { margin: 0 0 6px; }
+.empty p:last-child { margin-bottom: 0; }
+.inline-empty { margin-top: 8px; }
+
+.notice { font-size: 12px; }
+.notice.is-warn { color: var(--warn); }
+.notice.is-stop { color: var(--stop); font-weight: 600; }
+
+/* ---------------------------------------------------------- responsive -- */
+
+/* One column below 900px. The safety bar and the e-stop line stay pinned;
+   they are fixed, so they follow for free. */
+@media (max-width: 900px) {
+  .run-grid, .runs-grid { grid-template-columns: minmax(0, 1fr); }
+  /* One column cannot fit the viewport, so let the page scroll here rather
+     than squeezing the scene into a letterbox. The safety bar and the e-stop
+     line stay fixed, so the stop control is still always on screen. */
+  #view-run { height: auto; display: block; }
+  #view-run > .banner-host,
+  #view-run > .scalar-strip { margin-bottom: var(--gap); }
+  .run-grid { display: block; }
+  .scene-holder { aspect-ratio: 4 / 3; min-height: 0; }
+  .readout-column { overflow-y: visible; margin-top: var(--gap); }
+  .knob-table { grid-template-columns: 1fr; }
+  .knob-doc { margin-bottom: 6px; }
+  .kv-table { grid-template-columns: 1fr; }
+  .safety-bar { gap: 12px; padding: 0 8px; }
+  .wordmark { font-size: 12px; letter-spacing: 0.1em; }
+  .hardware-mark { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+  .stop-button:active { transform: none; }
+}

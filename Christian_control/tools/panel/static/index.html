@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SRL console</title>
+<link rel="stylesheet" href="panel.css">
+</head>
+<body>
+
+<!--
+  The safety bar and the e-stop line are outside the tab panels on purpose:
+  they are fixed to the viewport and survive every view change, so the stop
+  control is never a tab away. Everything between them scrolls.
+-->
+<header class="safety-bar">
+  <span class="wordmark">SRL CONSOLE</span>
+
+  <label class="field inline">
+    <span class="field-label">arm</span>
+    <select id="arm-select" title="Which arm's numbers are shown. The scene always draws both.">
+      <option value="right">right</option>
+      <option value="left">left</option>
+    </select>
+  </label>
+
+  <!-- Which arms the running session is driving, which is not the same
+       question as whose numbers are on screen. -->
+  <span class="driving-mark" id="driving-mark" hidden></span>
+
+  <!-- Permanent, not a status: there is no simulator in this repository, so
+       this indicator could only ever read HARDWARE. Saying it plainly is
+       safer than showing a value that looks switchable. -->
+  <span class="hardware-mark">HARDWARE</span>
+
+  <!-- Only when the server is playing a recorded run back: the screen looks
+       exactly like a live one, so it has to say that no arm is involved. -->
+  <span class="replay-mark" id="replay-mark" hidden>REPLAY · recorded data, no arm</span>
+
+  <!-- Age of the newest telemetry row, by the browser's own clock. A frozen
+       server cannot hold this still. -->
+  <span class="link" id="link">
+    <span class="link-dot" aria-hidden="true"></span>
+    <span class="link-text" id="link-text">no link</span>
+    <span class="num link-age" id="link-age">—</span>
+  </span>
+
+  <button type="button"
+          id="stop-button"
+          class="stop-button"
+          title="Ends commanding and hands the arm back to high-level servoing. There is no ramp: the arm stops being commanded where it is.">
+    STOP AND RELEASE
+  </button>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Views">
+  <button type="button" role="tab" class="tab" data-view="run"     id="tab-run"     aria-controls="view-run"     aria-selected="true">RUN</button>
+  <button type="button" role="tab" class="tab" data-view="config"  id="tab-config"  aria-controls="view-config"  aria-selected="false">CONFIG</button>
+  <button type="button" role="tab" class="tab" data-view="targets" id="tab-targets" aria-controls="view-targets" aria-selected="false">TARGETS</button>
+  <button type="button" role="tab" class="tab" data-view="runs"    id="tab-runs"    aria-controls="view-runs"    aria-selected="false">RUNS</button>
+  <button type="button" role="tab" class="tab" data-view="session" id="tab-session" aria-controls="view-session" aria-selected="false">SESSION</button>
+  <span class="tabs-spacer"></span>
+  <!-- One line of connection truth, repeated here because the tab strip is
+       the one row present in every view. -->
+  <span class="connection" id="connection">connecting</span>
+</nav>
+
+<main>
+
+  <!-- ============================== RUN ============================== -->
+  <section class="view" id="view-run" role="tabpanel" aria-labelledby="tab-run">
+
+    <div id="banner-host" class="banner-host"></div>
+
+    <!-- Loop scalars, in fixed slots: they change every frame and must not be
+         allowed to shift anything around them while they do. -->
+    <div id="scalar-strip" class="scalar-strip"></div>
+
+    <!-- One line for the thing that just happened and needs a sentence, such
+         as a rejected plan. Empty when there is nothing to say. -->
+    <p class="notice" id="run-message"></p>
+
+    <div class="run-grid">
+
+      <section class="card scene-card">
+        <div class="card-head">
+          <h2>Scene</h2>
+          <span class="card-note">mount frame · world equals mount · no Vicon</span>
+        </div>
+        <div class="scene-holder">
+          <canvas id="scene" class="scene"></canvas>
+        </div>
+        <div class="legend">
+          <span class="legend-item"><i class="swatch swatch-meas"></i>measured</span>
+          <span class="legend-item"><i class="swatch swatch-ask"></i>commanded</span>
+          <span class="legend-item"><i class="swatch swatch-plan"></i>plan</span>
+          <span class="legend-item" id="clearance-note">clearance is a property of the plan; nothing measures it live</span>
+        </div>
+      </section>
+
+      <aside class="readout-column">
+
+        <section class="card" id="errors-card">
+          <div class="card-head">
+            <h2>Error</h2>
+            <span class="card-note">current · worst since last frame</span>
+          </div>
+          <div id="error-rows"></div>
+          <p class="card-foot" id="world-frame-note">
+            End-effector error is in the world frame. World equals mount today,
+            so this is the base-frame number; it separates when Vicon is wired.
+          </p>
+        </section>
+
+        <section class="card" id="joints-card">
+          <div class="card-head">
+            <h2>Joints</h2>
+            <span class="card-note">angle · travel · velocity</span>
+          </div>
+          <div id="joint-bars"></div>
+          <p class="card-foot">
+            J1, J3, J5 and J7 turn continuously and have no software limit, so
+            they get no range bar.
+          </p>
+        </section>
+
+        <section class="card" id="other-arm-card">
+          <div class="card-head">
+            <h2>Other arm</h2>
+            <span class="card-note" id="other-arm-name">left</span>
+          </div>
+          <p class="worst-line" id="other-arm-worst">no telemetry from the other arm</p>
+        </section>
+
+        <!-- The controller says why it stopped, in sentences. Not showing this
+             is what once turned a SetServoingMode timeout into a screenshot. -->
+        <section class="card" id="run-log-card">
+          <div class="card-head">
+            <h2>Controller says</h2>
+            <span class="card-note">its own words, as they arrive</span>
+          </div>
+          <pre class="log-pane log-pane--short" id="run-log" aria-live="polite">Nothing from the controller yet.</pre>
+          <div class="button-row">
+            <button type="button" id="copy-diagnostics" class="action">COPY DIAGNOSTICS</button>
+            <span class="hint">Everything needed to explain a problem, as text to paste.</span>
+          </div>
+        </section>
+
+        <div id="staleness-host"></div>
+
+      </aside>
+    </div>
+
+    <div class="empty" id="run-empty" hidden>
+      <p>No session is running.</p>
+      <p>Start one from <button type="button" class="link-button" data-goto="session">SESSION</button>,
+         or replay a recorded run from <button type="button" class="link-button" data-goto="runs">RUNS</button>.</p>
+    </div>
+  </section>
+
+  <!-- ============================ CONFIG ============================= -->
+  <section class="view" id="view-config" role="tabpanel" aria-labelledby="tab-config" hidden>
+
+    <!-- The rebuild loop is the reason this panel exists: a compiled constant
+         was changed, the binary was stale, and the session refused at the
+         gate. So freshness is the first thing on the pane, not a footnote. -->
+    <section class="card freshness-card" id="freshness-card">
+      <div class="card-head">
+        <h2>Built binary</h2>
+        <span class="card-note">these values are compiled in; editing them changes the source, not the running arm</span>
+      </div>
+      <div class="freshness-row">
+        <span class="freshness-state" id="freshness-state">checking</span>
+        <span class="freshness-detail" id="freshness-detail"></span>
+        <button type="button" id="build-controller" class="action">BUILD CONTROLLER</button>
+        <button type="button" id="build-bridge" class="action">BUILD BRIDGE</button>
+      </div>
+      <pre class="log-pane" id="build-log" aria-live="polite">No build has run in this panel session.</pre>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Knobs</h2>
+        <span class="card-note">editable · written to Config.h</span>
+      </div>
+      <div id="knob-table" class="knob-table"></div>
+      <p class="card-foot" id="config-error"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Thresholds</h2>
+        <span class="card-note">read only · named by what they do</span>
+      </div>
+      <div id="threshold-table" class="kv-table"></div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Joint limits</h2>
+        <span class="card-note">read only · firmware and software boundaries</span>
+      </div>
+      <div id="joint-limit-table" class="kv-table"></div>
+    </section>
+  </section>
+
+  <!-- ============================ TARGETS ============================ -->
+  <section class="view" id="view-targets" role="tabpanel" aria-labelledby="tab-targets" hidden>
+    <section class="card">
+      <div class="card-head">
+        <h2>Goal</h2>
+        <span class="card-note">planner_bridge/config/goal.yaml · comments are part of the file and are kept</span>
+      </div>
+      <textarea id="goal-text" class="code-area" spellcheck="false" rows="20"></textarea>
+      <div class="button-row">
+        <button type="button" id="goal-save" class="action">SAVE GOAL</button>
+        <button type="button" id="plan-solve" class="action">SOLVE AND PREVIEW</button>
+        <span class="hint">Solving reads the goal and produces a plan. It never sends anything to an arm.</span>
+      </div>
+      <p class="card-foot" id="goal-status"></p>
+
+      <!-- A plan starts from where the arm actually is. With no controller
+           running that has to come from a recorded run, and the newest run is
+           not always usable: a session that failed before its loop started
+           leaves a newer, emptier file than the good run before it. -->
+      <div class="start-state">
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">plan from</span>
+            <select id="start-state-select"></select>
+          </label>
+          <span class="hint" id="start-state-note"></span>
+        </div>
+        <div class="field-row" id="start-deg-row" hidden>
+          <span class="field-label">joint angles, degrees</span>
+          <input type="text" id="start-deg-input" class="num start-deg-input"
+                 spellcheck="false" autocomplete="off"
+                 placeholder="285.0 251.0 358.0 18.7 256.5 345.6 155.3">
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Plan</h2>
+        <span class="card-note" id="plan-arm-note"></span>
+      </div>
+      <div id="plan-summary" class="kv-table"></div>
+      <div class="empty inline-empty" id="plan-empty">
+        <p>No plan solved yet.</p>
+        <p>Press <strong>SOLVE AND PREVIEW</strong> to solve the goal above and draw it in the scene.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Solver output</h2>
+        <span class="card-note">verbatim · carries plan-initialisation quality and goal-orientation warnings</span>
+      </div>
+      <pre class="log-pane" id="plan-stderr">Nothing solved in this panel session.</pre>
+    </section>
+  </section>
+
+  <!-- ============================= RUNS ============================== -->
+  <section class="view" id="view-runs" role="tabpanel" aria-labelledby="tab-runs" hidden>
+    <div class="runs-grid">
+      <section class="card">
+        <div class="card-head">
+          <h2>Recorded runs</h2>
+          <span class="card-note" id="runs-count"></span>
+        </div>
+        <div id="runs-list" class="runs-list"></div>
+        <div class="empty inline-empty" id="runs-empty" hidden>
+          <p>No runs recorded yet.</p>
+          <p>A run writes its CSV under <span class="num">runs/</span> the moment a session starts.</p>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Summary</h2>
+          <span class="card-note" id="run-name"></span>
+        </div>
+        <div id="run-summary" class="kv-table"></div>
+        <h3 class="sub-head">Worst seen in the run</h3>
+        <div id="run-worst" class="kv-table"></div>
+        <h3 class="sub-head">How it ended</h3>
+        <div id="run-stop" class="kv-table"></div>
+        <h3 class="sub-head">Trajectory edges</h3>
+        <div id="run-edges" class="kv-table"></div>
+        <h3 class="sub-head">Preamble — the settings this run was compiled with</h3>
+        <pre class="log-pane" id="run-preamble"></pre>
+        <p class="card-foot" id="run-hint">Choose a run to read its preamble and summary.</p>
+      </section>
+    </div>
+  </section>
+
+  <!-- ============================ SESSION ============================ -->
+  <section class="view" id="view-session" role="tabpanel" aria-labelledby="tab-session" hidden>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>State</h2>
+        <span class="card-note">what this panel knows about the running session</span>
+      </div>
+      <div id="session-state" class="kv-table"></div>
+      <p class="card-foot" id="session-attach"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Start</h2>
+        <span class="card-note">only from the workstation</span>
+      </div>
+      <div id="start-block">
+        <p class="prose" id="start-prose">
+          Starting commands the arm. Type <span class="num">GO</span> to confirm you are
+          at the workstation, the workspace is clear, and the physical e-stop is in reach.
+        </p>
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">drive</span>
+            <select id="drive-select">
+              <option value="right">the right arm</option>
+              <option value="left">the left arm</option>
+              <option value="both">both arms</option>
+            </select>
+          </label>
+          <span class="hint" id="drive-note"></span>
+        </div>
+        <div class="button-row">
+          <label class="field inline">
+            <span class="field-label">confirm</span>
+            <input type="text" id="go-input" class="num go-input" size="4" autocomplete="off" spellcheck="false" placeholder="GO">
+          </label>
+          <button type="button" id="start-button" class="action action-strong">START SESSION</button>
+        </div>
+      </div>
+      <p class="card-foot" id="start-status"></p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Stop from a terminal</h2>
+        <span class="card-note">always available, panel or no panel</span>
+      </div>
+      <p class="prose">Paste this into any terminal on the workstation to stop the session the same way this panel does.</p>
+      <div class="copy-row">
+        <code class="num copy-text" id="kill-command">no session is running</code>
+        <button type="button" id="copy-kill" class="action">COPY</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Controller log</h2>
+        <span class="card-note" id="session-log-source">from the current or most recent session</span>
+      </div>
+      <pre class="log-pane" id="session-log" aria-live="polite">Nothing from the controller yet.</pre>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Diagnostics</h2>
+        <span class="card-note">one block of text that explains what state everything is in</span>
+      </div>
+      <p class="prose">
+        Build freshness, the session, which run log a solve would plan from, and the
+        tail of the controller log. Copy it and paste it when asking why something did
+        not work. The same report prints in a terminal with
+        <span class="num">control_panel.py --check</span>, for when the panel itself will not start.
+      </p>
+      <div class="button-row">
+        <button type="button" id="copy-diagnostics-session" class="action">COPY DIAGNOSTICS</button>
+        <button type="button" id="show-diagnostics" class="action">SHOW</button>
+        <span class="hint" id="diagnostics-status"></span>
+      </div>
+      <textarea id="diagnostics-text" class="code-area" rows="16" spellcheck="false" readonly hidden></textarea>
+    </section>
+  </section>
+
+</main>
+
+<footer class="estop-line">
+  Physical E-STOP is not monitored. It is your primary stop.
+</footer>
+
+<script type="module" src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>readouts.js — eye check</title>
+<style>
+  /* The palette and its token names are copied from panel.css, so what this
+     page shows is what the real panel shows. --track is the one token
+     panel.css does not publish; readouts.js falls back to --rule without it. */
+  :root {
+    --ground:     #DCDFD8;
+    --panel:      #E8EAE4;
+    --track:      #C6CAC2;
+    --ink:        #14171A;
+    --ink-dim:    #5A625E;
+    --rule:       #A8AEA4;
+    --ask:        #2E6E8E;
+    --warn:       #C46A00;
+    --stop:       #B3161C;
+    --stop-wash:  #F3E1E1;
+    --label-font: ui-sans-serif, "Roboto Condensed", "Liberation Sans Narrow",
+                  system-ui, sans-serif;
+    --num-font:   ui-monospace, "DejaVu Sans Mono", "Liberation Mono", Menlo,
+                  monospace;
+  }
+  body {
+    margin: 0;
+    padding: 1.5rem 2rem 6rem;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--label-font);
+    font-size: 15px;
+  }
+  h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 0.2rem; }
+  h2 {
+    font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--ink-dim); font-weight: 600;
+    margin: 2rem 0 0.5rem; padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  p.lede { color: var(--ink-dim); font-size: 0.8rem; max-width: 62ch; margin: 0 0 1.5rem; }
+  section { background: var(--panel); border: 1px solid var(--rule); padding: 0.8rem 1rem; }
+  .bar { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0; }
+  button {
+    font-family: var(--label-font); font-size: 0.72rem;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    background: var(--panel); color: var(--ink);
+    border: 1px solid var(--rule); padding: 0.3rem 0.7rem; cursor: pointer;
+  }
+  button:hover { border-color: var(--ink); }
+  ul.check { color: var(--ink-dim); font-size: 0.78rem; max-width: 78ch; line-height: 1.5; }
+  code { font-family: var(--num-font); font-size: 0.9em; }
+  #loaderr { color: var(--stop); font-size: 0.85rem; max-width: 70ch; line-height: 1.5; }
+  .live-off { opacity: 0.35; filter: grayscale(1); }
+</style>
+</head>
+<body>
+
+<h1>readouts.js — eye check</h1>
+<p class="lede">
+  No server, no robot. Every component below is driven by synthetic values,
+  including nulls and NaNs, warning and stop conditions, and a stale link.
+  Nothing on a healthy screen should be red, amber or green — press the
+  buttons to make colour appear, and it should be the only thing that
+  changes.
+</p>
+
+<p id="loaderr" hidden>
+  This page loads <code>readouts.js</code> as an ES module, which browsers
+  refuse to do over <code>file://</code>. Serve the directory instead:
+  <code>python3 -m http.server -d Christian_control/tools/panel/static 8001</code>
+  and open <code>http://localhost:8001/readouts.test.html</code>.
+</p>
+
+<div id="page" hidden>
+
+  <h2>1 · createSlot — the primitive</h2>
+  <section>
+    <div class="bar">
+      <button data-slots="normal">normal</button>
+      <button data-slots="null">null</button>
+      <button data-slots="nan">NaN and 'nan'</button>
+      <button data-slots="negative">negative</button>
+      <button data-slots="wide">wider than reserved</button>
+      <button data-slots="sweep">sweep (watch for movement)</button>
+    </div>
+    <div id="slots" style="display:flex; gap:2rem; flex-wrap:wrap;"></div>
+    <ul class="check">
+      <li>null and NaN show dimmed dashes, never <code>0.000</code>.</li>
+      <li>Under <em>sweep</em>, the labels to the right of each slot must not
+        move at all, however the digits change.</li>
+      <li><em>wider than reserved</em> is the counter-example and is meant to
+        push its label sideways: it is what a slot sized for the value you
+        expected, rather than the widest one possible, does on the day it
+        matters.</li>
+    </ul>
+  </section>
+
+  <h2>2 · createErrorRow — bands named by consequence</h2>
+  <section>
+    <div class="bar">
+      <button data-rows="healthy">healthy</button>
+      <button data-rows="arrived">arrived</button>
+      <button data-rows="warn">replan advised</button>
+      <button data-rows="stop">stop conditions</button>
+      <button data-rows="over">past end of scale</button>
+      <button data-rows="null">no data</button>
+    </div>
+    <div id="rows"></div>
+    <ul class="check">
+      <li>The orientation row shows an <em>arrival</em> mark and the words
+        <em>no stop threshold</em>, and no invented stop mark.</li>
+      <li>Crossing <em>arrival</em> colours nothing: leaving the tolerance is
+        what normal motion looks like.</li>
+      <li>The worst-so-far marker is a ghosted tick and its own dimmed number,
+        and it never replaces the live value.</li>
+      <li>Band marks stay in exactly the same place in every scenario.</li>
+    </ul>
+  </section>
+
+  <h2>3 · createJointBar — true travel, and no invented limits</h2>
+  <section>
+    <div class="bar">
+      <button data-joints="home">home</button>
+      <button data-joints="moving">moving</button>
+      <button data-joints="near">J2 near its software limit</button>
+      <button data-joints="fault">J6 faulted, J4 past the limit</button>
+      <button data-joints="null">no data</button>
+      <button data-joints="raw">raw 0–360 feedback</button>
+    </div>
+    <!-- Joint rows keep fixed column widths, so a narrow window scrolls this
+         container rather than reflowing the numbers. -->
+    <div id="joints" style="overflow-x: auto;"></div>
+    <ul class="check">
+      <li>J1, J3, J5, J7 have <em>no</em> range bar, <em>no</em> distance to a
+        limit, and say <em>continuous — no limit</em>.</li>
+      <li>J2, J4, J6 bars are drawn to their real ranges, so the bars are
+        visibly different widths of travel, not a shared 0–100.</li>
+      <li>Under <em>raw 0–360 feedback</em> the bounded joints still land in
+        sensible places: 250.997 is −109.0 on J2's bar.</li>
+      <li>The pale blue tick is the commanded angle. It is the same blue the
+        scene uses for what was asked for.</li>
+      <li>Hovering a bar or tick names the threshold it came from.</li>
+    </ul>
+  </section>
+
+  <h2>4 · createBanner — state as text, marked derived</h2>
+  <section>
+    <div class="bar">
+      <button data-banner="IDLE">IDLE</button>
+      <button data-banner="PLANNING">PLANNING</button>
+      <button data-banner="READY">READY</button>
+      <button data-banner="MOVING">MOVING</button>
+      <button data-banner="HOLDING TARGET">HOLDING TARGET</button>
+      <button data-banner="STOPPING">STOPPING</button>
+      <button data-banner="FAULT">FAULT</button>
+      <button data-banner="empty">no session</button>
+    </div>
+    <div id="banner"></div>
+    <ul class="check">
+      <li>The state word is readable from across the room without colour.</li>
+      <li><em>derived</em> sits beside the state; <em>reported</em> sits beside
+        the controller, which came from the CSV preamble.</li>
+      <li>STOPPING says there is no ramp. FAULT points at controller.log.</li>
+      <li>With no session, progress and remaining are dashes, not zeros.</li>
+    </ul>
+  </section>
+
+  <h2>5 · createStaleness — the hard break at 2 s</h2>
+  <section>
+    <div class="bar">
+      <button data-stale="live">live (frames arriving)</button>
+      <button data-stale="freeze">stop the frames</button>
+      <button data-stale="lostctl">file stopped growing</button>
+      <button data-stale="lostpanel">SSE dropped</button>
+      <button data-stale="never">no frames yet</button>
+    </div>
+    <div id="stale"></div>
+    <div id="stalezone" style="margin-top:1rem;">
+      <div id="stalezone-inner"></div>
+    </div>
+    <ul class="check">
+      <li>The age is always on screen and always counting.</li>
+      <li>At 2.00 s the break is unmistakable, and the region above greys out
+        because <code>isStale()</code> said so.</li>
+      <li>“The panel lost the controller” and “I lost the panel” both reach the
+        break and say different things.</li>
+      <li>A stop button, were one here, would be untouched by any of this.</li>
+    </ul>
+  </section>
+
+  <h2>6 · the spellings panel.js uses</h2>
+  <section>
+    <p class="lede" style="margin-bottom:0.8rem;">
+      panel.js was written from the same design at the same time and names a
+      few options differently — <code>digits</code>, <code>value</code> in a
+      band, <code>continuous</code>, <code>breakAfterS</code> — and calls
+      <code>set()</code> where this module says <code>update()</code>. Below,
+      every component is built and driven that way instead. It must look the
+      same as the sections above; if it does not, the two files have drifted.
+    </p>
+    <div id="compat"></div>
+    <ul class="check">
+      <li>Numbers, bands and bars are present, not blank.</li>
+      <li>The joint row built from a flat <code>continuous: true</code> object
+        draws no bar, exactly as section 3 does.</li>
+    </ul>
+  </section>
+
+</div>
+
+<script type="module">
+import {
+  createSlot, createErrorRow, createJointBar, createBanner, createStaleness,
+} from "./readouts.js";
+
+document.getElementById("page").hidden = false;
+
+// ---------------------------------------------------------------- slots
+const slotHost = document.getElementById("slots");
+const slots = [
+  { name: "position",   slot: createSlot({ chars: 7, decimals: 4, unit: "m" }) },
+  { name: "angle",      slot: createSlot({ chars: 8, decimals: 2, unit: "deg" }) },
+  { name: "sigma_min",  slot: createSlot({ chars: 6, decimals: 4, unit: "" }) },
+];
+for (const s of slots) {
+  const wrap = document.createElement("div");
+  wrap.style.display = "flex";
+  wrap.style.alignItems = "baseline";
+  wrap.style.gap = "0.5rem";
+  const cap = document.createElement("span");
+  cap.className = "ro-cap";
+  cap.textContent = s.name;
+  wrap.append(cap, s.slot.el);
+  const after = document.createElement("span");
+  after.className = "ro-cap";
+  after.textContent = "| this must not move";
+  wrap.append(after);
+  slotHost.append(wrap);
+}
+let sweep = null;
+function slotScenario(which) {
+  if (sweep) { clearInterval(sweep); sweep = null; }
+  const values = {
+    normal:   [0.4213, 87.65, 0.0412],
+    null:     [null, null, null],
+    nan:      [NaN, "nan", Number.NaN],
+    negative: [-0.4213, -128.90, -0.0412],
+    wide:     [-12345.6789, -359.99, -12.3456],
+  };
+  if (which === "sweep") {
+    sweep = setInterval(() => {
+      const t = Date.now() / 1000;
+      slots[0].slot.set(Math.sin(t) * 9.9);
+      slots[1].slot.set(Math.cos(t) * 199.9);
+      slots[2].slot.set(Math.abs(Math.sin(t * 1.7)) * 9.9);
+    }, 60);
+    return;
+  }
+  const v = values[which];
+  slots.forEach((s, i) => s.slot.set(v[i]));
+}
+
+// ---------------------------------------------------------------- error rows
+// Thresholds are the ones the server reads out of Config.h; they are written
+// here by hand only because this page has no server.
+const rowHost = document.getElementById("rows");
+const rows = {
+  position: createErrorRow({
+    label: "position error (world frame — world = mount, no Vicon)",
+    unit: "m", decimals: 4,
+    bands: [{ at: 0.001, name: "arrival" }, { at: 0.05, name: "replan advised" }],
+  }),
+  orientation: createErrorRow({
+    label: "orientation error",
+    unit: "rad", decimals: 4,
+    bands: [{ at: 0.001, name: "arrival" }],
+    full: 0.2,
+  }),
+  following: createErrorRow({
+    label: "following error (cmd − meas, worst joint)",
+    unit: "deg", decimals: 2,
+    bands: [{ at: 3.0, name: "stop" }],
+  }),
+  jointRef: createErrorRow({
+    label: "joint reference error",
+    unit: "deg", decimals: 2,
+    bands: [{ at: 8.0, name: "stop" }],
+  }),
+  splice: createErrorRow({
+    label: "splice distance at activation",
+    unit: "deg", decimals: 2,
+    bands: [{ at: 2.0, name: "plan rejected" }],
+  }),
+  posture: createErrorRow({
+    label: "posture error",
+    unit: "deg", decimals: 2,
+    bands: [{ at: 15.0, name: "replan advised" }],
+  }),
+  margin: createErrorRow({
+    label: "joint limit margin (smaller is worse)",
+    unit: "deg", decimals: 2,
+    bands: [{ at: 5.0, name: "replan advised" }],
+    worseWhen: "below", full: 60,
+  }),
+  sigma: createErrorRow({
+    label: "sigma_min (smaller is worse)",
+    unit: "", decimals: 4,
+    bands: [{ at: 0.02, name: "replan advised" }],
+    worseWhen: "below", full: 0.2,
+  }),
+};
+for (const r of Object.values(rows)) rowHost.append(r.el);
+
+const ROW_SCENARIOS = {
+  healthy: {
+    position: [0.0182, 0.0410], orientation: [0.0121, 0.0180],
+    following: [0.42, 1.10], jointRef: [1.20, 2.60], splice: [0.31, 0.31],
+    posture: [4.80, 9.20], margin: [17.90, 12.40], sigma: [0.0781, 0.0512],
+  },
+  arrived: {
+    position: [0.0004, 0.0410], orientation: [0.0007, 0.0180],
+    following: [0.06, 1.10], jointRef: [0.09, 2.60], splice: [0.31, 0.31],
+    posture: [1.10, 9.20], margin: [24.60, 12.40], sigma: [0.0910, 0.0512],
+  },
+  warn: {
+    position: [0.0631, 0.0631], orientation: [0.0402, 0.0402],
+    following: [1.90, 2.40], jointRef: [4.30, 5.10], splice: [1.42, 1.42],
+    posture: [18.70, 18.70], margin: [3.20, 3.20], sigma: [0.0141, 0.0141],
+  },
+  stop: {
+    position: [0.1120, 0.1120], orientation: [0.0904, 0.0904],
+    following: [3.42, 3.42], jointRef: [8.90, 8.90], splice: [4.10, 4.10],
+    posture: [26.40, 26.40], margin: [0.40, 0.40], sigma: [0.0038, 0.0038],
+  },
+  over: {
+    position: [0.9100, 0.9100], orientation: [1.9000, 1.9000],
+    following: [12.00, 12.00], jointRef: [40.00, 40.00], splice: [30.00, 30.00],
+    posture: [120.0, 120.0], margin: [0.00, 0.00], sigma: [0.0000, 0.0000],
+  },
+  null: {
+    position: [null, null], orientation: [NaN, null],
+    following: ["nan", "nan"], jointRef: [null, null], splice: [null, null],
+    posture: [null, null], margin: [null, null], sigma: [NaN, NaN],
+  },
+};
+function rowScenario(which) {
+  const s = ROW_SCENARIOS[which];
+  for (const [key, row] of Object.entries(rows)) row.update(s[key][0], s[key][1]);
+}
+
+// ---------------------------------------------------------------- joint bars
+// Only J2, J4 and J6 are bounded. The zeros in the Config.h arrays are the
+// continuous-joint sentinel, and are represented here as bounded: false
+// rather than as a limit of zero.
+const jointHost = document.getElementById("joints");
+const LIMITS = {
+  1: { bounded: false },
+  2: { bounded: true, lower_deg: -128.9, upper_deg: 128.9,
+       warn_deg: 130.0, error_deg: 140.0, software_limit_deg: 126.9,
+       follow_error_stop_deg: 3.0, replan_margin_deg: 5.0 },
+  3: { bounded: false },
+  4: { bounded: true, lower_deg: -147.8, upper_deg: 147.8,
+       warn_deg: 145.0, error_deg: 150.0, software_limit_deg: 145.0,
+       follow_error_stop_deg: 3.0, replan_margin_deg: 5.0 },
+  5: { bounded: false },
+  6: { bounded: true, lower_deg: -120.3, upper_deg: 120.3,
+       warn_deg: 118.0, error_deg: 123.0, software_limit_deg: 118.0,
+       follow_error_stop_deg: 3.0, replan_margin_deg: 5.0 },
+  7: { bounded: false },
+};
+const joints = {};
+for (let i = 1; i <= 7; i += 1) {
+  joints[i] = createJointBar({ index: i, limits: LIMITS[i] });
+  jointHost.append(joints[i].el);
+}
+
+function marginFor(index, angle) {
+  const lim = LIMITS[index];
+  if (!lim.bounded || angle === null) return null;
+  let w = angle % 360;
+  if (w > 180) w -= 360;
+  if (w <= -180) w += 360;
+  return lim.software_limit_deg - Math.abs(w);
+}
+function setJoints(angles, vels, follows, faults) {
+  for (let i = 1; i <= 7; i += 1) {
+    joints[i].update({
+      angle_deg: angles[i - 1],
+      velocity_deg_s: vels[i - 1],
+      follow_err_deg: follows[i - 1],
+      margin_deg: marginFor(i, angles[i - 1]),
+      fault: faults ? faults[i - 1] : 0,
+    });
+  }
+}
+const JOINT_SCENARIOS = {
+  home:   () => setJoints([0, 15, 180, -130, 0, 55, 90],
+                          [0, 0, 0, 0, 0, 0, 0],
+                          [0, 0, 0, 0, 0, 0, 0]),
+  moving: () => setJoints([12.4, -46.2, 174.9, 61.3, -8.7, 43.8, 92.1],
+                          [3.2, -8.7, 0.4, 12.9, -1.1, 5.5, 0.0],
+                          [0.12, -0.44, 0.03, 0.91, -0.07, 0.22, 0.00]),
+  near:   () => setJoints([12.4, 124.8, 174.9, 61.3, -8.7, 43.8, 92.1],
+                          [3.2, 22.4, 0.4, 12.9, -1.1, 5.5, 0.0],
+                          [0.12, 1.80, 0.03, 0.91, -0.07, 0.22, 0.00]),
+  fault:  () => setJoints([12.4, -46.2, 174.9, 147.1, -8.7, 119.6, 92.1],
+                          [0, 0, 0, 0, 0, 0, 0],
+                          [0.12, -0.44, 0.03, 3.60, -0.07, 4.20, 0.00],
+                          [0, 0, 0, 0, 0, 4, 0]),
+  null:   () => setJoints([null, NaN, "nan", null, null, null, null],
+                          [null, null, null, null, null, null, null],
+                          [null, null, null, null, null, null, null]),
+  // The numbers the arm actually reports: row 300 of
+  // runs/2026-08-11/loop_log_right_20260811_153920.csv, in 0–360.
+  raw:    () => setJoints([284.951, 250.997, 358.029, 18.731, 256.537, 345.613, 155.298],
+                          [0, 0, 0.000303, 0, 0, 0, 0.000606],
+                          [0, 0, 0, 0, 0, 0, 0]),
+};
+
+// ---------------------------------------------------------------- banner
+const banner = createBanner();
+document.getElementById("banner").append(banner.el);
+const BANNER_BASE = {
+  arm: "right",
+  task: "reach fixed target A",
+  controller: "pose-primary trajectory",
+  trajectory_id: "panel-20260811-154613",
+};
+function bannerScenario(state) {
+  if (state === "empty") {
+    banner.update({ state: "IDLE", controller: null, progress: null, remaining_s: null });
+    return;
+  }
+  const running = state === "MOVING" || state === "HOLDING TARGET" || state === "STOPPING";
+  banner.update({
+    ...BANNER_BASE,
+    state,
+    progress: running ? 0.428 : state === "READY" ? 0 : null,
+    remaining_s: running ? 12.4 : null,
+  });
+}
+
+// ---------------------------------------------------------------- staleness
+const staleZone = document.getElementById("stalezone-inner");
+const staleDemo = createErrorRow({
+  label: "a live region the page greys when the link goes stale",
+  unit: "m", decimals: 4,
+  bands: [{ at: 0.001, name: "arrival" }, { at: 0.05, name: "replan advised" }],
+});
+staleZone.append(staleDemo.el);
+staleDemo.update(0.0182, 0.0410);
+
+const staleness = createStaleness({
+  onChange: (stale) => staleZone.classList.toggle("live-off", stale),
+});
+document.getElementById("stale").append(staleness.el);
+
+let frames = null;
+function staleScenario(which) {
+  if (frames) { clearInterval(frames); frames = null; }
+  if (which === "live") {
+    frames = setInterval(() => staleness.update(Date.now()), 50);
+  } else if (which === "freeze") {
+    staleness.update(Date.now());
+  } else if (which === "lostctl") {
+    staleness.update(Date.now() - 2400, "the panel lost the controller");
+  } else if (which === "lostpanel") {
+    staleness.update(Date.now() - 2400, "I lost the panel");
+  } else {
+    staleness.update(null);
+  }
+}
+
+// ------------------------------------------------- the spellings panel.js uses
+const compat = document.getElementById("compat");
+const compatSlot = createSlot({ key: "dt_s", label: "loop dt", unit: "ms", digits: 2 });
+const compatRow = createErrorRow({
+  key: "orientation", label: "Orientation", unit: "deg", digits: 2,
+  bands: [{ value: 0.0573, name: "arrival" }],
+  note: "nothing stops the arm on orientation error",
+});
+const compatBounded = createJointBar({
+  index: 2, label: "J2", continuous: false,
+  lower_deg: -128.9, upper_deg: 128.9, warn_deg: 130.0, error_deg: 140.0,
+  software_limit_deg: 126.9, velocity_limit_deg_s: 74.0,
+});
+const compatContinuous = createJointBar({
+  index: 1, label: "J1", continuous: true,
+  lower_deg: null, upper_deg: null, warn_deg: null, error_deg: null,
+  software_limit_deg: null, velocity_limit_deg_s: 74.0,
+});
+const compatBanner = createBanner({ derived: true });
+const compatStale = createStaleness({ breakAfterS: 2 });
+
+const compatSlotWrap = document.createElement("div");
+compatSlotWrap.style.margin = "0.3rem 0 0.6rem";
+compatSlotWrap.append(compatSlot.el);
+compat.append(compatSlotWrap, compatRow.el);
+const compatJoints = document.createElement("div");
+compatJoints.style.overflowX = "auto";
+compatJoints.append(compatBounded.el, compatContinuous.el);
+compat.append(compatJoints, compatBanner.el, compatStale.el);
+compatStale.el.style.marginTop = "0.8rem";
+
+compatSlot.set(2.04);
+compatRow.set({ value: 2.31, worst: 3.02 });
+compatBounded.set({
+  angle_deg: 124.8, commanded_deg: 126.6, velocity_deg_s: 22.4,
+  following_deg: 1.8, fault: false,
+});
+compatContinuous.set({
+  angle_deg: 12.4, commanded_deg: 12.52, velocity_deg_s: 3.2,
+  following_deg: 0.12, fault: false,
+});
+compatBanner.set({
+  state: "MOVING", arm: "right", task: "joint_trajectory",
+  detail: "plan 3 of 5", progress: 0.428,
+});
+compatStale.set({ age_s: 0.06, stale: false, connected: true, growing: true, reason: "" });
+
+// ---------------------------------------------------------------- wiring
+const dispatch = {
+  slots: slotScenario,
+  rows: rowScenario,
+  joints: (which) => JOINT_SCENARIOS[which](),
+  banner: bannerScenario,
+  stale: staleScenario,
+};
+document.querySelectorAll("button").forEach((button) => {
+  for (const [group, fn] of Object.entries(dispatch)) {
+    if (button.dataset[group] !== undefined) {
+      button.addEventListener("click", () => fn(button.dataset[group]));
+    }
+  }
+});
+
+slotScenario("normal");
+rowScenario("healthy");
+JOINT_SCENARIOS.moving();
+bannerScenario("MOVING");
+staleScenario("live");
+</script>
+
+<script>
+// If the module above never ran, the page stayed hidden — say why.
+window.addEventListener("load", () => {
+  if (document.getElementById("page").hidden) {
+    document.getElementById("loaderr").hidden = false;
+  }
+});
+</script>
+
+</body>
+</html>
