@@ -1,10 +1,16 @@
 """Tests for config_file.
 
-Two rules shape these tests. The real Config.h is read but never written —
-every write test works on a copy in a temporary directory, so a failing test
-can never leave the controller's compiled settings altered. And the guard
-overrides are checked from both sides: absent from the whitelist, and refused
-by name if a future edit ever put one there.
+One rule shapes every write test here: the real Config.h is read but never
+written. Every write test works on a copy in a temporary directory, so a
+failing test can never leave the controller's compiled settings altered.
+
+Guard overrides are on the whitelist and writable — Christian's explicit
+choice, 2026-08-12, reversing the prior exclusion (see the module docstring
+and docs/intent/story.md's "Superseded decisions"). What these tests now
+guard is that the reversal is total and visible: each guard override is
+really on KNOBS, really writable, and really flagged `dangerous` for the
+UI — not silently still refused, and not silently indistinguishable from an
+ordinary gain.
 """
 
 import shutil
@@ -18,7 +24,7 @@ from Christian_control.tools.panel import config_file, paths
 class KnobWhitelist(unittest.TestCase):
     def test_every_knob_is_found_in_the_real_config(self):
         knobs = config_file.read_knobs()
-        self.assertEqual(len(knobs), 15)
+        self.assertEqual(len(knobs), 19)
         missing = [name for name, knob in knobs.items() if knob["value"] is None]
         self.assertEqual(missing, [], "knob(s) no longer match Config.h")
 
@@ -27,13 +33,21 @@ class KnobWhitelist(unittest.TestCase):
         self.assertEqual(knobs["kKpCartesian"]["value"], "10.0")
         self.assertEqual(knobs["kOrientationEnabled"]["value"], "true")
 
-    def test_guard_overrides_are_not_on_the_whitelist(self):
+    def test_guard_overrides_are_on_the_whitelist_by_explicit_choice(self):
+        knobs = config_file.read_knobs()
         for name in config_file.GUARD_OVERRIDES:
-            self.assertNotIn(name, config_file.KNOBS)
+            self.assertIn(name, config_file.KNOBS, name)
+            self.assertIn(name, knobs, name)
+
+    def test_guard_overrides_are_flagged_dangerous_and_nothing_else_is(self):
+        knobs = config_file.read_knobs()
+        for name, entry in knobs.items():
+            expected = name in config_file.GUARD_OVERRIDES
+            self.assertEqual(entry["dangerous"], expected, name)
 
     def test_guard_overrides_exist_in_config_h_under_those_names(self):
-        # If Config.h renamed one, the refusal above would be guarding a name
-        # that no longer means anything, so pin the names to the real file.
+        # If Config.h renamed one, the whitelist above would be exposing a
+        # name that no longer means anything, so pin the names to the file.
         text = paths.CONFIG_H.read_text()
         for name in config_file.GUARD_OVERRIDES:
             self.assertIsNotNone(config_file.parse_scalar(text, name), name)
@@ -99,15 +113,114 @@ class WriteAgainstACopy(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(rendered, "1.0")
 
-    def test_guard_overrides_are_refused_and_the_file_is_untouched(self):
+    def test_guard_overrides_round_trip_like_any_other_bool_knob(self):
         for name in config_file.GUARD_OVERRIDES:
-            ok, message = config_file.write_knob(name, "true", self.config)
-            self.assertFalse(ok, name)
-            self.assertIn("guard override", message)
-        self.assert_unchanged()
+            ok, rendered = config_file.write_knob(name, "true", self.config)
+            self.assertTrue(ok, name)
+            self.assertEqual(rendered, "true")
+            self.assertEqual(
+                config_file.read_knobs(self.config)[name]["value"], "true", name)
 
     def test_unknown_name_is_refused(self):
         ok, message = config_file.write_knob("kNotAKnob", "1.0", self.config)
+        self.assertFalse(ok)
+        self.assertIn("whitelist", message)
+        self.assert_unchanged()
+
+
+class VectorKnobWhitelist(unittest.TestCase):
+    def test_the_alias_is_never_whitelisted(self):
+        # kQdotLimitDegS = kModelVelocityLimitsDegS in Config.h; writing the
+        # alias's name would change nothing the controller reads, so only
+        # the real constant may ever be on this whitelist.
+        self.assertNotIn("kQdotLimitDegS", config_file.VECTOR_KNOBS)
+        self.assertIn("kModelVelocityLimitsDegS", config_file.VECTOR_KNOBS)
+
+    def test_the_real_constant_reads_back(self):
+        knobs = config_file.read_vector_knobs()
+        self.assertEqual(
+            knobs["kModelVelocityLimitsDegS"]["value"], [45.0] * 7)
+
+
+class WriteVectorAgainstACopy(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="panel_config_"))
+        self.addCleanup(shutil.rmtree, self.tmp)
+        self.config = self.tmp / "Config.h"
+        shutil.copy2(paths.CONFIG_H, self.config)
+        self.original = self.config.read_text()
+        self.backup = self.config.with_suffix(".h.panel.bak")
+
+    def assert_unchanged(self):
+        self.assertEqual(self.config.read_text(), self.original)
+        self.assertFalse(self.backup.exists())
+
+    def test_round_trip(self):
+        new_values = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0]
+        ok, rendered = config_file.write_vector_knob(
+            "kModelVelocityLimitsDegS", new_values, self.config)
+        self.assertTrue(ok)
+        self.assertEqual(rendered, new_values)
+        self.assertEqual(
+            config_file.read_vector_knobs(self.config)
+            ["kModelVelocityLimitsDegS"]["value"],
+            new_values)
+        # A neighbouring scalar knob survived the rewrite untouched.
+        self.assertEqual(
+            config_file.read_knobs(self.config)["kKpCartesian"]["value"],
+            "10.0")
+
+    def test_backup_is_written_once_and_holds_the_original(self):
+        config_file.write_vector_knob(
+            "kModelVelocityLimitsDegS", [1, 2, 3, 4, 5, 6, 7], self.config)
+        self.assertTrue(self.backup.exists())
+        self.assertEqual(self.backup.read_text(), self.original)
+        config_file.write_vector_knob(
+            "kModelVelocityLimitsDegS", [8, 9, 10, 11, 12, 13, 14], self.config)
+        self.assertEqual(self.backup.read_text(), self.original)
+
+    def test_accepts_numeric_strings_the_same_as_numbers(self):
+        # The panel posts trimmed strings, not client-side-parsed numbers, so
+        # an invalid entry fails server-side rather than silently becoming 0.
+        ok, rendered = config_file.write_vector_knob(
+            "kModelVelocityLimitsDegS",
+            ["1", "2", "3", "4", "5", "6", "7"], self.config)
+        self.assertTrue(ok)
+        self.assertEqual(rendered, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0])
+
+    def test_wrong_length_is_refused(self):
+        ok, message = config_file.write_vector_knob(
+            "kModelVelocityLimitsDegS", [1, 2, 3], self.config)
+        self.assertFalse(ok)
+        self.assertIn("7", message)
+        self.assert_unchanged()
+
+    def test_a_non_numeric_entry_is_refused(self):
+        ok, message = config_file.write_vector_knob(
+            "kModelVelocityLimitsDegS",
+            [1, 2, 3, 4, 5, "fast", 7], self.config)
+        self.assertFalse(ok)
+        self.assertIn("number", message)
+        self.assert_unchanged()
+
+    def test_an_empty_entry_is_refused_not_silently_zero(self):
+        ok, message = config_file.write_vector_knob(
+            "kModelVelocityLimitsDegS",
+            [1, 2, 3, 4, 5, "", 7], self.config)
+        self.assertFalse(ok)
+        self.assertIn("number", message)
+        self.assert_unchanged()
+
+    def test_unknown_vector_name_is_refused(self):
+        ok, message = config_file.write_vector_knob(
+            "kNotAVector", [1, 2, 3, 4, 5, 6, 7], self.config)
+        self.assertFalse(ok)
+        self.assertIn("whitelist", message)
+        self.assert_unchanged()
+
+    def test_the_alias_cannot_be_written(self):
+        ok, message = config_file.write_vector_knob(
+            "kQdotLimitDegS", [1, 2, 3, 4, 5, 6, 7], self.config)
         self.assertFalse(ok)
         self.assertIn("whitelist", message)
         self.assert_unchanged()

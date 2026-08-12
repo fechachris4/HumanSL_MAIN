@@ -189,6 +189,20 @@
 
     <section class="card">
       <div class="card-head">
+        <h2>Velocity limits</h2>
+        <span class="card-note">editable · deg/s per joint, J1–J7 · written to Config.h</span>
+      </div>
+      <div id="vector-knob-table" class="knob-table"></div>
+      <p class="card-foot">
+        Writes kModelVelocityLimitsDegS, the constant the controller actually
+        reads — not the kQdotLimitDegS alias below. The Joint limits table
+        reflects the same file, so it updates immediately too, before any
+        rebuild.
+      </p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
         <h2>Thresholds</h2>
         <span class="card-note">read only · named by what they do</span>
       </div>

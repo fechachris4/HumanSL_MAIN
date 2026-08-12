@@ -965,6 +965,7 @@ async function refreshConfig() {
     return;
   }
   renderKnobs();
+  renderVectorKnobs();
   renderReadOnlyTable('threshold-table', state.config.thresholds, 'These are the numbers the controller enforces. Change one through its knob above, then rebuild.');
   renderReadOnlyTable('joint-limit-table', state.config.joints, 'Firmware and software boundaries. Only J2, J4 and J6 are bounded; the others turn continuously.');
   renderRun();
@@ -978,14 +979,15 @@ function renderKnobs() {
   for (const [name, entry] of Object.entries(knobs)) {
     const value = typeof entry === 'object' ? pick(entry, 'value') : entry;
     const doc = typeof entry === 'object' ? (pick(entry, 'doc', 'meaning') || '') : '';
+    const dangerous = typeof entry === 'object' && Boolean(entry.dangerous);
 
     const label = document.createElement('label');
-    label.className = 'knob-name';
+    label.className = dangerous ? 'knob-name knob-danger' : 'knob-name';
     label.textContent = name;
     label.htmlFor = `knob-${name}`;
 
     const input = document.createElement('input');
-    input.className = 'knob-input num';
+    input.className = dangerous ? 'knob-input num knob-danger' : 'knob-input num';
     input.id = `knob-${name}`;
     input.type = 'text';
     input.value = value === null || value === undefined ? '' : String(value);
@@ -1001,10 +1003,85 @@ function renderKnobs() {
     });
 
     const note = document.createElement('span');
-    note.className = 'knob-doc';
+    note.className = dangerous ? 'knob-doc knob-danger' : 'knob-doc';
     note.textContent = doc;
 
     host.append(label, input, note);
+  }
+}
+
+// One row per vector knob: 7 inputs, one per joint, committed together —
+// the constant behind them is a single JointVector in Config.h, so there is
+// no meaningful way to write one joint's limit without the other six.
+function renderVectorKnobs() {
+  const host = $('vector-knob-table');
+  host.textContent = '';
+  const knobs = state.config?.vector_knobs || {};
+
+  for (const [name, entry] of Object.entries(knobs)) {
+    const values = Array.isArray(entry.value) ? entry.value : [null, null, null, null, null, null, null];
+    const doc = entry.doc || '';
+
+    const label = document.createElement('span');
+    label.className = 'knob-name';
+    label.textContent = name;
+
+    const row = document.createElement('div');
+    row.className = 'vector-knob-row';
+    const inputs = [];
+    for (let joint = 0; joint < 7; joint++) {
+      const input = document.createElement('input');
+      input.className = 'knob-input num';
+      input.id = `knob-${name}-j${joint + 1}`;
+      input.type = 'text';
+      input.title = `J${joint + 1}`;
+      const value = values[joint];
+      input.value = value === null || value === undefined ? '' : String(value);
+      input.dataset.committed = input.value;
+      input.addEventListener('input', () => {
+        input.classList.toggle('is-dirty', input.value !== input.dataset.committed);
+        input.classList.remove('is-rejected');
+      });
+      input.addEventListener('change', () => commitVectorKnob(name, inputs));
+      input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') input.blur();
+      });
+      inputs.push(input);
+      row.append(input);
+    }
+
+    const note = document.createElement('span');
+    note.className = 'knob-doc';
+    note.textContent = doc;
+
+    host.append(label, row, note);
+  }
+}
+
+async function commitVectorKnob(name, inputs) {
+  // Sent as trimmed strings, not client-side Number()'d — Number('') is 0,
+  // which would silently commit an empty field as a real zero instead of
+  // letting write_vector_knob reject it the same way an empty scalar knob
+  // is already rejected.
+  const raw = inputs.map((input) => input.value.trim());
+  try {
+    const result = await postJSON('/api/config/set', { name, value: raw });
+    if (result.error) {
+      inputs.forEach((input) => input.classList.add('is-rejected'));
+      setNotice('config-error', `${name} was not written: ${result.error}. Config.h is unchanged.`, 'is-stop');
+      return;
+    }
+    const written = Array.isArray(result.value) ? result.value : raw;
+    inputs.forEach((input, joint) => {
+      input.value = String(written[joint] ?? input.value);
+      input.dataset.committed = input.value;
+      input.classList.remove('is-dirty', 'is-rejected');
+    });
+    setNotice('config-error', `${name} written to Config.h. The running binary still holds the old values until you build.`, 'is-warn');
+    refreshStatus();
+  } catch (err) {
+    inputs.forEach((input) => input.classList.add('is-rejected'));
+    setNotice('config-error', `${name} was not written: ${err.message}`, 'is-stop');
   }
 }
 

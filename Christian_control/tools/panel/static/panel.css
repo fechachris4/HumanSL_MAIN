@@ -399,6 +399,17 @@ main {
 .knob-input.is-dirty { border-color: var(--warn); }
 .knob-input.is-rejected { border-color: var(--stop); }
 
+/* Guard overrides: each one trades away an automatic stop, so it is styled
+   apart from an ordinary gain, using the one token reserved for stop/fault
+   severity rather than the general-purpose --warn used for is-dirty. */
+.knob-name.knob-danger { color: var(--stop); font-weight: 600; }
+.knob-input.knob-danger { border-color: var(--stop); }
+.knob-doc.knob-danger { color: var(--stop); }
+
+#vector-knob-table { grid-template-columns: 22ch minmax(0, 1fr) 1fr; }
+.vector-knob-row { display: flex; flex-wrap: wrap; gap: 4px; }
+.vector-knob-row .knob-input { width: 7ch; flex: 0 0 auto; }
+
 .kv-table { display: grid; grid-template-columns: 28ch 1fr; gap: 3px 12px; align-items: baseline; }
 .kv-key { font-size: 11px; color: var(--ink-dim); }
 .kv-value { font-size: 13px; }

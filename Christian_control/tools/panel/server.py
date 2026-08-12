@@ -179,6 +179,7 @@ class _Handler(BaseHTTPRequestHandler):
             elif route == "/api/config":
                 self._json({
                     "knobs": config_file.read_knobs(),
+                    "vector_knobs": config_file.read_vector_knobs(),
                     "thresholds": config_file.read_thresholds(),
                     "joints": config_file.read_joint_limits(),
                 })
@@ -234,8 +235,17 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if route == "/api/config/set":
                 req = self._body()
-                ok, message = config_file.write_knob(
-                    str(req.get("name", "")), str(req.get("value", "")))
+                name = str(req.get("name", ""))
+                if name in config_file.VECTOR_KNOBS:
+                    # A vector value arrives as a JSON array of 7 numbers, so
+                    # it must reach write_vector_knob unstringified — casting
+                    # it with str() the way the scalar path does would turn
+                    # the list into "[1, 2, ...]" and every write would fail.
+                    ok, message = config_file.write_vector_knob(
+                        name, req.get("value"))
+                else:
+                    ok, message = config_file.write_knob(
+                        name, str(req.get("value", "")))
                 self._json({"ok": True, "value": message} if ok
                            else {"error": message}, 200 if ok else 400)
             elif route == "/api/build":
