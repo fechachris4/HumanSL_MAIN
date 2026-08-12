@@ -11,6 +11,7 @@ validation (type + stated range) exists to fail earlier with a plain
 sentence, never to replace the bridge's.
 """
 
+import math
 import shutil
 from pathlib import Path
 
@@ -99,6 +100,8 @@ def _coerce(ktype: str, rule: str, value: object) -> tuple[bool, object]:
             floats = [float(v) for v in value]
         except (TypeError, ValueError):
             return False, "every element must be a number"
+        if not all(math.isfinite(v) for v in floats):
+            return False, "every element must be a finite number"
         if not all(check(v) for v in floats):
             return False, f"every element {why}"
         return True, floats
@@ -106,6 +109,11 @@ def _coerce(ktype: str, rule: str, value: object) -> tuple[bool, object]:
         number = int(str(value).strip()) if ktype == "int" else float(str(value).strip())
     except ValueError:
         return False, "not an integer" if ktype == "int" else "not a number"
+    # float("inf") and float("nan") parse happily, and inf passes every rule
+    # here ("inf > 0"), so the range check alone would let a value through
+    # that no solver can use.
+    if not math.isfinite(number):
+        return False, "must be a finite number"
     if not check(number):
         return False, why
     return True, number
@@ -181,6 +189,11 @@ def write_joint_limit(section: str, actuator: str, bound: str, value: object,
         number = float(str(value).strip())
     except ValueError:
         return False, "not a number"
+    # No downstream check catches this: nothing in the bridge validates
+    # joint_limits.yaml, and NaN quietly defeats the lower/upper comparison
+    # below, because every comparison with NaN is false.
+    if not math.isfinite(number):
+        return False, f"{section}/{actuator}/{bound}: not a finite number"
     target = path or paths.JOINT_LIMITS_YAML
     if not target.is_file():
         return False, f"{target} does not exist"

@@ -108,10 +108,26 @@ class WriteAgainstACopy(unittest.TestCase):
                           ("solver.max_iterations", "0"),
                           ("motion.nominal_speed_mps", "fast"),
                           ("goal.position_sigma_xyz", [0.01, 0.01]),
-                          ("goal.position_sigma_xyz", [0.01, -0.01, 0.01])]:
+                          ("goal.position_sigma_xyz", [0.01, -0.01, 0.01]),
+                          # float() takes these, and "inf > 0" passes every
+                          # range rule in the table, so the range check alone
+                          # would write a planner file no solve can use.
+                          ("motion.nominal_speed_mps", "inf"),
+                          ("motion.nominal_speed_mps", "nan"),
+                          ("motion.min_duration_s", "-inf"),
+                          ("path_following.validation_dt_s", "Infinity"),
+                          ("goal.position_sigma_xyz", [0.01, "inf", 0.01]),
+                          ("goal.rotation_sigma_rpy", ["nan", 0.1, 0.1])]:
             ok, why = planner_config.write_planner_knob(name, bad, self.yaml)
             self.assertFalse(ok, f"{name}={bad!r} should be refused")
             self.assertTrue(why, name)
+        self.assert_unchanged()
+
+    def test_a_non_finite_value_is_refused_by_name(self):
+        ok, why = planner_config.write_planner_knob(
+            "motion.nominal_speed_mps", "inf", self.yaml)
+        self.assertFalse(ok)
+        self.assertIn("finite", why)
         self.assert_unchanged()
 
 
@@ -179,4 +195,16 @@ class JointLimitsWrite(unittest.TestCase):
                      ("velocity_limits", "actuator_1", "lower_limit", "slow")]:
             ok, _ = planner_config.write_joint_limit(*args, self.yaml)
             self.assertFalse(ok, args)
+        self.assertEqual(self.yaml.read_text(), self.original)
+
+    def test_non_finite_bounds_are_refused(self):
+        # Nothing downstream validates joint_limits.yaml, so this is the only
+        # check there is. NaN is the dangerous one: every comparison with it
+        # is false, so it slips straight past the lower-below-upper test.
+        for value in ("nan", "inf", "-inf", "Infinity", "NaN"):
+            ok, why = planner_config.write_joint_limit(
+                "velocity_limits", "actuator_1", "upper_limit", value,
+                self.yaml)
+            self.assertFalse(ok, value)
+            self.assertIn("finite", why)
         self.assertEqual(self.yaml.read_text(), self.original)
