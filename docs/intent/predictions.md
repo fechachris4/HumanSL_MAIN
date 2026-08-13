@@ -141,7 +141,26 @@ Predicted: implement now (limits slice + circle pacing) — he is
 mid-hardware-session with the arm connected; a knob map or a sweep design
 would land after the lab time is gone.
 
-**Actual:** (pending)
+**Actual:**
+
+- Q1: "Knew it worked, just slow." **Miss.** The nans were my worry, not
+  his — he watched the arm do what he expected and his question was about
+  speed all along. Lesson: he reads the robot, not the console.
+- Q2: all three (tracking the wearer, characterise the platform, demo
+  credibility). **Partial.** Predicted tracking as the single why; he
+  holds all three at once, so no single-purpose framing should drive the
+  design.
+- Q3: whole pipeline, all goal types. **Miss.** Predicted lap-first for
+  the current circle; he wants fast as the default everywhere, not a
+  per-goal tweak.
+- Q4: neither plain "implement" nor plain "map" — a limits *derivation*:
+  every fault-capable limit (velocity, acceleration, jerk, anything that
+  faults the arm) stated from Kinova's documentation from first
+  principles, fixed as hard boundaries the controller cannot cross, with
+  operation ~5% below them; knob map on paper first, every number with
+  its source. **Miss on substance** (predicted implement-now): he wants
+  to *understand and own the limits* before any of them move. Consistent
+  with the MSc protocol — he must defend every number in the report.
 
 ### 2026-08-13 — scoping questions for "controller logs world pose"
 

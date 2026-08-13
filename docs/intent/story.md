@@ -106,6 +106,35 @@ commit.
   above; it does not replace it. (Prompts: raw-prompt-log 2026-08-13
   14:51:39, 15:10:25, 15:11:05; choice recorded in
   docs/intent/predictions.md for the same date.)
+- The end-effector must stay true in the world while the wearer moves —
+  Christian restated the project's master goal in his own words ("this is
+  for my SRL arm stability problem being able to keep the end effector
+  true in the world") and asked that design choices be understood against
+  it, not just recorded. The reading he was given and did not dispute: the
+  wearer is the dominant disturbance, not the operator — the arm exists to
+  hold a point in the room while the human does something else, and the
+  human doing something else is what shakes the base. Consequences that
+  follow: measurement age is the ceiling on achievable stabilisation; a
+  frame or sign error turns stabilisation into amplification on a worn
+  arm, so frames stay explicit and honestly named; corrections must fade
+  with estimate age and re-engage smoothly, never step; mount flex between
+  marker cluster and arm base is an invisible error floor that stage 0's
+  rigidity captures exist to measure. (Prompt: raw-prompt-log 2026-08-13
+  15:35:39; reaffirmed 15:43:20.)
+- World-frame wiring, first slice scoped 2026-08-13 (refines the staged
+  Vicon goal): the controller reads Vicon on its own thread behind a
+  stub-able provider, so the standalone build ("No GTSAM / GPMP2 / Vicon
+  required") stays true; log columns and reader code are written only
+  after the stage 0 lab recording, honouring the 2026-08-12
+  data-before-format decision; until stage 2 calibration exists the
+  columns carry raw segment poses named for what they are
+  (world_T_<segment>, plus an age column), never presented as mount
+  poses; and all five Nexus segments are logged, not just the mount —
+  recordings are thesis evidence, disk is cheap, lab time is the scarce
+  resource. At this stage the world pose is observed and recorded only; it
+  enters no control law. (Prompts: raw-prompt-log 2026-08-13 15:24:35,
+  15:43:20; the four choices and one prediction miss recorded in
+  docs/intent/predictions.md the same date.)
 
 ## Interpretations (hypotheses)
 
@@ -239,3 +268,13 @@ and why. Dismissals are binding — do not re-pitch.
   Worth remembering as a calibration data point: reluctance to spend
   Christian's time is not the same as reluctance to build him something
   (docs/intent/predictions.md, 2026-08-13).
+- 2026-08-13 (world-frame wiring scoping): four routes for Vicon into the
+  panel were shown — replay-only display, controller logs the world pose
+  it used, the panel opening its own DataStream client, explain-and-defer.
+  Adopted: controller logs world pose. Dismissed: the panel's own client,
+  because it would display a pose sampled separately from anything control
+  acted on, and the two disagree exactly when the base moves — the only
+  time it matters. Also shown: mount-segment-only logging (recommended as
+  the minimal surface) versus all five segments — all five adopted, on the
+  grounds that an unused control is clutter but an unrecorded segment is
+  lost thesis evidence.

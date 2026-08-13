@@ -876,3 +876,7 @@ yh but do you truly understand what this is for this is for my SRL arm stability
 ## 2026-08-13 15:35:54 BST
 
 commit this
+
+## 2026-08-13 15:43:20 BST
+
+okay update the story and memory with all of this but how does it shape how you designed and my intended goal because i want to wire in the world frame but i dont know if i am overloading you with info and tasks
