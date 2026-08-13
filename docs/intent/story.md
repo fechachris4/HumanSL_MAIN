@@ -77,14 +77,20 @@ commit.
   asking: commanded clip 50 deg/s against live hard limits of 80.0021
   (joints 1-4) and 70.004 deg/s (joints 5-7). This records the objective
   only; what to change and when is unsettled — see Open questions.
-  The why, confirmed: to demonstrate in the thesis that the hardware was
-  driven to its real capability. Peak speed is the objective itself, not a
-  means to tracking performance — so the target is the Kinova table limits
-  (79.64 deg/s joints 1-4, 69.91 deg/s joints 5-7), and success is
-  measured by what the arm was shown to reach, not by tracking error.
-  (Prompt: raw-prompt-log 2026-08-13 14:38:07, repeated 14:41:05 and
-  15:12:06/15:12:35; why confirmed via interactive question 2026-08-13
-  ~15:20.)
+  The why, as first confirmed (~15:20): to demonstrate in the thesis that
+  the hardware was driven to its real capability, with peak speed as the
+  objective itself. Broadened by Christian ~15:35 (interactive question,
+  after raw-log 15:32:43): the speed serves all three of tracking the
+  wearer, characterising the platform, and demo credibility — so the
+  earlier "not a means to tracking performance" reading was too narrow,
+  though the target remains the Kinova limits and speed everywhere, for
+  every goal type, not per-goal tweaks. (The Interpretations entry below
+  preserves the earlier refutation; the ~15:35 broadening supersedes its
+  scope — tracking is one of three whys, not zero and not the sole one.)
+  How this coexists with the world-frame stability goal: by phase — speed
+  governs free moves between poses, the hold governs stationary work near
+  the wearer, and both pass through the same velocity limits and safety
+  path, so neither goal relaxes the other's safety envelope.
 - The intent steward's designed mechanisms should actually exist, not
   remain an agreed design. Christian noticed the gap himself — "what
   happened to, yesterday we worked on ... how to improve our workflow ...
@@ -135,6 +141,20 @@ commit.
   enters no control law. (Prompts: raw-prompt-log 2026-08-13 15:24:35,
   15:43:20; the four choices and one prediction miss recorded in
   docs/intent/predictions.md the same date.)
+- Every limit that can fault the arm is stated from Kinova's documentation
+  from first principles — velocity, acceleration, jerk, anything
+  fault-capable — fixed as hard boundaries the controller cannot cross,
+  with normal operation about 5% below them; and the map of where every
+  current limit comes from is written on paper before anything is changed.
+  In his words: "I would like to state those limits clearly and put those
+  as like hard limit boundaries that the controller could not go. And then
+  I will say anything other than that, perhaps 5% below." Survey delivered
+  as Christian_control/docs/motion-limits-map.md; found three gaps no
+  document can close (firmware thresholds unread, torque tables
+  unextracted, no low-level acceleration figure) and one latent validator
+  bug (max-vs-max limit comparison) that goes live when limits split
+  80/70. (Prompt: raw-prompt-log 2026-08-13 15:32:43 and the interactive
+  answer ~15:35 recorded in docs/intent/predictions.md.)
 
 ## Interpretations (hypotheses)
 
@@ -148,6 +168,10 @@ commit.
   *request's* purpose, when this is MSc work and a thesis has goals the
   control system does not. Requests that serve the degree rather than the
   running system will keep being misread this way otherwise.
+  *Amended ~15:35 same day:* asked directly, Christian selected all three
+  whys — tracking the wearer, characterising the platform, and demo
+  credibility — so "refuted" was itself too strong: tracking is among the
+  reasons, it is just not the only one. The pattern note above stands.
 - **The frustration at 14:56:57 and 14:59:04 was about process that
   produced nothing, not about process as such.** In the same session a
   one-line question ("why are there such bounds") drew a fifteen-agent
@@ -180,6 +204,27 @@ system's guardrails are what they are is never lost, only superseded.
   comply." If a future session needs the reasoning behind this
   supersession and it is not recorded elsewhere, ask Christian directly
   rather than assume.
+- **Stage 0 before stage 1 code, 2026-08-12.** Prior decision
+  (interactive question, 2026-08-12 design session): run the lab
+  verification before writing stage 1, so real data informs the snapshot
+  format. Superseded the same evening by Christian's approval of the
+  combined stage 0+1 plan (raw-prompt-log 2026-08-12 16:20:43 "I've
+  reviewed it, and it's pretty good"; 17:12:41 "Go with option 1") — the
+  reconciliation being that stage 0's recordings need the recorder to
+  exist, so the recorder came first. Reading confirmed by Christian
+  2026-08-13 16:07. The residue is honest: the snapshot format predates
+  real data, and the guard is stage 1's acceptance test that a stage-0
+  recording replays offline — if the lab exposes a format problem, stage 1
+  is revised, never the recording bent to fit.
+- **World-frame slices on the old boundary, 2026-08-12 rollback.**
+  Slices 1–4 of the 2026-08-10 world-frame architecture were reverted
+  (d04b2035). The revert removed an implementation on the wrong boundary;
+  it did not abandon the world-frame goal, which re-entered eleven days of
+  work later as the staged Vicon integration (2026-08-12 spec) and was
+  restated as the master goal in Christian's own words on 2026-08-13.
+  Anyone reading git history should read that revert as "wrong boundary
+  corrected", never "goal dropped" — for the thesis it is the
+  found-and-fixed part of the story.
 - **Mechanical steward reminders, 2026-08-13.** Prior decision
   (2026-08-12, Exposure log below): a per-prompt steward reminder injected
   by hook was dismissed with "CLAUDE.md is enough". That dismissal named

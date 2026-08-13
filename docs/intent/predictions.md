@@ -162,6 +162,23 @@ would land after the lab time is gone.
   to *understand and own the limits* before any of them move. Consistent
   with the MSc protocol — he must defend every number in the report.
 
+### 2026-08-13 — far-target "fault" in the chicken-head controller
+
+**Q1 — is the failure he means the software joint-limit-warning stop, or a
+real firmware fault?** Predicted: the software stop. Five 2026-08-05
+reactive runs ended exit_reason=joint_limit_warning with clean fault
+banks, and the genuinely-faulting cause (j4/j6 0/0 firmware bands) was
+fixed 2026-08-03. Risk to the prediction: his memory may be anchored on
+the 08-03 sessions where the arm really did fault.
+
+**Q2 — which remedy will he choose?** Predicted: project the target to
+the nearest achievable pose (option 3), because it is the behaviour his
+own graceful-degradation section names, and his pattern today is
+capability over protection. Second guess: the far-away orientation
+relaxation (option 1) alongside it.
+
+**Actual:** (pending)
+
 ### 2026-08-13 — scoping questions for "controller logs world pose"
 
 **Predicted:** (1) Link decision: stub-able provider, not a hard SDK link —

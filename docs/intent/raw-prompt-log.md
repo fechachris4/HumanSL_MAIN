@@ -880,3 +880,27 @@ commit this
 ## 2026-08-13 15:43:20 BST
 
 okay update the story and memory with all of this but how does it shape how you designed and my intended goal because i want to wire in the world frame but i dont know if i am overloading you with info and tasks
+
+## 2026-08-13 15:46:49 BST
+
+okay lets prepare for the stage 0 lab session
+
+## 2026-08-13 15:58:41 BST
+
+so what is the goal and our objectives
+
+## 2026-08-13 16:03:11 BST
+
+identify misaligments aor confusion for a human
+
+## 2026-08-13 16:04:05 BST
+
+my problem is if i try run the controller alone with my safelty limits the controller faults
+
+## 2026-08-13 16:05:19 BST
+
+my problem is if i try run the controller alone with my safelty limits the arm faults i am reffering to the chicken head controller if i tell it to go a far distand it just faults
+
+## 2026-08-13 16:07:58 BST
+
+yes thats right, apply all the fixes
