@@ -400,6 +400,17 @@ void WriteCsvHeader(std::ostream& csv)
     csv << ",null_leak_mps";
     csv << ",traj_activated,traj_rejected,traj_complete,traj_start_error_deg"
         << ",joint_follow_stop,joint_follow_error_deg";
+    csv << ",vicon_seq,vicon_frame,vicon_latency_s,vicon_age_s";
+    for (const char* segment :
+         {"mount", "leftbase", "rightbase", "leftee", "rightee"})
+        csv << ",vicon_" << segment << "_x_m"
+            << ",vicon_" << segment << "_y_m"
+            << ",vicon_" << segment << "_z_m"
+            << ",vicon_" << segment << "_qx"
+            << ",vicon_" << segment << "_qy"
+            << ",vicon_" << segment << "_qz"
+            << ",vicon_" << segment << "_qw"
+            << ",vicon_" << segment << "_valid";
     csv << "\n";
 }
 
@@ -456,6 +467,15 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
         << s.joint_traj_start_error_deg << ","
         << (s.joint_following_error_stop ? 1 : 0) << ","
         << s.joint_following_error_deg;
+    csv << "," << s.vicon_sequence << "," << s.vicon_frame_number << ","
+        << s.vicon_latency_s << "," << s.vicon_age_s;
+    for (int seg = 0; seg < 5; ++seg) {
+        for (int i = 0; i < 3; ++i)
+            csv << "," << s.vicon_seg_pos_m[seg][i];
+        for (int i = 0; i < 4; ++i)
+            csv << "," << s.vicon_seg_quat_xyzw[seg][i];
+        csv << "," << (s.vicon_seg_valid[seg] ? 1 : 0);
+    }
     csv << "\n";
 }
 

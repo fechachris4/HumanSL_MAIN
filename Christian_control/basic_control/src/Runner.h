@@ -52,6 +52,8 @@
 #include "State.h"
 #include "Targets.h"
 
+class BasePoseSlot; // src/BasePose.h — only Runner.cpp needs the definition
+
 // MOVES THE ARM. Runs the sequence above until `stop`, a guard trip, or a
 // communication failure; restores single-level servoing on every exit path.
 LoopResult RunControlLoop(Kinova::Api::Base::BaseClient* base,
@@ -69,4 +71,11 @@ LoopResult RunControlLoop(Kinova::Api::Base::BaseClient* base,
                           // so the arrival notice can name it: an unlabelled
                           // Cartesian triple is unreadable once more than one
                           // frame exists. The loop does no kinematics with it.
-                          const char* base_frame);
+                          const char* base_frame,
+                          // World-pose observation (log_format 10). The loop
+                          // samples this wait-free slot once per cycle and
+                          // copies the result into the log row — OBSERVE AND
+                          // LOG ONLY, no control law reads it. nullptr (the
+                          // default, and the stub build's only case) logs
+                          // the documented absence values instead.
+                          BasePoseSlot* base_pose = nullptr);

@@ -219,7 +219,7 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 9; WriteCsvRow is the authority):
+// CSV column order (log_format = 10; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -229,8 +229,10 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
 //   ack_unchanged_j1..7, taskvel_j1..7, nullvel_j1..7,
 //   null_leak_mps, traj_activated, traj_rejected, traj_complete,
-//   traj_start_error_deg, joint_follow_stop,
-//   joint_follow_error_deg                                (141 columns)
+//   traj_start_error_deg, joint_follow_stop, joint_follow_error_deg,
+//   vicon_seq, vicon_frame, vicon_latency_s, vicon_age_s,
+//   vicon_<seg>_{x_m,y_m,z_m,qx,qy,qz,qw,valid} for each of
+//   mount, leftbase, rightbase, leftee, rightee          (185 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -255,6 +257,13 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // joint_follow_error_deg is the worst joint's WRAPPED reference error every
 // tracking cycle, and joint_follow_stop is 1 on a row whose error passed
 // config::kTrajFollowingErrorStopDeg — the row that stopped the loop.
+// Format 10 (2026-08-13) appends the world-pose observation: the Vicon
+// sample contract (vicon_seq/vicon_frame/vicon_latency_s/vicon_age_s) and
+// all five segments' raw poses in the VICON-WORLD frame, metres,
+// quaternion x,y,z,w — named vicon_<seg>_* because they are segment poses,
+// NOT calibrated mount/base poses (mountseg_T_mount does not exist yet).
+// Observed and logged only; no control law reads them at this format. See
+// the field-group comment inside LoopLogSample for the ZOH/absence rules.
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -363,6 +372,61 @@ struct LoopLogSample {
     bool joint_following_error_stop = false;
     double joint_following_error_deg = // NaN: this cycle ran no joint tracking
         std::numeric_limits<double>::quiet_NaN();
+
+    // World-pose observation (log_format 10). Copied verbatim from the
+    // BasePoseSample the loop read this cycle (src/BasePose.h — Vicon-world
+    // frame, metres, quaternions x,y,z,w); OBSERVED AND LOGGED ONLY, no
+    // control law reads any of it in this format. vicon_sequence repeats
+    // across ~5 consecutive rows at the 100 Hz Vicon / 500 Hz loop ratio —
+    // that is zero-order hold, detected by the unchanged sequence, with
+    // vicon_age_s growing. All-NaN + sequence 0 means no Vicon source (or
+    // no sample yet): absence is never a plausible zero. Kept as flat
+    // arrays so Hardware.h does not include BasePose.h; Runner.cpp copies
+    // field-for-field and the log-schema test pins the layout.
+    std::uint64_t vicon_sequence = 0;      // 0 = no sample has ever arrived
+    std::uint32_t vicon_frame_number = 0;  // Vicon's own frame counter
+    double vicon_latency_s =               // SDK-reported total latency
+        std::numeric_limits<double>::quiet_NaN();
+    double vicon_age_s =                   // now − sample receive time,
+        std::numeric_limits<double>::quiet_NaN(); // steady_clock seconds
+    double vicon_seg_pos_m[5][3] = {       // Mount, LeftBase, RightBase,
+        {std::numeric_limits<double>::quiet_NaN(),  // LeftEE, RightEE —
+         std::numeric_limits<double>::quiet_NaN(),  // BasePose.h order
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()}};
+    double vicon_seg_quat_xyzw[5][4] = {
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()},
+        {std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN(),
+         std::numeric_limits<double>::quiet_NaN()}};
+    bool vicon_seg_valid[5] = {false, false, false, false, false};
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully
@@ -400,7 +464,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 9. Both
+// Column header and one data row — the authority for log_format = 10. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);

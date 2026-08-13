@@ -1,5 +1,7 @@
 # Standalone build for controller — links the bundled Kortex API and Pinocchio.
-# No GTSAM / GPMP2 / Vicon required.
+# No GTSAM / GPMP2 / Vicon required. (When third_party/vicon_api exists,
+# world-pose LOGGING is compiled in — observe-only; -DNO_VICON=ON or an
+# absent SDK builds the stub and this promise stays literal.)
 #
 #   cd Christian_control/basic_control && mkdir build && cd build
 #   cmake .. && make
@@ -95,6 +97,28 @@ function(add_pinocchio_to target)
     )
 endfunction()
 
+# --- Vicon world-pose source (slice 1: observe/log only). The controller
+#     stays standalone: when the vendored DataStream SDK is absent (or
+#     -DNO_VICON=ON), the stub is compiled instead and StartViconSource
+#     returns nullptr — no SDK header or library is touched anywhere in
+#     the build, and the vicon_* log columns record honest absence. ---
+option(NO_VICON
+        "Build the controller without the Vicon world-pose source" OFF)
+set(VICON_SDK "${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/vicon_api")
+set(VICON_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../vicon/src")
+if (NOT NO_VICON AND EXISTS "${VICON_SDK}/lib/libViconDataStreamSDK_CPP.so")
+    set(VICON_SOURCE_FILES
+            src/ViconSource.cpp
+            ${VICON_SRC}/ViconInterface.cpp
+            ${VICON_SRC}/SnapshotBuilder.cpp
+    )
+    set(VICON_SOURCE_MODE "sdk")
+else ()
+    set(VICON_SOURCE_FILES src/ViconSourceStub.cpp)
+    set(VICON_SOURCE_MODE "absent")
+endif ()
+message(STATUS "Vicon world-pose source: ${VICON_SOURCE_MODE}")
+
 # --- controller: Kortex + bundled Pinocchio (dynamics/kinematics via the
 #     Dynamics class, our copy of TrajectoryExecution's model wrapper) ---
 add_executable(controller
@@ -110,17 +134,31 @@ add_executable(controller
         src/Hardware.cpp
         src/Safety.cpp
         src/Dynamics.cpp
+        ${VICON_SOURCE_FILES}
 )
 
 # src/ is the include root. One file per job, named for that job:
 # State/ReactiveLaw/Controller/Targets/Actuation are pure Eigen,
 # Kinematics adds Pinocchio, Hardware adds Kortex, Runner is the loop,
-# Main the program, Config the settings.
-target_include_directories(controller PRIVATE src)
+# Main the program, Config the settings. BasePose/ViconSource are the
+# world-pose observation (BasePose.h needs the SDK-free ViconSnapshot.h
+# from ../vicon/src in both build modes).
+target_include_directories(controller PRIVATE src ${VICON_SRC})
 target_link_libraries(controller
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
 )
 add_pinocchio_to(controller)
+if (VICON_SOURCE_MODE STREQUAL "sdk")
+    # SYSTEM keeps -Wall quiet inside the vendor header; the RPATH lets the
+    # loader find the boost .so files next to the SDK (mirrors ../vicon).
+    target_include_directories(controller SYSTEM PRIVATE ${VICON_SDK}/include)
+    target_link_libraries(controller
+            ${VICON_SDK}/lib/libViconDataStreamSDK_CPP.so
+    )
+    set_target_properties(controller PROPERTIES
+            BUILD_RPATH "${VICON_SDK}/lib"
+    )
+endif ()
 
 # --- clear_faults: supported whole-arm fault recovery (Base::ClearFaults),
 #     read-verify only, no motion. Kortex, no Pinocchio. ---
@@ -289,6 +327,19 @@ target_include_directories(test_control_logic PRIVATE src)
 add_bundled_eigen_to(test_control_logic)
 target_link_libraries(test_control_logic pthread)
 add_test(NAME control_logic COMMAND test_control_logic)
+
+# --- test_base_pose: hardware-free tests for the world-pose sample
+#     contract, snapshot→sample mapping, and the SPSC triple-buffer slot
+#     (src/BasePose.h). Uses the SDK-free ViconSnapshot value type from
+#     ../vicon/src; no SDK, no Kortex, no Pinocchio — safe to run anywhere. ---
+add_executable(test_base_pose
+        tests/test_base_pose.cpp
+)
+target_include_directories(test_base_pose PRIVATE src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../vicon/src)
+add_bundled_eigen_to(test_base_pose)
+target_link_libraries(test_base_pose pthread)
+add_test(NAME base_pose COMMAND test_base_pose)
 
 # --- test_reactive_law: hardware-free tests for the reactive pose law
 #     (control/ReactiveLaw.h — pure Eigen) + pose-target parsing, including

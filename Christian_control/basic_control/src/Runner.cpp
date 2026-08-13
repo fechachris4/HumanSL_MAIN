@@ -12,6 +12,8 @@
 #include <KDetailedException.h>
 
 #include "Runner.h"
+
+#include "BasePose.h"
 #include "StopPriority.h"
 
 namespace k_api = Kinova::Api;
@@ -91,7 +93,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           std::chrono::microseconds period,
                           const JointVector& qdot_limit_deg_s,
                           double following_error_limit_deg, bool robot_ready,
-                          const char* base_frame)
+                          const char* base_frame, BasePoseSlot* base_pose)
 {
     // T1: the readiness gate is a hard precondition (unreachable from main,
     // which returns before calling us when the gate fails).
@@ -124,6 +126,36 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     LoopStop reason = LoopStop::kUserStop;
     bool faults_observed = false; // live fault seen at any point (taints exit)
     LoopLogSample sample; // reused every cycle
+
+    // World-pose observation (log_format 10): the loop's only contact with
+    // the Vicon side. One wait-free slot read per cycle, copied into the
+    // row — observe and log only, no control law reads it (slice 1).
+    // `base_pose_sample` is the reader-owned last copy: between Vicon
+    // frames (~5 cycles at 100 Hz vs this loop's 500 Hz) the sequence
+    // repeats and only the age advances — zero-order hold, per
+    // docs/thesis/world-frame-hold-derivation.md §5. NOTHING may
+    // finite-difference across a repeated sequence.
+    BasePoseSample base_pose_sample;
+    const auto fill_vicon = [&](LoopLogSample& s,
+                                std::chrono::steady_clock::time_point now) {
+        if (base_pose != nullptr)
+            base_pose->ReadLatest(base_pose_sample);
+        s.vicon_sequence = base_pose_sample.sequence;
+        s.vicon_frame_number = base_pose_sample.vicon_frame_number;
+        s.vicon_latency_s = base_pose_sample.latency_reported_s;
+        s.vicon_age_s = BasePoseAgeS(
+            base_pose_sample,
+            std::chrono::duration<double>(now.time_since_epoch()).count());
+        for (int seg = 0; seg < kBasePoseSegmentCount; ++seg) {
+            for (int i = 0; i < 3; ++i)
+                s.vicon_seg_pos_m[seg][i] =
+                    base_pose_sample.segments[seg].position_m[i];
+            for (int i = 0; i < 4; ++i)
+                s.vicon_seg_quat_xyzw[seg][i] =
+                    base_pose_sample.segments[seg].quat_xyzw[i];
+            s.vicon_seg_valid[seg] = base_pose_sample.segments[seg].valid;
+        }
+    };
     long cycle = 0;
     int joint_limit_warning_joint = -1;
     int stale_feedback_joint = -1;
@@ -224,6 +256,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 counters.overrun = 0;
             FillSample(sample, feedback, cyclic.last_command_frame_id(),
                        commanded_deg, commanded_velocity_deg_s, hold_status);
+            fill_vicon(sample, t_now);
             sample.cycle = 0;
             sample.requested_deg = commanded_deg;
             sample.requested_velocity_deg_s = JointVector{};
@@ -418,6 +451,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             t_prev = t_now;
             FillSample(sample, feedback, cyclic.last_command_frame_id(),
                        commanded_deg, commanded_velocity_deg_s, status);
+            fill_vicon(sample, t_now);
             sample.cycle = cycle;
             sample.requested_deg = actuation_status.requested_deg;
             sample.requested_velocity_deg_s = requested_velocity_deg_s;

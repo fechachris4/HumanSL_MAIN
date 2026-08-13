@@ -32,6 +32,7 @@
 #include <KDetailedException.h>
 
 #include "Actuation.h"
+#include "BasePose.h"
 #include "Config.h"
 #include "Controller.h"
 #include "FramePrint.h"
@@ -43,6 +44,7 @@
 #include "Safety.h"
 #include "State.h"
 #include "Targets.h"
+#include "ViconSource.h"
 
 namespace k_api = Kinova::Api;
 
@@ -136,7 +138,11 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
 void WriteCsvPreamble(const std::string& log_file, const config::ArmConfig& arm_config,
                       std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 9 (compiled)\n";
+    csv << "# log_format = 10 (compiled)\n";
+    // Why a log's vicon_* columns are all-NaN: source compiled out
+    // ("absent"), or compiled in but never connected (age stays NaN).
+    csv << "# vicon_source = " << kViconSourceBuildMode << " ("
+        << kViconSourceHost << ")\n";
     csv << "# arm = " << arm_config.name << " (" << arm_config.ip << ")\n";
     WriteConfigLines(log_file, csv, "# ");
 }
@@ -412,6 +418,20 @@ namespace
             }
             WriteCsvPreamble(log_file_arg, arm_config, csv);
 
+            // World-pose observation (slice 1). Slot + acquisition thread
+            // are per-arm because the slot is strictly single-reader and
+            // --arm both runs one RunOneArm per arm: two arms mean two SDK
+            // connections, which DataStream serves fine. The source starts
+            // (and keeps retrying) in its own thread — an unreachable
+            // Vicon never delays or stops the takeover; the stub build
+            // returns nullptr and the columns record honest absence.
+            BasePoseSlot base_pose_slot;
+            std::unique_ptr<ViconSource> vicon_source =
+                StartViconSource(base_pose_slot);
+            std::cout << tag << "vicon world-pose source: "
+                      << kViconSourceBuildMode << " (" << kViconSourceHost
+                      << ", observe/log only)\n";
+
             // From here the CSV writes itself: the writer thread drains the log
             // to disk every kLogDrainInterval for as long as it is alive. It is
             // declared after `csv` and before the loop, so it is torn down
@@ -500,7 +520,7 @@ namespace
                 controller, actuation,
                 log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
                 config::kFollowingErrorLimitDeg, robot_ready,
-                arm_config.base_frame);
+                arm_config.base_frame, &base_pose_slot);
 
             input_thread_joiner.Join();
 
