@@ -238,6 +238,21 @@ system's guardrails are what they are is never lost, only superseded.
   comply." If a future session needs the reasoning behind this
   supersession and it is not recorded elsewhere, ask Christian directly
   rather than assume.
+- **Stage 0's two captures, 2026-08-13.** Prior decision (2026-08-12
+  design, reaffirmed in the stage-0 runbook): capture a static and a
+  wearer-moving recording as stage 0's deliverable, feeding stage 2's
+  calibration and the mount-rigidity answer. Superseded 2026-08-13
+  ~16:40: back from the lab, Christian chose "live stream only, no
+  captures" with the cost stated at the moment of choice (calibration
+  and the rigidity check lose their recorded input). Consistent with his
+  route decision earlier the same day: one live chain, Vicon →
+  controller → log → panel, where the controller's own log is the
+  de-facto recording once stage 1.5 lands. Consequences: stage 1's
+  "stage-0 recording replays offline" acceptance is void as written;
+  stage 2's calibration must sample the live stream (or a stage 1.5
+  controller log) when it runs; the recorder/replay code stays (tested,
+  and useful for synthetic tests) but is no longer the data path.
+  (Prompt: raw-prompt-log 2026-08-13 16:38; interactive answer ~16:41.)
 - **Stage 0 before stage 1 code, 2026-08-12.** Prior decision
   (interactive question, 2026-08-12 design session): run the lab
   verification before writing stage 1, so real data informs the snapshot

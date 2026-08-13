@@ -916,3 +916,11 @@ okay lets go do the lab session
 ## 2026-08-13 16:25:51 BST
 
 okay lets go do the lab session, my problem is what i need to do is world to mount transformation because the velocity of the end effector velocity is dependednt on base velocity. so i need to calculate orientation and position change but i need to show it mathematically and that counts in the introduction to the vicon and its a big part but i did not see you mention it which is what i worrying me. You are not engaging the problem with me mathematicallly so i am not able to see what and when you create changes. anyway this should give you a good idea of what direction i am reffering to fo the introduction of vicon. please ask question [Image #1] [Image #2] [Image #3] this is how i want things to represent the transformation i should go into the code and clearly identify this quickly
+
+## 2026-08-13 16:37:33 BST
+
+lets start by removing some boundaries because current ones are limituiing me
+
+## 2026-08-13 16:38:11 BST
+
+okay we are back from the lab and we are using live recording

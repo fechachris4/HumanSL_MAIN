@@ -235,3 +235,23 @@ targets relative to the wearer, not prose for the mount plate. The
 five-segment inventory was never the whole intent. Pattern for both:
 predicted from implementation convenience and existing artifacts;
 he decides from the math and the thesis narrative.
+
+### 2026-08-13 — what "we are using live recording" means
+
+**Predicted:** he means working against the live stream now, and will
+choose to capture the two stage-0 recordings immediately when told they
+don't exist — the rig is in-volume and streaming, so the capture costs
+two minutes and unblocks stage 2, and he has consistently chosen to
+gather evidence when it is cheap (all-five-segments decision).
+
+**Actual:** live stream only, no captures — chosen with the cost stated
+in the option text (no calibration input, no offline mount-rigidity
+answer).
+
+**Result:** miss. The reading that survives: he does not want a parallel
+recording pipeline at all. Combined with his earlier route choice ("the
+controller logs the world pose it used"), the coherent picture is one
+live chain — Vicon → controller → log → panel — where the controller's
+own log IS the recording. Files-on-disk deliverables I keep proposing
+(captures, replays) are my framing, not his; his framing is the running
+system. Predict future data questions from that.
