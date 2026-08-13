@@ -183,6 +183,17 @@ options; per the ledger's own miss-rate note, questions this safe are
 cheap confirmations rather than real probes. The information was still
 worth having: both answers gate hardware-relevant work.
 
+### 2026-08-13 — which fix for the fast-pacing goal-accuracy regression
+
+Faster pacing (his 1.0 s floor) degraded the canonical 0.2 m point move
+to 82.4 mm goal error; offline sweep run before asking. **Predicted:** he
+takes the ×10 tighter goal anchor (3.2 mm at full speed, recommended) —
+it is the only option that keeps the speed he just chose AND the accuracy,
+and his pattern all day has been capability first. Second guess: he asks
+for anchor + qc_scale combined.
+
+**Actual:** (pending)
+
 ### 2026-08-13 — scoping questions for "controller logs world pose"
 
 **Predicted:** (1) Link decision: stub-able provider, not a hard SDK link —
@@ -255,3 +266,31 @@ live chain — Vicon → controller → log → panel — where the controller's
 own log IS the recording. Files-on-disk deliverables I keep proposing
 (captures, replays) are my framing, not his; his framing is the running
 system. Predict future data questions from that.
+
+### 2026-08-13 — architecture A/B, timing contract, slice packaging
+
+**Predicted:** (1) Architecture: B (world-reference adapter) — his own
+description of B notes the controller "remains unchanged internally",
+the unwired PoseReference seam exists for exactly this, and it is the
+smallest change to a proven hardware path; the sim shows the law is
+identical either way. (2) Timing: the fuller option — snapshot contract
++ ZOH + velocity-on-new-sample + filtering — because his message lists
+velocity estimation and filtering under what the first implementation
+"should" do, not under "eventually". (3) Packaging: fold the pose-only
+world hold and the logging into one slice — "implement pose-only world
+holding first" is his sentence, and observed-only logging alone gives
+him nothing he has said he wants.
+
+**Actual:** (1) Architecture A — hardware mirrors the sim's frames.py
+assembly. (2) Timing: the minimum — contract + ZOH + stale-freeze, no
+velocity estimation at all yet. (3) Two slices, log then hold.
+
+**Result:** miss, miss, hit. (1) predicted B from the existing hardware
+seam; his authority is the sim he built and trusts — "check the mujoco
+project because i done it pretty well there". The sim is the reference
+architecture, not the current C++ seam; C++-mirrors-Python was already
+the recorded rule and I under-weighted it. (2) predicted more machinery
+from his own list; he took the strict minimum — the "should" list was a
+roadmap, not a slice-1 spec. Both misses share a shape: when his sim or
+his math already embodies a choice, he picks consistency with it over
+convenience of the existing hardware code.

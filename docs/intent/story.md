@@ -166,6 +166,34 @@ commit.
   (Prompts: raw-prompt-log 2026-08-13 16:04/16:05; choice recorded in
   docs/intent/predictions.md, both predictions hit.)
 
+- The scientific project is designing **and evaluating** a system that
+  maintains an end-effector pose in the external world while its
+  supporting base moves — Christian's own definition, correcting "the
+  gap is the project" as too narrow. Components he named: world-state
+  estimation, frame calibration, reference generation, motion
+  compensation, latency handling, occlusion and dropout handling,
+  safety, quantitative evaluation, later dual-arm and planning. "Simply
+  wiring the systems together proves integration. It does not yet prove
+  successful stabilisation." Evaluation is a deliverable, not a
+  by-product. (Prompt: raw-prompt-log 2026-08-13 17:26.)
+- World-on-hardware architecture, decided 2026-08-13 ~17:35 (interactive
+  questions with implementation previews; predictions ledger same date):
+  **Architecture A** — the 500 Hz loop assembles world-frame inputs
+  (T_W_B from ZOH'd Vicon sample × calibration, world-rotated Jacobian,
+  world pose error) and feeds the unchanged frame-agnostic law, mirroring
+  msc_project controller/frames.py, which he built and trusts ("i done
+  it pretty well there so it can be a rough estimate"). The sim is the
+  reference architecture. Timing gate for the first hardware run: the
+  strict minimum — full snapshot contract (frame number, sequence,
+  receive timestamp, reported latency, pose, validity), zero-order hold,
+  never differentiate a reused sample, stale ⇒ freeze the world
+  correction at the last good value with graded logged freshness, never
+  a stop or a step. His line, now a design rule: "A controller that uses
+  stale Vicon data without knowing it is stale is more dangerous than
+  one that has no Vicon integration." Packaging: two slices — slice 1
+  acquisition+logging+panel with no control change and explicit exit
+  criteria; slice 2 the pose-only world hold behind its own design gate.
+  (Prompt: raw-prompt-log 2026-08-13 17:26; answers same hour.)
 - The world-frame hold's first hardware slice uses feedback only — "Its a
   PD velocity controller but i want to establish world on hardware using
   the vicon. which uses only feedback." Establish the world frame in the
