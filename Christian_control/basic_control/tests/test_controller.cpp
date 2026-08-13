@@ -122,9 +122,75 @@ namespace
 
 } // namespace
 
+namespace
+{
+    // The world-hold engage path, end to end through the real model — the
+    // test the first hardware run showed was missing: production always
+    // carries a joint reference, so the engage must happen THROUGH an
+    // idle joint hold, not only through an empty reference.
+    void WorldHoldEngageTests()
+    {
+        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
+        DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
+                                config::kRightBaseFrame,
+                                config::kRightEndEffectorFrame);
+        TrackingController controller(model);
+        Eigen::Matrix<double, 7, 1> q;
+        q << 0.3, -0.5, 0.4, 1.0, -0.2, 0.8, 0.1;
+        RobotState state = StateAt(q);
+        controller.Reset(state);
+        ControllerStatus status;
+
+        // Idle joint reference (production's permanent companion).
+        Reference idle;
+        JointReference joint;
+        joint.q_rad = q;
+        joint.qdot_rad_s.setZero();
+        idle.joint = joint;
+        idle.joint_is_idle_hold = true;
+
+        // No fresh world sample: the idle joint hold is followed exactly
+        // as before this slice — joint telemetry set, no hold engage.
+        state.world_fresh = false;
+        status = ControllerStatus{};
+        Eigen::Matrix<double, 7, 1> qdot =
+            controller.DesiredVelocity(state, idle, 0.002, status);
+        Check(status.hold_state == 0,
+              "no fresh sample: world hold stays inactive through idle hold");
+        Check(std::isfinite(status.joint_following_error_deg),
+              "no fresh sample: the idle JOINT hold is what runs");
+        Check(qdot.cwiseAbs().maxCoeff() < 1e-9,
+              "holding at the reference joints commands ~zero velocity");
+
+        // Fresh sample arrives: the SAME idle reference must now engage
+        // the world hold (this exact transition was unreachable before
+        // the 2026-08-13 fix and the first hardware run proved it).
+        state.world_fresh = true;
+        state.t_s = 0.1;
+        status = ControllerStatus{};
+        qdot = controller.DesiredVelocity(state, idle, 0.002, status);
+        Check(status.hold_state == 1,
+              "fresh sample engages the world hold through the idle hold");
+        Check(status.world_err_m == 0.0,
+              "engage anchors at the current pose: zero world error");
+        Check(qdot.cwiseAbs().maxCoeff() < 1e-6,
+              "engage at the current pose commands ~zero velocity");
+
+        // An ACTIVE trajectory still owns the cycle outright.
+        Reference active = idle;
+        active.joint_is_idle_hold = false;
+        status = ControllerStatus{};
+        controller.DesiredVelocity(state, active, 0.002, status);
+        Check(status.hold_state == 0,
+              "an actively sampled trajectory pre-empts the world hold");
+    }
+} // namespace
+
 int main()
 {
+    
     TestHoldPoseReseatsAfterJointTracking();
+    WorldHoldEngageTests();
     if (failures == 0) {
         std::cout << "all controller tests passed\n";
         return 0;

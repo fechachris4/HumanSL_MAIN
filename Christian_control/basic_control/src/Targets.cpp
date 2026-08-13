@@ -282,6 +282,7 @@ Reference JointTrajectorySource::Get(const RobotState& state, double dt_s,
     if (!active_) {
         joint.q_rad = hold_q_rad_;
         reference.joint = joint;
+        reference.joint_is_idle_hold = true; // offerable to the world hold
         return reference;
     }
 
@@ -299,6 +300,10 @@ Reference JointTrajectorySource::Get(const RobotState& state, double dt_s,
     joint.q_rad = sample.q_rad;
     joint.qdot_rad_s = sample.qdot_rad_s;
     reference.joint = joint;
+    // A completed trajectory holding its endpoint is an idle hold too —
+    // the world hold may take over there (spec §2: re-engage after a
+    // trajectory), anchored wherever the trajectory ended.
+    reference.joint_is_idle_hold = sample.complete;
     return reference;
 }
 

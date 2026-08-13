@@ -119,6 +119,10 @@ private:
     // True while the hold provided the target last cycle; the transition
     // out re-seats the base-frame fallback pose (latch-off step guard).
     bool hold_was_active_ = false;
+    // True once the hold has engaged at all this run: before that, idle
+    // joint references are followed exactly as before this slice; after,
+    // the source's idle q is stale and the Cartesian fallback is used.
+    bool world_hold_ever_engaged_ = false;
     // The current cycle's reference twist resolved to world (framed
     // PoseReference semantics); scratch, valid only within one call.
     Twist resolved_reference_twist_;

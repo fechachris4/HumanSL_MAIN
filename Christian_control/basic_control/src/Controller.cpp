@@ -70,7 +70,12 @@ TrackingController::DesiredVelocity(const RobotState& state,
     // Joint channel: tracked directly, with no model and no Cartesian
     // telemetry to fill — the command flows into the same clip and
     // integration path as the pose channel's.
-    if (reference.joint) {
+    // Only an ACTIVELY SAMPLED trajectory owns the cycle outright. The
+    // source's idle hold (startup pose / completed endpoint) is offered
+    // to the world hold below first — production always carries a joint
+    // reference, so gating on reference.joint alone made the world
+    // hold unreachable (found on the first hardware run, 2026-08-13).
+    if (reference.joint && !reference.joint_is_idle_hold) {
         followed_joint_reference_ = true;
         // Trajectory precedence (spec §2): the world anchor is dropped;
         // the first hold cycle after the trajectory re-engages fresh.
@@ -183,6 +188,7 @@ TrackingController::DesiredVelocity(const RobotState& state,
         status.world_err_rot_rad = hold.error_rot_rad;
         if (hold.provides_target) {
             hold_was_active_ = true;
+            world_hold_ever_engaged_ = true;
             status.hold_ramp = hold.ramp;
             desired_world = hold.target_world;
         } else {
@@ -197,6 +203,26 @@ TrackingController::DesiredVelocity(const RobotState& state,
                 hold_was_active_ = false;
                 hold_position_ = ee.position;
                 hold_rotation_ = ee.rotation;
+            }
+            // Before the world hold has EVER engaged, an idle joint
+            // reference is followed exactly as before this slice — the
+            // no-Vicon behaviour is bit-for-bit today's. After an
+            // engage, the source's idle q is stale by the whole held
+            // motion (it would snap the arm back to startup joints), so
+            // the fallback is the re-seated Cartesian hold instead.
+            if (!world_hold_ever_engaged_ && reference.joint) {
+                const JointTrackingCommand command = SolveJointTracking(
+                    *reference.joint, state.q_rad,
+                    config::kKpJointTracking,
+                    config::kTrajFollowingErrorStopDeg * kDegToRad);
+                status.joint_following_error_deg =
+                    command.max_abs_error_rad / kDegToRad;
+                status.joint_following_error_stop =
+                    command.following_error_stop;
+                const double nan = std::numeric_limits<double>::quiet_NaN();
+                status.p_desired.setConstant(nan);
+                status.p_current.setConstant(nan);
+                return command.qdot_rad_s;
             }
             // Inactive or latched off: today's behaviour, expressed in
             // world so there is exactly one error convention below.

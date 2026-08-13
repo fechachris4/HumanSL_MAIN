@@ -189,6 +189,13 @@ struct JointReference {
 struct Reference {
     std::optional<PoseReference> pose;
     std::optional<JointReference> joint;
+    // True when `joint` is only the source's IDLE hold (startup pose or a
+    // completed trajectory's endpoint), not an actively-sampled
+    // trajectory. An idle hold is offered to the world hold first
+    // (2026-08-13 slice): production always has a joint reference, so
+    // without this flag the world hold's branch is unreachable — the
+    // first hardware run proved it.
+    bool joint_is_idle_hold = false;
 };
 
 // What the Runner requires of a reference source, so the loop is written once
