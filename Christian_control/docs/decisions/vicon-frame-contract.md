@@ -46,6 +46,24 @@ The lab boxes below stay unchecked: they require a person at the rig
   a fallback for that segment — note it here, do not proceed silently)
 - Marker `Mount22`: renamed/explained? _____________
 
+## Torso segment (added 2026-08-13, Christian's frame decision)
+
+Christian defined (2026-08-13 ~16:25) the torso `T` in his control math
+as a **separate tracked segment**, distinct from the mount plate: targets
+are specified relative to the wearer's body (`p_d^T, R_d^T`), while the
+control chain runs through the mount. That needs a sixth segment.
+
+- [ ] If marker budget and time allow: add a `Torso` segment (3+ markers
+      on the wearer's trunk, away from the backpack plate) to the Nexus
+      subject, and capture it in BOTH recordings — the `wearer_moving`
+      capture then measures mount-vs-torso flex directly, not just
+      mount-plate rigidity.
+- [ ] If not possible today: record here that Torso is absent from these
+      recordings, so stage 2 knows, and a follow-up capture is needed
+      before any torso-relative target work.
+- Torso segment present in recordings: yes / no — _____________
+- Torso marker placement notes: _____________
+
 ## Axis convention
 
 - [ ] Nexus's configured axis mapping recorded here (Vicon defaults to
