@@ -8,6 +8,7 @@
 #include <limits>
 
 #include "Config.h"
+#include "Frames.h"
 #include "Kinematics.h"
 
 namespace
@@ -34,6 +35,9 @@ TrackingController::TrackingController(DualArmKinematics& model)
     : model_(model),
       workspace_(std::make_unique<KinematicsWorkspace>(model.dynamics())),
       gains_(ConfiguredGains()),
+      world_hold_(config::kWorldHoldRampS, config::kWorldHoldMaxErrorM,
+                  config::kWorldHoldMaxRotErrorRad,
+                  config::kWorldHoldReanchorAfterS),
       arrival_monitor_(config::kArrivalDwellS),
       timeout_monitor_(config::kTargetHoldS)
 {
@@ -68,6 +72,9 @@ TrackingController::DesiredVelocity(const RobotState& state,
     // integration path as the pose channel's.
     if (reference.joint) {
         followed_joint_reference_ = true;
+        // Trajectory precedence (spec §2): the world anchor is dropped;
+        // the first hold cycle after the trajectory re-engages fresh.
+        world_hold_.Reset();
         const JointTrackingCommand command = SolveJointTracking(
             *reference.joint, state.q_rad, config::kKpJointTracking,
             config::kTrajFollowingErrorStopDeg * kDegToRad);
@@ -90,13 +97,18 @@ TrackingController::DesiredVelocity(const RobotState& state,
         Reset(state);
     }
 
-    // Pose channel, or the hold pose when the source gave no reference.
-    const Eigen::Vector3d p_desired =
-        reference.pose ? reference.pose->p_desired : hold_position_;
-    const Eigen::Matrix3d rotation_desired =
-        reference.pose && reference.pose->rotation
-            ? *reference.pose->rotation
-            : hold_rotation_;
+    // World assembly (Frames.h, ported from the simulation's frames.py —
+    // the reference implementation). world_T_base = the ZOH Mount-segment
+    // sample composed through MSeg_T_mount (≡ I until stage-2 calibration)
+    // and the model's fixed mount→base offset. With the never-seen default
+    // (identity sample) the "world" is simply the mount frame, and every
+    // command below is algebraically identical to the pre-Vicon law —
+    // rotating the frame of e and J changes no DLS solution.
+    const pinocchio::SE3& mount_from_base =
+        model_.MountFromBase(model_.controlled_arm());
+    const world_frames::FramePose world_T_base = world_frames::ComposePose(
+        {state.world_p_mountseg, state.world_R_mountseg},
+        {mount_from_base.translation(), mount_from_base.rotation()});
 
     // A new operator target re-arms the arrival notice; the hold pose
     // never does.
@@ -117,18 +129,97 @@ TrackingController::DesiredVelocity(const RobotState& state,
     const PoseJacobian ee =
         model_.ControlledPoseAndJacobian(state.q_rad, *workspace_);
 
-    // Equation 1: pose error, reference minus actual (ReactiveLaw.h).
-    const Eigen::Vector3d e_pos = p_desired - ee.position;
-    const Eigen::Vector3d e_rot =
-        RotationLog(rotation_desired * ee.rotation.transpose());
+    // frames.py arm_controller_state: EE pose, Jacobian and measured twist
+    // in the WORLD frame. The moving-body twist is ZERO this slice (the
+    // feedback-only decision: no measured base twist exists yet), so the
+    // transport term contributes nothing and V_base,E lands here later.
+    const world_frames::WorldArmState world = world_frames::ArmControllerState(
+        world_T_base, {}, {ee.position, ee.rotation}, ee.jacobian,
+        state.qdot_rad_s, Twist{});
 
-    // Equation 2: twist error, the source's reference velocity minus the
-    // measured end-effector twist J q̇_measured. The hold pose is stationary,
-    // so its reference twist is genuinely zero rather than a placeholder.
-    const Eigen::Matrix<double, 6, 1> measured_twist =
-        ee.jacobian * state.qdot_rad_s;
+    // The desired pose, WORLD frame. Three producers, one convention:
+    // an explicit pose reference (world semantics since the 2026-08-13
+    // port), the auto-engaged world hold, or — Vicon untrusted — the
+    // world image of the base-frame takeover hold, which tracks the base
+    // exactly as the pre-Vicon controller did.
+    world_frames::FramePose desired_world;
+    if (reference.pose) {
+        world_hold_.Reset(); // an explicit target outranks the hold
+        hold_was_active_ = false;
+        // Resolve the DECLARED frame to world once per cycle, exactly as
+        // the sim's resolve_target_world does — a base-framed target
+        // moves with the base (the pre-Vicon meaning), a world-framed
+        // one holds in the room. Moving-body twist is zero this slice.
+        world_frames::FramePose target_pose;
+        target_pose.position_m = reference.pose->p_desired;
+        target_pose.rotation =
+            reference.pose->rotation
+                ? *reference.pose->rotation
+                : hold_rotation_; // hold orientation, declared frame's axes
+        const world_frames::WorldTargetValue resolved =
+            world_frames::ResolveTargetWorld(
+                {state.world_p_mountseg, state.world_R_mountseg},
+                {mount_from_base.translation(), mount_from_base.rotation()},
+                Twist{},
+                static_cast<world_frames::TargetFrame>(reference.pose->frame),
+                target_pose, reference.pose->twist);
+        desired_world = resolved.pose_world;
+        if (!reference.pose->rotation) // hold orientation is base-frame FK
+            desired_world.rotation =
+                world_frames::ComposePose(world_T_base,
+                                          {hold_position_, hold_rotation_})
+                    .rotation;
+        resolved_reference_twist_ = resolved.twist_world;
+    } else {
+        WorldHoldInput hold_in;
+        hold_in.sample_fresh =
+            config::kWorldHoldAutoEngage && state.world_fresh;
+        hold_in.ee_pose_world = world.ee_pose_world;
+        hold_in.t_s = state.t_s;
+        const WorldHoldOutput hold = world_hold_.Update(hold_in);
+        status.hold_state = static_cast<int>(hold.state);
+        status.world_err_m = hold.error_norm_m;
+        status.hold_reanchor_count = hold.reanchor_count;
+        status.world_err_rot_rad = hold.error_rot_rad;
+        if (hold.provides_target) {
+            hold_was_active_ = true;
+            status.hold_ramp = hold.ramp;
+            desired_world = hold.target_world;
+        } else {
+            // Latch-off step guard (review finding, 2026-08-13): the
+            // base-frame hold pose was seated at takeover and is stale
+            // by however far the world hold has since moved the arm —
+            // falling back to it verbatim would command a step. On the
+            // transition out of an active hold, re-seat it from the
+            // CURRENT measurement, exactly as the post-trajectory
+            // re-seat does; the fallback then starts with zero error.
+            if (hold_was_active_) {
+                hold_was_active_ = false;
+                hold_position_ = ee.position;
+                hold_rotation_ = ee.rotation;
+            }
+            // Inactive or latched off: today's behaviour, expressed in
+            // world so there is exactly one error convention below.
+            desired_world = world_frames::ComposePose(
+                world_T_base, {hold_position_, hold_rotation_});
+        }
+    }
+
+    // Equation 1: pose error, reference minus actual — WORLD frame, as in
+    // reactive_controller.pose_error (ReactiveLaw.h supplies the log map).
+    const Eigen::Vector3d e_pos =
+        desired_world.position_m - world.ee_pose_world.position_m;
+    const Eigen::Vector3d e_rot = RotationLog(
+        desired_world.rotation * world.ee_pose_world.rotation.transpose());
+
+    // Equation 2: twist error, reference minus measured world twist —
+    // reactive_controller.twist_error. The hold's reference twist is
+    // genuinely zero; an explicit reference brings its own (world frame).
+    Eigen::Matrix<double, 6, 1> measured_twist;
+    measured_twist.head<3>() = world.ee_twist_world.linear_m_s;
+    measured_twist.tail<3>() = world.ee_twist_world.angular_rad_s;
     const Twist reference_twist =
-        reference.pose ? reference.pose->twist : Twist{};
+        reference.pose ? resolved_reference_twist_ : Twist{};
     const Twist e_twist = TwistError(reference_twist, measured_twist);
 
     // Arrival is edge-triggered only on a terminal source sample.  A moving
@@ -157,7 +248,10 @@ TrackingController::DesiredVelocity(const RobotState& state,
         status.not_reached_edge = true;
         status.arrival_error_m = e_pos.norm();
     }
-    status.p_desired = p_desired;
+    // Log continuity: pd_*/p_* columns stay in the BASE frame as their
+    // Hardware.h documentation says — the base image of the world target.
+    status.p_desired = world_T_base.rotation.transpose() *
+                       (desired_world.position_m - world_T_base.position_m);
     status.p_current = ee.position;
     status.rot_error_rad = e_rot.norm();
     status.tool_quat = Eigen::Quaterniond(ee.rotation);
@@ -167,7 +261,8 @@ TrackingController::DesiredVelocity(const RobotState& state,
     // σ_min of the full 6×7 task Jacobian — 6×6 self-adjoint solve, no
     // allocation. The Jacobian mixes meters-per-radian and
     // radian-per-radian rows, so watch this value's trend, not its size.
-    const Eigen::Matrix<double, 6, 6> jjt = ee.jacobian * ee.jacobian.transpose();
+    const Eigen::Matrix<double, 6, 6> jjt =
+        world.jacobian_world * world.jacobian_world.transpose();
     const Eigen::SelfAdjointEigenSolver<Eigen::Matrix<double, 6, 6>> eigensolver(jjt);
     status.sigma_min = std::sqrt(std::max(0.0, eigensolver.eigenvalues()(0)));
 
@@ -178,8 +273,9 @@ TrackingController::DesiredVelocity(const RobotState& state,
     ramped_gains.limit_avoid_gain_s_inv *=
         UnitRamp(state.t_s, config::kNullRampDurationS);
     const ReactiveSolution solution = SolveReactiveVelocityDetailed(
-        ee.jacobian, e_pos, e_rot, e_twist.linear_m_s, e_twist.angular_rad_s,
-        state.q_rad, limit_rad_, zone_rad_, ramped_gains);
+        world.jacobian_world, e_pos, e_rot, e_twist.linear_m_s,
+        e_twist.angular_rad_s, state.q_rad, limit_rad_, zone_rad_,
+        ramped_gains);
     status.qdot_task_rad_s = solution.qdot_task_rad_s;
     status.qdot_null_rad_s = solution.qdot_null_rad_s;
     status.null_leak_m_s = solution.leak_twist.head<3>().norm();

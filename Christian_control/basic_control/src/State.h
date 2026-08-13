@@ -31,6 +31,18 @@ struct RobotState {
     Eigen::Matrix<double, 7, 1> q_rad;      // measured joint positions
     Eigen::Matrix<double, 7, 1> qdot_rad_s; // measured joint velocities
     double t_s = 0.0;                       // time since takeover
+
+    // World attachment (world-hold slice, 2026-08-13 spec): the Vicon
+    // Mount segment's pose in Vicon-world, zero-order-held from the
+    // 100 Hz stream, plus this cycle's trust verdict. The controller
+    // composes world_T_base = world_T_mountseg · MSeg_T_mount(≡I, until
+    // stage-2 calibration) · mount_T_base(model) via Frames.h. With the
+    // identity default the "world" is simply the mount frame, and every
+    // command is algebraically identical to the pre-Vicon controller —
+    // rotating a frame changes no DLS solution.
+    Eigen::Vector3d world_p_mountseg = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d world_R_mountseg = Eigen::Matrix3d::Identity();
+    bool world_fresh = false; // valid Mount + age <= kWorldHoldFreshMaxAgeS
 };
 
 // Per-cycle telemetry the source and controller surface. Data only — the
@@ -82,6 +94,16 @@ struct ControllerStatus {
     double joint_following_error_deg =
         std::numeric_limits<double>::quiet_NaN();
 
+    // World-hold evidence (log_format 11): the state machine's verdict,
+    // the UNRAMPED world error the divergence latch watches, the ramp
+    // factor, and the re-anchor count. NaN/0 whenever the hold is not the
+    // active reference this cycle.
+    int hold_state = 0; // WorldHoldState as int: 0 off 1 engaged 2 frozen 3 latched
+    double world_err_m = std::numeric_limits<double>::quiet_NaN();
+    double world_err_rot_rad = std::numeric_limits<double>::quiet_NaN();
+    double hold_ramp = std::numeric_limits<double>::quiet_NaN();
+    int hold_reanchor_count = 0;
+
     // MEASURED tool orientation, flange frame in the right-arm base frame.
     // Hamilton convention, hemisphere-fixed to w >= 0 so logs never jump
     // sign. Telemetry only.
@@ -112,9 +134,18 @@ struct Twist {
 // today; a source that moves its target should fill it, or the law will
 // fight the motion it asked for.
 struct PoseReference {
-    Eigen::Vector3d p_desired;               // meters, CONTROLLED arm's base frame
-    std::optional<Eigen::Matrix3d> rotation; // base frame; nullopt = hold
-    Twist twist;                             // reference velocity, base frame
+    // The declared frame (sim FramedTarget semantics, review-hardened
+    // 2026-08-13): a producer STATES the frame its numbers live in and
+    // the controller resolves to world once per cycle via
+    // Frames::ResolveTargetWorld — a base-framed target therefore moves
+    // with the base (exactly the pre-Vicon behaviour), a world-framed
+    // one holds in the room. The default is kBase so any legacy
+    // producer keeps its historical meaning instead of silently
+    // becoming a world target. 0=world 1=mount(moving body) 2=base.
+    int frame = 2;
+    Eigen::Vector3d p_desired;               // meters, in `frame`
+    std::optional<Eigen::Matrix3d> rotation; // in `frame`; nullopt = hold
+    Twist twist;                             // reference velocity, in `frame`
     std::uint64_t sequence = 0;
     // A profile may pass through its endpoint before it is permitted to
     // advance the target state machine.  Only a stationary terminal sample

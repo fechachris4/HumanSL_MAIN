@@ -76,6 +76,11 @@ namespace
         s.joint_traj_start_error_deg = status.joint_traj_start_error_deg;
         s.joint_following_error_stop = status.joint_following_error_stop;
         s.joint_following_error_deg = status.joint_following_error_deg;
+        s.hold_state = status.hold_state;
+        s.world_err_m = status.world_err_m;
+        s.world_err_rot_rad = status.world_err_rot_rad;
+        s.hold_ramp = status.hold_ramp;
+        s.hold_reanchor_count = status.hold_reanchor_count;
         s.command_frame_id = command_frame_id;
         s.feedback_frame_id = fb.frame_id();
         s.arm_state = fb.base().active_state();
@@ -136,16 +141,24 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     // docs/thesis/world-frame-hold-derivation.md §5. NOTHING may
     // finite-difference across a repeated sequence.
     BasePoseSample base_pose_sample;
+    double base_pose_age_s = std::numeric_limits<double>::quiet_NaN();
+    // The cycle's single slot read, at cycle start: the SAME sample then
+    // feeds control (world hold) and the log row, so the evidence columns
+    // describe exactly the input the controller acted on.
+    const auto read_base_pose =
+        [&](std::chrono::steady_clock::time_point now) {
+            if (base_pose != nullptr)
+                base_pose->ReadLatest(base_pose_sample);
+            base_pose_age_s = BasePoseAgeS(
+                base_pose_sample,
+                std::chrono::duration<double>(now.time_since_epoch()).count());
+        };
     const auto fill_vicon = [&](LoopLogSample& s,
-                                std::chrono::steady_clock::time_point now) {
-        if (base_pose != nullptr)
-            base_pose->ReadLatest(base_pose_sample);
+                                std::chrono::steady_clock::time_point) {
         s.vicon_sequence = base_pose_sample.sequence;
         s.vicon_frame_number = base_pose_sample.vicon_frame_number;
         s.vicon_latency_s = base_pose_sample.latency_reported_s;
-        s.vicon_age_s = BasePoseAgeS(
-            base_pose_sample,
-            std::chrono::duration<double>(now.time_since_epoch()).count());
+        s.vicon_age_s = base_pose_age_s;
         for (int seg = 0; seg < kBasePoseSegmentCount; ++seg) {
             for (int i = 0; i < 3; ++i)
                 s.vicon_seg_pos_m[seg][i] =
@@ -256,6 +269,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 counters.overrun = 0;
             FillSample(sample, feedback, cyclic.last_command_frame_id(),
                        commanded_deg, commanded_velocity_deg_s, hold_status);
+            read_base_pose(t_now);
             fill_vicon(sample, t_now);
             sample.cycle = 0;
             sample.requested_deg = commanded_deg;
@@ -388,6 +402,32 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
             }
             state.t_s = std::chrono::duration<double>(t_now - control_start).count();
+
+            // World attachment for this cycle (world-hold slice). One slot
+            // read; a valid Mount pose updates the ZOH state, an occluded
+            // or absent one keeps the LAST pose (the freeze the spec asks
+            // for happens by construction) and only the trust flag drops.
+            read_base_pose(t_now);
+            {
+                const BasePoseSegmentPose& mount =
+                    base_pose_sample.segments[kBasePoseMount];
+                if (mount.valid) {
+                    state.world_p_mountseg = Eigen::Vector3d(
+                        mount.position_m[0], mount.position_m[1],
+                        mount.position_m[2]);
+                    state.world_R_mountseg =
+                        Eigen::Quaterniond(mount.quat_xyzw[3],
+                                           mount.quat_xyzw[0],
+                                           mount.quat_xyzw[1],
+                                           mount.quat_xyzw[2])
+                            .toRotationMatrix();
+                }
+                state.world_fresh = mount.valid &&
+                                    base_pose_sample.sequence > 0 &&
+                                    std::isfinite(base_pose_age_s) &&
+                                    base_pose_age_s <=
+                                        config::kWorldHoldFreshMaxAgeS;
+            }
 
             // Reference then controller: both pure computation. The source
             // says WHERE to be this cycle; the controller turns that into

@@ -62,11 +62,11 @@ int main()
 
     Check(header.size() == row.size(),
           "the header and a data row have the same number of columns");
-    Check(header.size() == 185,
-          "log_format 10 has the 185 columns the Hardware.h comment claims");
+    Check(header.size() == 190,
+          "log_format 11 has the 190 columns the Hardware.h comment claims");
 
-    // The world-pose columns are the format-10 tail: 4 sample-contract
-    // fields, then 8 columns per segment in the BasePose.h order.
+    // The format-10/11 tail: 4 sample-contract fields, 8 columns per
+    // segment in the BasePose.h order, then the format-11 hold evidence.
     std::vector<std::string> tail = {"vicon_seq", "vicon_frame",
                                      "vicon_latency_s", "vicon_age_s"};
     for (const char* segment :
@@ -76,10 +76,14 @@ int main()
                                   "_qz", "_qw", "_valid"})
             tail.push_back("vicon_" + s + field);
     }
+    for (const char* name : {"hold_state", "world_err_m",
+                             "world_err_rot_rad", "hold_ramp",
+                             "hold_reanchor_count"})
+        tail.push_back(name);
     for (std::size_t i = 0; i < tail.size(); ++i) {
         const std::size_t column = header.size() - tail.size() + i;
         Check(column < header.size() && header[column] == tail[i],
-              "format-10 column " + tail[i] + " is in its documented place");
+              "format-11 column " + tail[i] + " is in its documented place");
     }
 
     // The evidence a joint following-error stop leaves behind.
@@ -139,6 +143,31 @@ int main()
           "validity round-trips");
     Check(vicon_value_of("vicon_leftee_x_m") == "nan",
           "an untouched segment in a populated sample stays NaN");
+
+    // Hold evidence: absent-by-default, and a populated row round-trips.
+    Check(value_of("hold_state") == "0" && value_of("world_err_m") == "nan" &&
+              value_of("hold_ramp") == "nan",
+          "no-hold rows record state 0 and NaN errors, never zeros");
+    LoopLogSample hold_sample;
+    hold_sample.hold_state = 2;
+    hold_sample.world_err_m = 0.031;
+    hold_sample.world_err_rot_rad = 0.02;
+    hold_sample.hold_ramp = 1.0;
+    hold_sample.hold_reanchor_count = 3;
+    std::ostringstream hold_row_out;
+    WriteCsvRow(hold_row_out, hold_sample);
+    const std::vector<std::string> hold_row =
+        Split(OneLine(hold_row_out.str()));
+    const auto hold_value_of = [&](const std::string& name) {
+        for (std::size_t i = 0; i < header.size() && i < hold_row.size(); ++i)
+            if (header[i] == name)
+                return hold_row[i];
+        return std::string("<missing>");
+    };
+    Check(hold_value_of("hold_state") == "2" &&
+              hold_value_of("world_err_m") == "0.031" &&
+              hold_value_of("hold_reanchor_count") == "3",
+          "hold evidence round-trips through the row writer");
 
     if (failures == 0) {
         std::cout << "all log-schema tests passed\n";

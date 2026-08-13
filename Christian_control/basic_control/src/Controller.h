@@ -27,6 +27,7 @@
 #include "Arrival.h"
 #include "ReactiveLaw.h"
 #include "State.h"
+#include "WorldHold.h"
 
 class DualArmKinematics;      // Kinematics.h — only the .cpp needs them
 struct KinematicsWorkspace;
@@ -105,9 +106,22 @@ private:
     double zone_rad_ = 0.0;
 
     // The takeover pose: the target when a reference has no pose channel or
-    // no orientation.
+    // no orientation. BASE frame (it is FK at the re-seat instant); the
+    // world hold below supersedes it whenever Vicon is trusted, and its
+    // world image is used when it is not.
     Eigen::Vector3d hold_position_ = Eigen::Vector3d::Zero();
     Eigen::Matrix3d hold_rotation_ = Eigen::Matrix3d::Identity();
+
+    // The world anchor (spec 2026-08-13): engage/freeze/re-anchor/latch
+    // state machine over the hold pose. Constructed from Config.h in the
+    // .cpp. Runs ONLY on hold cycles (no pose, no joint reference).
+    WorldHold world_hold_;
+    // True while the hold provided the target last cycle; the transition
+    // out re-seats the base-frame fallback pose (latch-off step guard).
+    bool hold_was_active_ = false;
+    // The current cycle's reference twist resolved to world (framed
+    // PoseReference semantics); scratch, valid only within one call.
+    Twist resolved_reference_twist_;
 
     // True once a joint reference has been followed, cleared by the re-seat
     // it triggers on the first pose-channel cycle after it. Without that

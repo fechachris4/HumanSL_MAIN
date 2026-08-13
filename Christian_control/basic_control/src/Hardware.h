@@ -219,7 +219,7 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 10; WriteCsvRow is the authority):
+// CSV column order (log_format = 11; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -232,7 +232,9 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   traj_start_error_deg, joint_follow_stop, joint_follow_error_deg,
 //   vicon_seq, vicon_frame, vicon_latency_s, vicon_age_s,
 //   vicon_<seg>_{x_m,y_m,z_m,qx,qy,qz,qw,valid} for each of
-//   mount, leftbase, rightbase, leftee, rightee          (185 columns)
+//   mount, leftbase, rightbase, leftee, rightee,
+//   hold_state, world_err_m, world_err_rot_rad, hold_ramp,
+//   hold_reanchor_count                                  (190 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -264,6 +266,15 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // NOT calibrated mount/base poses (mountseg_T_mount does not exist yet).
 // Observed and logged only; no control law reads them at this format. See
 // the field-group comment inside LoopLogSample for the ZOH/absence rules.
+// Format 11 (2026-08-13, world-hold slice) appends the hold evidence:
+// hold_state (0 inactive / 1 engaged / 2 frozen / 3 latched-off),
+// world_err_m and world_err_rot_rad (the UNRAMPED world-frame error the
+// divergence latch watches; NaN when the hold is not the active
+// reference), hold_ramp (0..1 authority ramp; NaN when not holding), and
+// hold_reanchor_count (blackout recoveries this run). The Mount sample
+// now also FEEDS the world hold — the first format in which a vicon_*
+// input reaches a control law; the vicon_* columns record exactly the
+// sample the controller used that cycle (one slot read per cycle).
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -434,6 +445,13 @@ struct LoopLogSample {
          std::numeric_limits<double>::quiet_NaN(),
          std::numeric_limits<double>::quiet_NaN()}};
     bool vicon_seg_valid[5] = {false, false, false, false, false};
+
+    // World-hold evidence (log_format 11). See the format-11 comment above.
+    int hold_state = 0;
+    double world_err_m = std::numeric_limits<double>::quiet_NaN();
+    double world_err_rot_rad = std::numeric_limits<double>::quiet_NaN();
+    double hold_ramp = std::numeric_limits<double>::quiet_NaN();
+    int hold_reanchor_count = 0;
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully
@@ -471,7 +489,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 10. Both
+// Column header and one data row — the authority for log_format = 11. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);

@@ -133,12 +133,23 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     out << prefix << "log_file = " << (log_file.empty() ? "<timestamped>" : log_file)
         << (log_file.empty() ? " (default)\n" : " (--log)\n");
     line("control_dt_s", FormatDouble(config::kControlDtS));
+    line("world_hold_auto_engage",
+         config::kWorldHoldAutoEngage ? "true" : "false");
+    line("world_hold_fresh_max_age_s",
+         FormatDouble(config::kWorldHoldFreshMaxAgeS));
+    line("world_hold_ramp_s", FormatDouble(config::kWorldHoldRampS));
+    line("world_hold_max_error_m",
+         FormatDouble(config::kWorldHoldMaxErrorM));
+    line("world_hold_max_rot_error_rad",
+         FormatDouble(config::kWorldHoldMaxRotErrorRad));
+    line("world_hold_reanchor_after_s",
+         FormatDouble(config::kWorldHoldReanchorAfterS));
 }
 
 void WriteCsvPreamble(const std::string& log_file, const config::ArmConfig& arm_config,
                       std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 10 (compiled)\n";
+    csv << "# log_format = 11 (compiled)\n";
     // Why a log's vicon_* columns are all-NaN: source compiled out
     // ("absent"), or compiled in but never connected (age stays NaN).
     csv << "# vicon_source = " << kViconSourceBuildMode << " ("

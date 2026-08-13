@@ -316,6 +316,30 @@ namespace config
     // report; this switch removes only the Cartesian stop.
     inline constexpr bool kDisableFollowingErrorStop = false;
 
+    // World hold (2026-08-13 spec; Christian's interactive decisions).
+    // Auto-engage: after the takeover hold, the controller's hold pose
+    // anchors itself in the Vicon WORLD frame on the first cycle with a
+    // fresh, valid Mount sample — and stays base-relative (today's exact
+    // behaviour) whenever Vicon is absent, stale, or has diverged once.
+    inline constexpr bool kWorldHoldAutoEngage = true;
+    // Fresh = sample age at cycle start <= this (5 lost frames at 100 Hz;
+    // measured p99 age on 2026-08-13 was 9.7 ms, so 50 ms is a real gap).
+    inline constexpr double kWorldHoldFreshMaxAgeS = 0.05;
+    // Authority ramp after every (re-)engage: the effective world error is
+    // ramp * e, so a wrong frame sign drifts slowly instead of stepping.
+    inline constexpr double kWorldHoldRampS = 2.0;
+    // One-way divergence latch: past either world-frame error bound the
+    // hold demotes itself to the joint hold for the rest of the run.
+    // Rotation latches separately because a wrong rotation sign can
+    // reorient the arm while the position error stays small. The latch
+    // tests ramp*error — authority-proportional (review, 2026-08-13).
+    inline constexpr double kWorldHoldMaxErrorM = 0.08;
+    inline constexpr double kWorldHoldMaxRotErrorRad = 0.5;
+    // A freeze shorter than this resumes with the SAME anchor (no ramp
+    // restart, no anchor churn on a marginal stream); a longer blackout
+    // re-anchors at the current pose.
+    inline constexpr double kWorldHoldReanchorAfterS = 0.2;
+
     // Consecutive-cycle stop counters; N <= 0 disables one. Non-finite
     // controller output is never integrated (that cycle holds); overrun =
     // measured dt above kOverrunFactor x nominal. A stale cyclic

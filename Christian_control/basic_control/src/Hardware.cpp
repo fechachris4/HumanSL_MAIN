@@ -411,6 +411,8 @@ void WriteCsvHeader(std::ostream& csv)
             << ",vicon_" << segment << "_qz"
             << ",vicon_" << segment << "_qw"
             << ",vicon_" << segment << "_valid";
+    csv << ",hold_state,world_err_m,world_err_rot_rad,hold_ramp"
+        << ",hold_reanchor_count";
     csv << "\n";
 }
 
@@ -476,6 +478,9 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
             csv << "," << s.vicon_seg_quat_xyzw[seg][i];
         csv << "," << (s.vicon_seg_valid[seg] ? 1 : 0);
     }
+    csv << "," << s.hold_state << "," << s.world_err_m << ","
+        << s.world_err_rot_rad << "," << s.hold_ramp << ","
+        << s.hold_reanchor_count;
     csv << "\n";
 }
 
