@@ -1,6 +1,14 @@
 # Vicon frame contract — Stage 0 lab record
 
-Status: template — fill in during the lab session, then commit.
+Status (2026-08-13 ~16:40): **captures superseded — live stream only, by
+Christian's decision** back from the lab. The two recordings below were
+never made and will not be; stage 2's calibration will sample the live
+stream or a stage 1.5 controller log instead. Live verification stands:
+five valid segments confirmed streaming from this machine twice today
+(see pre-check section). Still open from this record: axis convention
+(read it off Nexus), segment template origin notes, the `Mount22` marker
+name, and the Torso segment decision — these need a person at the Nexus
+GUI, no recording required.
 
 ## Pre-check from the office, 2026-08-13 (evidence, not the lab session)
 
