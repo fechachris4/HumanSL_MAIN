@@ -33,6 +33,37 @@ Run from this machine at ~15:50 BST with `connect_vicon` (read-only):
 The lab boxes below stay unchecked: they require a person at the rig
 (nudging segments, wearing the backpack, Nexus GUI access).
 
+## Slice-1 live validation, 2026-08-13 18:20 (authorized run, left arm, hold only)
+
+Run: `controller --arm left`, 130 s, log
+`runs/2026-08-13/loop_log_left_20260813_182005.csv` (log_format 10,
+`vicon_source = sdk`). Arm held its startup pose; no motion commanded.
+
+- **Columns live from row 1**: 65,068 rows, zero rows before the first
+  Vicon sample (the source connects during startup, before takeover).
+- **Rate/ZOH exactly as designed**: 13,015 distinct samples in 130.1 s
+  (100.04 Hz); sequence strictly monotonic; zero-order-hold run length
+  median 5, max 6 (100 Hz → 500 Hz).
+- **Age**: median 5.5 ms, p95 9.6 ms, p99 9.7 ms, max 9.9 ms — uniform
+  over the 10 ms Vicon period, never stale. Min −0.6 ms: age is stamped
+  at cycle start while a frame can arrive mid-cycle; documented in
+  Hardware.h, deliberately not clamped.
+- **Cross-check against an independent client**: a concurrent
+  `connect_vicon` read agreed with the logged Mount pose to
+  sub-millimetre (−0.0274/−0.4785/1.2657 m both sides) and the
+  quaternion element-for-element in the same x,y,z,w order.
+- **Validity**: all five segments 100.00% valid, zero invalid spells.
+- **Overruns**: 0 in 65,043 cycles — the slot read costs the loop
+  nothing measurable.
+- Mount position spread over the run: ≤3.7 mm (parked rig; noise floor).
+
+Exit criteria for the hold slice: age histogram **met**; independent
+cross-check **met**; occlusion behaviour **NOT yet observed** — every
+segment stayed visible for the whole run, so the invalid-path has no
+live evidence yet (deliberately occlude the Mount cluster for a few
+seconds during the next run); axis convention / template origins still
+need the Nexus GUI reads below.
+
 ## Streaming restored
 
 - [ ] Nexus/Tracker is running and publishing (port 801 reachable from

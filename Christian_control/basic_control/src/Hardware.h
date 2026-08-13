@@ -388,7 +388,14 @@ struct LoopLogSample {
     double vicon_latency_s =               // SDK-reported total latency
         std::numeric_limits<double>::quiet_NaN();
     double vicon_age_s =                   // now − sample receive time,
-        std::numeric_limits<double>::quiet_NaN(); // steady_clock seconds
+        std::numeric_limits<double>::quiet_NaN(); // steady_clock seconds.
+    // "now" is the CYCLE START (t_now, the same instant time_s is stamped
+    // from), while the acquisition thread can publish mid-cycle — so a
+    // frame that lands between cycle start and the row fill shows a small
+    // NEGATIVE age (bounded by the cycle's compute+exchange time; −0.6 ms
+    // observed on the 2026-08-13 validation run). Deliberately not
+    // clamped: a clamp would hide the very timing evidence this column
+    // exists to record.
     double vicon_seg_pos_m[5][3] = {       // Mount, LeftBase, RightBase,
         {std::numeric_limits<double>::quiet_NaN(),  // LeftEE, RightEE —
          std::numeric_limits<double>::quiet_NaN(),  // BasePose.h order
