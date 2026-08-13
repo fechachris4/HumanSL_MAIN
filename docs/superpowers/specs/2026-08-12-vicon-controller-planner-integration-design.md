@@ -172,8 +172,21 @@ are present and fresh.
 
 This pulls stage 3's acquisition thread forward; stage 3 then consumes
 an already-proven provider rather than introducing one beside new
-control behaviour. Code is written only after stage 0's recordings
-exist (ordering chosen 2026-08-13).
+control behaviour.
+
+**Refined 2026-08-13 evening** (full derivation and decisions:
+`Christian_control/docs/thesis/world-frame-hold-derivation.md`):
+live-stream-only — the stage-0 recordings were dropped by Christian's
+decision, so the gate "after stage 0's recordings" is void; the
+controller log becomes the de-facto recording. Architecture A chosen
+for the eventual hold (world-state assembly mirroring msc_project
+`controller/frames.py`; the law unchanged). Snapshot contract fixed at
+the strict minimum: frame number, sequence, receive timestamp, reported
+latency, pose, validity, computed age; ZOH between samples; never
+differentiate a reused sample; stale ⇒ freeze-at-last-good, graded and
+logged, never a stop. Two slices: this stage (observe + log, no control
+change, with exit criteria) then the pose-only world hold behind its
+own design gate.
 
 Acceptance: with the stub, byte-identical controller behaviour and a
 log that says the provider was absent; with replay, logged poses match
