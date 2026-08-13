@@ -72,6 +72,20 @@ wrong sign therefore appears as a slow, visible drift the operator kills,
 not a step at full gain. `UnitRamp` is the pattern the law already uses
 for limit-avoidance.
 
+**Implementation corrections (2026-08-13, during build):** (1) the ramp
+interpolates from the CURRENT pose toward the anchor —
+`target = (1−r)·x_now ⊕ r·X_des` — so the effective error is `r·e`; the
+formula above interpolated between two constants that coincide at engage
+and would have ramped nothing. (2) The divergence latch watches BOTH
+error channels: position (`kWorldHoldMaxErrorM`, 0.08 m) and rotation
+(`kWorldHoldMaxRotErrorRad`, 0.5 rad), because a wrong rotation sign can
+reorient the arm while position error stays small. (3) No
+`WorldHoldSource` in Targets was needed: the controller already owned
+the hold pose (`TrackingController::Reset`), so `WorldHold` lives inside
+the controller's hold path — trajectory precedence is the existing joint
+branch (which now drops the anchor), and an explicit pose reference
+outranks the hold. Fewer moving parts than §3's file list assumed.
+
 ## 2. State machine
 
 ```
