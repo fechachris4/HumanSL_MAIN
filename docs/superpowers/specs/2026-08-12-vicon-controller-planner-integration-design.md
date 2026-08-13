@@ -155,6 +155,30 @@ faithful on every field; occlusion, staleness, truncated-file and
 unknown-format cases degrade with a stated reason. A stage-0 recording
 replays offline.
 
+### Stage 1.5 — controller logs world pose (added 2026-08-13)
+
+Scoped with Christian on 2026-08-13 (decisions and one prediction miss
+recorded in docs/intent/story.md and docs/intent/predictions.md, same
+date). Before stage 2 exists, `basic_control` gains a Vicon acquisition
+thread behind a stub-able provider — with the SDK absent a stub reports
+"no data", so the standalone build promise ("No GTSAM / GPMP2 / Vicon
+required") stays true. Each log row gains all five segments' raw poses
+in Vicon world, named for what they are (`world_T_<segment>` position +
+quaternion + validity, plus an age-in-seconds column), bumping
+`log_format` 9 → 10. Observed and recorded only: no control law consumes
+the estimate in this slice. The panel inherits the columns through its
+existing name-based CSV reader and drops its "no Vicon" labels when they
+are present and fresh.
+
+This pulls stage 3's acquisition thread forward; stage 3 then consumes
+an already-proven provider rather than introducing one beside new
+control behaviour. Code is written only after stage 0's recordings
+exist (ordering chosen 2026-08-13).
+
+Acceptance: with the stub, byte-identical controller behaviour and a
+log that says the provider was absent; with replay, logged poses match
+the recording; the age column reflects the Vicon frame actually used.
+
 ### Stage 2 — calibration tool (offline, against the stage-0 recording)
 
 A tool computing `mountseg_T_mount` (and the base-segment offsets) from a

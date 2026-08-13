@@ -2,22 +2,49 @@
 
 Status: template — fill in during the lab session, then commit.
 
+## Pre-check from the office, 2026-08-13 (evidence, not the lab session)
+
+Run from this machine at ~15:50 BST with `connect_vicon` (read-only):
+
+- `192.168.128.206:801` answered; exit 0, 10 frames received. `.210`
+  pings but has port 801 closed — it is not the DataStream host.
+- Server frame rate: 100 Hz.
+- Subject seen streaming: **`Christian Test`** — note `record_vicon`'s
+  default subject is `"Dr Octopus Christian"`, so pass the subject
+  explicitly (it is provenance metadata in the file header; data rows
+  are unaffected either way).
+- All five segments present under that subject with finite quaternions:
+  `Mount`, `LeftBase`, `RightBase`, `LeftEE`, `RightEE`.
+- 22 labeled markers, 0 unlabeled: Mount1/2/3 + **Mount22** (odd name —
+  check the template in Nexus: mislabel for Mount4?), LeftBase1–4,
+  RightBase1–4, LeftEE1–5, RightEE1–5.
+- Marker heights ~1.15–1.32 m for Mount/Base clusters are consistent
+  with Z-up, but this is inference — the axis convention box below
+  still needs Nexus's own setting read off the GUI.
+
+The lab boxes below stay unchecked: they require a person at the rig
+(nudging segments, wearing the backpack, Nexus GUI access).
+
 ## Streaming restored
 
 - [ ] Nexus/Tracker is running and publishing (port 801 reachable from
       this machine — Windows firewall blocked it on 2026-08-10).
 - [ ] `./build/connect_vicon <host:port>` exits 0 and reports 10 frames.
-- Host used: _____________ (`.206` is the code default; `.210` was
-  observed live on 2026-08-10 — record whichever actually answers).
+- Host used: `192.168.128.206:801` (settled by the 2026-08-13 pre-check
+  above; `.210` was a 2026-08-10 misdiagnosis — spec open question 4 is
+  answered).
 
 ## Segment verification
 
 - [ ] All five expected segments (`Mount`, `LeftBase`, `RightBase`,
       `LeftEE`, `RightEE`) appear in `connect_vicon`'s segment listing,
       `occluded = false`, and move plausibly when nudged.
-- Segments actually observed: _____________
+- Segments actually observed: _____________ (all five seen streaming in
+  the 2026-08-13 pre-check, but "moves plausibly when nudged" needs
+  hands at the rig)
 - Any segment still occluded/absent: _____________ (if any, Stage 2 needs
   a fallback for that segment — note it here, do not proceed silently)
+- Marker `Mount22`: renamed/explained? _____________
 
 ## Axis convention
 
@@ -37,11 +64,12 @@ For each of the five segments, as built in Nexus:
 
 ## Recordings captured
 
-Run from `Christian_control/vicon/build/`:
+Run from `Christian_control/vicon/build/` (subject name as seen streaming
+on 2026-08-13 — adjust if Nexus renames it):
 
 ```
-./record_vicon <host:port> static 15
-./record_vicon <host:port> wearer_moving 20
+./record_vicon 192.168.128.206:801 static 15 "Christian Test"
+./record_vicon 192.168.128.206:801 wearer_moving 20 "Christian Test"
 ```
 
 - [ ] `static`: arms and wearer both stationary. Written to:

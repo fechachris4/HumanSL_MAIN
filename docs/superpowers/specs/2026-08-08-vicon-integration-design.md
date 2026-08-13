@@ -4,6 +4,14 @@ Date: 2026-08-08
 Status: proposal for approval. No code written. No file in project 907 was read
 other than read-only, and none was modified.
 
+> **Status update (2026-08-13):** kept for reference — the capability
+> audit and frame-contract reasoning still hold, and README.md /
+> CMakeLists.txt.legacy cite it. Its phased implementation plan is void
+> (the Phase 1 built from it was deleted 2026-08-10). The current
+> integration path is
+> `docs/superpowers/specs/2026-08-12-vicon-controller-planner-integration-design.md`
+> (stages 0–4 plus the 2026-08-13 stage 1.5 addendum).
+
 ## Problem
 
 We want a Vicon-driven monitor in `HumanSL_MAIN` that reports where the rig

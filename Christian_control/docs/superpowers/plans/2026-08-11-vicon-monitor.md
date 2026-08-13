@@ -1,5 +1,12 @@
 # Read-only Vicon Monitor Implementation Plan
 
+> **Status (2026-08-13): shelved — do not execute this plan.** See the
+> banner on its spec (`../specs/2026-08-11-vicon-monitor-design.md`):
+> the separate `vicon_monitor` process was dismissed for the control
+> path by the 2026-08-12 integration design, and the panel's Vicon
+> display now comes from the controller's log (stage 1.5). Kept for the
+> panel-diagnostics ideas only.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox syntax for tracking.
 
 **Goal:** Build a read-only Vicon monitor in the existing browser panel, backed by a validated sensing-only C++ executable and deterministic replay states.

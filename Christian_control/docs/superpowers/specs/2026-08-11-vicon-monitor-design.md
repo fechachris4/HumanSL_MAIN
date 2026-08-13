@@ -1,5 +1,14 @@
 # Read-only Vicon monitor
 
+> **Status (2026-08-13): not the current integration path — do not
+> implement from this document.** The standalone `vicon_monitor` process
+> described here was never built on this design. The 2026-08-12
+> integration design (`docs/superpowers/specs/2026-08-12-vicon-controller-planner-integration-design.md`)
+> dismissed a separate sensing process for the control path (extra
+> latency hop + serialization); the idea survives only as possible
+> future panel diagnostics. The panel's live Vicon display is instead
+> served by the controller's own log (stage 1.5 of that design).
+
 ## Goal
 
 Add one graphical, read-only Vicon monitor to the existing HumanSL browser
