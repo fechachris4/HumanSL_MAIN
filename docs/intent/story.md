@@ -194,6 +194,18 @@ commit.
   acquisition+logging+panel with no control change and explicit exit
   criteria; slice 2 the pose-only world hold behind its own design gate.
   (Prompt: raw-prompt-log 2026-08-13 17:26; answers same hour.)
+- The simulation is the reference implementation of world-frame
+  control, not an estimate: "You're treating world hold as a new control
+  problem, but it isn't." Hardware work maps msc_project's implementation
+  (frames.py, reactive_controller.py, runner.py cycle order) onto
+  hardware rather than re-deriving; genuinely new logic is limited to
+  what the sim never needed — world_T_B from Vicon, the Mount-to-model
+  frame relationship, 100/500 Hz handling, validity/staleness/dropout,
+  and reference arbitration. Every remaining difference must be called
+  out with its reason or eliminated in favour of the sim convention.
+  Caught in review of the hold-slice design v1, which had re-based the
+  law inputs at the seam; v2 carries the side-by-side mapping. (Prompt:
+  raw-prompt-log 2026-08-13 19:02.)
 - The world-frame hold's first hardware slice uses feedback only — "Its a
   PD velocity controller but i want to establish world on hardware using
   the vicon. which uses only feedback." Establish the world frame in the

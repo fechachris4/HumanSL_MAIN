@@ -294,3 +294,40 @@ from his own list; he took the strict minimum — the "should" list was a
 roadmap, not a slice-1 spec. Both misses share a shape: when his sim or
 his math already embodies a choice, he picks consistency with it over
 convenience of the existing hardware code.
+
+### 2026-08-13 — authorization for the slice-1 validation run
+
+**Predicted:** he authorizes me to run it now — "rebuild and lets run it"
+is already an instruction, the gate question is confirmation of workspace/
+e-stop state, and he has been driving toward exactly this validation all
+day.
+
+**Actual:** authorized, run it now.
+
+**Result:** hit.
+
+### 2026-08-13 — hold-slice design gate: activation, staleness, hardware order
+
+**Predicted:** (1) Activation: explicit runtime command while joint hold
+stays the default — matches his staged bring-up instinct and the panel
+philosophy of deliberate hardware ops; auto-engage puts a brand-new
+control path in charge the moment servoing starts, which nothing in his
+history suggests he wants. (2) Staleness: 50 ms freeze threshold with
+re-anchor-on-recovery — five lost frames is a real dropout, p99 was
+9.7 ms so 50 ms has margin both ways; re-anchor avoids the recovery
+jump, and he has consistently chosen no-step behaviour near a person.
+(3) Hardware order: Nexus GUI reads (axis convention, template origins)
+required BEFORE the first world-hold hardware run — his own sign-error
+concern ("stabilisation becomes amplification") makes running on an
+assumed convention indefensible; code and tests proceed meanwhile.
+
+**Actual:** (1) auto-engage when fresh; (2) 50 ms freeze + re-anchor;
+(3) no gate — the first run verifies signs itself, tethered low-gain.
+
+**Result:** miss, hit, miss. The two misses rhyme with every miss today:
+he trusts the running system plus his own presence at the e-stop over
+procedural gates, and he wants the new capability IN the loop, not
+beside it. Engineering answer recorded in the design: respect both
+choices, shape the risk — ramp-in on engage, divergence latch that
+degrades to joint hold. Predict future gate questions from "he gates
+with his hands, not with process".

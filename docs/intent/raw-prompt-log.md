@@ -974,3 +974,33 @@ Safety
 Quantitative evaluation
 Potentially dual-arm operation and planning later
 Simply wiring the systems together proves integration. It does not yet prove successful stabilisation. can you check the mujoco project because i done it pretty well there so it can be a rough estimate ask qeuestion with implementation
+
+## 2026-08-13 17:48:07 BST
+
+do you have a plan
+
+## 2026-08-13 17:50:28 BST
+
+ok go ahead with slice 1
+
+## 2026-08-13 18:07:55 BST
+
+this was slice 2, but how many more slices are left?
+
+## 2026-08-13 18:17:25 BST
+
+commit slice 1
+
+## 2026-08-13 18:18:15 BST
+
+rebuild and lets run it to validate the columns
+
+## 2026-08-13 18:26:33 BST
+
+ok lets go ahead with the hold slice
+
+## 2026-08-13 19:02:39 BST
+
+look at the msc project as reference because i used it tfor the way to control and improve my my ideas so those should give rough estimates of what i want but yh. You're treating world hold as a new control problem, but it isn't. The simulation already contains the working reference implementation of the world-frame controller and has already validated the frame maths under base motion. Before finalising this hardware design, inspect the simulation implementation and use it as the source of truth. Trace exactly how the simulation constructs the world/base/EE transforms, computes the desired world pose, position/orientation errors, transforms those quantities for the Jacobian/controller, and handles base translation/rotation. Then map that implementation onto hardware rather than re-deriving an alternative architecture.
+
+The new hardware work should be limited to the things simulation did not need: obtaining the equivalent world_T_B from Vicon, establishing the fixed relationship between the Vicon Mount frame and the model's mount/base frame if one exists, handling the 100 Hz Vicon versus 500 Hz controller rate, Vicon validity/staleness/dropout behaviour, and arbitration between world hold and trajectory/planner references. Show me a side-by-side mapping of simulation component → hardware equivalent → genuinely new hardware logic, and call out anywhere the proposed hardware maths differs from the simulation. If there is no reason for a difference, reuse the simulation convention rather than introducing a new one.
