@@ -155,6 +155,40 @@ commit.
   bug (max-vs-max limit comparison) that goes live when limits split
   80/70. (Prompt: raw-prompt-log 2026-08-13 15:32:43 and the interactive
   answer ~15:35 recorded in docs/intent/predictions.md.)
+- A target beyond what the arm can reach cleanly gets the nearest
+  achievable pose plus an honest report of the shortfall — never a stop,
+  never a silent substitution. Chosen ~16:10 after the far-target
+  diagnosis; the offline IK evidence showed "nearest" must be nearest in
+  pose space (the failed 2026-08-05 target was fully reachable in
+  position if ~45° of tool pitch was yielded), so the projection must be
+  able to trade orientation for position and say so. Root cause and
+  evidence: Christian_control/docs/thesis/far-target-joint-limit-stop.md.
+  (Prompts: raw-prompt-log 2026-08-13 16:04/16:05; choice recorded in
+  docs/intent/predictions.md, both predictions hit.)
+
+- The world-frame hold's first hardware slice uses feedback only — "Its a
+  PD velocity controller but i want to establish world on hardware using
+  the vicon. which uses only feedback." Establish the world frame in the
+  loop first; the base-twist feedforward V_base,E (his section-6 math,
+  2026-08-13 images) stays the target law but is deferred, not dropped.
+  This answers the 2026-08-12 spec's open question 3 for the first slice.
+  (Prompt: raw-prompt-log 2026-08-13 16:25; interactive answer same turn.)
+- Targets are defined relative to the wearer's torso, and the torso is a
+  separate tracked segment from the mount plate — control runs through
+  the mount, target specification through the torso (`p_d^T, R_d^T`,
+  transformed once into world). Six tracked bodies, not five; the segment
+  inventory in the staged-Vicon goal above widens accordingly, and the
+  mount-rigidity experiment gains a second purpose: measuring
+  mount-vs-torso flex. (Interactive answer, 2026-08-13 ~16:30, to a
+  direct frame question; his notation table names T throughout.)
+- Working mode, standing: equations before code, always. Every
+  control-behaviour change is presented first as the equation that
+  changes, in his notation, then as the code diff realising it, with a
+  file:line map; a derivation doc in the repo ties the full law to code
+  symbols. His stated why: "i am not able to see what and when you create
+  changes" without the math — the math is how he audits the work and how
+  the thesis gets written. (Prompt: raw-prompt-log 2026-08-13 16:25;
+  interactive answer same turn.)
 
 ## Interpretations (hypotheses)
 

@@ -177,7 +177,11 @@ own graceful-degradation section names, and his pattern today is
 capability over protection. Second guess: the far-away orientation
 relaxation (option 1) alongside it.
 
-**Actual:** (pending)
+**Actual:** Q1: the software stop — hit. Q2: nearest-achievable
+projection with the IK diagnostic first — hit. Both were the recommended
+options; per the ledger's own miss-rate note, questions this safe are
+cheap confirmations rather than real probes. The information was still
+worth having: both answers gate hardware-relevant work.
 
 ### 2026-08-13 — scoping questions for "controller logs world pose"
 
@@ -204,3 +208,30 @@ form: "he dislikes speculative surface" applies to *controls nobody uses*
 streams costs disk, not attention; lab time is the scarce resource, and a
 recording you didn't make cannot be re-made for the thesis. Predict data
 questions from evidence value, not from UI minimalism.
+
+### 2026-08-13 — twist feedforward, torso frame, math-first working mode
+
+**Predicted:** (1) V_base,E feedforward: he picks "build it now, bring up
+staged" — his math makes the term central and the code already has the
+staged-enable pattern (velocity_enabled), so all-feedback-first then
+switch-on-feedforward gives him both the term and a safe bring-up, plus
+an ablation (with/without feedforward) that is thesis gold. (2) His
+"torso" frame T is the mount plate — the rigid, measured thing; the table
+name is the write-up's word for the wearer's back. (3) Math-first
+presentation of control changes + a derivation doc mapping equation →
+symbol → file:line: yes, emphatically — this prompt IS that request.
+
+**Actual:** (1) his own words: "Its a PD velocity controller but i want
+to establish world on hardware using the vicon. which uses only
+feedback" — feedback-only first slice, V_base,E deferred. (2) T is a
+SEPARATE torso segment, not the mount plate. (3) Equations before code,
+always, plus the derivation doc.
+
+**Result:** miss, miss, hit. (1) predicted build-now-staged; he wants
+the world frame established with pure feedback before any feedforward
+term exists — establish the frame, then earn the term. (2) the bigger
+miss: his math's torso frame is a real, sixth tracked body for defining
+targets relative to the wearer, not prose for the mount plate. The
+five-segment inventory was never the whole intent. Pattern for both:
+predicted from implementation convenience and existing artifacts;
+he decides from the math and the thesis narrative.

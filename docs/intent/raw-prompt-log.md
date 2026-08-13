@@ -904,3 +904,15 @@ my problem is if i try run the controller alone with my safelty limits the arm f
 ## 2026-08-13 16:07:58 BST
 
 yes thats right, apply all the fixes
+
+## 2026-08-13 16:13:43 BST
+
+commit the doc changes
+
+## 2026-08-13 16:16:24 BST
+
+okay lets go do the lab session
+
+## 2026-08-13 16:25:51 BST
+
+okay lets go do the lab session, my problem is what i need to do is world to mount transformation because the velocity of the end effector velocity is dependednt on base velocity. so i need to calculate orientation and position change but i need to show it mathematically and that counts in the introduction to the vicon and its a big part but i did not see you mention it which is what i worrying me. You are not engaging the problem with me mathematicallly so i am not able to see what and when you create changes. anyway this should give you a good idea of what direction i am reffering to fo the introduction of vicon. please ask question [Image #1] [Image #2] [Image #3] this is how i want things to represent the transformation i should go into the code and clearly identify this quickly
