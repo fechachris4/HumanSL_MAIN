@@ -287,7 +287,7 @@ namespace detail {
 // base_transform * DhRootInBaseLink()^-1 * base_link_M_tool(joints) — the
 // same frame-composition identity utils.cpp's forwardKinematics uses, so
 // this reduces to exactly what the DH chain used to compute for any
-// base_transform, not just the live call site's DhRootInMount().
+// base_transform, not just the live call site's DhRootInWorld().
 inline Eigen::Isometry3d ToolPoseInBaseTransform(const Eigen::Vector<double, 7>& joints,
                                                  const Eigen::Matrix4d& base_transform,
                                                  const std::string& end_effector_frame,

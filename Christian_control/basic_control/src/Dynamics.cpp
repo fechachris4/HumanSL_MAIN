@@ -17,9 +17,8 @@ Dynamics::Dynamics(const std::string& urdf_path) {
     // Set initial gravity in model
     model_.gravity.linear() = gravity_world_;
     
-    // stderr, not stdout: planner_bridge's STDOUT is the target pipe
-    // (run_session.sh runs `planner_bridge > $PIPE`), so anything printed
-    // there is read by the controller as wire input. These are diagnostics.
+    // Keep model diagnostics on stderr so planner/runtime diagnostics remain
+    // separate from the controller's operator-facing stdout.
     std::cerr << "Model loaded successfully!" << std::endl;
     std::cerr << "Number of joints: " << model_.njoints << std::endl;
     std::cerr << "Number of DOFs: " << model_.nv << std::endl;

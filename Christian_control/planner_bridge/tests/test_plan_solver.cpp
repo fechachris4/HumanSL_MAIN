@@ -9,14 +9,16 @@
 int main(int argc, char** argv) {
     assert(argc == 4 &&
            "usage: test_plan_solver <dh_tool.yaml> <joint_limits.yaml> <planner.yaml>");
-    const PlannerModel model = LoadPlannerModel(argv[1]);
+    const Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+    const PlannerModel model =
+        LoadPlannerModel(argv[1], /*has_tool=*/true, world_T_mount);
     // The checked-in tuning, not a hand-built one: this test then covers
     // the file the real runs use, so a config edit that breaks solving is
     // caught here rather than on hardware.
     const PlannerConfig config = LoadPlannerConfig(argv[3]);
     PlanRequest request;
     request.q_start_rad = Eigen::Matrix<double, 7, 1>::Zero();
-    const Eigen::Vector3d start = ToolPositionInMount(model, request.q_start_rad);
+    const Eigen::Vector3d start = ToolPositionInWorld(model, request.q_start_rad);
     // (0.15, 0.10, -0.10) was chosen in base_link and is proven solvable
     // there (test_bridge_main cites it). The planner now works in mount, so
     // the offset is rotated by the mounting transform to keep the PHYSICAL

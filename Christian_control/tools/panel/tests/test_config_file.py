@@ -24,7 +24,7 @@ from Christian_control.tools.panel import config_file, paths
 class KnobWhitelist(unittest.TestCase):
     def test_every_knob_is_found_in_the_real_config(self):
         knobs = config_file.read_knobs()
-        self.assertEqual(len(knobs), 19)
+        self.assertEqual(len(knobs), 16)
         missing = [name for name, knob in knobs.items() if knob["value"] is None]
         self.assertEqual(missing, [], "knob(s) no longer match Config.h")
 
@@ -245,10 +245,6 @@ class Thresholds(unittest.TestCase):
         self.assertAlmostEqual(thresholds["kArrivalToleranceM"]["value"], 0.001)
         self.assertAlmostEqual(
             thresholds["kFollowingErrorLimitDeg"]["value"], 3.0)
-        self.assertAlmostEqual(
-            thresholds["kTrajFollowingErrorStopDeg"]["value"], 8.0)
-        self.assertAlmostEqual(
-            thresholds["kTrajStartToleranceDeg"]["value"], 2.0)
         self.assertAlmostEqual(thresholds["kControlDtS"]["value"], 0.002)
 
     def test_orientation_tolerance_is_not_labelled_as_a_stop(self):

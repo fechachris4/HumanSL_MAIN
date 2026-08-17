@@ -8,8 +8,9 @@
 
 namespace {
 
-// Sphere centres for one configuration, in `mount`. Both arms' models are
-// built at DhRootInMount(left_arm), so these are directly comparable across
+// Sphere centres for one configuration, in Vicon `world`. Both arms' models
+// use the same immutable world_T_mount snapshot and are built at
+// DhRootInWorld(left_arm), so these are directly comparable across
 // arms with no further transform.
 std::vector<Eigen::Vector3d> SphereCentres(const PlannerModel& model,
                                            const Eigen::Matrix<double, 7, 1>& q) {
@@ -49,8 +50,8 @@ std::string InterArmClearanceReport::Summary() const {
 }
 
 InterArmClearanceReport CheckInterArmClearance(
-    const PlannerModel& left_model, const std::string& left_block,
-    const PlannerModel& right_model, const std::string& right_block,
+    const PlannerModel& left_model, const TimedJointTrajectory& left,
+    const PlannerModel& right_model, const TimedJointTrajectory& right,
     double required_clearance_m, double skew_window_s, double grid_dt_s) {
 
     InterArmClearanceReport report;
@@ -58,18 +59,16 @@ InterArmClearanceReport CheckInterArmClearance(
     report.skew_window_s = skew_window_s;
 
     const double dt = grid_dt_s > 0.0 ? grid_dt_s : 0.002;
-    const ReconstructedTrajectory left = ReconstructEmittedBlock(left_block, dt);
-    const ReconstructedTrajectory right = ReconstructEmittedBlock(right_block, dt);
-    if (!left.parsed) {
-        report.error = "left block did not parse: " + left.error;
+    if (!left.valid) {
+        report.error = "left trajectory invalid: " + left.error;
         return report;
     }
-    if (!right.parsed) {
-        report.error = "right block did not parse: " + right.error;
+    if (!right.valid) {
+        report.error = "right trajectory invalid: " + right.error;
         return report;
     }
     if (left.samples.empty() || right.samples.empty()) {
-        report.error = "a reconstructed trajectory was empty";
+        report.error = "a timed joint trajectory was empty";
         return report;
     }
 
@@ -78,7 +77,7 @@ InterArmClearanceReport CheckInterArmClearance(
     // once per offset, which is the dominant cost.
     std::vector<std::vector<Eigen::Vector3d>> right_centres;
     right_centres.reserve(right.samples.size());
-    for (const ReconstructedSample& sample : right.samples)
+    for (const TimedJointSample& sample : right.samples)
         right_centres.push_back(SphereCentres(right_model, sample.q_rad));
 
     const std::size_t left_spheres = left_model.arm_model->nr_body_spheres();

@@ -103,7 +103,7 @@ class ExchangeTimestampCompatibilityTest(unittest.TestCase):
 
     def test_supported_formats_with_both_timing_columns_are_current(self):
         columns = {"t_send_s": [], "t_recv_s": []}
-        for log_format in range(2, 12):
+        for log_format in range(2, 14):
             with self.subTest(log_format=log_format):
                 self.assertTrue(
                     runlog.has_exchange_timestamps({"log_format": str(log_format)}, columns)
@@ -113,7 +113,7 @@ class ExchangeTimestampCompatibilityTest(unittest.TestCase):
         columns = {"t_send_s": [], "t_recv_s": []}
         for preamble in (
             {"log_format": "1"},
-            {"log_format": "12"},
+            {"log_format": "14"},
             {},
             {"log_format": "six"},
             {"log_format": "6.0"},

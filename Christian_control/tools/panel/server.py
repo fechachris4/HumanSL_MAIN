@@ -31,7 +31,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from . import (build, config_file, dh, diagnose, paths, plan, planner_config,
-               runs, session, telemetry)
+               plots, runs, session, telemetry)
 
 # Set by serve(); read by the handler. Plain module state rather than a class
 # attribute so the handler stays a thin dispatcher.
@@ -167,6 +167,22 @@ class _Handler(BaseHTTPRequestHandler):
         kind, _ = mimetypes.guess_type(target.name)
         self._send(target.read_bytes(), kind or "application/octet-stream")
 
+    def _plot_image(self, rel: str) -> None:
+        """A PNG plots.run() produced, by its path relative to the repo
+        root (as returned in that response's "images" list). Same
+        resolve-then-compare traversal guard as _static(), rooted at the
+        repo instead of static/ since these files live under runs/."""
+        if not rel:
+            self._json({"error": "missing path"}, 400)
+            return
+        target = (paths.REPO / rel).resolve()
+        root = paths.REPO.resolve()
+        if (not str(target).startswith(str(root)) or not target.is_file()
+                or target.suffix.lower() != ".png"):
+            self._json({"error": f"no such plot image: {rel}"}, 404)
+            return
+        self._send(target.read_bytes(), "image/png")
+
     # ---- GET ---------------------------------------------------------
 
     def do_GET(self) -> None:  # noqa: N802 (http.server's spelling)
@@ -190,6 +206,10 @@ class _Handler(BaseHTTPRequestHandler):
             elif route == "/api/run":
                 rel = (query.get("f") or [""])[0]
                 self._json(runs.summarize_run(rel))
+            elif route == "/api/plots":
+                self._json(plots.list_scripts())
+            elif route == "/api/plot-image":
+                self._plot_image((query.get("path") or [""])[0])
             elif route == "/api/plan":
                 arm = (query.get("arm") or ["right"])[0]
                 self._json(plan.last_plan(arm))
@@ -272,6 +292,11 @@ class _Handler(BaseHTTPRequestHandler):
                 req = self._body()
                 self._json(plan.solve(str(req.get("arm", "right")),
                                       req.get("start_deg")))
+            elif route == "/api/plots/run":
+                req = self._body()
+                self._json(plots.run(str(req.get("script", "")),
+                                     str(req.get("run", "")),
+                                     req.get("params") or {}))
             elif route == "/api/session/start":
                 req = self._body()
                 # session.start makes the loopback decision itself, from the
@@ -435,7 +460,6 @@ def status_snapshot() -> dict:
         "freshness": freshness,
         "session": session.status(),
         "goal_arms": plan.session_arms(),
-        "pipes": {arm: paths.target_pipe(arm).exists() for arm in paths.ARMS},
         "dh": {arm: {k: v for k, v in dh.read(arm).items() if k != "joints"}
                for arm in paths.ARMS},
         "replay": replay_active(),

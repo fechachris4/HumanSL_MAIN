@@ -1,6 +1,6 @@
 //
-// BasePose — the world-pose sample the controller logs (slice 1 of the
-// world-frame work: observe and record only, no control law reads this).
+// BasePose — the coherent world pose/twist sample consumed and logged by the
+// controller.
 //
 // Three pieces, in reading order:
 //
@@ -19,7 +19,7 @@
 //      or invalid stays NaN/invalid.
 //   3. BasePoseSlot — the handoff between the acquisition thread (writes
 //      at the Vicon rate, ~100 Hz) and the 500 Hz control thread (reads
-//      every cycle, for logging in slice 1). Single producer, single
+//      every cycle, for measurement and logging). Single producer, single
 //      consumer, wait-free triple buffer: the three buffers are
 //      partitioned between the two threads by atomic index exchanges, so
 //      no buffer is ever touched by both threads at once — a reader can
@@ -29,7 +29,8 @@
 // same clock RunControlLoop paces with, so age = now − t_receive_s is
 // exact. Between Vicon frames the reader keeps seeing the same sequence —
 // zero-order hold, with age growing. NOTHING may finite-difference a
-// reused sample (derivation doc §5); slice 1 differentiates nothing.
+// reused sample (derivation doc §5). Differentiation belongs to the Vicon
+// producer and only occurs when source frame numbers advance.
 //
 
 #pragma once
@@ -39,6 +40,7 @@
 #include <cstdint>
 #include <limits>
 
+#include "MountTwistEstimator.h"
 #include "ViconSnapshot.h"
 
 // The five segments streamed by the lab's Nexus subject, in log-column
@@ -74,8 +76,24 @@ struct BasePoseSample {
     std::uint64_t sequence = 0; // ours; ++ per NEW sample; 0 = never any
     double t_receive_s = // steady_clock seconds at the SDK read
         std::numeric_limits<double>::quiet_NaN();
+    double frame_rate_hz = // SDK GetFrameRate at that read
+        std::numeric_limits<double>::quiet_NaN();
     double latency_reported_s = // SDK GetLatencyTotal at that read
         std::numeric_limits<double>::quiet_NaN();
+    // Filtered Mount spatial twist in Vicon-world axes, estimated only from
+    // advancing valid Vicon frames. It shares this sample's frame/sequence
+    // provenance and triple-buffer publication with the Mount pose, so a
+    // reader cannot observe a twist from another frame. Invalid means all six
+    // numbers remain NaN rather than resembling a stationary measurement.
+    double mount_linear_world_m_s[3] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    double mount_angular_world_rad_s[3] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    bool mount_twist_valid = false;
     BasePoseSegmentPose segments[kBasePoseSegmentCount];
 };
 
@@ -93,13 +111,26 @@ inline double BasePoseAgeS(const BasePoseSample& sample, double now_steady_s)
 // this only reshapes them into the five named slots. Unknown segments are
 // ignored; missing or invalid ones keep the NaN/invalid default.
 inline BasePoseSample ToBasePoseSample(const ViconSnapshot& snapshot,
-                                       std::uint64_t sequence)
+                                       std::uint64_t sequence,
+                                       const MountTwistEstimate& mount_twist = {})
 {
     BasePoseSample sample;
     sample.vicon_frame_number = snapshot.frame_number;
     sample.sequence = sequence;
     sample.t_receive_s = snapshot.host_time_s;
+    sample.frame_rate_hz = snapshot.frame_rate_hz;
     sample.latency_reported_s = snapshot.latency_total_s;
+    if (mount_twist.valid &&
+        mount_twist.source_frame_number == snapshot.frame_number &&
+        mount_twist.linear_m_s.allFinite() &&
+        mount_twist.angular_rad_s.allFinite()) {
+        for (int i = 0; i < 3; ++i) {
+            sample.mount_linear_world_m_s[i] = mount_twist.linear_m_s[i];
+            sample.mount_angular_world_rad_s[i] =
+                mount_twist.angular_rad_s[i];
+        }
+        sample.mount_twist_valid = true;
+    }
     for (const SegmentSample& segment : snapshot.segments) {
         for (int slot = 0; slot < kBasePoseSegmentCount; ++slot) {
             if (segment.segment_name != kBasePoseSegmentNames[slot])

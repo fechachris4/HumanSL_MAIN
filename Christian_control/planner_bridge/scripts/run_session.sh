@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
-# One-terminal supervised session for the Stage 1.5 bridge workflow.
+# One-terminal supervised session for the single-process planner/controller.
 # Sequences what the operator previously did by hand; bypasses nothing.
 #
 # Which arm(s): --arm right|left|both on the command line, or (if --arm is
 # omitted) the `session_arms:` key in config/goal.yaml — the one file this
 # workflow already asks you to edit before every run, so the session's arm
 # selection lives next to the targets it's about to send. --arm both starts
-# ONE controller process (two threads, one stop flag — a fault on either
-# arm stops both) and runs planner_bridge twice, once per arm, each into
-# its own pipe and reading only its own goal.yaml block.
+# ONE controller process (two arm threads, in-process planner workers, one
+# stop flag — a fault on either arm stops both).
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 CONTROLLER="$REPO/Christian_control/basic_control/build/controller"
-BRIDGE="$REPO/Christian_control/planner_bridge/build/planner_bridge"
+CONTROLLER_BUILD="$REPO/Christian_control/basic_control/build"
+PLANNER_SRC="$REPO/Christian_control/planner_bridge/src"
+PLANNER_TG="$REPO/Christian_control/planner_bridge/trajectory_generation"
 GOAL_YAML="$REPO/Christian_control/planner_bridge/config/goal.yaml"
 PLANNER_YAML="$REPO/Christian_control/planner_bridge/config/planner.yaml"
 ARM=""
@@ -45,36 +46,38 @@ fi
 # of duplicating itself for the right/left/both cases.
 if [[ "$ARM" == "both" ]]; then ARMS=(right left); else ARMS=("$ARM"); fi
 
-fresh_or_die() { # $1 binary, $2 source dir
+fresh_or_die() { # $1 binary, remaining args are source directories
     [[ -x "$1" ]] || { echo "missing binary: $1 — build it first"; exit 1; }
-    local stale
-    stale=$(find "$2" -name '*.cpp' -o -name '*.h' | xargs -r ls -t | head -1)
-    if [[ "$stale" -nt "$1" ]]; then
-        echo "STALE: $1 is older than $stale"
-        [[ $ALLOW_STALE = 1 ]] || { echo "rebuild, or pass --allow-stale"; exit 1; }
-    fi
+    local binary="$1" source_dir stale
+    shift
+    for source_dir in "$@"; do
+        stale=$(find "$source_dir" -type f \( -name '*.cpp' -o -name '*.h' \) -print0 |
+            xargs -0 -r ls -t | head -1)
+        if [[ -n "$stale" && "$stale" -nt "$binary" ]]; then
+            echo "STALE: $binary is older than $stale"
+            [[ $ALLOW_STALE = 1 ]] || { echo "rebuild, or pass --allow-stale"; exit 1; }
+        fi
+    done
 }
-fresh_or_die "$CONTROLLER" "$REPO/Christian_control/basic_control/src"
-fresh_or_die "$BRIDGE"     "$REPO/Christian_control/planner_bridge/src"
-fresh_or_die "$BRIDGE"     "$REPO/Christian_control/planner_bridge/trajectory_generation"
+fresh_or_die "$CONTROLLER" \
+    "$REPO/Christian_control/basic_control/src" "$PLANNER_SRC" "$PLANNER_TG"
 
-# The bridge's DH YAML is generated from the URDF at build time. If the URDF
-# was edited and the build not rerun (or it failed at the generator), the
-# stale generated file must not reach a session. Checked per arm this run
-# actually uses.
+# The controller build's nested planner library generates these DH YAML files
+# from the URDF. If the URDF was edited and the build not rerun, stale model
+# geometry must not reach a session.
 URDF="$REPO/Christian_control/basic_control/config/GEN3_dual_mounted.urdf"
 dh_yaml_for() { # $1 arm
     if [[ "$1" == "left" ]]; then
-        echo "$REPO/Christian_control/planner_bridge/build/config/dh_params_flange.yaml"
+        echo "$CONTROLLER_BUILD/planner_bridge/config/dh_params_flange.yaml"
     else
-        echo "$REPO/Christian_control/planner_bridge/build/config/dh_params_tool.yaml"
+        echo "$CONTROLLER_BUILD/planner_bridge/config/dh_params_tool.yaml"
     fi
 }
 for a in "${ARMS[@]}"; do
     dh_yaml="$(dh_yaml_for "$a")"
-    [[ -f "$dh_yaml" ]] || { echo "missing generated $dh_yaml — build planner_bridge first"; exit 1; }
+    [[ -f "$dh_yaml" ]] || { echo "missing generated $dh_yaml — build controller first"; exit 1; }
     if [[ "$URDF" -nt "$dh_yaml" ]]; then
-        echo "STALE: $dh_yaml is older than the URDF — rebuild planner_bridge"
+        echo "STALE: $dh_yaml is older than the URDF — rebuild controller"
         [[ $ALLOW_STALE = 1 ]] || { echo "rebuild, or pass --allow-stale"; exit 1; }
     fi
 done
@@ -92,7 +95,7 @@ mkdir -p "$REPO/runs"   # first run on a fresh checkout has no runs/ dir yet
 
 # One directory per session, holding everything needed to explain the run
 # afterwards. Without it a run CSV is linked to the goal and plan that
-# produced it only by timestamp adjacency, and the bridge's diagnostics —
+# produced it only by timestamp adjacency, and the planner diagnostics —
 # including the line that says whether the goal orientation was inherited —
 # go to the terminal and die with the scrollback.
 #
@@ -109,6 +112,8 @@ SESSION_START="$(date -Is)"
 
 SESSION_MARK=$(mktemp)   # anything newer than this was created by THIS session
 CONTROLLER_PID=""        # set right after the fork; trap is a no-op until then
+CONTROLLER_TAIL_PID=""
+declare -A LATEST
 
 # Written on EVERY exit path, so a session that fails early still leaves a
 # record of what it was. `wait` before finalising, so the controller has
@@ -120,7 +125,7 @@ finalize_session() {
         echo "  \"git_dirty\": $(if [[ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]]; then echo true; else echo false; fi),"
         echo "  \"arm\": \"$ARM\","
         echo "  \"controller_sha256\": \"$(sha_of "$CONTROLLER")\","
-        echo "  \"bridge_sha256\": \"$(sha_of "$BRIDGE")\","
+        echo "  \"planner_handoff\": \"in_process_typed_world_cartesian\","
         echo "  \"urdf_sha256\": \"$(sha_of "$URDF")\","
         echo "  \"started\": \"$SESSION_START\","
         echo "  \"ended\": \"$(date -Is)\","
@@ -147,8 +152,16 @@ finalize_session() {
     done
 }
 
-CONTROLLER_TAIL_PID=""
-trap 'kill -INT "$CONTROLLER_PID" 2>/dev/null || true; wait "$CONTROLLER_PID" 2>/dev/null || true; kill "$CONTROLLER_TAIL_PID" 2>/dev/null || true; finalize_session; rm -f "$SESSION_MARK"' EXIT
+cleanup_session() {
+    local rc=$?
+    [[ -n "$CONTROLLER_PID" ]] && kill -INT "$CONTROLLER_PID" 2>/dev/null || true
+    [[ -n "$CONTROLLER_PID" ]] && wait "$CONTROLLER_PID" 2>/dev/null || true
+    [[ -n "$CONTROLLER_TAIL_PID" ]] && kill "$CONTROLLER_TAIL_PID" 2>/dev/null || true
+    finalize_session
+    rm -f "$SESSION_MARK"
+    return "$rc"
+}
+trap cleanup_session EXIT
 
 # A PLAIN redirect to a file, then `tail -f` for the live view. This looks
 # clumsier than `> >(tee log)` and it is deliberate.
@@ -162,7 +175,6 @@ trap 'kill -INT "$CONTROLLER_PID" 2>/dev/null || true; wait "$CONTROLLER_PID" 2>
 "$CONTROLLER" --arm "$ARM" > "$SESSION_DIR/controller.log" 2>&1 & CONTROLLER_PID=$!
 tail -n +1 -f "$SESSION_DIR/controller.log" 2>/dev/null & CONTROLLER_TAIL_PID=$!
 
-declare -A LATEST   # arm -> its newest run-log path, filled in below
 
 for a in "${ARMS[@]}"; do
     echo "waiting for the $a controller thread's run log..."
@@ -178,8 +190,7 @@ for a in "${ARMS[@]}"; do
     echo "  $a state source: $found"
 
     # The file existing is not enough: the controller's CSV header and first
-    # data rows may still be buffered, and the bridge errors on a
-    # header-less file. Wait until a meas_j1 header line AND at least one
+    # data rows may still be buffered. Wait until a meas_j1 header line AND at least one
     # row after it are actually on disk.
     echo "waiting for telemetry data in the $a run log..."
     ready=0
@@ -193,40 +204,37 @@ for a in "${ARMS[@]}"; do
     [[ $ready = 1 ]] || { echo "no telemetry rows appeared in $found after 30 s"; exit 1; }
 done
 
-# The goal comes from config/goal.yaml (edit it before starting a session;
-# the bridge reads it because no --goal is passed here) — each arm reads
-# only its own block. One bridge run per arm per session — no prompt, no
-# typed coordinates.
-SENT=0
+# Wait for each selected controller thread to activate its first typed plan.
 for a in "${ARMS[@]}"; do
-    pipe="/tmp/humansl_bridge_targets_$a"
-    for _ in $(seq 1 10); do [[ -p "$pipe" ]] && break; sleep 1; done
-    [[ -p "$pipe" ]] || { echo "target pipe never appeared: $pipe"; exit 1; }
-    echo "sending $a's plan..."
-    # Solve to a FILE first, then copy that file into the pipe only if the
-    # bridge succeeded. Two things this buys over writing straight to the
-    # pipe: the plan becomes a durable artifact by construction rather than as
-    # a side effect, and the exit status is checked before a single byte can
-    # reach the controller. stderr goes to its own log — it carries the
-    # plan-initialisation quality and the goal-orientation warning, which
-    # previously went to the terminal and were lost.
-    plan_file="$SESSION_DIR/plan_$a.traj"
-    if "$BRIDGE" --arm "$a" > "$plan_file" 2> "$SESSION_DIR/bridge_$a.log"; then
-        cat "$SESSION_DIR/bridge_$a.log"
-        cat "$plan_file" > "$pipe"
-        echo "  $a: goal sent — arm is following the plan."
-        SENT=$((SENT + 1))
-    else
-        rc=$?
-        cat "$SESSION_DIR/bridge_$a.log"
-        echo "  $a: bridge exited $rc — nothing was sent for this arm."
-    fi
+    echo "waiting for the $a controller thread to activate its first plan..."
+    activated=0
+    for _ in $(seq 1 180); do
+        if awk -F, '
+            /^#/ { next }
+            !header {
+                for (i = 1; i <= NF; ++i) if ($i == "cart_traj_activated") column = i
+                header = 1
+                next
+            }
+            column && $column == "1" { found = 1; exit }
+            END { exit found ? 0 : 1 }
+        ' "$found"; then
+            activated=1
+            break
+        fi
+        kill -0 "$CONTROLLER_PID" 2>/dev/null || {
+            echo "controller exited before $a activated its initial plan"
+            exit 1
+        }
+        sleep 1
+    done
+    [[ $activated = 1 ]] || {
+        echo "no complete $a plan was activated after 180 s"
+        exit 1
+    }
+    echo "  $a: first typed world-Cartesian plan activated; worker remains in controller."
 done
 
-if [[ $SENT -gt 0 ]]; then
-    echo "Press Enter to stop the controller."
-    read -r
-else
-    echo "no plan was sent for any arm; stopping controller."
-fi
+echo "In-process planner worker(s) remain active. Press Enter to stop the controller."
+read -r
 echo "stopping controller..."

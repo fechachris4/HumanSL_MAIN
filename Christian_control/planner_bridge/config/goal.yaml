@@ -68,10 +68,10 @@ left:
   frame: mount
   path:
     type: circle
-    centre: [ 0.3100, 0.386, 0.5213 ]
-    radius_m: 0.1
+    centre: [ 0.0, 0.386, 0.5213 ]
+    radius_m: 0.2
     normal: [ 1, 0, 0 ]
-    duration_s: 12.0
+    duration_s: 12
     # fixed = hold one orientation for the whole trace (what drawing on a
     # surface wants). radial = keep +z pointed at the circle's centre.
     orientation: fixed

@@ -30,8 +30,11 @@
 namespace {
 void CheckChain(const char* label, const std::string& yaml_path,
                 const char* end_effector_frame, bool left_arm, bool has_tool) {
-    const PlannerModel model = LoadPlannerModel(yaml_path, has_tool);
-    // The gpmp2 arm is built at DhRootInMount, so its FK comes out in mount.
+    const Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+    const PlannerModel model =
+        LoadPlannerModel(yaml_path, has_tool, world_T_mount);
+    // Identity T_W_M makes world coincide with Mount in this regression;
+    // GPMP2 FK therefore comes out in both frames here.
     // The Pinocchio adapter is permanently base_link (deliberately — see
     // Config.h), so it is carried up by the same URDF-read mounting transform
     // the model used. An exact rigid transform, so it adds no error of its

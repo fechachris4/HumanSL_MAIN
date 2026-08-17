@@ -4,6 +4,14 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra)
 
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    option(PLANNER_BRIDGE_TESTS
+           "Register planner_bridge's hardware-free test targets" ON)
+else ()
+    option(PLANNER_BRIDGE_TESTS
+           "Register planner_bridge's hardware-free test targets" OFF)
+endif ()
+
 # DT_RUNPATH (the linker's new-dtags default) is non-transitive: it lets
 # planner_bridge find libgtsam.so, but libgtsam.so has no RPATH of its own,
 # so libgtsam.so's dependency libmetis-gtsam.so never resolves when the
@@ -73,7 +81,36 @@ target_link_options(bridge_core INTERFACE
     -Wl,-z,lazy
 )
 
-add_executable(planner_bridge src/main.cpp)
+# All planner implementation sources belong to the reusable runtime library.
+# Test registration below is optional, but the controller's nested build must
+# still receive this complete library when planner_bridge is consumed in
+# process.
+target_sources(bridge_core PRIVATE
+    src/PlannerModel.cpp
+    src/WorldSdf.cpp
+    src/CartesianPath.cpp
+    src/PathFrames.cpp
+    src/PathIk.cpp
+    src/InterArmDistance.cpp
+    src/PathAssembly.cpp
+    src/PathValidationReport.cpp
+    src/ValidatePath.cpp
+    src/WorldTrajectoryProjection.cpp
+    src/PlannerConfig.cpp
+    src/PlanSolver.cpp
+    src/PathValidation.cpp
+    src/StartState.cpp
+    src/BridgeMain.cpp
+    src/PlannerRuntime.cpp
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract/PlanningRequest.cpp
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract/WorldCartesianTrajectory.cpp
+)
+target_include_directories(bridge_core PUBLIC
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract)
+
+add_executable(planner_bridge src/main.cpp
+    src/PlannerPreview.cpp
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract/WorldCartesianTrajectoryWire.cpp)
 target_link_libraries(planner_bridge PRIVATE bridge_core)
 set_target_properties(planner_bridge PROPERTIES BUILD_RPATH "${TP_LIB}")
 
@@ -112,9 +149,48 @@ add_custom_command(OUTPUT "${DH_PARAMS_FLANGE_YAML}"
     VERBATIM)
 add_custom_target(dh_params_flange ALL DEPENDS "${DH_PARAMS_FLANGE_YAML}")
 
+if (PLANNER_BRIDGE_TESTS)
 enable_testing()
 
-target_sources(bridge_core PRIVATE src/PlannerModel.cpp)
+add_test(NAME run_session
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_run_session.sh)
+
+# Shared planner/controller world-Cartesian wire contract. Eigen-only: its
+# parser and validator run entirely off the real-time path and link no robot
+# or planning library.
+add_executable(test_cartesian_contract
+    tests/test_cartesian_contract.cpp
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract/WorldCartesianTrajectory.cpp
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract/WorldCartesianTrajectoryWire.cpp
+)
+target_include_directories(test_cartesian_contract PRIVATE
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract
+    ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+add_test(NAME cartesian_contract COMMAND test_cartesian_contract)
+
+add_executable(test_planning_request_contract
+    ${HUMANSL_ROOT}/Christian_control/basic_control/tests/test_planning_request.cpp
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract/PlanningRequest.cpp)
+target_include_directories(test_planning_request_contract PRIVATE
+    ${HUMANSL_ROOT}/Christian_control/basic_control/src
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract
+    ${HUMANSL_ROOT}/third_party/include/eigen3)
+add_test(NAME planning_request_contract COMMAND test_planning_request_contract)
+
+add_executable(test_world_trajectory_projection
+    tests/test_world_trajectory_projection.cpp
+)
+target_include_directories(test_world_trajectory_projection PRIVATE
+    src
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract
+)
+target_link_libraries(test_world_trajectory_projection PRIVATE bridge_core)
+set_target_properties(test_world_trajectory_projection PROPERTIES
+    BUILD_RPATH "${TP_LIB}")
+add_test(NAME world_trajectory_projection COMMAND test_world_trajectory_projection
+         ${DH_PARAMS_TOOL_YAML} ${DH_PARAMS_FLANGE_YAML})
+
 add_executable(test_planner_model tests/test_planner_model.cpp)
 target_include_directories(test_planner_model PRIVATE src)
 target_link_libraries(test_planner_model PRIVATE bridge_core)
@@ -137,7 +213,6 @@ set_target_properties(test_sphere_scaling PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME sphere_scaling COMMAND test_sphere_scaling
          ${DH_PARAMS_TOOL_YAML})
 
-target_sources(bridge_core PRIVATE src/WorldSdf.cpp)
 # The Cartesian path types and circle generator: pure Eigen geometry, no
 # gtsam, no Pinocchio, no robot. Kept out of bridge_core's link line for
 # that reason — it compiles standalone and runs anywhere.
@@ -166,6 +241,8 @@ target_include_directories(test_path_assembly PRIVATE
     ${HUMANSL_ROOT}/Christian_control/basic_control/src
     ${HUMANSL_ROOT}/third_party/include/eigen3
 )
+target_link_libraries(test_path_assembly PRIVATE bridge_core)
+set_target_properties(test_path_assembly PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME path_assembly COMMAND test_path_assembly)
 
 # Determinism of the IK's random restarts: same request, same plan.
@@ -188,12 +265,6 @@ add_test(NAME inter_arm_distance COMMAND test_inter_arm_distance
 
 # The Cartesian path types and the frame crossing that consumes them, in
 # bridge_core so both the probe tool and (next) PlanSolver share one copy.
-target_sources(bridge_core PRIVATE src/CartesianPath.cpp src/PathFrames.cpp
-                                   src/PathIk.cpp src/InterArmDistance.cpp src/PathAssembly.cpp
-                                   src/PathValidationReport.cpp src/ValidatePath.cpp
-                                   src/ReconstructBlock.cpp
-                                   ${HUMANSL_ROOT}/Christian_control/basic_control/src/JointTrajectory.cpp)
-
 # The one place gpmp2's [rotation; translation] pose-error ordering is
 # written down, held to gtsam's own logmap rather than to a comment.
 add_executable(test_pose_noise_ordering tests/test_pose_noise_ordering.cpp)
@@ -244,7 +315,6 @@ add_test(NAME circle_plan COMMAND test_circle_plan
          ${JOINT_LIMITS_YAML}
          ${PLANNER_CONFIG_YAML})
 
-target_sources(bridge_core PRIVATE src/PlannerConfig.cpp)
 add_executable(test_planner_config tests/test_planner_config.cpp)
 target_include_directories(test_planner_config PRIVATE src)
 target_link_libraries(test_planner_config PRIVATE bridge_core)
@@ -252,7 +322,6 @@ set_target_properties(test_planner_config PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME planner_config COMMAND test_planner_config
          ${PLANNER_CONFIG_YAML} ${CMAKE_CURRENT_BINARY_DIR})
 
-target_sources(bridge_core PRIVATE src/PlanSolver.cpp)
 add_executable(test_plan_solver tests/test_plan_solver.cpp)
 target_include_directories(test_plan_solver PRIVATE src)
 target_link_libraries(test_plan_solver PRIVATE bridge_core)
@@ -262,12 +331,7 @@ add_test(NAME plan_solver COMMAND test_plan_solver
          ${JOINT_LIMITS_YAML}
          ${PLANNER_CONFIG_YAML})
 
-target_sources(bridge_core PRIVATE src/PathValidation.cpp)
-add_executable(test_path_validation
-    tests/test_path_validation.cpp
-    ${HUMANSL_ROOT}/Christian_control/basic_control/src/Targets.cpp
-    ${HUMANSL_ROOT}/Christian_control/basic_control/src/JointTrajectory.cpp
-)
+add_executable(test_path_validation tests/test_path_validation.cpp)
 target_include_directories(test_path_validation PRIVATE
     src ${HUMANSL_ROOT}/Christian_control/basic_control/src)
 target_link_libraries(test_path_validation PRIVATE bridge_core)
@@ -275,19 +339,16 @@ set_target_properties(test_path_validation PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME path_validation COMMAND test_path_validation
          ${DH_PARAMS_TOOL_YAML})
 
-target_sources(bridge_core PRIVATE src/StartState.cpp)
 add_executable(test_start_state tests/test_start_state.cpp)
 target_include_directories(test_start_state PRIVATE src)
 target_link_libraries(test_start_state PRIVATE bridge_core)
 set_target_properties(test_start_state PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME start_state COMMAND test_start_state)
 
-target_sources(bridge_core PRIVATE src/TrajectoryEmit.cpp src/BridgeMain.cpp)
-add_executable(test_bridge_main
-    tests/test_bridge_main.cpp
-    ${HUMANSL_ROOT}/Christian_control/basic_control/src/Targets.cpp
-    ${HUMANSL_ROOT}/Christian_control/basic_control/src/JointTrajectory.cpp
-)
+add_executable(test_bridge_main tests/test_bridge_main.cpp)
+target_sources(test_bridge_main PRIVATE
+    src/PlannerPreview.cpp
+    ${HUMANSL_ROOT}/Christian_control/cartesian_contract/WorldCartesianTrajectoryWire.cpp)
 target_include_directories(test_bridge_main PRIVATE
     src ${HUMANSL_ROOT}/Christian_control/basic_control/src)
 target_link_libraries(test_bridge_main PRIVATE bridge_core)
@@ -297,19 +358,34 @@ add_test(NAME bridge_main COMMAND test_bridge_main
          ${JOINT_LIMITS_YAML}
          ${DH_PARAMS_FLANGE_YAML})
 
+# Typed planner result characterization. The test is the first consumer of
+# the in-process planner API; its initial red build is intentional during the
+# migration.
+add_executable(test_planner_runtime tests/test_planner_runtime.cpp)
+target_include_directories(test_planner_runtime PRIVATE
+    src ${HUMANSL_ROOT}/Christian_control/cartesian_contract)
+target_link_libraries(test_planner_runtime PRIVATE bridge_core)
+set_target_properties(test_planner_runtime PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME planner_runtime COMMAND test_planner_runtime
+         ${PLANNER_CONFIG_YAML}
+         ${JOINT_LIMITS_YAML}
+         ${DH_PARAMS_TOOL_YAML}
+         ${DH_PARAMS_FLANGE_YAML})
+
 # Every consumer of the generated YAML depends on the generating target, so
 # single-target builds (`make test_plan_solver`) produce the file before
 # anything runs against it. (`ALL` on dh_params_tool covers bare `ctest`
 # after a full build — ctest itself never builds.)
 foreach(dh_consumer planner_bridge probe_path_reachability test_planner_model test_gpmp2_urdf_validation test_sphere_scaling test_grid_coverage
-        test_plan_solver test_path_validation test_bridge_main)
+        test_plan_solver test_path_validation test_bridge_main test_planner_runtime
+        test_world_trajectory_projection)
     add_dependencies(${dh_consumer} dh_params_tool)
 endforeach()
 
 # planner_bridge and its CLI-argument test also need the left/flange YAML —
 # BridgeMain.cpp picks between the two files by --arm, so both must exist
 # before either binary runs.
-foreach(dh_flange_consumer planner_bridge test_bridge_main test_grid_coverage test_planner_model)
+foreach(dh_flange_consumer planner_bridge test_bridge_main test_grid_coverage test_planner_model test_world_trajectory_projection)
     add_dependencies(${dh_flange_consumer} dh_params_flange)
 endforeach()
 
@@ -318,7 +394,9 @@ endforeach()
 # binaries alone doesn't resolve transitive deps under ctest's fork/exec —
 # a pre-existing gap in the third_party build, worked around once here for
 # every bridge_core-linked test rather than per add_test call.
-foreach(bridge_test_name pose_noise_ordering ik_determinism inter_arm_distance circle_plan planner_model world_sdf plan_solver path_validation start_state bridge_main gpmp2_urdf_validation sphere_scaling grid_coverage planner_config)
+foreach(bridge_test_name pose_noise_ordering ik_determinism inter_arm_distance circle_plan planner_model world_sdf plan_solver path_validation start_state bridge_main gpmp2_urdf_validation sphere_scaling grid_coverage planner_config path_assembly world_trajectory_projection)
     set_tests_properties(${bridge_test_name} PROPERTIES
         ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 endforeach()
+
+endif () # PLANNER_BRIDGE_TESTS

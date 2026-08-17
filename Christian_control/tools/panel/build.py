@@ -1,13 +1,14 @@
 """Is the built thing older than what it was built from, and rebuild it.
 
-Two jobs, and they belong together because the answer to the first one is
-always "then build it".
+Two build products remain visible: the controller (which contains the
+in-process planner) and the standalone planner preview executable.
 
 The freshness half mirrors the `fresh_or_die` gate at the top of
 `planner_bridge/scripts/run_session.sh`: the controller binary against
-`basic_control/src`, the bridge binary against both `planner_bridge/src` and
-`planner_bridge/trajectory_generation`, and the build-generated DH table for
-each arm against the URDF it is generated from. Mirroring means the panel can
+`basic_control/src`, `planner_bridge/src`, and
+`planner_bridge/trajectory_generation`, the standalone preview binary against
+the planner sources, and the build-generated DH table for each arm against
+the URDF it is generated from. Mirroring means the panel can
 show the answer BEFORE you commit to a run, which is the whole point — a
 stale binary discovered by the session script is discovered after you have
 already decided to move an arm. It does not replace that gate: run_session.sh
@@ -136,7 +137,7 @@ def _binary_freshness(
 def _dh_freshness(arm: str) -> tuple[dict[str, Any], list[str]]:
     """One arm's build-generated DH table against the URDF it comes from.
 
-    The generator runs as part of the planner_bridge build, so an edited URDF
+    The generator runs as part of the controller's nested planner build, so an edited URDF
     with no rebuild leaves a table describing the previous robot. That is the
     quietest possible wrong answer: everything still runs, and the planner
     aims at the wrong place.
@@ -153,7 +154,7 @@ def _dh_freshness(arm: str) -> tuple[dict[str, Any], list[str]]:
         stale = True
         reasons.append(
             f"the {arm} arm's {generated.name} has not been generated "
-            "— build planner_bridge"
+            "— build controller"
         )
     elif urdf_mtime is not None and urdf_mtime > generated_mtime:
         stale = True
@@ -184,7 +185,8 @@ def freshness() -> dict[str, Any]:
     """
     controller, controller_reasons = _binary_freshness(
         paths.CONTROLLER_BIN,
-        [paths.CONTROLLER_SRC],
+        [paths.CONTROLLER_SRC, paths.BRIDGE_SRC,
+         paths.BRIDGE_TRAJECTORY_GENERATION],
         paths.BASIC_CONTROL,
         "controller",
     )

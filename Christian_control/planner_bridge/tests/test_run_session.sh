@@ -1,19 +1,6 @@
 #!/usr/bin/env bash
-# Hardware-free rehearsal of scripts/run_session.sh against stub binaries.
-#
-# Three properties, all of which the session-artifact change could plausibly
-# have broken:
-#
-#   A. The EXIT trap's `kill -INT` still reaches the CONTROLLER. $! must be
-#      the controller itself. Measured here: with `cmd > >(tee log) &` it is
-#      NOT — $! is a wrapper subshell and the signal never arrives, which
-#      would silently stop Ctrl-C reaching a MOVING ARM. A plain `> file`
-#      redirect forks nothing extra and keeps $! correct. This is the reason
-#      this file exists.
-#   B. What reaches the target pipe is byte-identical to the saved plan.
-#   C. A failing bridge sends nothing at all to the pipe.
-#
-# No robot, no Kortex, no real binaries: a fake repo tree with shell stubs.
+# Hardware-free rehearsal of the single-process run_session.sh workflow.
+# The controller below is a throwaway stub; no Kortex or planner process runs.
 
 set -uo pipefail
 
@@ -21,7 +8,7 @@ REAL_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRIPT_UNDER_TEST="$REAL_REPO/Christian_control/planner_bridge/scripts/run_session.sh"
 FAILURES=0
 
-check() { # $1 condition-description, $2 = "ok" or anything else
+check() {
     if [[ "$2" == "ok" ]]; then
         echo "  ok   $1"
     else
@@ -30,167 +17,132 @@ check() { # $1 condition-description, $2 = "ok" or anything else
     fi
 }
 
-# Builds a throwaway repo tree with stub binaries. $1 = bridge exit code.
-make_fake_repo() {
-    local bridge_rc="$1"
-    local root; root="$(mktemp -d)"
-    mkdir -p "$root/Christian_control/basic_control/build" \
+make_fake_repo() { # $1: 0 = activate a plan, 1 = exit before activation
+    local fail="$1"
+    local root
+    root="$(mktemp -d)"
+    mkdir -p "$root/Christian_control/basic_control/build/planner_bridge/config" \
              "$root/Christian_control/basic_control/src" \
              "$root/Christian_control/basic_control/config" \
-             "$root/Christian_control/planner_bridge/build/config" \
              "$root/Christian_control/planner_bridge/src" \
              "$root/Christian_control/planner_bridge/trajectory_generation" \
              "$root/Christian_control/planner_bridge/config" \
              "$root/Christian_control/planner_bridge/scripts" \
              "$root/runs"
 
-    cp "$SCRIPT_UNDER_TEST" "$root/Christian_control/planner_bridge/scripts/run_session.sh"
+    cp "$SCRIPT_UNDER_TEST" \
+       "$root/Christian_control/planner_bridge/scripts/run_session.sh"
     chmod +x "$root/Christian_control/planner_bridge/scripts/run_session.sh"
+    printf 'int main(){}\n' > "$root/Christian_control/basic_control/src/x.cpp"
+    printf 'int main(){}\n' > "$root/Christian_control/planner_bridge/src/x.cpp"
+    printf 'int main(){}\n' > "$root/Christian_control/planner_bridge/trajectory_generation/x.cpp"
+    printf 'frame: mount\n' > \
+        "$root/Christian_control/basic_control/config/GEN3_dual_mounted.urdf"
+    printf 'session_arms: right\nright:\n  goal: [0,0,0]\nleft:\n  goal: [0,0,0]\n' > \
+        "$root/Christian_control/planner_bridge/config/goal.yaml"
+    printf 'motion:\n  nominal_speed_mps: 0.05\n' > \
+        "$root/Christian_control/planner_bridge/config/planner.yaml"
+    printf 'a: 1\n' > \
+        "$root/Christian_control/basic_control/build/planner_bridge/config/dh_params_tool.yaml"
+    printf 'a: 1\n' > \
+        "$root/Christian_control/basic_control/build/planner_bridge/config/dh_params_flange.yaml"
 
-    # Sources must be OLDER than the binaries or fresh_or_die refuses to run.
-    # Every directory fresh_or_die is pointed at must EXIST, too: it runs
-    # `find` under `set -euo pipefail`, so a missing directory aborts the whole
-    # script before it does anything — which is how this file silently stopped
-    # testing what it is for when trajectory_generation moved here.
-    echo "int main(){}" > "$root/Christian_control/basic_control/src/x.cpp"
-    echo "int main(){}" > "$root/Christian_control/planner_bridge/src/x.cpp"
-    echo "int main(){}" > "$root/Christian_control/planner_bridge/trajectory_generation/x.cpp"
-    printf 'frame: mount\n' > "$root/Christian_control/basic_control/config/GEN3_dual_mounted.urdf"
-    printf 'session_arms: right\nright:\n  frame: mount\n  goal: [0,0,0]\n' \
-        > "$root/Christian_control/planner_bridge/config/goal.yaml"
-    printf 'motion:\n  nominal_speed_mps: 0.05\n' \
-        > "$root/Christian_control/planner_bridge/config/planner.yaml"
-    printf 'a: 1\n' > "$root/Christian_control/planner_bridge/build/config/dh_params_tool.yaml"
-    printf 'a: 1\n' > "$root/Christian_control/planner_bridge/build/config/dh_params_flange.yaml"
-    sleep 0.05
-
-    # Stub controller, in PYTHON deliberately — not bash.
-    #
-    # A background job started from a non-interactive shell inherits SIGINT as
-    # SIG_IGN, and bash REFUSES to install a trap for a signal it inherited as
-    # ignored. A bash stub therefore cannot catch the trap's kill -INT, and a
-    # test built on one measures the stub rather than the system. The real
-    # controller is C++ and calls std::signal(SIGINT, ...) at Main.cpp:562,
-    # which DOES reset an inherited SIG_IGN. Python's signal.signal() resets it
-    # the same way, so this stub is faithful where a shell one is not.
-    #
-    # It prints the disposition it inherited, so the log records the fact
-    # rather than leaving it as folklore.
     cat > "$root/Christian_control/basic_control/build/controller" <<'CTRL'
 #!/usr/bin/env python3
-import os, signal, sys, threading, time
+import os
+import signal
+import sys
+import time
 from datetime import date, datetime
 
-arm = "right"
-a = sys.argv[1:]
-for i, v in enumerate(a):
-    if v == "--arm" and i + 1 < len(a):
-        arm = a[i + 1]
-root = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".."))
-
-print(f"stub controller: starting for arm {arm}", flush=True)
-print(f"stub controller: inherited SIGINT disposition = "
-      f"{'SIG_IGN' if signal.getsignal(signal.SIGINT) is signal.SIG_IGN else 'default/handler'}",
-      flush=True)
+selected = "right"
+for index, value in enumerate(sys.argv):
+    if value == "--arm" and index + 1 < len(sys.argv):
+        selected = sys.argv[index + 1]
+arms = ["right", "left"] if selected == "both" else [selected]
+root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+fail = os.environ.get("STUB_PLAN_FAIL") == "1"
 
 def on_sigint(signum, frame):
-    with open(os.path.join(root, f"sigint_{arm}.txt"), "w") as f:
-        f.write("SIGINT\n")
-    sys.exit(0)
+    with open(os.path.join(root, "controller_sigint.txt"), "w") as output:
+        output.write("SIGINT\n")
+    raise SystemExit(0)
 
-signal.signal(signal.SIGINT, on_sigint)   # resets an inherited SIG_IGN
-
+signal.signal(signal.SIGINT, on_sigint)
 day = os.path.join(root, "runs", date.today().isoformat())
 os.makedirs(day, exist_ok=True)
-csv = os.path.join(day, f"loop_log_{arm}_{datetime.now():%H%M%S}.csv")
-with open(csv, "w") as f:
-    f.write("# log_format = 9\ntime_s,meas_j1,meas_j2\n0.0,1.0,2.0\n")
-
-pipe = f"/tmp/humansl_bridge_targets_{arm}"
-if os.path.exists(pipe):
-    os.remove(pipe)
-os.mkfifo(pipe)
-received = os.path.join(root, f"received_{arm}.txt")
-open(received, "w").close()
-
-def drain():
-    with open(pipe, "rb") as p, open(received, "wb") as out:
-        out.write(p.read())
-threading.Thread(target=drain, daemon=True).start()
-
-for _ in range(300):
+for arm in arms:
+    csv_path = os.path.join(day, f"loop_log_{arm}_{datetime.now():%H%M%S%f}.csv")
+    with open(csv_path, "w") as output:
+        output.write("# log_format = 13\n")
+        output.write("time_s,meas_j1,cart_traj_activated\n")
+        output.write(f"0.0,1,{'0' if fail else '1'}\n")
+print(f"stub controller: ready for {selected}", flush=True)
+if fail:
+    raise SystemExit(3)
+while True:
     time.sleep(0.1)
 CTRL
     chmod +x "$root/Christian_control/basic_control/build/controller"
-
-    # Stub bridge: a recognisable plan on stdout, diagnostics on stderr.
-    cat > "$root/Christian_control/planner_bridge/build/planner_bridge" <<BRIDGE
-#!/usr/bin/env bash
-echo "goal orientation: INHERITED from the start pose" >&2
-echo "TRAJ_BEGIN 2"
-echo "0.000000 1 2 3 4 5 6 7 0 0 0 0 0 0 0"
-echo "1.000000 1 2 3 4 5 6 7 0 0 0 0 0 0 0"
-echo "TRAJ_END"
-exit $bridge_rc
-BRIDGE
-    chmod +x "$root/Christian_control/planner_bridge/build/planner_bridge"
     echo "$root"
 }
 
-run_session() { # $1 repo root -> exits when the script does
-    printf 'GO\n\n' | timeout 60 \
-        "$1/Christian_control/planner_bridge/scripts/run_session.sh" --arm right \
+run_session() { # $1 root, $2 arm, optional STUB_PLAN_FAIL=1
+    STUB_PLAN_FAIL="${3:-0}" timeout 15 \
+        bash -c "printf 'GO\\n\\n' | '$1/Christian_control/planner_bridge/scripts/run_session.sh' --arm '$2'" \
         > "$1/session_stdout.txt" 2>&1
 }
 
-echo "== A/B: bridge succeeds =="
+echo "== single controller process succeeds for both arms =="
 ROOT_OK="$(make_fake_repo 0)"
-run_session "$ROOT_OK"
+run_session "$ROOT_OK" both 0
 SESSION_DIR="$(find "$ROOT_OK/runs" -maxdepth 2 -type d -name 'session_*' | head -1)"
-
-[[ -n "$SESSION_DIR" ]] && check "a session directory is created" ok \
-    || check "a session directory is created" no
-
-# A. THE ONE THAT MATTERS.
-[[ -f "$ROOT_OK/sigint_right.txt" ]] \
-    && check "trap's kill -INT reaches the controller (\$! is the controller)" ok \
-    || check "trap's kill -INT reaches the controller (\$! is the controller)" no
-
-# B.
-if [[ -f "$SESSION_DIR/plan_right.traj" && -f "$ROOT_OK/received_right.txt" ]] \
-   && cmp -s "$SESSION_DIR/plan_right.traj" "$ROOT_OK/received_right.txt"; then
-    check "what reached the pipe is byte-identical to the saved plan" ok
-else
-    check "what reached the pipe is byte-identical to the saved plan" no
-fi
-
-for f in goal.yaml planner.yaml controller.log bridge_right.log session.json; do
-    [[ -s "$SESSION_DIR/$f" ]] && check "captured $f" ok || check "captured $f" no
+[[ -n "$SESSION_DIR" ]] && check "session directory created" ok || check "session directory created" no
+[[ -f "$ROOT_OK/controller_sigint.txt" ]] \
+    && check "EXIT trap SIGINT reaches the controller process" ok \
+    || check "EXIT trap SIGINT reaches the controller process" no
+[[ ! -e /tmp/humansl_bridge_targets_right &&
+   ! -e /tmp/humansl_bridge_targets_left &&
+   ! -e /tmp/humansl_planning_requests_right &&
+   ! -e /tmp/humansl_planning_requests_left ]] \
+    && check "no production FIFO paths are created" ok \
+    || check "no production FIFO paths are created" no
+for arm in right left; do
+    if find "$ROOT_OK/runs" -maxdepth 2 -name "loop_log_${arm}_*.csv" -print -quit | grep -q .; then
+        check "$arm controller log exists" ok
+    else
+        check "$arm controller log exists" no
+    fi
 done
-grep -q "INHERITED" "$SESSION_DIR/bridge_right.log" 2>/dev/null \
-    && check "bridge stderr diagnostics are captured, not lost to the terminal" ok \
-    || check "bridge stderr diagnostics are captured, not lost to the terminal" no
-ls "$SESSION_DIR"/loop_log_right_*.csv >/dev/null 2>&1 \
-    && check "the run CSV is linked into the session directory" ok \
-    || check "the run CSV is linked into the session directory" no
+for file in goal.yaml planner.yaml controller.log session.json; do
+    [[ -s "$SESSION_DIR/$file" ]] && check "captured $file" ok \
+        || check "captured $file" no
+done
+grep -q 'planner_handoff.*in_process_typed_world_cartesian' "$SESSION_DIR/session.json" \
+    && check "session provenance records typed in-process handoff" ok \
+    || check "session provenance records typed in-process handoff" no
 
-echo "== C: bridge fails =="
-ROOT_BAD="$(make_fake_repo 3)"
-run_session "$ROOT_BAD"
-SESSION_BAD="$(find "$ROOT_BAD/runs" -maxdepth 2 -type d -name 'session_*' | head -1)"
-
-[[ ! -s "$ROOT_BAD/received_right.txt" ]] \
-    && check "a failing bridge sends nothing to the pipe" ok \
-    || check "a failing bridge sends nothing to the pipe" no
-grep -q "bridge exited 3" "$ROOT_BAD/session_stdout.txt" 2>/dev/null \
-    && check "the bridge's exit code is reported to the operator" ok \
-    || check "the bridge's exit code is reported to the operator" no
-[[ -f "$SESSION_BAD/session.json" ]] \
-    && check "a failed session still leaves a session.json" ok \
-    || check "a failed session still leaves a session.json" no
+echo "== failed controller startup is reported without planner artifacts =="
+ROOT_BAD="$(make_fake_repo 1)"
+run_session "$ROOT_BAD" right 1
+grep -q "controller exited before right activated its initial plan" \
+    "$ROOT_BAD/session_stdout.txt" \
+    && check "failed activation is reported to the operator" ok \
+    || check "failed activation is reported to the operator" no
+BAD_SESSION="$(find "$ROOT_BAD/runs" -maxdepth 3 -name session.json | head -1)"
+[[ -f "$BAD_SESSION" ]] && check "failed session still leaves session.json" ok \
+    || check "failed session still leaves session.json" no
+! find "$ROOT_BAD/runs" -maxdepth 2 -name 'published_*.ok' | grep -q . \
+    && check "failed session leaves no publication marker" ok \
+    || check "failed session leaves no publication marker" no
 
 rm -rf "$ROOT_OK" "$ROOT_BAD"
-rm -f /tmp/humansl_bridge_targets_right
+rm -f /tmp/humansl_bridge_targets_right /tmp/humansl_bridge_targets_left \
+      /tmp/humansl_planning_requests_right /tmp/humansl_planning_requests_left
 echo
-if [[ $FAILURES -eq 0 ]]; then echo "test_run_session: PASSED"; else echo "test_run_session: FAILED ($FAILURES)"; fi
+if [[ $FAILURES -eq 0 ]]; then
+    echo "test_run_session: PASSED"
+else
+    echo "test_run_session: FAILED ($FAILURES)"
+fi
 exit $((FAILURES > 0))

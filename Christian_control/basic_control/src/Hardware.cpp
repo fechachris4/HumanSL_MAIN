@@ -398,8 +398,6 @@ void WriteCsvHeader(std::ostream& csv)
     for (int i = 1; i <= 7; ++i)
         csv << ",nullvel_j" << i;
     csv << ",null_leak_mps";
-    csv << ",traj_activated,traj_rejected,traj_complete,traj_start_error_deg"
-        << ",joint_follow_stop,joint_follow_error_deg";
     csv << ",vicon_seq,vicon_frame,vicon_latency_s,vicon_age_s";
     for (const char* segment :
          {"mount", "leftbase", "rightbase", "leftee", "rightee"})
@@ -411,8 +409,24 @@ void WriteCsvHeader(std::ostream& csv)
             << ",vicon_" << segment << "_qz"
             << ",vicon_" << segment << "_qw"
             << ",vicon_" << segment << "_valid";
-    csv << ",hold_state,world_err_m,world_err_rot_rad,hold_ramp"
-        << ",hold_reanchor_count";
+    csv << ",vicon_frame_rate_hz"
+        << ",vicon_mount_vx_mps,vicon_mount_vy_mps,vicon_mount_vz_mps"
+        << ",vicon_mount_wx_radps,vicon_mount_wy_radps"
+        << ",vicon_mount_wz_radps,vicon_mount_twist_valid";
+    csv << ",cart_traj_activated,cart_traj_rejected,cart_traj_complete"
+        << ",cart_traj_cancelled,cart_replan_requested"
+        << ",cart_start_position_error_m,cart_start_orientation_error_rad"
+        << ",cart_trajectory_id,cart_planner_vicon_sequence"
+        << ",cart_reference_time_s"
+        << ",cart_ref_x_world_m,cart_ref_y_world_m,cart_ref_z_world_m"
+        << ",cart_ref_qx_world,cart_ref_qy_world,cart_ref_qz_world,cart_ref_qw_world"
+        << ",cart_ref_vx_world_mps,cart_ref_vy_world_mps,cart_ref_vz_world_mps"
+        << ",cart_ref_wx_world_radps,cart_ref_wy_world_radps,cart_ref_wz_world_radps"
+        << ",cart_meas_x_world_m,cart_meas_y_world_m,cart_meas_z_world_m"
+        << ",cart_meas_qx_world,cart_meas_qy_world,cart_meas_qz_world,cart_meas_qw_world"
+        << ",cart_meas_vx_world_mps,cart_meas_vy_world_mps,cart_meas_vz_world_mps"
+        << ",cart_meas_wx_world_radps,cart_meas_wy_world_radps,cart_meas_wz_world_radps"
+        << ",world_fresh,world_mount_twist_valid";
     csv << "\n";
 }
 
@@ -463,12 +477,6 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
     for (double v : s.qdot_null_deg_s)
         csv << "," << v;
     csv << "," << s.null_leak_m_s;
-    csv << "," << (s.joint_traj_activated ? 1 : 0) << ","
-        << (s.joint_traj_rejected ? 1 : 0) << ","
-        << (s.joint_traj_complete_edge ? 1 : 0) << ","
-        << s.joint_traj_start_error_deg << ","
-        << (s.joint_following_error_stop ? 1 : 0) << ","
-        << s.joint_following_error_deg;
     csv << "," << s.vicon_sequence << "," << s.vicon_frame_number << ","
         << s.vicon_latency_s << "," << s.vicon_age_s;
     for (int seg = 0; seg < 5; ++seg) {
@@ -478,9 +486,32 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
             csv << "," << s.vicon_seg_quat_xyzw[seg][i];
         csv << "," << (s.vicon_seg_valid[seg] ? 1 : 0);
     }
-    csv << "," << s.hold_state << "," << s.world_err_m << ","
-        << s.world_err_rot_rad << "," << s.hold_ramp << ","
-        << s.hold_reanchor_count;
+    csv << "," << s.vicon_frame_rate_hz;
+    for (double v : s.vicon_mount_linear_world_m_s)
+        csv << "," << v;
+    for (double v : s.vicon_mount_angular_world_rad_s)
+        csv << "," << v;
+    csv << "," << (s.vicon_mount_twist_valid ? 1 : 0);
+    csv << "," << (s.cart_traj_activated ? 1 : 0)
+        << "," << (s.cart_traj_rejected ? 1 : 0)
+        << "," << (s.cart_traj_complete ? 1 : 0)
+        << "," << (s.cart_traj_cancelled ? 1 : 0)
+        << "," << (s.cart_replan_requested ? 1 : 0)
+        << "," << s.cart_start_position_error_m
+        << "," << s.cart_start_orientation_error_rad
+        << "," << s.cart_trajectory_id
+        << "," << s.cart_planner_vicon_sequence
+        << "," << s.cart_reference_time_s;
+    for (double v : s.cart_ref_position_world_m) csv << "," << v;
+    for (double v : s.cart_ref_quat_world_xyzw) csv << "," << v;
+    for (double v : s.cart_ref_linear_world_m_s) csv << "," << v;
+    for (double v : s.cart_ref_angular_world_rad_s) csv << "," << v;
+    for (double v : s.cart_measured_position_world_m) csv << "," << v;
+    for (double v : s.cart_measured_quat_world_xyzw) csv << "," << v;
+    for (double v : s.cart_measured_linear_world_m_s) csv << "," << v;
+    for (double v : s.cart_measured_angular_world_rad_s) csv << "," << v;
+    csv << "," << (s.world_fresh ? 1 : 0)
+        << "," << (s.world_mount_twist_valid ? 1 : 0);
     csv << "\n";
 }
 

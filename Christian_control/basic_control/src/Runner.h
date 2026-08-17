@@ -1,7 +1,13 @@
 //
-// Runner — the cyclic control loop: timing, clamping, safety hooks,
-// logging and the hardware exchange. It owns the cycle ORDER and contains
-// no control math (that is Controller.h) and no program setup (Main.cpp).
+// Runner — the cyclic control loop: timing, the Kortex takeover and
+// exchange, safety-fact decoding, logging and teardown. Since the Plan 01
+// extraction it owns NO per-cycle control mathematics: the command
+// pipeline (measurement -> world-freshness classification -> reference ->
+// law -> non-finite hold -> clamp -> integration) lives in
+// ArmExecutionCore (ExecutionCore.h); this file assembles the core's
+// input from Kortex feedback and the wait-free Vicon slot, transmits the
+// command frame the core returns, and hands the reply's decoded health
+// facts back for the stop verdict.
 //
 // Takeover sequence — each step exactly once, in this order:
 //   T1  the readiness gate has passed (RobotReadyForTakeover) — a hard
@@ -11,18 +17,21 @@
 //       switch (commanding earlier fails with WRONG_SERVOING_MODE)
 //   T4  stream the fixed Seed measured-position command on the normal grid
 //       for config::kTakeoverHoldS; log and safety-classify every reply
-//   T5  reseed actuation and the controller from the final hold reply, then
-//       send one measured-position frame whose reply is cycle 1's input
+//   T5  seed the execution core from the final hold reply (its first
+//       measurement and its integrator seed), then send one
+//       measured-position frame whose reply is cycle 1's input
 //   T6  normal control
 //
-// Per cycle: dt (measured, clamped; nominal on cycle 0) -> RobotState from
-// the previous exchange -> ReferenceSource::Get (State.h — the Cartesian pose
-// path or the joint-trajectory path, selected in Main.cpp) ->
-// TrackingController::DesiredVelocity -> per-joint clamp to
-// ±qdot_limit_deg_s -> PositionIntegration::Apply (command lead plus the
-// joint-warning hold) -> CyclicSession::Send -> log sample -> edge-triggered fault prints ->
-// acknowledgement-freshness update -> live-state/joint-boundary/stale-feedback
-// priority -> the counter stops -> sleep_until grid.
+// Per cycle: measure dt at cycle start -> assemble ArmExecutionInput
+// (previous exchange's joint feedback in degrees; one wait-free world
+// slot read as a RAW WorldSample) -> ArmExecutionCore::Step (the frozen
+// pipeline order, through position integration) -> publish the typed planning
+// request if the core raised the replan edge (the edge is core evidence,
+// the slot publish is adapter I/O) -> CyclicSession::Send the returned
+// command frame -> log sample -> acknowledgement-freshness update ->
+// decode the reply's health facts -> ArmExecutionCore::ResolveStop
+// (send-then-resolve: the stop verdict never precedes the send) ->
+// sleep_until grid.
 //
 // No stop is keyed on physical motion or a stationary position value. A
 // per-actuator cyclic command acknowledgement that fails to advance for the
@@ -37,45 +46,39 @@
 
 #pragma once
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 
 #include <BaseClientRpc.h>
 #include <BaseCyclicClientRpc.h>
 
-#include "Actuation.h"
 #include "Config.h"
-#include "Controller.h"
+#include "ExecutionCore.h"
 #include "Hardware.h"
+#include "PlanningRequest.h"
+#include "PlanningRequestSlot.h"
 #include "Safety.h"
 #include "State.h"
-#include "Targets.h"
 
 class BasePoseSlot; // src/BasePose.h — only Runner.cpp needs the definition
 
 // MOVES THE ARM. Runs the sequence above until `stop`, a guard trip, or a
 // communication failure; restores single-level servoing on every exit path.
+// `core` must be freshly constructed (not yet seeded): T5 performs its one
+// Seed. `following_error_limit_deg` paces the takeover hold's guard and the
+// stop report; it must equal the core's configured limit (both come from
+// config::kFollowingErrorLimitDeg in production).
 LoopResult RunControlLoop(Kinova::Api::Base::BaseClient* base,
                           Kinova::Api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                          ReferenceSource& reference,
-                          TrackingController& controller,
-                          PositionIntegration& actuation,
+                          ArmExecutionCore& core,
                           LoopLog& log, const std::atomic<bool>& stop,
                           std::chrono::microseconds period,
-                          const JointVector& qdot_limit_deg_s,
                           double following_error_limit_deg, bool robot_ready,
-                          // The frame status.p_desired is expressed in — the
-                          // CONTROLLED arm's own base_link, which is
-                          // leftbase_link on a --arm left run. Passed in only
-                          // so the arrival notice can name it: an unlabelled
-                          // Cartesian triple is unreadable once more than one
-                          // frame exists. The loop does no kinematics with it.
-                          const char* base_frame,
-                          // World-pose observation (log_format 10). The loop
-                          // samples this wait-free slot once per cycle and
-                          // copies the result into the log row — OBSERVE AND
-                          // LOG ONLY, no control law reads it. nullptr (the
-                          // default, and the stub build's only case) logs
-                          // the documented absence values instead.
+                          PlanningArm planning_arm,
+                          PlanningRequestSlot* planning_requests,
+                          // The loop samples this wait-free slot once per
+                          // cycle. Its coherent Mount pose/twist feeds both
+                          // measurement and telemetry. nullptr is supported
+                          // by hardware-free tests and yields awaiting-world
+                          // zero-error hold behaviour.
                           BasePoseSlot* base_pose = nullptr);

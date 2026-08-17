@@ -4,10 +4,9 @@ Three jobs that belong together because they are the same question asked at
 three moments: where the arm is being asked to go, what the planner made of
 that, and what it actually put on the wire.
 
-Nothing here can move the arm. solve() runs planner_bridge with its standard
-output captured to a FILE, which is how run_session.sh does it and is
-deliberately not the controller's named pipe: the bridge opens no connection
-to the robot, and writing to a file is what keeps a preview a preview.
+Nothing here can move the arm. solve() runs the standalone preview wrapper with
+its text output captured to a temporary file; that file is never handed to the
+controller, which uses the in-process typed planner path during a session.
 
 The bridge's stderr is returned verbatim rather than summarised. It carries
 the plan-initialisation quality, the validation report and the warning about
@@ -522,9 +521,8 @@ def _run_bridge(command: list[str], stdout_path: Path) -> tuple[int, str]:
 
     The only place the panel executes a binary from the robot side of the
     repository. It is safe because the planner talks to nothing: it reads
-    YAML and a CSV, and writes a text block. run_session.sh runs it exactly
-    this way and only then cats the file into the controller's pipe — the
-    panel does not have that second step, and must not grow one.
+    YAML and a CSV, and writes a text block for preview only. The production
+    session does not invoke this wrapper or pass its file to the controller.
     """
     with stdout_path.open("w") as out:
         finished = subprocess.run(command, stdout=out, stderr=subprocess.PIPE,

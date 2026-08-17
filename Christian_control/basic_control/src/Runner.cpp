@@ -2,6 +2,7 @@
 // Runner — implementation of the loop declared in Runner.h.
 //
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <optional>
@@ -21,7 +22,6 @@ namespace k_api = Kinova::Api;
 namespace
 {
     constexpr int NUM_JOINTS = std::tuple_size_v<JointVector>;
-    constexpr double kDegToRad = M_PI / 180.0;
     constexpr double kRadToDeg = 180.0 / M_PI;
 
     struct TakeoverStop
@@ -38,7 +38,10 @@ namespace
                     std::uint32_t command_frame_id,
                     const JointVector& commanded_deg,
                     const JointVector& commanded_velocity_deg_s,
-                    const ControllerStatus& status)
+                    const ControllerStatus& status,
+                    const RobotState& state,
+                    const MeasuredCartesianState& measured,
+                    const PoseReference& reference)
     {
         for (int i = 0; i < 3; ++i)
         {
@@ -70,35 +73,69 @@ namespace
             s.actuator_status_flags[i] = a.status_flags();
             s.actuator_jitter_us[i] = a.jitter_comm();
         }
-        s.joint_traj_activated = status.joint_traj_activated;
-        s.joint_traj_rejected = status.joint_traj_rejected;
-        s.joint_traj_complete_edge = status.joint_traj_complete_edge;
-        s.joint_traj_start_error_deg = status.joint_traj_start_error_deg;
-        s.joint_following_error_stop = status.joint_following_error_stop;
-        s.joint_following_error_deg = status.joint_following_error_deg;
-        s.hold_state = status.hold_state;
-        s.world_err_m = status.world_err_m;
-        s.world_err_rot_rad = status.world_err_rot_rad;
-        s.hold_ramp = status.hold_ramp;
-        s.hold_reanchor_count = status.hold_reanchor_count;
+        s.cart_traj_activated = status.cartesian_traj_activated;
+        s.cart_traj_rejected = status.cartesian_traj_rejected;
+        s.cart_traj_complete = status.cartesian_traj_complete_edge;
+        s.cart_traj_cancelled = status.cartesian_traj_cancelled_edge;
+        s.cart_replan_requested = status.request_replan_edge;
+        s.cart_start_position_error_m =
+            status.cartesian_traj_start_position_error_m;
+        s.cart_start_orientation_error_rad =
+            status.cartesian_traj_start_orientation_error_rad;
+        s.cart_trajectory_id = reference.trajectory_id;
+        s.cart_planner_vicon_sequence = reference.planner_vicon_sequence;
+        s.cart_reference_time_s = reference.t_from_start_s;
+        const Eigen::Quaterniond ref_q(reference.ee_pose_world.rotation);
+        const Eigen::Quaterniond measured_q(measured.ee_pose_world.rotation);
+        for (int i = 0; i < 3; ++i) {
+            s.cart_ref_position_world_m[i] = reference.ee_pose_world.position_m[i];
+            s.cart_ref_linear_world_m_s[i] = reference.ee_twist_world.linear_m_s[i];
+            s.cart_ref_angular_world_rad_s[i] =
+                reference.ee_twist_world.angular_rad_s[i];
+            s.cart_measured_position_world_m[i] =
+                measured.ee_pose_world.position_m[i];
+            s.cart_measured_linear_world_m_s[i] =
+                measured.ee_twist_world.linear_m_s[i];
+            s.cart_measured_angular_world_rad_s[i] =
+                measured.ee_twist_world.angular_rad_s[i];
+        }
+        for (int i = 0; i < 4; ++i) {
+            s.cart_ref_quat_world_xyzw[i] = ref_q.coeffs()[i];
+            s.cart_measured_quat_world_xyzw[i] = measured_q.coeffs()[i];
+        }
+        s.world_fresh = state.world_fresh;
+        s.world_mount_twist_valid = state.world_mount_twist_valid;
         s.command_frame_id = command_frame_id;
         s.feedback_frame_id = fb.frame_id();
         s.arm_state = fb.base().active_state();
         s.base_fault_bank = fb.base().fault_bank_a();
         s.refresh_ok = true;
     }
+
+    // Takeover rows run before world measurement/reference generation. They
+    // use the same robot/actuation fields and leave format-13 Cartesian
+    // evidence at its explicit default values.
+    void FillSample(LoopLogSample& s, const k_api::BaseCyclic::Feedback& fb,
+                    std::uint32_t command_frame_id,
+                    const JointVector& commanded_deg,
+                    const JointVector& commanded_velocity_deg_s,
+                    const ControllerStatus& status)
+    {
+        FillSample(s, fb, command_frame_id, commanded_deg,
+                   commanded_velocity_deg_s, status, RobotState{},
+                   MeasuredCartesianState{}, PoseReference{});
+    }
 } // namespace
 
 LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           k_api::BaseCyclic::BaseCyclicClient* base_cyclic,
-                          ReferenceSource& reference,
-                          TrackingController& controller,
-                          PositionIntegration& actuation,
+                          ArmExecutionCore& core,
                           LoopLog& log, const std::atomic<bool>& stop,
                           std::chrono::microseconds period,
-                          const JointVector& qdot_limit_deg_s,
                           double following_error_limit_deg, bool robot_ready,
-                          const char* base_frame, BasePoseSlot* base_pose)
+                          PlanningArm planning_arm,
+                          PlanningRequestSlot* planning_requests,
+                          BasePoseSlot* base_pose)
 {
     // T1: the readiness gate is a hard precondition (unreachable from main,
     // which returns before calling us when the gate fails).
@@ -108,6 +145,25 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     // Stop policy is compile-time only: the config constants below are read
     // directly and no CLI flag or file may weaken them. Fault-bank changes
     // are printed and logged regardless of the selected stop policy.
+    //
+    // PARALLEL CONFIG SURFACE (recorded 2026-08-17, simplicity review I3):
+    // this adapter reads config::kStopOnFault (warnings + takeover ladder),
+    // config::kDisableFollowingErrorStop (warning; the takeover predicate's
+    // gate lives in Safety.cpp), config::kOverrunFactor (takeover overrun
+    // count + post-loop report), config::kOverrunStopCycles (takeover
+    // consecutive-overrun stop) and config::kStaleFeedbackStopCycles (the
+    // adapter-owned acknowledgement monitor, both phases) DIRECTLY, while
+    // ArmExecutionCore consumes the same values through its
+    // construction-time snapshot: ExecutionConfig fields for the first
+    // three thresholds (ProductionExecutionConfig() is the pinned identity
+    // mapping — tests/test_execution_config.cpp) and a construction-time
+    // config::kOverrunFactor read (deferred ExecutionConfig field,
+    // ExecutionCore.cpp). INVARIANT: production constructs the core from
+    // ProductionExecutionConfig(), so both surfaces are the same compiled
+    // constants and neither side has runtime reconfiguration. The
+    // following_error_limit_deg parameter carries the same invariant
+    // (Runner.h). kStaleFeedbackStopCycles never enters the core at all —
+    // the acknowledgement monitor is adapter-owned, so it has one surface.
     if (!config::kStopOnFault)
         std::cout << "WARNING: FAULT-STOP DISABLED (config::kStopOnFault = false) — live "
             "fault bits will NOT stop the loop; following-error, low-level-servoing, "
@@ -116,9 +172,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     if (config::kDisableFollowingErrorStop)
         std::cout << "WARNING: FOLLOWING-ERROR STOP DISABLED "
             "(config::kDisableFollowingErrorStop) — a joint whose MEASURED position "
-            "stops following its command will NOT stop the loop. The joint-trajectory "
-            "tracking gate (config::kTrajFollowingErrorStopDeg) is separate and still "
-            "stops it.\n";
+            "stops following its command will NOT stop the loop.\n";
     if (!config::kStopOnFault)
         if (config::kDisableFollowingErrorStop)
             std::cout << "WARNING: BOTH the fault stop and the following-error stop are "
@@ -131,10 +185,10 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     LoopStop reason = LoopStop::kUserStop;
     bool faults_observed = false; // live fault seen at any point (taints exit)
     LoopLogSample sample; // reused every cycle
+    std::uint64_t next_planning_request_id = 1;
 
-    // World-pose observation (log_format 10): the loop's only contact with
-    // the Vicon side. One wait-free slot read per cycle, copied into the
-    // row — observe and log only, no control law reads it (slice 1).
+    // The loop's only contact with Vicon: one coherent wait-free slot read
+    // per cycle, used by both world measurement and the matching log row.
     // `base_pose_sample` is the reader-owned last copy: between Vicon
     // frames (~5 cycles at 100 Hz vs this loop's 500 Hz) the sequence
     // repeats and only the age advances — zero-order hold, per
@@ -143,7 +197,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     BasePoseSample base_pose_sample;
     double base_pose_age_s = std::numeric_limits<double>::quiet_NaN();
     // The cycle's single slot read, at cycle start: the SAME sample then
-    // feeds control (world hold) and the log row, so the evidence columns
+    // feeds world control and the log row, so the evidence columns
     // describe exactly the input the controller acted on.
     const auto read_base_pose =
         [&](std::chrono::steady_clock::time_point now) {
@@ -159,6 +213,14 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         s.vicon_frame_number = base_pose_sample.vicon_frame_number;
         s.vicon_latency_s = base_pose_sample.latency_reported_s;
         s.vicon_age_s = base_pose_age_s;
+        s.vicon_frame_rate_hz = base_pose_sample.frame_rate_hz;
+        for (int i = 0; i < 3; ++i) {
+            s.vicon_mount_linear_world_m_s[i] =
+                base_pose_sample.mount_linear_world_m_s[i];
+            s.vicon_mount_angular_world_rad_s[i] =
+                base_pose_sample.mount_angular_world_rad_s[i];
+        }
+        s.vicon_mount_twist_valid = base_pose_sample.mount_twist_valid;
         for (int seg = 0; seg < kBasePoseSegmentCount; ++seg) {
             for (int i = 0; i < 3; ++i)
                 s.vicon_seg_pos_m[seg][i] =
@@ -187,47 +249,10 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         // to finish entering LOW_LEVEL_SERVOING). The only standalone read.
         k_api::BaseCyclic::Feedback feedback = cyclic.Seed();
 
-        RobotState state;
-        for (int i = 0; i < NUM_JOINTS; ++i)
-        {
-            state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
-            state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
-        }
-
-        // Fault-change printing state, seeded from the startup read so a
-        // bank already latched at entry (allowed by RobotReadyForTakeover
-        // for the JOINT_FAULT summary) does not print as a fresh event.
-        std::array<std::uint32_t, 7> prev_joint_banks{};
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            prev_joint_banks[i] = feedback.actuators(i).fault_bank_a();
-        std::uint32_t prev_base_bank = feedback.base().fault_bank_a();
-        int fault_prints = 0;
-
         JointVector commanded_deg;
         JointVector commanded_velocity_deg_s{};
         for (int i = 0; i < NUM_JOINTS; ++i)
             commanded_deg[i] = feedback.actuators(i).position();
-
-        // Fault visibility is shared by the takeover hold and normal loop:
-        // every bank change is still printed, but policy is resolved from
-        // the independently observed sample facts below.
-        const auto print_fault_change = [&]()
-        {
-            if (sample.base_fault_bank != prev_base_bank ||
-                sample.fault_bank != prev_joint_banks)
-            {
-                if (fault_prints < kMaxFaultChangePrints)
-                {
-                    PrintFaultChange(sample, cycle, prev_joint_banks, prev_base_bank);
-                    if (++fault_prints == kMaxFaultChangePrints)
-                        std::cout << "further fault-bank changes not printed (limit "
-                            << kMaxFaultChangePrints
-                            << "); every cycle's banks are in the CSV\n";
-                }
-                prev_base_bank = sample.base_fault_bank;
-                prev_joint_banks = sample.fault_bank;
-            }
-        };
 
         using clock = std::chrono::steady_clock;
         // CSV time covers the entire low-level takeover, while RobotState
@@ -277,8 +302,6 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             sample.lead_limited = {};
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
-            print_fault_change();
-
             // The holding command is exactly the fixed Seed measurement, so
             // no integrator proposal exists and the joint-boundary fact is
             // false. All other normal-loop precedence remains active.
@@ -340,17 +363,21 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         std::cout << "takeover hold: PASS (" << config::kTakeoverHoldS
             << " s unchanged POSITION command)\n";
 
-        // T5: only after a complete healthy hold do the integrator and
-        // controller capture the final measured pose. This prevents any
-        // harmless takeover drift becoming an initial command jump.
+        // T5: only after a complete healthy hold does the execution core
+        // capture the final measured joints — its first measurement AND its
+        // integrator seed (q_command = q_measured, the only time command
+        // state is seeded from measurement). The Cartesian reference
+        // captures the first fresh measured world pose in T6, preventing
+        // harmless takeover drift from becoming an initial command jump.
+        JointVector seed_position_deg;
+        JointVector seed_velocity_deg_s;
         for (int i = 0; i < NUM_JOINTS; ++i)
         {
-            state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
-            state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
-            commanded_deg[i] = feedback.actuators(i).position();
+            seed_position_deg[i] = feedback.actuators(i).position();
+            seed_velocity_deg_s[i] = feedback.actuators(i).velocity();
         }
-        actuation.Prepare(state);
-        controller.Reset(state);
+        core.Seed(seed_position_deg, seed_velocity_deg_s);
+        commanded_deg = seed_position_deg;
         feedback = cyclic.Send(commanded_deg);
 
         // T6: normal control begins only after the mode gate and full hold.
@@ -358,123 +385,106 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         auto t_prev = control_start;
         auto next_cycle = control_start;
 
-        ControllerStatus status;
-
-        // Periodic status line: cadence in whole cycles from the same grid
-        // that paces the loop; 0 = disabled. The saturation tally counts
-        // cycles (not joints) where any clip engaged since the last line.
-        const long status_period_cycles = config::kStatusPrintPeriodS > 0.0
-            ? std::lround(config::kStatusPrintPeriodS *
-                          config::kControlFrequencyHz)
-            : 0;
-        long cycles_since_status = 0;
-        int saturated_cycles_in_window = 0;
+        ArmExecutionInput input;
 
         while (!stop)
         {
             next_cycle += period;
 
-            // dt = measured elapsed cycle time (nominal on the first cycle),
-            // clamped so a stall cannot integrate one large jump. Sampled at
-            // cycle start — dt is an input to the controller.
+            // dt is measured at cycle start and handed to the core RAW: the
+            // core clamps it for integration (nominal on its first cycle,
+            // never more than 2x nominal — a stall cannot integrate one
+            // large jump) and counts overruns from the raw value, exactly
+            // as this loop did inline before the extraction.
             const auto t_now = clock::now();
-            const double dt_s =
-                cycle == 0
-                    ? nominal_dt_s
-                    : ClampedCycleDt(
-                        std::chrono::duration<double>(t_now - t_prev).count(),
-                        nominal_dt_s);
-            if (cycle > 0 &&
-                std::chrono::duration<double>(t_now - t_prev).count() >
-                config::kOverrunFactor * nominal_dt_s)
-            {
-                ++counters.overrun;
-                ++counters.overrun_total;
-            }
-            else
-                counters.overrun = 0;
+            input.dt_s =
+                std::chrono::duration<double>(t_now - t_prev).count();
+            input.t_s =
+                std::chrono::duration<double>(t_now - control_start).count();
 
-            // Measured state from the previous exchange; degrees -> radians
-            // at this boundary.
+            // Measured state from the previous exchange, still in actuator
+            // degrees — the degrees -> radians boundary lives inside the
+            // core so the conversion stays identical to the frozen loop.
             for (int i = 0; i < NUM_JOINTS; ++i)
             {
-                state.q_rad[i] = feedback.actuators(i).position() * kDegToRad;
-                state.qdot_rad_s[i] = feedback.actuators(i).velocity() * kDegToRad;
+                input.measured_position_deg[i] =
+                    feedback.actuators(i).position();
+                input.measured_velocity_deg_s[i] =
+                    feedback.actuators(i).velocity();
             }
-            state.t_s = std::chrono::duration<double>(t_now - control_start).count();
 
-            // World attachment for this cycle (world-hold slice). One slot
-            // read; a valid Mount pose updates the ZOH state, an occluded
-            // or absent one keeps the LAST pose (the freeze the spec asks
-            // for happens by construction) and only the trust flag drops.
+            // The cycle's single wait-free slot read, then the RAW world
+            // sample: pose + validity + sequence + age + twist, BEFORE any
+            // freshness verdict. Classification (fresh/stale, ZOH pose
+            // freeze, stale-twist decay, prolonged-stale handling) is the
+            // core's job — this adapter only reports what Vicon delivered.
             read_base_pose(t_now);
             {
                 const BasePoseSegmentPose& mount =
                     base_pose_sample.segments[kBasePoseMount];
-                if (mount.valid) {
-                    state.world_p_mountseg = Eigen::Vector3d(
-                        mount.position_m[0], mount.position_m[1],
-                        mount.position_m[2]);
-                    state.world_R_mountseg =
-                        Eigen::Quaterniond(mount.quat_xyzw[3],
-                                           mount.quat_xyzw[0],
-                                           mount.quat_xyzw[1],
-                                           mount.quat_xyzw[2])
-                            .toRotationMatrix();
-                }
-                state.world_fresh = mount.valid &&
-                                    base_pose_sample.sequence > 0 &&
-                                    std::isfinite(base_pose_age_s) &&
-                                    base_pose_age_s <=
-                                        config::kWorldHoldFreshMaxAgeS;
+                input.world.mount_valid = mount.valid;
+                input.world.mount_position_m = Eigen::Vector3d(
+                    mount.position_m[0], mount.position_m[1],
+                    mount.position_m[2]);
+                for (int i = 0; i < 4; ++i)
+                    input.world.mount_quat_xyzw[i] = mount.quat_xyzw[i];
+                input.world.sequence = base_pose_sample.sequence;
+                input.world.age_s = base_pose_age_s;
+                input.world.mount_twist_valid =
+                    base_pose_sample.mount_twist_valid;
+                input.world.mount_linear_world_m_s = Eigen::Vector3d(
+                    base_pose_sample.mount_linear_world_m_s[0],
+                    base_pose_sample.mount_linear_world_m_s[1],
+                    base_pose_sample.mount_linear_world_m_s[2]);
+                input.world.mount_angular_world_rad_s = Eigen::Vector3d(
+                    base_pose_sample.mount_angular_world_rad_s[0],
+                    base_pose_sample.mount_angular_world_rad_s[1],
+                    base_pose_sample.mount_angular_world_rad_s[2]);
             }
 
-            // Reference then controller: both pure computation. The source
-            // says WHERE to be this cycle; the controller turns that into
-            // the desired q̇ before clamping.
-            status = ControllerStatus{};
-            const Reference cycle_reference =
-                reference.Get(state, dt_s, status);
-            Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
-                controller.DesiredVelocity(state, cycle_reference, dt_s,
-                                           status);
+            // One core step: measurement -> world classification ->
+            // reference -> law -> non-finite hold -> clamp -> integration,
+            // in the frozen pre-extraction order (fixed-size computation,
+            // no locks or I/O). The returned command frame is transmitted
+            // below BEFORE the stop verdict (send-then-resolve), so a stop
+            // cycle still sends its held frame first.
+            const ArmExecutionResult result = core.Step(input);
+            if (result.overrun)
+                ++counters.overrun_total;
+
+            // Fixed-size, wait-free typed publication only. GPMP2 remains in
+            // the in-process non-real-time planner worker. The replan EDGE is
+            // core evidence; this publish is the adapter-to-worker handoff.
+            if (result.controller_status.request_replan_edge &&
+                planning_requests) {
+                PlanningRequest request;
+                request.request_id = next_planning_request_id++;
+                request.arm = planning_arm;
+                request.vicon_sequence = base_pose_sample.sequence;
+                request.vicon_frame_number =
+                    base_pose_sample.vicon_frame_number;
+                request.receive_steady_s = base_pose_sample.t_receive_s;
+                request.age_s = std::max(0.0, base_pose_age_s);
+                request.world_T_mount = Eigen::Isometry3d::Identity();
+                request.world_T_mount.translation() =
+                    result.state.world_p_mountseg;
+                request.world_T_mount.linear() =
+                    result.state.world_R_mountseg;
+                request.q_rad = result.state.q_rad;
+                planning_requests->Publish(request);
+            }
 
             // The requested velocity for the record is the controller's own
-            // output, captured BEFORE the non-finite hold and the speed
-            // clamp below can modify it (a non-finite value is logged as
-            // such — that is the evidence for the kNonFiniteCommand stop).
+            // raw output, captured by the core BEFORE its non-finite hold
+            // and speed clamp (a non-finite value is logged as such — that
+            // is the evidence for the kNonFiniteCommand stop).
             JointVector requested_velocity_deg_s{};
             for (int i = 0; i < NUM_JOINTS; ++i)
-                requested_velocity_deg_s[i] = qdot_raw_rad_s[i] * kRadToDeg;
+                requested_velocity_deg_s[i] =
+                    result.qdot_raw_rad_s[i] * kRadToDeg;
 
-            // Non-finite output never reaches the integrator: hold this
-            // cycle and count it (decision 12).
-            if (!qdot_raw_rad_s.allFinite())
-            {
-                qdot_raw_rad_s.setZero();
-                ++counters.nonfinite;
-            }
-            else
-                counters.nonfinite = 0;
-
-            // Arrival edge: the mailbox advance stays here (pure state, no
-            // I/O). The notices themselves print in the post-exchange slack
-            // below, with the trajectory edges — a print must never sit
-            // between this cycle's compute and its Send.
-            if (status.arrived_edge)
-                reference.OnArrivalEdge(status);
-
-            // Per-joint clamp — the program's single speed limit — then the
-            // actuation integrates and produces this cycle's setpoints.
-            // A pinned clamp is allowed indefinitely (no saturation stop):
-            // far targets transit at clip speed by design.
-            const JointVelocityClampResult clamp_result =
-                ClampJointVelocity(qdot_raw_rad_s, qdot_limit_deg_s);
-            const Eigen::Matrix<double, 7, 1>& qdot_clamped_rad_s =
-                clamp_result.qdot_rad_s;
-            const PositionIntegration::ApplyStatus actuation_status =
-                actuation.Apply(qdot_clamped_rad_s, state, dt_s, commanded_deg,
-                                commanded_velocity_deg_s);
+            commanded_deg = result.commanded_deg;
+            commanded_velocity_deg_s = result.commanded_velocity_deg_s;
 
             // The one exchange: send this cycle's position command, receive
             // the feedback the next iteration will use. Stamped on both
@@ -490,16 +500,16 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             sample.t_recv_s = std::chrono::duration<double>(t_recv - log_start).count();
             t_prev = t_now;
             FillSample(sample, feedback, cyclic.last_command_frame_id(),
-                       commanded_deg, commanded_velocity_deg_s, status);
+                       commanded_deg, commanded_velocity_deg_s,
+                       result.controller_status, result.state,
+                       result.measured, result.reference);
             fill_vicon(sample, t_now);
             sample.cycle = cycle;
-            sample.requested_deg = actuation_status.requested_deg;
+            sample.requested_deg = result.actuation_status.requested_deg;
             sample.requested_velocity_deg_s = requested_velocity_deg_s;
-            sample.lead_limited = actuation_status.lead_limited;
+            sample.lead_limited = result.actuation_status.lead_limited;
             joint_fault_was_latched =
                 joint_fault_was_latched || (sample.base_fault_bank & kJointFaultBit) != 0;
-
-            print_fault_change();
 
             // Update and record acknowledgement freshness before resolving
             // this completed feedback sample. The count is evidence of a
@@ -510,21 +520,29 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 StaleAcknowledgementJoint(sample.ack_unchanged_cycles,
                                           config::kStaleFeedbackStopCycles);
 
-            // Resolve every fact independently: an ignored fault must still
-            // taint the exit and must never mask following error or loss of
-            // low-level servoing. Communication exits in the Send catch
-            // remain unconditional before this completed feedback sample.
-            const StopPriorityDecision priority = ResolveStopPriority(
-                FollowingErrorStopRequested(
-                    FollowingErrorExceeded(sample, following_error_limit_deg),
-                    status.joint_following_error_stop),
-                HasLiveFault(sample),
-                sample.arm_state != k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL,
-                actuation_status.joint_limit_warning_joint.has_value(),
-                config::kStopOnFault,
-                stale_acknowledgement_joint.has_value());
-            faults_observed = faults_observed || priority.live_fault_observed;
-            switch (priority.reason)
+            // The reply's generic health facts, decoded HERE (Kortex fault
+            // banks, the servoing-mode field and the acknowledgement
+            // freshness monitor stay the adapter's). The core ranks them —
+            // with its own following-error and joint-boundary facts —
+            // through the frozen precedence, then the decision-12 counters.
+            // An ignored fault must still taint the exit and must never
+            // mask following error or loss of low-level servoing.
+            // Communication exits in the Send catch remain unconditional
+            // before this completed feedback sample.
+            AdapterHealth health;
+            health.live_fault = HasLiveFault(sample);
+            health.low_level_state_lost =
+                sample.arm_state !=
+                k_api::Common::ArmState::ARMSTATE_SERVOING_LOW_LEVEL;
+            health.stale_feedback = stale_acknowledgement_joint.has_value();
+            JointVector reply_position_deg;
+            for (int i = 0; i < NUM_JOINTS; ++i)
+                reply_position_deg[i] = feedback.actuators(i).position();
+            const ExecutionStopDecision stop_decision =
+                core.ResolveStop(reply_position_deg, health);
+            faults_observed = faults_observed ||
+                              stop_decision.priority.live_fault_observed;
+            switch (stop_decision.priority.reason)
             {
             case StopPriorityReason::kFollowingError:
                 reason = LoopStop::kFollowingError;
@@ -539,7 +557,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 log.push(sample);
                 break;
             case StopPriorityReason::kJointLimitWarning:
-                joint_limit_warning_joint = *actuation_status.joint_limit_warning_joint;
+                joint_limit_warning_joint =
+                    *result.actuation_status.joint_limit_warning_joint;
                 reason = LoopStop::kJointLimitWarning;
                 log.push(sample);
                 break;
@@ -551,108 +570,26 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             case StopPriorityReason::kNone:
                 break;
             }
-            if (priority.reason != StopPriorityReason::kNone)
+            if (stop_decision.priority.reason != StopPriorityReason::kNone)
                 break;
-            // Decision-12 counters, checked after the independent live-state
-            // and stale-feedback priority so those guards keep priority; N <=
-            // 0 disables one. There is deliberately NO saturation stop: a
-            // pinned velocity clamp is normal transit toward a far target
-            // (removed 2026-07-23).
-            if (config::kNonFiniteStopCycles > 0 &&
-                counters.nonfinite >= config::kNonFiniteStopCycles)
+            // Decision-12 counter stops, evaluated by the core only when
+            // the priority ladder found nothing; N <= 0 disables one.
+            // There is deliberately NO saturation stop: a pinned velocity
+            // clamp is normal transit toward a far target (removed
+            // 2026-07-23).
+            if (stop_decision.nonfinite_stop)
             {
                 reason = LoopStop::kNonFiniteCommand;
                 log.push(sample);
                 break;
             }
-            if (config::kOverrunStopCycles > 0 &&
-                counters.overrun >= config::kOverrunStopCycles)
+            if (stop_decision.overrun_stop)
             {
                 reason = LoopStop::kOverrun;
                 log.push(sample);
                 break;
             }
             log.push(sample);
-
-            // Arrival notices (edge-triggered by the controller above;
-            // controllers do no I/O, and the print waits for this slack).
-            if (status.arrived_edge)
-            {
-                std::cout << "target reached: " << status.p_desired[0] << " "
-                    << status.p_desired[1] << " " << status.p_desired[2]
-                    << " m in " << base_frame
-                    << ", within " << status.arrival_error_m * 1000.0
-                    << " mm — holding\n";
-            }
-            else if (status.not_reached_edge)
-            {
-                std::cout << "target NOT reached: "
-                    << status.arrival_error_m * 1000.0 << " mm short after "
-                    << config::kTargetHoldS
-                    << " s (holding; Ctrl+C to abort)\n";
-            }
-
-            // Joint-trajectory edges: one bounded line each, edge-triggered
-            // by the source. Printed here, in the slack after the exchange
-            // and the log push, for the same reason as the status line below
-            // — a print must never sit between this cycle's compute and its
-            // Send. A rejected plan is the failure the replanning loop must
-            // never suffer silently, so it names the splice distance that
-            // failed the guard.
-            if (status.joint_traj_activated)
-                std::cout << "trajectory activated: " << status.joint_traj_points
-                    << " points, " << status.joint_traj_duration_s << " s\n";
-            if (status.joint_traj_rejected)
-                std::cout << "trajectory REJECTED: first point "
-                    << status.joint_traj_start_error_deg
-                    << " deg from the measured position (limit "
-                    << config::kTrajStartToleranceDeg
-                    << " deg); the previous reference keeps running\n";
-            if (status.joint_traj_complete_edge)
-                std::cout << "trajectory complete: holding the final point\n";
-
-            // Status line, in the slack after the exchange and the log push
-            // so it never delays a Send. Same thread as the arrival notice;
-            // one bounded line per period.
-            if (status_period_cycles > 0)
-            {
-                for (int i = 0; i < NUM_JOINTS; ++i)
-                {
-                    if (clamp_result.saturated[i])
-                    {
-                        ++saturated_cycles_in_window;
-                        break;
-                    }
-                }
-                if (++cycles_since_status >= status_period_cycles)
-                {
-                    StatusLineData status_line;
-                    status_line.t_s = state.t_s;
-                    status_line.position_error_m =
-                        (status.p_desired - status.p_current).norm();
-                    status_line.rot_error_rad = status.rot_error_rad;
-                    status_line.task_speed_deg_s =
-                        status.qdot_task_rad_s.norm() * kRadToDeg;
-                    status_line.null_speed_deg_s =
-                        status.qdot_null_rad_s.norm() * kRadToDeg;
-                    status_line.null_leak_m_s = status.null_leak_m_s;
-                    status_line.sigma_min = status.sigma_min;
-                    status_line.saturated_cycles = saturated_cycles_in_window;
-                    status_line.window_cycles =
-                        static_cast<int>(cycles_since_status);
-                    constexpr int kBoundedJoints[3] = {1, 3, 5}; // j2/j4/j6
-                    for (int b = 0; b < 3; ++b)
-                    {
-                        status_line.bounded_q_deg[b] = std::remainder(
-                            state.q_rad[kBoundedJoints[b]] * kRadToDeg, 360.0);
-                        status_line.bounded_limit_deg[b] =
-                            config::kJointSoftwareLimitDeg[kBoundedJoints[b]];
-                    }
-                    std::cout << FormatStatusLine(status_line) << "\n";
-                    cycles_since_status = 0;
-                    saturated_cycles_in_window = 0;
-                }
-            }
 
             // Fixed-rate pacing on a grid (sleep_until, so errors don't add
             // up); after a stall, continue instead of bursting.

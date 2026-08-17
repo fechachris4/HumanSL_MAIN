@@ -4,7 +4,33 @@ Date: 2026-07-22
 Status: accepted; amended 2026-07-24 to remove the 0.9 factor; superseded
 the uniform 45 deg/s clip ("Why the clip is 45 deg/s" in
 `resolved-rate-position-integration.md`).
-**Currently NOT in force — see "Reverted to 45 deg/s" below.**
+**Back in force since 2026-08-13, at 95% — see "Raised to 76/66.5" below.**
+
+## Raised to 76/66.5 deg/s (2026-08-13)
+
+Christian decided the clip returns to the hardware's limits, as this
+record always argued: the boundary is what the base reports live via
+`GetKinematicHardLimits` (80.0021 deg/s joints 1-4, 70.004 deg/s joints
+5-7), and operation sits 5% inside it — so
+`config::kModelVelocityLimitsDegS` is now 76.0 / 66.5. His stated rule:
+every fault-capable limit comes from Kinova, stated as a hard boundary,
+"anything other than that, perhaps 5% below". Full provenance survey in
+`docs/motion-limits-map.md`.
+
+Done in the same change, as this record's own logic demands:
+
+- The planner's `joint_limits.yaml` velocity table (which had carried
+  Table 41's 50 deg/s — the admittance/force-mode table, wrong for
+  low-level streaming) now carries the same 76/66.5.
+- The split limits made a latent validator bug live: the dynamic gate
+  compared the overall max joint speed against the LARGEST limit. It now
+  checks each joint against its own (`DynamicLimitsValid`,
+  `PathValidationReport.h`, with a regression test).
+- The safety note below stands: first runs after this raise use small,
+  nearby targets, workspace clear, e-stop in hand. What actually binds a
+  fast low-level stream is FOLLOWING_ERROR (acceleration/torque), and the
+  firmware's thresholds for it have still never been read from this robot
+  (`read_safety_limits` fills that gap, read-only).
 
 ## Reverted to 45 deg/s (2026-08-03)
 

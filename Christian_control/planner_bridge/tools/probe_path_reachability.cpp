@@ -83,7 +83,7 @@ double ParseDouble(const std::string& text) {
 }
 
 config::ReferenceFrame FrameFromName(const std::string& name) {
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         if (name == config::kReferenceFrameNames[i])
             return static_cast<config::ReferenceFrame>(i);
     Usage("unknown frame '" + name + "'");
@@ -139,23 +139,27 @@ int main(int argc, char** argv) {
     const bool left_arm = arm == "left";
     // has_tool mirrors LoadPlannerModel's contract: tool <-> right chain,
     // bare flange <-> left chain.
-    const PlannerModel model = LoadPlannerModel(dh_path, /*has_tool=*/!left_arm);
+    // The standalone probe has no Vicon input; identity makes its WORLD
+    // coincide with Mount while exercising the same world-aware model path.
+    const Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+    const PlannerModel model =
+        LoadPlannerModel(dh_path, /*has_tool=*/!left_arm, world_T_mount);
     const Eigen::Matrix4d base_transform = model.base_pose.matrix();
 
     CartesianPath path;
     try {
-        path = PathToMount(GenerateCircle(spec));
+        path = PathToWorld(GenerateCircle(spec), world_T_mount);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "error: %s\n", error.what());
         return 1;
     }
 
-    std::printf("arm %s, frame %s -> mount, radius %.4f m, %d samples\n",
+    std::printf("arm %s, frame %s -> world, radius %.4f m, %d samples\n",
                 arm.c_str(), config::kReferenceFrameNames[static_cast<int>(spec.frame)],
                 spec.radius_m, spec.samples);
     std::printf("on-path tolerance: %.2f mm / %.2f deg\n\n", tolerance_mm, tolerance_deg);
     std::printf("%-5s %-28s %-9s %-11s %-11s %s\n",
-                "i", "position in mount (m)", "verdict", "pos err(mm)", "rot err(deg)",
+                "i", "position in world (m)", "verdict", "pos err(mm)", "rot err(deg)",
                 "joints outside limits");
 
     int solved_count = 0, on_path_count = 0;

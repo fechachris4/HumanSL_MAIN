@@ -1,5 +1,5 @@
 //
-// PathFrames — the one place a Cartesian path crosses into `mount`, the
+// PathFrames — the one place a Cartesian path crosses into Vicon `world`,
 // frame everything downstream of the planner's edge works in.
 //
 // Why this is separate from CartesianPath.h: a path is pure geometry and
@@ -25,17 +25,15 @@
 #include "CartesianPath.h"
 #include "Config.h"  // basic_control — config::ReferenceFrame
 
-// One pose, from its declared frame into `mount`. Frames are rigidly
-// related and static (the rig is bolted down), so this is a constant
-// transform read from the URDF via Pinocchio — never a hardcoded constant.
-//
-// A room/world frame, when Vicon supplies one, is added HERE and nowhere
-// else: it composes above mount as T_mount_room, and every caller of this
-// function keeps working untouched.
-Eigen::Isometry3d PoseToMount(const Eigen::Isometry3d& pose,
-                              config::ReferenceFrame frame);
+// One pose, from its declared frame into Vicon world. world_T_mount is one
+// immutable planning snapshot; arm-base transforms come from the URDF via
+// Pinocchio and are never hardcoded.
+Eigen::Isometry3d PoseToWorld(const Eigen::Isometry3d& pose,
+                             config::ReferenceFrame frame,
+                             const Eigen::Isometry3d& world_T_mount);
 
-// Every sample of a path, converted into `mount`. The returned path's
-// `frame` is kMount, so a converted path cannot be mistaken for an
+// Every sample of a path, converted into `world`. The returned path's
+// `frame` is kWorld, so a converted path cannot be mistaken for an
 // unconverted one further downstream.
-CartesianPath PathToMount(const CartesianPath& path);
+CartesianPath PathToWorld(const CartesianPath& path,
+                          const Eigen::Isometry3d& world_T_mount);

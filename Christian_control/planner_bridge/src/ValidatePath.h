@@ -1,11 +1,7 @@
 //
-// ValidatePath — measures a planned trajectory against what was requested,
-// on the reconstruction the controller will actually execute.
-//
-// gtsam-side: it forward-kinematics through PlannerModel and queries the
-// SDF. It therefore CANNOT include basic_control's JointTrajectory.h
-// (utils.h defines a rival struct of the same name), which is why the
-// reconstruction arrives as plain Eigen samples from ReconstructBlock.h.
+// ValidatePath — measures GPMP2's final dense joint trajectory against what
+// was requested. Joint samples remain an internal planner artefact; the
+// controller receives only the separately projected world-Cartesian path.
 //
 
 #pragma once
@@ -17,23 +13,17 @@
 
 #include "PathValidationReport.h"
 #include "PlannerModel.h"
-#include "ReconstructBlock.h"
+#include "TimedJointTrajectory.h"
 #include "WorldSdf.h"
 
-// `reconstructed` is the controller's own cubic-Hermite reconstruction of
-// the FINAL emitted block, sampled at the controller's rate — the joint
-// path the arm actually follows.
-//
-// `gp_dense` is the optimiser's output before subsampling, used only to
-// separate planner error from wire-transport loss. `reconstruction_at`
-// samples the same block at an arbitrary instant so the two can be compared
-// at the GP's own timestamps.
+// `trajectory` is the exact final dense GPMP2 result on its uniform grid.
+// `sample_at` evaluates the same result at arbitrary instants.
 PathValidationReport ValidatePlannedPath(
     const PlannerModel& model,
-    const ReconstructedTrajectory& reconstructed,
+    const TimedJointTrajectory& trajectory,
     const std::vector<gtsam::Vector>& gp_dense,
     double gp_dense_duration_s,
-    const std::function<ReconstructedSample(double)>& reconstruction_at,
+    const TimedJointSampler& sample_at,
     const gpmp2::SignedDistanceField& sdf,
     const std::string& sdf_contents,
     const ValidationInputs& inputs,

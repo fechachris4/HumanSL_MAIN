@@ -2,8 +2,8 @@
 
 The controller writes one CSV per arm per run under runs/<date>/, and
 run_session.sh writes a session directory beside it holding the goal file,
-the planner config, the controller's terminal output, the plan it sent and a
-session.json naming the git revision and the binaries' digests. The two are
+the planner config, the controller's terminal output, planner diagnostics and
+a session.json naming the git revision and the controller digest. The two are
 linked only by the run log's name, which is why find_session_dir exists.
 
 Everything here is read-only and after the fact. A summary streams the file

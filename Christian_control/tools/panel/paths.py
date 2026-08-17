@@ -30,12 +30,13 @@ RUN_SESSION_SH = PLANNER_BRIDGE / "scripts" / "run_session.sh"
 
 URDF = BASIC_CONTROL / "config" / "GEN3_dual_mounted.urdf"
 
-# The build-generated DH tables the browser uses for forward kinematics.
-# run_session.sh checks these against the URDF for staleness; the right arm
-# is described to the tool frame, the left to the flange.
+# The controller build's nested planner target generates the DH tables the
+# browser uses for forward kinematics. run_session.sh checks these against the
+# URDF for staleness; the right arm is described to the tool frame, the left to
+# the flange.
 DH_YAML = {
-    "right": BRIDGE_BUILD / "config" / "dh_params_tool.yaml",
-    "left": BRIDGE_BUILD / "config" / "dh_params_flange.yaml",
+    "right": CONTROLLER_BUILD / "planner_bridge" / "config" / "dh_params_tool.yaml",
+    "left": CONTROLLER_BUILD / "planner_bridge" / "config" / "dh_params_flange.yaml",
 }
 
 RUNS = REPO / "runs"
@@ -54,14 +55,6 @@ SESSION_STATE = Path("/tmp/humansl_panel_session.json")
 PANEL_SCRATCH = Path("/tmp/humansl_panel")
 
 ARMS = ("right", "left")
-
-
-def target_pipe(arm: str) -> Path:
-    """The named pipe the controller reads trajectories from, per arm.
-
-    Mirrors config::ArmConfig::target_pipe_path.
-    """
-    return Path(f"/tmp/humansl_bridge_targets_{arm}")
 
 
 def panel_backup(target: Path) -> Path:

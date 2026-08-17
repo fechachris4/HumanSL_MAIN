@@ -14,6 +14,8 @@
 
 #include "Safety.h"
 
+#include "StopPriority.h"
+
 // ---------------------------------------------------------------
 // Supervisor — stop classification and the readiness gate
 // ---------------------------------------------------------------
@@ -34,19 +36,19 @@ bool FollowingErrorExceeded(const LoopLogSample& s,
                             double following_error_limit_deg)
 {
     // Checked first so the guard cannot be masked by fault classification
-    // (ClassifyStop returns on the first match). measured_deg sits within
-    // ±180° of the command
-    // (FillSample) and the gap grows by well under a degree per
-    // cycle, so at a small limit the comparison is unambiguous.
+    // (ClassifyStop returns on the first match). The predicate itself is
+    // the shared definition in StopPriority.h — the same one
+    // ArmExecutionCore::ResolveStop ranks in the normal loop — so the
+    // takeover phase and the normal loop cannot drift apart. measured_deg
+    // already sits within ±180° of the command (FillSample); the shared
+    // wrap is a no-op on it.
     //
     // config::kDisableFollowingErrorStop removes this stop entirely. Joint
     // warnings and consecutive-cycle guards remain independent in Runner.
-    if (!config::kDisableFollowingErrorStop)
-        for (int i = 0; i < NUM_JOINTS; ++i)
-            if (std::abs(s.measured_deg[i] - s.commanded_deg[i]) >
-                following_error_limit_deg)
-                return true;
-    return false;
+    if (config::kDisableFollowingErrorStop)
+        return false;
+    return FollowingErrorExceeded(s.commanded_deg, s.measured_deg,
+                                  following_error_limit_deg);
 }
 
 bool HasLiveFault(const LoopLogSample& s)
@@ -200,21 +202,6 @@ void PrintStopReport(LoopStop reason, const LoopLogSample& s, long cycle,
         break;
     case LoopStop::kFollowingError:
         {
-            // Two rules share this reason (StopPriority.h). The joint
-            // tracking gate compares the REFERENCE against the measured
-            // position, so the Cartesian command-vs-measured text below would
-            // name the wrong quantity and the wrong limit for it.
-            if (s.joint_following_error_stop)
-            {
-                std::cout << "loop stopped: joint following error at t=" << s.t_s
-                    << " s (cycle " << cycle << "): the worst joint is "
-                    << s.joint_following_error_deg
-                    << " deg from its trajectory reference (limit "
-                    << config::kTrajFollowingErrorStopDeg
-                    << ") — the arm stopped following the commanded"
-                       " trajectory\n";
-                break;
-            }
             int worst = 0;
             double worst_gap = 0.0;
             for (int i = 0; i < NUM_JOINTS; ++i)

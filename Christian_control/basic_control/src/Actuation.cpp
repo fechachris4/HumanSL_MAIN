@@ -7,6 +7,8 @@
 
 #include "Actuation.h"
 
+#include "ExecutionConfig.h"
+
 namespace
 {
     constexpr int NUM_JOINTS = std::tuple_size_v<JointVector>;
@@ -32,10 +34,18 @@ JointVelocityClampResult ClampJointVelocity(
     return result;
 }
 
-PositionIntegration::PositionIntegration(double command_lead_limit_deg)
+PositionIntegration::PositionIntegration(const ExecutionConfig& config)
     // Store the safety limit in radians too, so every calculation inside the
     // controller uses one unit.
-    : command_lead_limit_rad_(command_lead_limit_deg / kRadToDeg)
+    : command_lead_limit_rad_(config.command_lead_limit_deg / kRadToDeg),
+      software_limit_deg_(config.software_limit_deg)
+{}
+
+PositionIntegration::PositionIntegration(double command_lead_limit_deg)
+    : command_lead_limit_rad_(command_lead_limit_deg / kRadToDeg),
+      // Construction-time snapshot: the production boundaries, so the
+      // whole-frame hold behaves exactly as with the production config.
+      software_limit_deg_(ProductionExecutionConfig().software_limit_deg)
 {}
 
 void PositionIntegration::Prepare(const RobotState& state)
@@ -101,7 +111,7 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
 
     for (int i = 0; i < NUM_JOINTS; ++i)
     {
-        const double software_limit_deg = config::kJointSoftwareLimitDeg[i];
+        const double software_limit_deg = software_limit_deg_[i];
         if (software_limit_deg <= 0.0)
             continue; // continuous joint: no bounded position boundary
 

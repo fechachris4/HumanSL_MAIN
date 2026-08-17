@@ -126,7 +126,7 @@ int main()
     static_assert(config::kStaleFeedbackStopCycles == 25,
                   "stale feedback must stop after 25 completed replies");
     CycleCounters c;
-    Check(c.nonfinite == 0 && c.overrun == 0 && c.overrun_total == 0,
+    Check(c.overrun == 0 && c.overrun_total == 0,
           "fresh counters start at zero");
 
     // FeedbackFreshnessMonitor counts consecutive repeated acknowledgements
@@ -253,9 +253,8 @@ int main()
               "status line is a single line (caller adds the newline)");
     }
 
-    // Two rules share LoopStop::kFollowingError, and the stop report must
-    // name the one that fired: the joint gate compares against the
-    // trajectory REFERENCE, the Cartesian rule against the sent command.
+    // The following-error stop reports the shared actuation path's sent
+    // command versus measured joint position.
     {
         const auto report = [limit](const LoopLogSample& sample) {
             std::ostringstream captured;
@@ -265,24 +264,12 @@ int main()
             return captured.str();
         };
 
-        LoopLogSample joint_stop = CleanSample();
-        joint_stop.joint_following_error_stop = true;
-        joint_stop.joint_following_error_deg = 9.5;
-        const std::string joint_text = report(joint_stop);
-        Check(joint_text.find("joint following error") != std::string::npos,
-              "the joint gate is named in its own stop report");
-        Check(joint_text.find("9.5") != std::string::npos &&
-                  joint_text.find("trajectory reference") != std::string::npos,
-              "the joint stop report prints the reference error");
-        Check(joint_text.find("8") != std::string::npos,
-              "the joint stop report prints its own limit");
-
         LoopLogSample cartesian_stop = CleanSample();
         cartesian_stop.measured_deg[2] = cartesian_stop.commanded_deg[2] + 4.0;
         const std::string cartesian_text = report(cartesian_stop);
         Check(cartesian_text.find("joint 3 is 4 deg from its command") !=
                   std::string::npos,
-              "the Cartesian stop report keeps its command-vs-measured text");
+              "the stop report keeps its command-vs-measured text");
         Check(cartesian_text.find("trajectory reference") == std::string::npos,
               "the Cartesian stop report does not claim a trajectory error");
     }

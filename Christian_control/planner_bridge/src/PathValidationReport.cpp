@@ -20,14 +20,14 @@ std::string PathValidationReport::Summary() const {
     // The gate first, then the two errors that explain it. e_command is
     // what the arm does; the other two say why.
     out << "planning fidelity (traced phase only)\n"
-        << "  e_command       (desired vs 500 Hz reconstruction)  max "
+        << "  e_command       (desired vs final dense timed view) max "
         << command.max_position_m * 1000.0 << " mm, rms "
         << command.rms_position_m * 1000.0 << " mm, p95 "
         << command.p95_position_m * 1000.0 << " mm, rot "
         << command.max_orientation_rad * 180.0 / M_PI << " deg   <- GATED\n"
         << "  e_planner       (desired vs GP-dense)               max "
         << planner.max_position_m * 1000.0 << " mm\n"
-        << "  e_reconstruction(GP-dense vs reconstruction)        max "
+        << "  e_reconstruction(GP-dense vs dense timed view)       max "
         << reconstruction.max_position_m * 1000.0
         << " mm  (subsample + Hermite transport loss)\n"
         << "  worst point at t = " << command.worst_time_s << " s, path parameter "

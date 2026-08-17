@@ -155,11 +155,15 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     const YAML::Node motion = root["motion"];
     RequireExactKeys(motion, {"nominal_speed_mps", "min_duration_s", "waypoints"},
                      "motion");
-    // Upper bounds here are bring-up sanity rails, not physical limits: a
-    // 0.5 that was meant to be 0.05 is exactly the typo that would
-    // otherwise produce a ten-times-faster move than intended.
+    // Upper bounds here are sanity rails, not physical limits. 2.0 m/s is
+    // above any tool speed the joint limits can actually produce, so the
+    // joint-space validation is what truly binds; the rail now catches
+    // only order-of-magnitude typos (a 5.0 meant as 0.05), no longer a
+    // deliberate fast setting (decision 2026-08-13,
+    // docs/motion-limits-map.md — the 0.25 it replaces was a bring-up
+    // value that rejected configured speeds the hardware allows).
     config.motion.nominal_speed_mps =
-        Number(motion, "nominal_speed_mps", "motion", 1e-4, 0.25);
+        Number(motion, "nominal_speed_mps", "motion", 1e-4, 2.0);
     config.motion.min_duration_s =
         Number(motion, "min_duration_s", "motion", 0.1, 600.0);
     config.motion.waypoints = Integer(motion, "waypoints", "motion", 2, 200);

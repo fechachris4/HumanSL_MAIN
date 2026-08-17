@@ -62,8 +62,8 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
 struct PathPlanOutcome {
     bool ok = false;
     std::string error;            // set when !ok
-    std::string emitted_block;    // the FINAL block, already time-scaled
-    PathValidationReport report;  // measured on that block's reconstruction
+    TrajectoryResult result;      // FINAL dense q/qdot, already time-scaled
+    PathValidationReport report;  // measured on the final dense internal path
     double total_time_sec = 0.0;
     int time_scaling_passes = 0;  // how many alpha iterations were needed
     bool time_scaling_settled = true;

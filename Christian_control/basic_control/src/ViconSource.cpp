@@ -20,6 +20,8 @@
 #include <vector>
 
 #include "BasePose.h"
+#include "Config.h"
+#include "MountTwistEstimator.h"
 #include "SnapshotBuilder.h"   // ../vicon/src — validation + mm→m
 #include "ViconInterface.h"    // ../vicon/src — SDK wrapper
 
@@ -56,6 +58,9 @@ private:
     void Run()
     {
         ViconInterface vicon;
+        MountTwistEstimator mount_twist_estimator(
+            config::kViconMountTwistFilterTauS,
+            config::kViconMountTwistResetGapS);
         std::uint64_t sequence = 0;
         int last_frame_number = -1;
         bool was_connected = false;
@@ -104,7 +109,10 @@ private:
                 static_cast<unsigned int>(frame_number), SteadyNowS(),
                 vicon.getFrameRate(), vicon.getLatencyTotal(), no_markers,
                 vicon.getSegmentPoses());
-            slot_.Publish(ToBasePoseSample(snapshot, ++sequence));
+            const MountTwistEstimate mount_twist =
+                mount_twist_estimator.Update(snapshot);
+            slot_.Publish(
+                ToBasePoseSample(snapshot, ++sequence, mount_twist));
         }
         vicon.disconnect();
     }

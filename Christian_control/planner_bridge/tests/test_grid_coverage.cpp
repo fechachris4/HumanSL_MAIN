@@ -111,11 +111,16 @@ void PrintRow(const char* label, const Eigen::Vector3d& lo, const Eigen::Vector3
 int main(int argc, char** argv) {
     assert(argc == 4 &&
            "usage: test_grid_coverage <dh_tool.yaml> <dh_flange.yaml> <joint_limits.yaml>");
-    const PlannerModel right = LoadPlannerModel(argv[1], /*has_tool=*/true);
-    const PlannerModel left = LoadPlannerModel(argv[2], /*has_tool=*/false);
+    const Eigen::Isometry3d world_T_mount =
+        Eigen::Translation3d(1.0, 2.0, 3.0) *
+        Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitZ());
+    const PlannerModel right =
+        LoadPlannerModel(argv[1], /*has_tool=*/true, world_T_mount);
+    const PlannerModel left =
+        LoadPlannerModel(argv[2], /*has_tool=*/false, world_T_mount);
     const auto [pos_limits, vel_limits] = createJointLimits(argv[3]);
     (void)vel_limits;
-    const GridBounds bounds = WorldGridBounds();
+    const GridBounds bounds = WorldGridBounds(WorldGridGeometry(world_T_mount));
 
     const Envelope right_envelope = MeasureEnvelope(right, pos_limits);
     const Envelope left_envelope = MeasureEnvelope(left, pos_limits);

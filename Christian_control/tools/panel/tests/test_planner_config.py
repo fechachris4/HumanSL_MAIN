@@ -20,12 +20,14 @@ class Whitelist(unittest.TestCase):
         self.assertEqual(missing, [], "knob(s) no longer match planner.yaml")
 
     def test_known_values_read_back(self):
+        # Values pinned to the checked-in planner.yaml as of the 2026-08-13
+        # speed-limit raise (docs/motion-limits-map.md).
         knobs = planner_config.read_planner_knobs()
-        self.assertEqual(knobs["motion.nominal_speed_mps"]["value"], 0.05)
+        self.assertEqual(knobs["motion.nominal_speed_mps"]["value"], 0.25)
         self.assertEqual(knobs["motion.waypoints"]["value"], 10.0)
         self.assertEqual(knobs["seeding.randomised"]["value"], "false")
         self.assertEqual(
-            knobs["goal.position_sigma_xyz"]["value"], [0.01, 0.1, 0.01])
+            knobs["goal.position_sigma_xyz"]["value"], [0.001, 0.01, 0.001])
 
     def test_every_real_key_is_whitelisted(self):
         # planner.yaml refuses unknown keys, so the whitelist and the file
@@ -154,8 +156,10 @@ class JointLimitsRead(unittest.TestCase):
         table = planner_config.read_joint_limits_file()
         self.assertAlmostEqual(
             table["position_limits"]["actuator_2"]["upper_limit"], 2.2515)
+        # -1.3265 rad/s = 76 deg/s, 95% of the live 80.0021 deg/s hard
+        # limit (2026-08-13 raise, docs/motion-limits-map.md).
         self.assertAlmostEqual(
-            table["velocity_limits"]["actuator_1"]["lower_limit"], -0.8727)
+            table["velocity_limits"]["actuator_1"]["lower_limit"], -1.3265)
         self.assertEqual(
             table["position_limits"]["actuator_2"]["unit"], '"radians"')
 

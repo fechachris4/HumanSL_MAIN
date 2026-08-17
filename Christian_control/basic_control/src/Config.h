@@ -1,6 +1,6 @@
 //
 // Config.h — JointVector and the one compiled source of truth for
-// controller behaviour. --log is the only runtime argument, so these
+// controller behaviour. Runtime flags select arm/log destination only, so these
 // values are the only thing between the operator and the arm: read this
 // file before a session. Rationale: ../../docs/decisions/, indexed by
 // compiled-config.md.
@@ -71,18 +71,14 @@ namespace config
     //     because that comparison is what validates the mounting transform.
     //
     // `mount` is the URDF root: the midpoint of the two arm bases, rigidly
-    // attached to both. It is NOT a room frame — it travels with the rig.
-    // A room frame belongs ABOVE it as T_room_mount, identity while the rig
-    // is bolted to a bench and supplied by motion capture once it is worn.
-    // That transform does not exist yet; when it does, it composes in
-    // BridgeMain's frame boundary and in DualArmKinematics::MountFromBase,
-    // and nothing else needs to move.
-    enum class ReferenceFrame { kMount, kRightBase, kLeftBase };
+    // attached to both. It travels with the rig. `world` is Vicon's fixed
+    // laboratory frame and composes above it through the measured T_W_M.
+    enum class ReferenceFrame { kMount, kRightBase, kLeftBase, kWorld };
     inline constexpr ReferenceFrame kReferenceFrame = ReferenceFrame::kMount;
 
     // The names accepted in a goal file's `frame:` key, in enum order.
     inline constexpr const char* kReferenceFrameNames[] = {
-        "mount", "right_base", "left_base"
+        "mount", "right_base", "left_base", "world"
     };
 
     // Left-arm frame names, for kinematics only. The left chain ends at the
@@ -100,16 +96,15 @@ namespace config
     // One instance per physical arm. `other_arm_nominal_rad` is the OTHER
     // arm's assumed pose (see the comment on kLeftNominalRad above) — for
     // kRightArmConfig that's the left arm's nominal, and vice versa.
-    // target_pipe_path and log_prefix are per-arm so a --arm=both run keeps
-    // the two arms' trajectory input and telemetry apart; lock_path names
-    // the IP it guards, matching ProcessLock's existing per-run contract.
+    // The log prefix and lock path are per-arm so a --arm=both run keeps
+    // telemetry apart; lock_path names the IP it guards, matching
+    // ProcessLock's existing per-run contract.
     struct ArmConfig {
         const char* name;
         const char* ip;
         const char* base_frame;
         const char* end_effector_frame;
         JointVector other_arm_nominal_rad;
-        const char* target_pipe_path;
         const char* log_prefix;
         const char* lock_path;
     };
@@ -117,13 +112,13 @@ namespace config
     inline constexpr ArmConfig kRightArmConfig{
         "right", kRightRobotIp, kRightBaseFrame, kRightEndEffectorFrame,
         kLeftNominalRad,
-        "/tmp/humansl_bridge_targets_right", "loop_log_right",
+        "loop_log_right",
         "/tmp/basic_control-192.168.1.10.lock"
     };
     inline constexpr ArmConfig kLeftArmConfig{
         "left", kLeftRobotIp, kLeftBaseFrame, kLeftEndEffectorFrame,
         kRightNominalRad,
-        "/tmp/humansl_bridge_targets_left", "loop_log_left",
+        "loop_log_left",
         "/tmp/basic_control-192.168.1.9.lock"
     };
 
@@ -135,11 +130,17 @@ namespace config
     inline constexpr int kConnectionInactivityTimeoutMs = 2000;
 
     // Commanded-speed clip, deg/s — the program's single speed limit.
-    // TEMPORARY 45 uniform, below the 79.64/69.91 Table 40 model limit
-    // (qdot-limit-raise.md; raising it back is a deliberate decision).
+    // 95% of the live hard limits the base reports at every startup
+    // (80.0021 deg/s joints 1-4, 70.004 deg/s joints 5-7): the Kinova
+    // limit is the boundary, operation sits 5% inside it (decision
+    // 2026-08-13, docs/motion-limits-map.md; history and safety notes in
+    // docs/decisions/qdot-limit-raise.md). VerifyKinematicHardLimits
+    // refuses startup if these ever exceed what the base reports. The
+    // planner's joint_limits.yaml velocity table carries the same values
+    // and must move with this one.
     inline constexpr JointVector kModelVelocityLimitsDegS = {
-        45, 45, 45, 45,
-        45, 45, 45
+        76.0, 76.0, 76.0, 76.0,
+        66.5, 66.5, 66.5
     };
 
     // Timing, single source of truth: 500 Hz — one Send/Feedback exchange
@@ -162,15 +163,10 @@ namespace config
     static_assert(kTakeoverHoldDuration == kCyclePeriod * kTakeoverHoldCycles,
                   "takeover hold must be an exact number of cyclic periods");
 
-    // The named pipe the controller reads targets from is per-arm
-    // (ArmConfig::target_pipe_path above). Created by Main at startup if
-    // missing. Writers (planner_bridge, echo) open/write/close per plan; the
-    // reader reopens after every EOF.
-
     // This controller's target contract is position-only: every target
     // preserves the orientation captured at takeover. The startup pose is
-    // measured at runtime; the arm holds it until the first validated pipe
-    // waypoint arrives — there is no compiled terminal target.
+    // measured at runtime; the arm holds it until the first typed planner
+    // trajectory arrives — there is no compiled terminal target.
     // Retained for the existing CSV key. It is a compile-time invariant, not
     // an operator-selectable orientation mode.
     inline constexpr bool kFixedTargetUseRpy = false;
@@ -188,13 +184,6 @@ namespace config
     // remains the final command-rate bound.
     inline constexpr double kKpCartesian = 10.0;
 
-    // Joint-space tracking gain on (q_ref - q_meas), 1/s.
-    inline constexpr double kKpJointTracking = 5.0;
-    // A trajectory whose first point is farther than this from the measured
-    // position (any joint) is rejected at activation — the splice guard.
-    inline constexpr double kTrajStartToleranceDeg = 2.0;
-    // Joint-space following-error stop: measured vs reference, any joint.
-    inline constexpr double kTrajFollowingErrorStopDeg = 8.0;
     // Dwell held at each reached target before the queue advances, s. Also
     // reused as the non-arrival timeout: if the arm is parked at a target and
     // has not arrived within this long, the run reports "target NOT reached"
@@ -304,41 +293,27 @@ namespace config
     // healthy joint.
     inline constexpr bool kSkipStartupGates = false;
 
-    // true = the loop never stops on the CARTESIAN following-error rule
+    // true = the loop never stops on the command following-error rule
     // (|command - measured| against kFollowingErrorLimitDeg). Read this next
     // to kStopOnFault above: disabling either removes an independent
     // automatic stop. Loss of low-level servoing, the software joint-boundary
-    // guard, and enabled non-finite/overrun counters remain automatic stops —
-    // and so does the joint tracking law's own gate on the wrapped reference
-    // error, kTrajFollowingErrorStopDeg, which this switch does NOT touch.
-    // Setting that threshold non-positive is the only way to disable it.
-    // kFollowingErrorLimitDeg keeps its value for telemetry and the stop
-    // report; this switch removes only the Cartesian stop.
+    // guard, and enabled non-finite/overrun counters remain automatic stops.
     inline constexpr bool kDisableFollowingErrorStop = false;
 
-    // World hold (2026-08-13 spec; Christian's interactive decisions).
-    // Auto-engage: after the takeover hold, the controller's hold pose
-    // anchors itself in the Vicon WORLD frame on the first cycle with a
-    // fresh, valid Mount sample — and stays base-relative (today's exact
-    // behaviour) whenever Vicon is absent, stale, or has diverged once.
-    inline constexpr bool kWorldHoldAutoEngage = true;
     // Fresh = sample age at cycle start <= this (5 lost frames at 100 Hz;
     // measured p99 age on 2026-08-13 was 9.7 ms, so 50 ms is a real gap).
-    inline constexpr double kWorldHoldFreshMaxAgeS = 0.05;
-    // Authority ramp after every (re-)engage: the effective world error is
-    // ramp * e, so a wrong frame sign drifts slowly instead of stepping.
-    inline constexpr double kWorldHoldRampS = 2.0;
-    // One-way divergence latch: past either world-frame error bound the
-    // hold demotes itself to the joint hold for the rest of the run.
-    // Rotation latches separately because a wrong rotation sign can
-    // reorient the arm while the position error stays small. The latch
-    // tests ramp*error — authority-proportional (review, 2026-08-13).
-    inline constexpr double kWorldHoldMaxErrorM = 0.08;
-    inline constexpr double kWorldHoldMaxRotErrorRad = 0.5;
-    // A freeze shorter than this resumes with the SAME anchor (no ramp
-    // restart, no anchor churn on a marginal stream); a longer blackout
-    // re-anchors at the current pose.
-    inline constexpr double kWorldHoldReanchorAfterS = 0.2;
+    inline constexpr double kWorldFreshMaxAgeS = 0.05;
+    // Mount-twist low-pass time constant. Five Vicon frames
+    // at the nominal 100 Hz smooth finite-difference noise without hiding the
+    // value in an undocumented implementation constant. This estimate is
+    inline constexpr double kViconMountTwistFilterTauS = 0.05;
+    // A gap at or above this resets differentiation; the next fresh frame
+    // establishes a pose but deliberately has no inherited pre-gap twist.
+    inline constexpr double kViconMountTwistResetGapS = 0.2;
+    // Active Cartesian trajectories are cancelled after this much
+    // continuously stale world state; fresh recovery captures a new hold
+    // and requests a new plan instead of resuming across unknown base motion.
+    inline constexpr double kWorldProlongedStaleS = 0.2;
 
     // Consecutive-cycle stop counters; N <= 0 disables one. Non-finite
     // controller output is never integrated (that cycle holds); overrun =
@@ -364,12 +339,9 @@ namespace config
     inline constexpr double kNullRampDurationS = 1.0;
     inline constexpr double kCommandLeadLimitDeg = 1.0;
 
-    // Periodic operator status line (FormatStatusLine): position/rotation
-    // error, the task and null-space velocity norms BEFORE summation, the
-    // null-space leak speed, sigma_min, clip-saturation count, and the
-    // bounded joints against their software limits. One line every this
-    // many seconds; non-positive disables it. Reporting only — printed from
-    // the loop thread like the arrival notice, so keep it >= 0.5 s.
+    // Historical terminal-status cadence retained for schema/config
+    // compatibility. The 500 Hz loop no longer performs terminal I/O;
+    // format-13 telemetry carries the same diagnostic values.
     inline constexpr double kStatusPrintPeriodS = 1.0;
 
     // Arrival notice: one printed line the first time the end-effector

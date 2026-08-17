@@ -41,9 +41,8 @@ gpmp2::BodySphereVector ArmModel::generateArmSpheres(
     // 6 <-> d(6)=d7. Stations run back along the link toward the parent
     // frame: +y on links 0/2/4, -z on link 6 (alpha7 = pi flips z).
     //
-    // No stdout here: in the production bridge this runs before the stdout
-    // FIFO redirect guard, so diagnostics are exceptions only (BridgeMain
-    // converts them to exit 3).
+    // No stdout here: this runs before the preview-stream redirect guard, so
+    // diagnostics are exceptions only (BridgeMain converts them to exit 3).
     const double authored_d[7] = {-0.2848, -0.0118, -0.4208, -0.0128,
                                   -0.3143, 0.0, -0.2874};
     double scale[7] = {0, 0, 0, 0, 0, 0, 0};

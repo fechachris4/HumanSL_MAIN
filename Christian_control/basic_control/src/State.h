@@ -2,16 +2,9 @@
 // State — the fixed records that cross module boundaries, and the contract
 // that produces references. Eigen only: no Kortex, no Pinocchio.
 //
-// Architecture (mirrors msc_project's state.py / backend.py split):
-//
-//   reference sources          THE controller
-//   ┌──────────────────┐      ┌────────────────────────┐
-//   │ Targets.h        │──Reference──▶ Controller.h    │──q̇──▶ clamp → Actuation.h
-//   │ (future: Vicon)  │    {pose}    │ tracks the pose  │
-//   └──────────────────┘              └────────────────┘
-//
-// A source says WHERE to be; the controller says HOW to move there. New
-// research inputs are new sources, never new controllers.
+// CartesianReference produces one world pose/twist; Controller maps its
+// error to qdot; Runner sends that through the one shared safety/actuation
+// path. GPMP2 joint states never cross this boundary.
 //
 
 #pragma once
@@ -19,35 +12,68 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-#include <optional>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
 
-// Measured robot state. A field belongs here only if the Runner can fill it
-// validly EVERY cycle from arm feedback alone; external sensing (Vicon,
-// anything future) arrives as a Reference instead.
+// Measured state assembled once by Runner from arm feedback and the latest
+// coherent Vicon sample. References are separate and never mutate this data.
 struct RobotState {
     Eigen::Matrix<double, 7, 1> q_rad;      // measured joint positions
     Eigen::Matrix<double, 7, 1> qdot_rad_s; // measured joint velocities
     double t_s = 0.0;                       // time since takeover
 
-    // World attachment (world-hold slice, 2026-08-13 spec): the Vicon
+    // World attachment: the Vicon
     // Mount segment's pose in Vicon-world, zero-order-held from the
     // 100 Hz stream, plus this cycle's trust verdict. The controller
-    // composes world_T_base = world_T_mountseg · MSeg_T_mount(≡I, until
-    // stage-2 calibration) · mount_T_base(model) via Frames.h. With the
-    // identity default the "world" is simply the mount frame, and every
-    // command is algebraically identical to the pre-Vicon controller —
-    // rotating a frame changes no DLS solution.
+    // composes world_T_base = world_T_mountseg · mount_T_base(model) via
+    // Frames.h. The tracked segment is currently assumed to coincide with
+    // the model Mount; a distinct MSeg_T_mount calibration is not represented.
     Eigen::Vector3d world_p_mountseg = Eigen::Vector3d::Zero();
     Eigen::Matrix3d world_R_mountseg = Eigen::Matrix3d::Identity();
-    bool world_fresh = false; // valid Mount + age <= kWorldHoldFreshMaxAgeS
+    Eigen::Vector3d world_v_mountseg_m_s = Eigen::Vector3d::Zero();
+    Eigen::Vector3d world_w_mountseg_rad_s = Eigen::Vector3d::Zero();
+    bool world_mount_twist_valid = false;
+    std::uint64_t world_sequence = 0;
+    bool world_fresh = false; // valid Mount + age <= kWorldFreshMaxAgeS
+};
+
+// The RAW Vicon world sample exactly as the adapter's wait-free slot read
+// delivers it at cycle start, BEFORE any freshness classification — the
+// input record of the execution core's world block (ExecutionCore.h). The
+// classification itself (fresh verdict, ZOH pose freeze, stale-twist
+// decay) writes the world_* fields of RobotState above; keeping the raw
+// sample and the classified state as separate records is what lets the
+// characterization fixture drive the classification instead of feeding it
+// its own outputs. Pose in Vicon-world metres, quaternion x,y,z,w in the
+// Vicon wire order; twist in world axes at the Mount segment point. NaN /
+// sequence 0 mean "no sample has ever arrived".
+struct WorldSample {
+    bool mount_valid = false; // the Mount segment resolved this frame
+    Eigen::Vector3d mount_position_m{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    double mount_quat_xyzw[4] = {std::numeric_limits<double>::quiet_NaN(),
+                                 std::numeric_limits<double>::quiet_NaN(),
+                                 std::numeric_limits<double>::quiet_NaN(),
+                                 std::numeric_limits<double>::quiet_NaN()};
+    std::uint64_t sequence = 0; // slot publish counter; 0 = never
+    double age_s = std::numeric_limits<double>::quiet_NaN(); // at cycle start
+    bool mount_twist_valid = false; // estimator produced a derivative
+    Eigen::Vector3d mount_linear_world_m_s{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    Eigen::Vector3d mount_angular_world_rad_s{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
 };
 
 // Per-cycle telemetry the source and controller surface. Data only — the
 // Runner decides what to print or log. NaN means "this cycle did not
-// compute it" (e.g. no Jacobian on a joint reference).
+// compute it" (e.g. takeover rows before Cartesian measurement).
 struct ControllerStatus {
     Eigen::Vector3d p_desired = Eigen::Vector3d::Zero(); // current target
     Eigen::Vector3d p_current = Eigen::Vector3d::Zero(); // FK this cycle
@@ -70,41 +96,22 @@ struct ControllerStatus {
             std::numeric_limits<double>::quiet_NaN());
     double null_leak_m_s = std::numeric_limits<double>::quiet_NaN();
 
-    // Joint-trajectory following (JointTrajectorySource). The three edges
-    // fire on the single cycle that activates, rejects, or completes a
-    // trajectory; joint_traj_start_error_deg carries the worst-joint distance
-    // that failed the activation splice guard. The point count and duration
-    // describe the trajectory the activation edge accepted.
-    bool joint_traj_activated = false;
-    bool joint_traj_rejected = false;
-    bool joint_traj_complete_edge = false;
-    double joint_traj_start_error_deg = 0.0;
-    int joint_traj_points = 0;
-    double joint_traj_duration_s = 0.0;
+    // World-Cartesian trajectory source evidence. Edges are true for one
+    // cycle; IDs/time describe the reference returned on this cycle.
+    bool cartesian_traj_activated = false;
+    bool cartesian_traj_rejected = false;
+    bool cartesian_traj_complete_edge = false;
+    double cartesian_traj_start_position_error_m = 0.0;
+    double cartesian_traj_start_orientation_error_rad = 0.0;
+    int cartesian_traj_points = 0;
+    double cartesian_traj_duration_s = 0.0;
+    std::uint64_t cartesian_trajectory_id = 0;
+    std::uint64_t planner_vicon_sequence = 0;
+    double cartesian_reference_time_s = 0.0;
+    bool request_replan_edge = false;
+    bool cartesian_traj_cancelled_edge = false;
 
-    // The controller's joint-space following-error stop request: the wrapped
-    // measured-vs-reference error exceeded config::kTrajFollowingErrorStopDeg
-    // on some joint. The Runner feeds this to the same ResolveStopPriority
-    // following-error input the Cartesian command-vs-measured rule uses, so a
-    // trip stops the loop with LoopStop::kFollowingError.
-    bool joint_following_error_stop = false;
-    // NaN on a cycle that ran no joint tracking (the NaN convention above):
-    // a pose cycle has no reference joint error, and logging 0.0 there would
-    // read as perfect tracking.
-    double joint_following_error_deg =
-        std::numeric_limits<double>::quiet_NaN();
-
-    // World-hold evidence (log_format 11): the state machine's verdict,
-    // the UNRAMPED world error the divergence latch watches, the ramp
-    // factor, and the re-anchor count. NaN/0 whenever the hold is not the
-    // active reference this cycle.
-    int hold_state = 0; // WorldHoldState as int: 0 off 1 engaged 2 frozen 3 latched
-    double world_err_m = std::numeric_limits<double>::quiet_NaN();
-    double world_err_rot_rad = std::numeric_limits<double>::quiet_NaN();
-    double hold_ramp = std::numeric_limits<double>::quiet_NaN();
-    int hold_reanchor_count = 0;
-
-    // MEASURED tool orientation, flange frame in the right-arm base frame.
+    // MEASURED tool orientation in Vicon world.
     // Hamilton convention, hemisphere-fixed to w >= 0 so logs never jump
     // sign. Telemetry only.
     Eigen::Quaterniond tool_quat{
@@ -123,93 +130,32 @@ struct Twist {
     Eigen::Vector3d angular_rad_s = Eigen::Vector3d::Zero();
 };
 
-// A desired end-effector pose and the velocity it is moving at. Empty
-// `rotation` means "no orientation requested" — the controller keeps its
-// takeover hold orientation. `sequence` identifies distinct targets so
-// arrival fires once per target.
-//
-// `twist` is the FEED-FORWARD reference for the Kd term (ReactiveLaw.h
-// equation 2), the counterpart of Python's WorldTarget.twist_world. Leaving
-// it zero makes the Kd term pure damping, which is what every source does
-// today; a source that moves its target should fill it, or the law will
-// fight the motion it asked for.
+struct CartesianPose {
+    Eigen::Vector3d position_m = Eigen::Vector3d::Zero();
+    Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
+};
+
+// One coherent measurement calculated once per control cycle from the latest
+// Mount pose/twist and measured arm joints. Every quantity is expressed in
+// Vicon world W; the controller law never performs another frame conversion.
+struct MeasuredCartesianState {
+    CartesianPose ee_pose_world;
+    Eigen::Matrix<double, 6, 7> jacobian_world =
+        Eigen::Matrix<double, 6, 7>::Zero();
+    Twist ee_twist_world;
+};
+
+// The controller's only reference: desired end-effector pose and twist in
+// Vicon world W. There is deliberately no frame selector, joint posture, or
+// optional orientation at this boundary.
 struct PoseReference {
-    // The declared frame (sim FramedTarget semantics, review-hardened
-    // 2026-08-13): a producer STATES the frame its numbers live in and
-    // the controller resolves to world once per cycle via
-    // Frames::ResolveTargetWorld — a base-framed target therefore moves
-    // with the base (exactly the pre-Vicon behaviour), a world-framed
-    // one holds in the room. The default is kBase so any legacy
-    // producer keeps its historical meaning instead of silently
-    // becoming a world target. 0=world 1=mount(moving body) 2=base.
-    int frame = 2;
-    Eigen::Vector3d p_desired;               // meters, in `frame`
-    std::optional<Eigen::Matrix3d> rotation; // in `frame`; nullopt = hold
-    Twist twist;                             // reference velocity, in `frame`
-    std::uint64_t sequence = 0;
+    CartesianPose ee_pose_world;
+    Twist ee_twist_world;
+    std::uint64_t trajectory_id = 0;
+    std::uint64_t planner_vicon_sequence = 0;
+    double t_from_start_s = 0.0;
     // A profile may pass through its endpoint before it is permitted to
     // advance the target state machine.  Only a stationary terminal sample
     // is eligible to generate the controller's arrival edge.
     bool arrival_eligible = true;
-};
-
-// Per-joint (reference - measured), taken on the SHORT way round.
-//
-// Kortex reports joint positions on [0, 360) while trajectories, limits and
-// firmware thresholds are all signed, so the same physical angle arrives a
-// full turn apart: a joint truly at -20 deg reads 340 deg. A raw subtraction
-// then reports 360 deg of error, which would reject every trajectory at the
-// splice guard and, past it, drive a full-speed correction the wrong way
-// round. std::remainder maps each difference into [-pi, pi], the same fix
-// Runner.cpp and Actuation.cpp already apply at their own boundaries. A
-// non-finite input stays non-finite: callers must test for that themselves.
-inline Eigen::Matrix<double, 7, 1>
-WrappedJointError(const Eigen::Matrix<double, 7, 1>& q_reference_rad,
-                  const Eigen::Matrix<double, 7, 1>& q_measured_rad)
-{
-    Eigen::Matrix<double, 7, 1> error;
-    for (int i = 0; i < 7; ++i)
-        error[i] = std::remainder(q_reference_rad[i] - q_measured_rad[i],
-                                  2.0 * M_PI);
-    return error;
-}
-
-// A desired joint position and the velocity it is moving at — what a
-// joint-space source (a sampled trajectory) commands. Both are seven-wide,
-// radians and radians per second, in Kortex actuator order.
-struct JointReference {
-    Eigen::Matrix<double, 7, 1> q_rad;
-    Eigen::Matrix<double, 7, 1> qdot_rad_s;
-};
-
-// What a source hands the controller each cycle: one channel, never both.
-// The pose channel goes to the reactive law, the joint channel to the joint
-// tracking law. Neither set means "no reference": the controller holds the
-// takeover pose.
-struct Reference {
-    std::optional<PoseReference> pose;
-    std::optional<JointReference> joint;
-    // True when `joint` is only the source's IDLE hold (startup pose or a
-    // completed trajectory's endpoint), not an actively-sampled
-    // trajectory. An idle hold is offered to the world hold first
-    // (2026-08-13 slice): production always has a joint reference, so
-    // without this flag the world hold's branch is unreachable — the
-    // first hardware run proved it.
-    bool joint_is_idle_hold = false;
-};
-
-// What the Runner requires of a reference source, so the loop is written once
-// for every kind of source (Targets.h has both: the Cartesian pose path and
-// the joint-trajectory path). Get is called exactly once per cycle with the
-// loop's clamped dt; OnArrivalEdge hands back the same cycle's status so a
-// source that sequences targets can advance. Sources that do not sequence
-// anything ignore it.
-class ReferenceSource
-{
-public:
-    virtual ~ReferenceSource() = default;
-
-    virtual Reference Get(const RobotState& state, double dt_s,
-                          ControllerStatus& status) = 0;
-    virtual void OnArrivalEdge(const ControllerStatus&) {}
 };

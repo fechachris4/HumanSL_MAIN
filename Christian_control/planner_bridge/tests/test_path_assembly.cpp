@@ -18,6 +18,7 @@
 
 #include "CartesianPath.h"
 #include "PathAssembly.h"
+#include "PathFrames.h"
 
 namespace {
 
@@ -41,6 +42,30 @@ std::vector<Eigen::Matrix<double, 7, 1>> FakeSolutions(std::size_t n) {
 }  // namespace
 
 int main() {
+    // The planner's single frame boundary: a path declared in Mount is
+    // carried through the immutable Vicon snapshot into WORLD, including
+    // both translation and orientation. A WORLD path is already resolved
+    // and must pass through unchanged.
+    const Eigen::Isometry3d world_T_mount =
+        Eigen::Translation3d(1.0, 2.0, 3.0) *
+        Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitZ());
+    CartesianPath mount_path;
+    mount_path.frame = config::ReferenceFrame::kMount;
+    PathSample mount_sample;
+    mount_sample.pose = Eigen::Translation3d(1.0, 0.0, 0.0) *
+                        Eigen::AngleAxisd(0.3, Eigen::Vector3d::UnitX());
+    mount_path.samples.push_back(mount_sample);
+    const CartesianPath world_path = PathToWorld(mount_path, world_T_mount);
+    assert(world_path.frame == config::ReferenceFrame::kWorld);
+    assert((world_path.samples[0].pose.translation() -
+            Eigen::Vector3d(1.0, 3.0, 3.0)).norm() < 1e-12);
+    assert((world_path.samples[0].pose.linear() -
+            (world_T_mount.linear() * mount_sample.pose.linear())).norm() < 1e-12);
+
+    CartesianPath already_world = world_path;
+    assert((PathToWorld(already_world, world_T_mount).samples[0].pose.matrix() -
+            already_world.samples[0].pose.matrix()).norm() < 1e-12);
+
     const CartesianPath circle = MakeCircle(12, 12.0);
     const auto solutions = FakeSolutions(circle.samples.size());
     const Eigen::Matrix<double, 7, 1> measured =

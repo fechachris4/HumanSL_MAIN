@@ -22,9 +22,9 @@
 // synchronisation the system does not provide. Each left state at t is
 // instead checked against right states over [t-skew, t+skew].
 //
-// Both arms' collision spheres are already expressed in the shared `mount`
-// frame: PlannerModel builds each arm at DhRootInMount(left_arm), so
-// sphereCentersMat returns mount-frame centres for either arm and no
+// Both arms' collision spheres are already expressed in the shared Vicon
+// world frame: PlannerModel builds each arm at DhRootInWorld(left_arm), so
+// sphereCentersMat returns world-frame centres for either arm and no
 // additional transform is involved.
 //
 
@@ -36,7 +36,7 @@
 #include <Eigen/Dense>
 
 #include "PlannerModel.h"
-#include "ReconstructBlock.h"
+#include "TimedJointTrajectory.h"
 
 // Which sphere pair was responsible, so a violation is actionable. A bare
 // minimum distance says a pair is too close but not which part of which arm,
@@ -46,7 +46,7 @@ struct SpherePairIdentity {
     std::size_t right_sphere = 0;
     double left_radius_m = 0.0;
     double right_radius_m = 0.0;
-    Eigen::Vector3d left_centre_m = Eigen::Vector3d::Zero();   // in `mount`
+    Eigen::Vector3d left_centre_m = Eigen::Vector3d::Zero();   // in `world`
     Eigen::Vector3d right_centre_m = Eigen::Vector3d::Zero();
 };
 
@@ -73,7 +73,8 @@ struct InterArmClearanceReport {
     std::string Summary() const;
 };
 
-// Both blocks reconstructed on ONE grid, compared over the skew window.
+// Both internal joint trajectories sampled on one grid and compared over
+// the skew window. Nothing here depends on a controller wire format.
 //
 // `skew_window_s` is the start-time uncertainty to tolerate: 0 means the two
 // arms are assumed to start together, which the system does not guarantee.
@@ -82,6 +83,6 @@ struct InterArmClearanceReport {
 // `grid_dt_s` is the comparison grid (500 Hz matches the controller's own
 // rate). `required_clearance_m` is what must be maintained.
 InterArmClearanceReport CheckInterArmClearance(
-    const PlannerModel& left_model, const std::string& left_block,
-    const PlannerModel& right_model, const std::string& right_block,
+    const PlannerModel& left_model, const TimedJointTrajectory& left,
+    const PlannerModel& right_model, const TimedJointTrajectory& right,
     double required_clearance_m, double skew_window_s, double grid_dt_s);

@@ -70,6 +70,7 @@ set_target_properties(vicon_interface PROPERTIES
 )
 
 add_library(vicon_snapshot STATIC
+        src/MountTwistEstimator.cpp
         src/SnapshotBuilder.cpp
         src/ViconRecorder.cpp
         src/ViconReplaySource.cpp
@@ -89,6 +90,12 @@ set_target_properties(connect_vicon PROPERTIES
 add_executable(record_vicon tools/record_vicon.cpp)
 target_link_libraries(record_vicon PRIVATE vicon_snapshot vicon_interface)
 set_target_properties(record_vicon PROPERTIES
+        BUILD_RPATH "${VICON_SDK}/lib"
+)
+
+add_executable(track_segment tools/track_segment.cpp)
+target_link_libraries(track_segment PRIVATE vicon_snapshot vicon_interface)
+set_target_properties(track_segment PROPERTIES
         BUILD_RPATH "${VICON_SDK}/lib"
 )
 
@@ -113,4 +120,7 @@ if (BUILD_TESTING)
 
     add_vicon_test(vicon_replay test_vicon_replay
             tests/test_vicon_replay.cpp vicon_snapshot)
+
+    add_vicon_test(vicon_mount_twist test_mount_twist_estimator
+            tests/test_mount_twist_estimator.cpp vicon_snapshot)
 endif ()

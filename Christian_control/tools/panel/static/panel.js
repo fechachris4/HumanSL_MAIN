@@ -33,7 +33,7 @@
   produce:
 
     /api/status    {freshness:{controller,bridge,dh,stale,reasons}, session,
-                    goal_arms, pipes, dh, replay, hardware, wall_ms}
+                    goal_arms, dh, replay, hardware, wall_ms}
     /api/config    {knobs:{name:{type,doc,value}},
                     thresholds:{name:{value,unit,consequence}},
                     joints:{bounded_mask, lower_deg, upper_deg, warn_deg,
@@ -177,6 +177,10 @@ const state = {
   goal: null,             // goal.yaml as parsed by the server, for the scene
   runs: [],
   selectedRun: null,
+  plotsSelectedRun: null,
+  plotsScripts: [],       // /api/plots, fetched once and cached
+  plotsSelectedScript: null,
+  plotsParams: {},        // {paramName: value}, e.g. {joint: '3'}
   buildPoll: null,
   logLines: [],
   lastNotable: '',      // the newest line that looks like an explanation
@@ -195,6 +199,7 @@ function init() {
   wireConfigPane();
   wireTargetsPane();
   wireSessionPane();
+  wirePlotsPane();
 
   buildRunView();
 
@@ -304,6 +309,7 @@ function showView(name) {
   });
   if (name === 'run') call(state.scene, 'resize');
   if (name === 'runs') refreshRuns();
+  if (name === 'plots') refreshPlotsTab();
 }
 
 /* ----------------------------------------------------------------- streams */
@@ -1390,6 +1396,173 @@ async function commitJointLimit(section, actuator, bound, input) {
   }
 }
 
+/* ------------------------------------------------------------------ plots */
+
+function wirePlotsPane() {
+  $('plots-generate').addEventListener('click', generatePlot);
+}
+
+async function refreshPlotsTab() {
+  await Promise.all([refreshPlotsRuns(), refreshPlotsScripts()]);
+}
+
+// A second, independent run-list rendering (same /api/runs data, same
+// .run-item markup as the RUNS tab) rather than sharing state.selectedRun —
+// the RUNS tab's selection is itself only ever UI-local, so this tab picking
+// its own run is consistent with that, not a new inconsistency.
+async function refreshPlotsRuns() {
+  let runList;
+  try { runList = await getJSON('/api/runs'); } catch { return; }
+  const host = $('plots-runs-list');
+  host.textContent = '';
+  $('plots-runs-empty').hidden = runList.length > 0;
+  $('plots-runs-count').textContent = runList.length ? `${runList.length} recorded` : '';
+
+  for (const run of runList) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'run-item';
+    item.setAttribute('aria-current', String(run.file === state.plotsSelectedRun));
+
+    const file = document.createElement('span');
+    file.className = 'run-file';
+    file.textContent = run.file;
+    const size = document.createElement('span');
+    size.className = 'num';
+    size.textContent = `${Number(run.mb ?? 0).toFixed(1)} MB`;
+    const when = document.createElement('span');
+    when.className = 'num';
+    when.textContent = run.mtime_iso ? run.mtime_iso.replace('T', ' ').slice(5, 16)
+                                     : formatTime(run.mtime);
+
+    item.append(file, size, when);
+    item.addEventListener('click', () => selectPlotsRun(run.file));
+    host.append(item);
+  }
+}
+
+function selectPlotsRun(file) {
+  state.plotsSelectedRun = file;
+  $('plots-selected-run').textContent = file;
+  updatePlotsGenerateEnabled();
+  refreshPlotsRuns(); // re-render so aria-current moves to the new choice
+}
+
+async function refreshPlotsScripts() {
+  if (!state.plotsScripts.length) {
+    try { state.plotsScripts = await getJSON('/api/plots'); } catch { return; }
+  }
+  renderPlotsScripts();
+}
+
+function renderPlotsScripts() {
+  const host = $('plots-script-list');
+  host.textContent = '';
+  for (const script of state.plotsScripts) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'plot-script-item';
+    item.setAttribute('aria-current', String(script.id === state.plotsSelectedScript));
+
+    const label = document.createElement('span');
+    label.className = 'plot-script-label';
+    label.textContent = script.label;
+    item.append(label);
+
+    for (const param of script.params || []) {
+      if (param.type !== 'select') continue;
+      const select = document.createElement('select');
+      if (!(param.name in state.plotsParams)) {
+        state.plotsParams[param.name] = param.options[0];
+      }
+      for (const option of param.options) {
+        const opt = document.createElement('option');
+        opt.value = option;
+        opt.textContent = option;
+        select.append(opt);
+      }
+      select.value = state.plotsParams[param.name];
+      // Choosing a value must not also select the script it sits inside.
+      select.addEventListener('click', (event) => event.stopPropagation());
+      select.addEventListener('change', () => {
+        state.plotsParams[param.name] = select.value;
+      });
+      item.append(select);
+    }
+
+    item.addEventListener('click', () => selectPlotsScript(script.id));
+    host.append(item);
+  }
+}
+
+function selectPlotsScript(id) {
+  state.plotsSelectedScript = id;
+  renderPlotsScripts();
+  updatePlotsGenerateEnabled();
+}
+
+function updatePlotsGenerateEnabled() {
+  $('plots-generate').disabled = !(state.plotsSelectedRun && state.plotsSelectedScript);
+}
+
+async function generatePlot() {
+  const button = $('plots-generate');
+  const status = $('plots-status');
+  button.disabled = true;
+  status.textContent = 'running…';
+  $('plots-images').textContent = '';
+  $('plots-output').hidden = true;
+  $('plots-output-head').hidden = true;
+
+  try {
+    const result = await postJSON('/api/plots/run', {
+      script: state.plotsSelectedScript,
+      run: state.plotsSelectedRun,
+      params: state.plotsParams,
+    });
+    renderPlotsResult(result);
+  } catch (err) {
+    status.textContent = `request failed: ${err.message}`;
+  }
+  updatePlotsGenerateEnabled();
+}
+
+function renderPlotsResult(result) {
+  const status = $('plots-status');
+  const images = result.images || [];
+  status.textContent = result.ok
+    ? `${images.length} image${images.length === 1 ? '' : 's'}`
+    : (result.error || 'failed');
+
+  const host = $('plots-images');
+  host.textContent = '';
+  for (const path of images) {
+    const figure = document.createElement('figure');
+    const img = document.createElement('img');
+    // Cache-bust: re-running the same script over the same run can
+    // overwrite a PNG at the same path (plot_move.py, plot_joint.py both
+    // use a fixed name), and the browser must not show the stale one.
+    img.src = `/api/plot-image?path=${encodeURIComponent(path)}&t=${Date.now()}`;
+    img.alt = path;
+    const caption = document.createElement('figcaption');
+    caption.textContent = path;
+    figure.append(img, caption);
+    host.append(figure);
+  }
+
+  // stdout carries real content for some scripts (plot_move.py's tracking
+  // stats, plot_run.py's/plot_world_hold.py's printed PNG paths) and stderr
+  // is where a Python traceback lands on failure — both are what "debug in
+  // the UI" needs, so both are shown, not just the failure case.
+  const parts = [];
+  if (result.stdout) parts.push(result.stdout.trim());
+  if (result.stderr) parts.push(`--- stderr ---\n${result.stderr.trim()}`);
+  const text = parts.join('\n\n');
+  $('plots-output').textContent = text || '(no output)';
+  $('plots-output').hidden = !text;
+  $('plots-output-head').hidden = !text;
+}
+
 function renderReadOnlyTable(hostId, data, note) {
   const host = $(hostId);
   host.textContent = '';
@@ -2218,7 +2391,6 @@ function renderFreshness() {
 function renderSession() {
   const session = state.status?.session || {};
   const running = Boolean(session.running);
-  const pipes = state.status?.pipes || {};
 
   // Which arms are actually being driven, in the safety bar, where it belongs:
   // reading the right arm's bars while both are moving is normal, and the bar
@@ -2256,8 +2428,7 @@ function renderSession() {
     started: session.started ?? '—',
     'session directory': session.session_dir ?? '—',
     'controller log': session.log_path ?? '—',
-    'target pipe': Object.entries(pipes)
-      .map(([arm, exists]) => `${arm} ${exists ? 'open' : 'absent'}`).join(' · ') || '—',
+    'planner handoff': 'typed WorldCartesianTrajectory inside controller',
     'telemetry source': state.replay ? 'replaying a recorded run' : 'live',
   }, '');
 

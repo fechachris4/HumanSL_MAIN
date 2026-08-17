@@ -219,7 +219,7 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 11; WriteCsvRow is the authority):
+// CSV column order (log_format = 13; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -228,13 +228,15 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   status_flags_j1..7, jitter_us_j1..7,
 //   cycle, req_j1..7, reqvel_j1..7, lead_limited_j1..7,
 //   ack_unchanged_j1..7, taskvel_j1..7, nullvel_j1..7,
-//   null_leak_mps, traj_activated, traj_rejected, traj_complete,
-//   traj_start_error_deg, joint_follow_stop, joint_follow_error_deg,
+//   null_leak_mps,
 //   vicon_seq, vicon_frame, vicon_latency_s, vicon_age_s,
 //   vicon_<seg>_{x_m,y_m,z_m,qx,qy,qz,qw,valid} for each of
 //   mount, leftbase, rightbase, leftee, rightee,
-//   hold_state, world_err_m, world_err_rot_rad, hold_ramp,
-//   hold_reanchor_count                                  (190 columns)
+//   vicon_frame_rate_hz, vicon_mount_vx_mps..vz_mps,
+//   vicon_mount_wx_radps..wz_radps, vicon_mount_twist_valid,
+//   cart_traj_activated..cart_reference_time_s,
+//   cart_ref_world_{pose,twist}, cart_meas_world_{pose,twist},
+//   world_fresh, world_mount_twist_valid                 (225 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -272,9 +274,17 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // divergence latch watches; NaN when the hold is not the active
 // reference), hold_ramp (0..1 authority ramp; NaN when not holding), and
 // hold_reanchor_count (blackout recoveries this run). The Mount sample
-// now also FEEDS the world hold — the first format in which a vicon_*
-// input reaches a control law; the vicon_* columns record exactly the
+// then fed the retired world-hold path — the first format in which a vicon_*
+// input reached a control law; the vicon_* columns record exactly the
 // sample the controller used that cycle (one slot read per cycle).
+// Format 12 (2026-08-16, Mount-twist observation slice) appends Vicon's
+// source frame rate and the filtered Mount segment twist in VICON-WORLD
+// axes (linear m/s, angular rad/s). Repeated vicon_seq rows deliberately
+// repeat the held estimate; validity says whether it belongs to that source
+// frame. In format 12 this estimate was observation-only. Format 13 wires it
+// into measured world twist and replaces the retired joint-trajectory
+// and world-hold telemetry with the sole world-Cartesian reference path's
+// identity, splice edges, reference/measured pose and twist, and freshness.
 //
 // Requested vs sent vs measured — the three quantities and their units:
 //   reqvel_j*  deg/s  controller output BEFORE the per-joint speed clamp
@@ -314,8 +324,8 @@ struct LoopLogSample {
     double dt_s = 0.0; // since previous cycle
     double t_send_s = 0.0; // just before cyclic.Send
     double t_recv_s = 0.0; // just after Send returned
-    double p_desired_m[3] = {0, 0, 0}; // CONTROLLED arm's base frame (leftbase_link on --arm left)
-    double p_current_m[3] = {0, 0, 0}; // FK of this cycle's measured q
+    double p_desired_m[3] = {0, 0, 0}; // Vicon world W
+    double p_current_m[3] = {0, 0, 0}; // Vicon world W
     JointVector commanded_deg{};   // integrated position command (sent)
     JointVector commanded_velocity_deg_s{}; // clipped q̇ fed to the integrator
     JointVector measured_deg{};     // feedback shifted within ±180° of the
@@ -374,15 +384,6 @@ struct LoopLogSample {
         std::numeric_limits<double>::quiet_NaN(),
         std::numeric_limits<double>::quiet_NaN()};
     double null_leak_m_s = std::numeric_limits<double>::quiet_NaN();
-
-    // Joint-trajectory edges (log_format 9). See the column note above.
-    bool joint_traj_activated = false;
-    bool joint_traj_rejected = false;
-    bool joint_traj_complete_edge = false;
-    double joint_traj_start_error_deg = 0.0;
-    bool joint_following_error_stop = false;
-    double joint_following_error_deg = // NaN: this cycle ran no joint tracking
-        std::numeric_limits<double>::quiet_NaN();
 
     // World-pose observation (log_format 10). Copied verbatim from the
     // BasePoseSample the loop read this cycle (src/BasePose.h — Vicon-world
@@ -446,12 +447,44 @@ struct LoopLogSample {
          std::numeric_limits<double>::quiet_NaN()}};
     bool vicon_seg_valid[5] = {false, false, false, false, false};
 
-    // World-hold evidence (log_format 11). See the format-11 comment above.
-    int hold_state = 0;
-    double world_err_m = std::numeric_limits<double>::quiet_NaN();
-    double world_err_rot_rad = std::numeric_limits<double>::quiet_NaN();
-    double hold_ramp = std::numeric_limits<double>::quiet_NaN();
-    int hold_reanchor_count = 0;
+    // Mount-twist observation (log_format 12). Copied from the same single
+    // BasePoseSample read as the pose fields above, so frame, pose and twist
+    // cannot tear across Vicon publications. World axes; NaN + false means
+    // unavailable. A repeated vicon_sequence is intentional zero-order hold.
+    double vicon_frame_rate_hz =
+        std::numeric_limits<double>::quiet_NaN();
+    double vicon_mount_linear_world_m_s[3] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    double vicon_mount_angular_world_rad_s[3] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    bool vicon_mount_twist_valid = false;
+
+    // Sole world-Cartesian path evidence (log_format 13). Reference and
+    // measurement are from the exact cycle that generated requested qdot.
+    bool cart_traj_activated = false;
+    bool cart_traj_rejected = false;
+    bool cart_traj_complete = false;
+    bool cart_traj_cancelled = false;
+    bool cart_replan_requested = false;
+    double cart_start_position_error_m = 0.0;
+    double cart_start_orientation_error_rad = 0.0;
+    std::uint64_t cart_trajectory_id = 0;
+    std::uint64_t cart_planner_vicon_sequence = 0;
+    double cart_reference_time_s = 0.0;
+    double cart_ref_position_world_m[3] = {0.0, 0.0, 0.0};
+    double cart_ref_quat_world_xyzw[4] = {0.0, 0.0, 0.0, 1.0};
+    double cart_ref_linear_world_m_s[3] = {0.0, 0.0, 0.0};
+    double cart_ref_angular_world_rad_s[3] = {0.0, 0.0, 0.0};
+    double cart_measured_position_world_m[3] = {0.0, 0.0, 0.0};
+    double cart_measured_quat_world_xyzw[4] = {0.0, 0.0, 0.0, 1.0};
+    double cart_measured_linear_world_m_s[3] = {0.0, 0.0, 0.0};
+    double cart_measured_angular_world_rad_s[3] = {0.0, 0.0, 0.0};
+    bool world_fresh = false;
+    bool world_mount_twist_valid = false;
 };
 
 // Single-producer / single-consumer queue over a fixed-capacity ring, fully
@@ -489,7 +522,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 11. Both
+// Column header and one data row — the authority for log_format = 12. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);

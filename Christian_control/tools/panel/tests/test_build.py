@@ -124,11 +124,9 @@ class FreshnessTest(unittest.TestCase):
     def test_the_bridge_watches_trajectory_generation_as_well_as_src(self) -> None:
         os.utime(self.trajectory_source, (NEW + 10, NEW + 10))
         report = build.freshness()
+        self.assertTrue(report["controller"]["stale"])
         self.assertTrue(report["bridge"]["stale"])
-        self.assertEqual(
-            report["bridge"]["newest_source"], str(self.trajectory_source)
-        )
-        self.assertIn("GenerateTrajectory.cpp", report["reasons"][0])
+        self.assertIn("GenerateTrajectory.cpp", " ".join(report["reasons"]))
 
     def test_editor_droppings_are_not_sources(self) -> None:
         touch(self.config_h.with_name(".Config.h.swp"), NEW + 10)

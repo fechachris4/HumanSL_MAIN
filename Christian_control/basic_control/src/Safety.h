@@ -72,13 +72,14 @@ struct LoopResult {
     long cycles = 0;
 };
 
-// Consecutive-cycle counters, updated by the Runner every cycle (reset to
-// zero on a healthy cycle) and compared directly against the Config.h
-// thresholds there (decision 12; they run after live-state, joint-boundary,
-// and stale-feedback priority). overrun_total is the whole-run tally reported
+// The Runner's remaining consecutive-cycle counter: takeover-hold overruns,
+// reset to zero on a healthy cycle and compared directly against
+// config::kOverrunStopCycles there (decision 12). The normal loop's
+// decision-12 counters (non-finite hold and overrun) moved into
+// ArmExecutionCore with the Plan 01 extraction; the dead nonfinite field
+// was removed 2026-08-17. overrun_total is the whole-run tally reported
 // after the loop.
 struct CycleCounters {
-    int nonfinite = 0;
     int overrun = 0;
     long overrun_total = 0;
 };
@@ -90,6 +91,9 @@ inline constexpr std::uint32_t kJointFaultBit =
 
 // Pure facts from one completed feedback sample (no printing — loop-safe).
 // The base's latched JOINT_FAULT summary bit alone is not a live fault.
+// The following-error overload applies the config::kDisableFollowingErrorStop
+// gate, then delegates to the ONE shared predicate in StopPriority.h (the
+// same definition ArmExecutionCore::ResolveStop consumes in the normal loop).
 bool FollowingErrorExceeded(const LoopLogSample& s,
                             double following_error_limit_deg);
 bool HasLiveFault(const LoopLogSample& s);

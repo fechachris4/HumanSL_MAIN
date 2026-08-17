@@ -16,28 +16,41 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
-#include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "InterArmDistance.h"
 #include "PlannerModel.h"
 
 namespace {
 
-// A block holding one configuration for `duration_s`. Two points is the
-// minimum the wire format accepts, and a stationary pair makes the expected
-// geometry computable by hand.
-std::string HoldBlock(const Eigen::Matrix<double, 7, 1>& q_deg, double duration_s) {
-    std::ostringstream out;
-    out << "TRAJ_BEGIN 2\n";
-    for (double t : {0.0, duration_s}) {
-        out << t;
-        for (int j = 0; j < 7; ++j) out << " " << q_deg(j);
-        for (int j = 0; j < 7; ++j) out << " " << 0.0;
-        out << "\n";
+TimedJointTrajectory Trajectory(
+    const std::vector<std::pair<double, Eigen::Matrix<double, 7, 1>>>& knots_deg,
+    double dt_s) {
+    TimedJointTrajectory out;
+    if (knots_deg.size() < 2 || !(dt_s > 0.0)) return out;
+    out.valid = true;
+    out.duration_s = knots_deg.back().first;
+    std::size_t hi = 1;
+    for (double t = 0.0; t <= out.duration_s + 1e-12; t += dt_s) {
+        while (hi + 1 < knots_deg.size() && knots_deg[hi].first < t) ++hi;
+        const auto& a = knots_deg[hi - 1];
+        const auto& b = knots_deg[hi];
+        const double span = b.first - a.first;
+        const double u = span > 0.0 ? (t - a.first) / span : 0.0;
+        TimedJointSample sample;
+        sample.t_s = t;
+        sample.q_rad = ((1.0 - u) * a.second + u * b.second) * (M_PI / 180.0);
+        sample.qdot_rad_s = (b.second - a.second) * (M_PI / 180.0) / span;
+        out.samples.push_back(sample);
     }
-    out << "TRAJ_END\n";
-    return out.str();
+    return out;
+}
+
+TimedJointTrajectory Hold(const Eigen::Matrix<double, 7, 1>& q_deg,
+                          double duration_s, double dt_s) {
+    return Trajectory({{0.0, q_deg}, {duration_s, q_deg}}, dt_s);
 }
 
 // The same distance the checker should find, computed here directly from
@@ -65,19 +78,21 @@ double ExpectedMinimumClearance(const PlannerModel& left,
 
 int main(int argc, char** argv) {
     assert(argc == 3 && "usage: test_inter_arm_distance <dh_tool.yaml> <dh_flange.yaml>");
-    const PlannerModel right = LoadPlannerModel(argv[1], /*has_tool=*/true);
-    const PlannerModel left = LoadPlannerModel(argv[2], /*has_tool=*/false);
+    const PlannerModel right = LoadPlannerModel(
+        argv[1], /*has_tool=*/true, Eigen::Isometry3d::Identity());
+    const PlannerModel left = LoadPlannerModel(
+        argv[2], /*has_tool=*/false, Eigen::Isometry3d::Identity());
 
     // --- both arms stationary at their zero configurations. The mounting
     //     geometry separates them, so this is the rig's resting clearance.
     Eigen::Matrix<double, 7, 1> zero_deg = Eigen::Matrix<double, 7, 1>::Zero();
     const Eigen::Matrix<double, 7, 1> zero_rad = Eigen::Matrix<double, 7, 1>::Zero();
 
-    const std::string left_block = HoldBlock(zero_deg, 2.0);
-    const std::string right_block = HoldBlock(zero_deg, 2.0);
+    const TimedJointTrajectory left_trajectory = Hold(zero_deg, 2.0, 0.01);
+    const TimedJointTrajectory right_trajectory = Hold(zero_deg, 2.0, 0.01);
 
     const InterArmClearanceReport report = CheckInterArmClearance(
-        left, left_block, right, right_block,
+        left, left_trajectory, right, right_trajectory,
         /*required_clearance_m=*/0.05, /*skew_window_s=*/0.0, /*grid_dt_s=*/0.01);
     assert(report.evaluated && report.error.empty());
     std::printf("%s", report.Summary().c_str());
@@ -105,11 +120,11 @@ int main(int argc, char** argv) {
     //     violated, and one below it as satisfied. The threshold must be a
     //     real control, not decoration.
     const InterArmClearanceReport strict = CheckInterArmClearance(
-        left, left_block, right, right_block,
+        left, left_trajectory, right, right_trajectory,
         /*required=*/report.minimum_clearance_m + 0.01, 0.0, 0.01);
     assert(!strict.clearance_satisfied && "a stricter requirement must fail");
     const InterArmClearanceReport lax = CheckInterArmClearance(
-        left, left_block, right, right_block,
+        left, left_trajectory, right, right_trajectory,
         /*required=*/std::max(0.0, report.minimum_clearance_m - 0.01), 0.0, 0.01);
     assert(lax.clearance_satisfied && "a laxer requirement must pass");
 
@@ -123,33 +138,19 @@ int main(int argc, char** argv) {
     Eigen::Matrix<double, 7, 1> folded_deg;
     folded_deg << 0, -60, 0, 90, 0, 45, 0;
     {
-        std::ostringstream l, r;
-        l << "TRAJ_BEGIN 3\n";
-        r << "TRAJ_BEGIN 3\n";
-        const double times[3] = {0.0, 5.0, 10.0};
         // left: zero -> folded -> zero ; right: folded -> zero -> folded
-        const Eigen::Matrix<double, 7, 1> left_seq[3] = {zero_deg, folded_deg, zero_deg};
-        const Eigen::Matrix<double, 7, 1> right_seq[3] = {folded_deg, zero_deg, folded_deg};
-        for (int k = 0; k < 3; ++k) {
-            l << times[k];
-            r << times[k];
-            for (int j = 0; j < 7; ++j) l << " " << left_seq[k](j);
-            for (int j = 0; j < 7; ++j) l << " " << 0.0;
-            for (int j = 0; j < 7; ++j) r << " " << right_seq[k](j);
-            for (int j = 0; j < 7; ++j) r << " " << 0.0;
-            l << "\n";
-            r << "\n";
-        }
-        l << "TRAJ_END\n";
-        r << "TRAJ_END\n";
+        const TimedJointTrajectory l = Trajectory(
+            {{0.0, zero_deg}, {5.0, folded_deg}, {10.0, zero_deg}}, 0.02);
+        const TimedJointTrajectory r = Trajectory(
+            {{0.0, folded_deg}, {5.0, zero_deg}, {10.0, folded_deg}}, 0.02);
 
         const InterArmClearanceReport timed = CheckInterArmClearance(
-            left, l.str(), right, r.str(), 0.05, /*skew=*/0.0, 0.02);
+            left, l, right, r, 0.05, /*skew=*/0.0, 0.02);
         assert(timed.evaluated);
         // A wider skew window can only ever find a SMALLER minimum: it
         // considers strictly more pairings, including the t-vs-t ones.
         const InterArmClearanceReport skewed = CheckInterArmClearance(
-            left, l.str(), right, r.str(), 0.05, /*skew=*/1.0, 0.02);
+            left, l, right, r, 0.05, /*skew=*/1.0, 0.02);
         assert(skewed.minimum_clearance_m <= timed.minimum_clearance_m + 1e-12 &&
                "widening the skew window must not INCREASE the reported minimum — "
                "it admits strictly more relative timings");
@@ -168,7 +169,7 @@ int main(int argc, char** argv) {
         folded(1) = -90.0;  // degrees: the wire format is degrees
         folded(3) = -90.0;
         const InterArmClearanceReport overlap = CheckInterArmClearance(
-            left, HoldBlock(folded, 1.0), right, HoldBlock(folded, 1.0),
+            left, Hold(folded, 1.0, 0.5), right, Hold(folded, 1.0, 0.5),
             /*required=*/0.05, /*skew=*/0.0, /*dt=*/0.5);
         assert(overlap.evaluated);
         assert(overlap.minimum_clearance_m < 0.0 &&
@@ -183,9 +184,9 @@ int main(int argc, char** argv) {
                     overlap.minimum_clearance_m * 1000.0);
     }
 
-    // --- a malformed block is reported, not silently treated as clear.
-    const InterArmClearanceReport bad =
-        CheckInterArmClearance(left, "not a block", right, right_block, 0.05, 0.0, 0.01);
+    // --- invalid internal data is reported, not silently treated as clear.
+    const InterArmClearanceReport bad = CheckInterArmClearance(
+        left, TimedJointTrajectory{}, right, right_trajectory, 0.05, 0.0, 0.01);
     assert(!bad.evaluated && !bad.error.empty() &&
            "an unparseable block must be reported, never assumed clear");
 

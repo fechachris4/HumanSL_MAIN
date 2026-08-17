@@ -1,0 +1,209 @@
+# Model and dependency provenance for the dual-arm MuJoCo execution twin.
+#
+# Machine-readable record checked by tests/test_model_provenance.py
+# (registered as ctest `sim_model_provenance`). The test recomputes every
+# hash and cross-checks the mount transforms and TCP names against the
+# URDF itself, so a stale or hand-mistyped entry here fails the build.
+#
+# Authority split (Plan 02):
+# - Kinematic truth (frames, joint order, limits, mount transforms, TCPs):
+#   the production URDF below, via DualArmKinematics.
+# - Simulator mechanics (meshes, inertials, actuator classes): the
+#   msc_project gen3.xml below. Its scene.xml mounting is NOT HumanSL
+#   geometry and is never a source.
+# Recorded 2026-08-17.
+
+units:
+  length: metres
+  angle: radians
+  time: seconds
+  # Robot-interface degrees and Vicon millimetres are converted once at
+  # their adapter boundaries (engineering contract section 2); every value
+  # in this file and in the generated MJCF uses the units above.
+
+mujoco:
+  version: "3.10.0"
+  library: third_party/lib/libmujoco.so.3.10.0
+  sha256: 872b2954e9760b1df122e3c807a907ff806e1980099b00e15789ae67e08b75d5
+  provenance_doc: third_party/MUJOCO_PROVENANCE.md
+  license: Apache-2.0 (third_party/licenses/MUJOCO_LICENSE)
+
+source_urdf:
+  path: Christian_control/basic_control/config/GEN3_dual_mounted.urdf
+  sha256: d6e9d3ac51ebedf18bcdace99943816ff8e19a711b22d5e504216a9e280a743b
+  kinematic_authority: true
+  runtime_authority: "DualArmKinematics::MountFromBase (Christian_control/basic_control/src/Kinematics.cpp)"
+
+source_mjcf:
+  path: /home/christian/msc_project/sim/assets/kinova_gen3/gen3.xml
+  sha256: 730a6073afc63e1ba6efc1eb048b8d7e43dd0a81df0192abcea3afe876fba3cb
+  kinematic_authority: false
+  role: >
+    Mechanics source only: single-arm Gen3 meshes, inertials, and generic
+    position-actuator classes (large kp=2000 kv=100 forcerange +/-105 N*m
+    for joints 1-4; small kp=500 kv=50 +/-52 N*m for joints 5-7). These
+    are declared generic plant dynamics, not a Kinova servo model. Its
+    companion scene.xml mounting (0.845708 rad tilt, torso offsets) is not
+    HumanSL geometry and must never be copied.
+  compiler_angle: radian
+  origin: MuJoCo Menagerie kinova_gen3 (copied into msc_project 2025)
+
+source_meshes:
+  # Exactly the meshes gen3.xml references (the test parses gen3.xml and
+  # requires this list to match). bracelet_no_vision_link.stl exists in
+  # the same directory but is unreferenced and is not a source.
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/base_link.stl
+    sha256: 3e38517e653d58f4160cfdcee34c9dea983d8b3ecb8f2c147444f58235335260
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/shoulder_link.stl
+    sha256: a98e232e5197f09e9cd520e7a450c21bcec74bc49e2a19ce7cf86c5dc25f2e18
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/half_arm_1_link.stl
+    sha256: 8df461a71780d8e2d09104a507584424279d85173adf14867e359f7e58b3bba7
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/half_arm_2_link.stl
+    sha256: 8a9f38de21648804b3ab7076ec73726031f2ade7c95eb2541d070553e025407b
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/forearm_link.stl
+    sha256: a00d96d2c7ec37e9fe4c5fb6d3fa2b4386dfd48fea5ac25632f4cb83b3505105
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/spherical_wrist_1_link.stl
+    sha256: 0b97a5e3b2de535344f8e8d4176d77f0cdb3455b235f35430fa0413208856e66
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/spherical_wrist_2_link.stl
+    sha256: 12271fb7d0ee78fb5642424cf5078be20f0476061e74203db964b674031ce879
+  - path: /home/christian/msc_project/sim/assets/kinova_gen3/assets/bracelet_with_vision_link.stl
+    sha256: 8bb05e420a88532b4eee3948a0047fb8e7f341c3e5cc971d54e97e2aaffcf878
+
+source_license:
+  path: /home/christian/msc_project/sim/assets/kinova_gen3/LICENSE
+  sha256: 50ee431dbfbfcc53d976d3a5a2918e2fff4236f7f3c492d405e98a3f72106736
+  spdx: BSD-3-Clause
+  holder: Kinova inc. (2018), via MuJoCo Menagerie
+
+frames:
+  # Names used throughout the simulation project; contract section 2
+  # convention A_T_B = pose of frame B expressed in frame A.
+  - world
+  - mount
+  - right_base
+  - left_base
+
+tcp:
+  # Asymmetric by design: right carries the configured tool, left is the
+  # bare flange. Different physical points; never compared as equivalents.
+  # There is no left tool transform — never invent one. pinch_site is
+  # rejected as either production TCP.
+  right:
+    frame: ConfiguredTool_Link
+    meaning: configured tool frame (right arm)
+  left:
+    frame: leftEndEffector_Link
+    meaning: bare flange frame (left arm)
+
+generated_model:
+  # The one model artifact, written by the generator below (Task 2). It is
+  # NEVER hand-edited: every correction — including any Task 3 parity
+  # fixes — is made in the generator and the file regenerated, then this
+  # hash updated. The test recomputes the hash, so a hand edit fails
+  # provenance exactly like an edited mesh copy would.
+  path: Christian_control/simulation/model/humansl_dual_gen3.xml
+  sha256: 946430c1ac0af2d5973603a2d4e35a806d3fef6d9d29858d6ebd047fe0ac0655
+  generator: Christian_control/simulation/tools/generate_dual_mjcf.py
+  hand_edits: forbidden
+  # All placements (mount->base, chain body origins, bounded ranges, TCP
+  # sites) are derived from the URDF above at full double precision.
+  # gen3.xml contributes mechanics only: inertials, meshes, actuator
+  # classes/ctrlranges, integrator, home keyframe. gen3.xml body quats
+  # are deliberately NOT used — they encode exact pi/2 where the URDF
+  # writes rounded angles (1.5708), a ~3.7e-6 rad difference that would
+  # fail the Task 3 parity gate.
+  mount_representation: >
+    The Mount is a MuJoCo mocap body (mocap="true"), welded to world at
+    the pose the backend writes into mjData.mocap_pos/mocap_quat each
+    control tick, with both arms as its direct jointed children
+    (nq = nv = 14; the Mount contributes no state). Adopted 2026-08-17 on
+    Christian's decision that the arms must hang from a possibly moving
+    base as they do on the real rig. It replaced a freejoint whose
+    qpos/qvel were rewritten every substep: that pinned position and
+    velocity but left the freejoint ACCELERATION free, so the whole rig
+    fell freely inside each substep and the arms were weightless
+    (mount qacc_z = -9.810 m/s^2 while every arm qacc was below 1e-12
+    rad/s^2 against bias torques up to 8.16 N*m). With the mocap Mount
+    the arms carry full gravity: each servo settles at -qfrc_bias/kp
+    (joint 1 0.234 deg, joint 2 0.090 deg at the home keyframe), and the
+    ideal-mode hold error rose honestly from 0.000186 m to 0.002295 m
+    over the 0.5 s dual-hold test. The Mount has no inertial element: a
+    world-welded body has infinite effective mass, so no placeholder mass
+    or inertia is invented for it any more. What this still does not
+    model: no reaction force reaches the wearer (the Mount is prescribed,
+    never pushed back), and a mocap body has no velocity the physics can
+    see, so base-motion fictitious forces on the links are absent — the
+    Mount twist is a sensing quantity only, and must come from the
+    analytic Mount motion, never from differencing mocap poses.
+  contact_filtering: >
+    Two <exclude> pairs (right/left base_link <-> shoulder_link) are
+    emitted by the generator. MuJoCo skips parent/child contacts except
+    when the parent is welded to world, which every <side>_base_link
+    became when the Mount stopped having a joint; without the excludes
+    the home posture has 8 penetrating contacts 12.045 mm deep (probe
+    2026-08-17). The excludes restore the SAME-ARM base/shoulder
+    filtering the freejoint model got automatically — not all of that
+    model's filtering. Two CROSS-arm pairs (left_base_link <->
+    right_shoulder_link, right_base_link <-> left_shoulder_link) were
+    also filtered before, as parent/child of the shared Mount weld, and
+    are live now that each base_link is its own world-weld. Measured
+    2026-08-17 with all geom margins forced to 50 m so only the filter
+    can reject a pair: 105 collidable body pairs here, 103 in a
+    reconstructed freejoint model, the difference being exactly those
+    two. They stay live on purpose — two separate arms interfering is a
+    real collision, and the freejoint model was hiding it. Consequence
+    for ncon == 0 acceptance checks (Plan 03 scenarios included): a
+    cross-arm base/shoulder approach now registers where the Plan 02
+    model would have ignored it. Backed by a machine check: ctest
+    sim_model_contract asserts the model's exclude list is exactly these
+    two same-arm pairs and nothing more. Christian's reference
+    simulation carries the identical two excludes for the identical
+    reason (msc_project/sim/scene.xml).
+  placement_verification: >
+    Task 3 parity gate PASSED 2026-08-17 (ctest sim_model_parity,
+    tests/test_model_parity.cpp): MuJoCo world FK of every base body and
+    TCP site, and finite-difference Jacobians (h=1e-7 rad, angular
+    columns via vee((R(q+h)R^T-I)/h)), against the production
+    DualArmKinematics over 9 configurations (home, retracted, bounded
+    edges, continuous wrap, 5 seeded randoms) each with its own
+    world_T_mount. Observed maxima: position 9.4e-16 m, orientation-log
+    1.4e-15 rad, FD-Jacobian component 4.4e-8 — gates 1e-8 m / 1e-8 rad
+    / 1e-6. Pre-registered mutations detected at predicted magnitudes:
+    swapped joints 2/4 -> 1.19 m; inverted joint-5 axis -> FD column
+    error 1.99 (~2*||column||); left/right mount swap (which the
+    structural contract accepts, being placement-blind) -> 0.113415 m
+    and 2.417000 rad, exactly 2*0.0567075 and 2*1.2085. Task 2's
+    structural gates plus this numeric gate are the automated defense of
+    every placement; no correction to the generator or model was needed.
+    RE-VERIFIED unchanged after the mocap Mount rework later the same day
+    (the Mount pose now enters through mocap_pos/mocap_quat instead of a
+    freejoint qpos block): identical maxima to the last digit — 9.437e-16
+    m, 1.394e-15 rad, 4.441e-08 — and identical mutation magnitudes, at
+    unchanged tolerances. The pinned model hash above did change with
+    that rework; the placements inside it did not. Evidence class: unit
+    test (kinematic parity; nothing stepped).
+
+copied_assets:
+  # Mesh copies the generated MJCF loads. Each copy's hash must equal the
+  # audited source_meshes entry of the same basename (the test recomputes
+  # both, so a silently edited local copy fails provenance).
+  dir: Christian_control/simulation/model/assets
+
+mount_transforms:
+  # Copied verbatim from the URDF fixed joints (the test re-parses the
+  # URDF and requires exact equality — zero tolerance, these numbers are
+  # transcribed, never re-derived). The runtime authority remains
+  # DualArmKinematics::MountFromBase(Arm); MJCF placement numbers are
+  # script-derived from that in Task 2, never hand-typed from here.
+  right:
+    urdf_joint: right_base_mount
+    parent: mount
+    child: base_link
+    rpy_rad: [1.2085, 0, 0]
+    xyz_m: [0, -0.0567075, 0]
+  left:
+    urdf_joint: left_base_mount
+    parent: mount
+    child: leftbase_link
+    rpy_rad: [-1.2085, 0, 0]
+    xyz_m: [0, 0.0567075, 0]

@@ -80,13 +80,13 @@ def read(arm: str) -> dict[str, Any]:
     if not path.is_file():
         return {"arm": arm, "joints": [], "exists": False, "stale": True,
                 "source": str(path),
-                "reason": f"{path.name} has not been generated — build planner_bridge"}
+                "reason": f"{path.name} has not been generated — build controller"}
     joints = parse_dh_yaml(path.read_text(errors="replace"))
     stale = False
     reason = ""
     if paths.URDF.is_file() and paths.URDF.stat().st_mtime > path.stat().st_mtime:
         stale = True
-        reason = f"{path.name} is older than the URDF — rebuild planner_bridge"
+        reason = f"{path.name} is older than the URDF — rebuild controller"
     return {
         "arm": arm,
         "joints": joints,

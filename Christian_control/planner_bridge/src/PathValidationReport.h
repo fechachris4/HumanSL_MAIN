@@ -1,35 +1,22 @@
 //
-// PathValidationReport — does the trajectory the controller will ACTUALLY
-// execute trace the shape that was asked for, without collisions and within
-// the arm's limits?
+// PathValidationReport — does GPMP2's final dense internal joint trajectory
+// trace the requested world path without collisions and within arm limits?
 //
-// The distinction matters. The pipeline is
-//
-//   GPMP2 dense solve  ->  subsample to <= 1000 points  ->  wire block
-//                      ->  controller reconstructs by CUBIC HERMITE
-//                      ->  500 Hz commanded joint trajectory  ->  robot
-//
-// so validating the GP-dense trajectory validates the planner's INTENTION,
-// not the arm's motion. Subsampling discards points and Hermite is not the
-// GP interpolant, and both distortions land after the optimiser is finished.
-// Everything here is therefore measured on the reconstruction of the FINAL
-// emitted block, using the controller's own SampleJointTrajectory rather
-// than a second implementation of it — a validator that reconstructed what
-// it merely believed the controller does could pass a trajectory the
-// controller then executes differently.
+// No joint trajectory crosses the controller boundary. This report sweeps the
+// exact final dense result on its uniform grid; only after it passes is every
+// state projected to a world-Cartesian CART_TRAJ point. The controller then
+// closes Cartesian feedback around that reference, so this is planner-path
+// evidence, not a claim that physical execution is identical.
 //
 // Three errors are reported, and only one of them is the gate:
 //
 //   e_planner        desired path  vs  GP-dense trajectory
-//   e_command        desired path  vs  500 Hz reconstruction   <- THE GATE
-//   e_reconstruction GP-dense      vs  500 Hz reconstruction
+//   e_command        desired path  vs  final dense timed view  <- THE GATE
+//   e_reconstruction GP-dense      vs  final dense timed view
 //
-// e_reconstruction is the transport loss introduced after planning. It is
-// reported so that a fidelity failure can be attributed: a large e_planner
-// with a small e_reconstruction means the optimiser could not hold the path,
-// while the reverse means the wire format threw away the accuracy the
-// optimiser achieved. They are not added — they are vector-valued and occur
-// at different points along the path.
+// The retained field names preserve the report/log API. With the current
+// no-decimation dense path, reconstruction should be numerical noise; a larger
+// value indicates disagreement inside planner sampling before publication.
 //
 
 #pragma once
@@ -127,3 +114,27 @@ struct ValidationInputs {
     Eigen::Vector3d circle_normal = Eigen::Vector3d::UnitZ();
     double circle_radius_m = 0.0;
 };
+
+// The dynamic-limits verdict, per joint: every joint's observed maximum
+// against ITS OWN limit. Limits differ per joint (76 deg/s for joints 1-4,
+// 66.5 deg/s for 5-7 — Config.h / joint_limits.yaml, 2026-08-13), so a
+// max-vs-max comparison would let a joint 5-7 run up to the joint 1-4
+// limit unnoticed. Non-positive velocity limits invalidate the verdict;
+// non-positive acceleration limits skip the acceleration check (no table
+// configured), matching the historical behaviour.
+inline bool DynamicLimitsValid(
+    const Eigen::Matrix<double, 7, 1>& max_velocity_per_joint_rad_s,
+    const Eigen::Matrix<double, 7, 1>& max_acceleration_per_joint_rad_s2,
+    const Eigen::Matrix<double, 7, 1>& velocity_limits_rad_s,
+    const Eigen::Matrix<double, 7, 1>& acceleration_limits_rad_s2)
+{
+    if ((velocity_limits_rad_s.array() <= 0.0).any())
+        return false;
+    if ((max_velocity_per_joint_rad_s.array() >
+         velocity_limits_rad_s.array()).any())
+        return false;
+    if ((acceleration_limits_rad_s2.array() <= 0.0).any())
+        return true;
+    return (max_acceleration_per_joint_rad_s2.array() <=
+            acceleration_limits_rad_s2.array()).all();
+}

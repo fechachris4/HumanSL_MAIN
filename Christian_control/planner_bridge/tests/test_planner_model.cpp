@@ -1,7 +1,7 @@
-// Consistency check: PlannerModel::ToolPoseInMount (Pinocchio, via
-// utils.cpp's forwardKinematics, with the arm built at DhRootInMount) against
+// Consistency check: PlannerModel::ToolPoseInWorld (Pinocchio, via
+// utils.cpp's forwardKinematics, with the arm built at DhRootInWorld) against
 // the same Pinocchio adapter called directly in base_link and then carried
-// into mount by MountFromBase.
+// through the supplied immutable world_T_mount snapshot.
 //
 // Both sides share one Pinocchio/URDF backend, so this does not catch shared
 // coding-logic bugs the way comparing two independently-implemented FK chains
@@ -31,8 +31,10 @@ namespace {
 
 // Worst position (mm) and orientation (deg) disagreement over `trials`
 // configurations, between the planner's FK and the adapter carried into mount.
-void CheckArm(const char* label, const std::string& dh_yaml, bool has_tool) {
-    const PlannerModel model = LoadPlannerModel(dh_yaml, has_tool);
+void CheckArm(const char* label, const std::string& dh_yaml, bool has_tool,
+              const Eigen::Isometry3d& world_T_mount) {
+    const PlannerModel model =
+        LoadPlannerModel(dh_yaml, has_tool, world_T_mount);
     const bool left_arm = !has_tool;
     const char* end_effector_frame =
         has_tool ? config::kRightEndEffectorFrame : config::kLeftEndEffectorFrame;
@@ -47,11 +49,13 @@ void CheckArm(const char* label, const std::string& dh_yaml, bool has_tool) {
         if (trial > 0)
             for (int j = 0; j < 7; ++j) q[j] = dist(rng);
 
-        const gtsam::Pose3 p_planner = ToolPoseInMount(model, q);
+        const gtsam::Pose3 p_planner = ToolPoseInWorld(model, q);
         const auto p_base = pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
             q, end_effector_frame, left_arm);
-        const Eigen::Vector3d expected_position = mount_from_base * p_base.position;
-        const Eigen::Matrix3d expected_rotation = mount_from_base.linear() * p_base.rotation;
+        const Eigen::Vector3d expected_position =
+            world_T_mount * mount_from_base * p_base.position;
+        const Eigen::Matrix3d expected_rotation =
+            world_T_mount.linear() * mount_from_base.linear() * p_base.rotation;
 
         worst_mm = std::max(worst_mm,
                             (p_planner.translation() - expected_position).norm() * 1000.0);
@@ -64,9 +68,18 @@ void CheckArm(const char* label, const std::string& dh_yaml, bool has_tool) {
     std::printf("%-6s planner-vs-adapter-through-mount: %.9f mm, %.9f deg\n", label,
                 worst_mm, worst_deg);
     assert(worst_mm < 1e-6 &&
-           "ToolPoseInMount must match the adapter carried through MountFromBase");
+           "ToolPoseInWorld must match the adapter carried through world_T_mount");
     assert(worst_deg < 1e-6 &&
-           "ToolPoseInMount must match the adapter carried through MountFromBase");
+           "ToolPoseInWorld must match the adapter carried through world_T_mount");
+
+    const Eigen::Isometry3d expected_world_T_dhroot =
+        world_T_mount * mount_from_base *
+        pinocchio_kinematics_adapter::DhRootInBaseLink();
+    assert((model.base_pose.matrix() - expected_world_T_dhroot.matrix()).norm() <
+               1e-12 &&
+           "the GPMP2 model root must be constructed in WORLD");
+    assert((model.world_T_mount.matrix() - world_T_mount.matrix()).norm() < 1e-12 &&
+           "the model must retain the exact planning snapshot for projection");
 }
 
 }  // namespace
@@ -74,8 +87,11 @@ void CheckArm(const char* label, const std::string& dh_yaml, bool has_tool) {
 int main(int argc, char** argv) {
     assert(argc == 3 &&
            "usage: test_planner_model <dh_params_tool.yaml> <dh_params_flange.yaml>");
-    CheckArm("right", argv[1], /*has_tool=*/true);
-    CheckArm("left", argv[2], /*has_tool=*/false);
+    const Eigen::Isometry3d world_T_mount =
+        Eigen::Translation3d(1.0, 2.0, 3.0) *
+        Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitZ());
+    CheckArm("right", argv[1], /*has_tool=*/true, world_T_mount);
+    CheckArm("left", argv[2], /*has_tool=*/false, world_T_mount);
 
     // An anchor independent of the consistency checks above. Those compare
     // two paths that both read MountFromBase, so a right-hand transform

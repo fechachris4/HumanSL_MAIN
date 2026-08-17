@@ -33,12 +33,16 @@
 motion:
   # Metres per second the plan is paced at: goal distance divided by this
   # gives the trajectory duration, which the controller then follows by
-  # timestamp. This is the knob that makes the arm move slower or faster.
-  # The controller's own 45 deg/s clip (Config.h) rejects a block that
-  # exceeds it at ingest, so raising this far enough fails there, late.
-  nominal_speed_mps: 0.05
-  # Floor on that duration, seconds, so short moves are not abrupt.
-  min_duration_s: 4.0
+  # timestamp. This is the knob that makes the arm move slower or faster —
+  # for POINT-TO-POINT goals only; a traced path's lap time is duration_s
+  # in goal.yaml. The controller's own clip (76/66.5 deg/s, Config.h)
+  # rejects a block that exceeds it at ingest, so raising this far enough
+  # fails there, late.
+  nominal_speed_mps: 0.25
+  # Floor on that duration, seconds, so short moves are not abrupt. A
+  # smoothness floor only — at its former 4.0 it silently paced every
+  # reachable move (docs/motion-limits-map.md).
+  min_duration_s: 1.0
   # Optimizer support states between start and goal. More is a finer plan
   # and a slower solve — the factor graph is rebuilt per waypoint.
   waypoints: 10
@@ -66,7 +70,11 @@ goal:
   # while landing accurately in x and z. Exposed at its historical value on
   # purpose: making it uniform is a behaviour change on the motion path and
   # deserves its own verification, not a config edit folded into a refactor.
-  position_sigma_xyz: [0.01, 0.1, 0.01]
+  # Tightened x10 on 2026-08-13 (ratio preserved): at the faster 1.0 s
+  # pacing the smoothness prior otherwise outweighs this anchor — the
+  # canonical 0.2 m test move missed by 82 mm at [0.01, 0.1, 0.01] and
+  # lands within 3.2 mm at these values (test_plan_solver measures it).
+  position_sigma_xyz: [0.001, 0.01, 0.001]
   # roll, pitch, yaw. The goal currently carries the tool orientation the
   # arm held at takeover, so these do bind.
   rotation_sigma_rpy: [0.01, 0.01, 0.01]
@@ -101,8 +109,8 @@ path_following:
   # Approach phase. Paced from JOINT displacement over joint velocity
   # limits — it is task-space unconstrained and has no commanded Cartesian
   # route, so a Cartesian length would be timing a path that does not exist.
-  approach_velocity_fraction: 0.3
-  approach_min_duration_s: 2.0
+  approach_velocity_fraction: 0.9
+  approach_min_duration_s: 0.1
   approach_waypoints: 5
   # Circle sampling by geometry rather than an arbitrary count:
   # e = r(1 - cos(pi/N)). Halving this roughly doubles the sample count.

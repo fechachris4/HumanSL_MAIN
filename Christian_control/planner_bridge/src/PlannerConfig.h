@@ -23,8 +23,10 @@
 // used before this file existed; test_planner_config holds the checked-in
 // YAML to them, so the file and the code cannot drift apart unnoticed.
 struct MotionConfig {
-    double nominal_speed_mps = 0.05;
-    double min_duration_s = 4.0;
+    // 0.25 m/s / 1.0 s floor since 2026-08-13: bring-up pacing (0.05 /
+    // 4.0) retired with the speed-limit raise (docs/motion-limits-map.md).
+    double nominal_speed_mps = 0.25;
+    double min_duration_s = 1.0;
     int waypoints = 10;
 };
 
@@ -46,9 +48,10 @@ struct PathFollowingConfig {
     double validation_dt_s = 0.002;
     // Approach phase: paced from joint displacement over joint velocity
     // limits, never from Cartesian distance (it has no commanded Cartesian
-    // route to measure).
-    double approach_velocity_fraction = 0.3;
-    double approach_min_duration_s = 2.0;
+    // route to measure). 0.9 / 0.1 s since 2026-08-13, with the
+    // speed-limit raise (docs/motion-limits-map.md).
+    double approach_velocity_fraction = 0.9;
+    double approach_min_duration_s = 0.1;
     int approach_waypoints = 5;
     // Circle sampling by geometry, not by an arbitrary count:
     // e = r(1 - cos(pi/N)) sets N from the chord error you will accept.

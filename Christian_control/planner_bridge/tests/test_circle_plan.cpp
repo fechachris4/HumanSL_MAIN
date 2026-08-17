@@ -1,11 +1,6 @@
-// End-to-end: a circle is planned, emitted, reconstructed by the
-// CONTROLLER's own interpolator, and validated against the requested
+// End-to-end: a circle is planned and the exact final dense GPMP2 artefact
+// that feeds world-Cartesian projection is validated against the requested
 // geometry.
-//
-// The point of this test is that it checks the artefact that would actually
-// be sent. It parses the emitted block with the controller's accumulator and
-// measures the reconstruction, so a plan that satisfies the optimiser's own
-// cost but is distorted by subsampling or Hermite reconstruction cannot pass.
 //
 // It also pins the two circle-specific decompositions. A single distance
 // hides WHICH way a trace is wrong, and out-of-plane drift has a different
@@ -21,12 +16,13 @@
 #include "PlanSolver.h"
 #include "PlannerConfig.h"
 #include "PlannerModel.h"
-#include "ReconstructBlock.h"
 
 int main(int argc, char** argv) {
     assert(argc == 4 &&
            "usage: test_circle_plan <dh_flange.yaml> <joint_limits.yaml> <planner.yaml>");
-    const PlannerModel model = LoadPlannerModel(argv[1], /*has_tool=*/false);
+    const Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+    const PlannerModel model =
+        LoadPlannerModel(argv[1], /*has_tool=*/false, world_T_mount);
     const PlannerConfig config = LoadPlannerConfig(argv[3]);
 
     // A circle measured reachable by probe_path_reachability (2026-08-07):
@@ -44,7 +40,8 @@ int main(int argc, char** argv) {
         spec.radius_m, config.path_following.max_chord_error_m);
     assert(spec.samples >= 8 && "chord-error sampling must produce a usable count");
 
-    const CartesianPath task_path = PathToMount(GenerateCircle(spec));
+    const CartesianPath task_path =
+        PathToWorld(GenerateCircle(spec), world_T_mount);
 
     Eigen::Matrix<double, 7, 1> start;
     start << -26.83, -113.52, 92.11, 109.07, 81.18, -24.70, -138.06;
@@ -53,10 +50,11 @@ int main(int argc, char** argv) {
     ValidationInputs validation;
     validation.circle_applicable = true;
     validation.circle_centre =
-        PoseToMount(Eigen::Isometry3d(Eigen::Translation3d(spec.centre_m)),
-                    spec.frame).translation();
+        PoseToWorld(Eigen::Isometry3d(Eigen::Translation3d(spec.centre_m)),
+                    spec.frame, world_T_mount).translation();
     validation.circle_normal =
-        PoseToMount(Eigen::Isometry3d(Eigen::Quaterniond::Identity()), spec.frame)
+        PoseToWorld(Eigen::Isometry3d(Eigen::Quaterniond::Identity()), spec.frame,
+                    world_T_mount)
             .linear() * spec.normal.normalized();
     validation.circle_radius_m = spec.radius_m;
 
@@ -64,28 +62,25 @@ int main(int argc, char** argv) {
         SolveAlongPath(model, task_path, start, std::nullopt, argv[2], config,
                        validation);
     assert(plan.ok && "planning a reachable circle must succeed");
+    assert(plan.result.trajectory_pos.size() ==
+               plan.result.trajectory_vel.size() &&
+           plan.result.trajectory_pos.size() > 1000 &&
+           "the outcome must retain every final dense state, not the old "
+           "1,000-point wire subset");
     std::printf("%s", plan.report.Summary().c_str());
 
-    // --- the emitted block must be exactly what the controller accepts,
-    //     parsed by the controller's own code rather than a lookalike.
-    const ReconstructedTrajectory reconstructed =
-        ReconstructEmittedBlock(plan.emitted_block, 0.002);
-    assert(reconstructed.parsed &&
-           "the controller's parser must accept the emitted block");
-    assert(!reconstructed.samples.empty());
-
-    // --- the block must begin at the MEASURED configuration: the
-    //     controller's splice guard rejects a block that does not.
+    // --- the dense result begins at the measured configuration. The
+    // world-Cartesian controller applies its own pose-continuity splice.
     const double start_error =
-        (reconstructed.samples.front().q_rad - start).cwiseAbs().maxCoeff();
+        (plan.result.trajectory_pos.front() - start).cwiseAbs().maxCoeff();
     assert(start_error < 2.0 * M_PI / 180.0 &&
            "the trajectory must start within the 2 deg splice guard");
 
     // --- rest at both ends. Zero-velocity support states, not duplicated
     //     points, are what make Hermite come to a stop.
-    assert(reconstructed.samples.front().qdot_rad_s.cwiseAbs().maxCoeff() <
+    assert(plan.result.trajectory_vel.front().cwiseAbs().maxCoeff() <
            1e-3 && "the trajectory must start from rest");
-    assert(reconstructed.samples.back().qdot_rad_s.cwiseAbs().maxCoeff() <
+    assert(plan.result.trajectory_vel.back().cwiseAbs().maxCoeff() <
            0.05 && "the trajectory must end essentially at rest");
 
     // --- fidelity, measured on the reconstruction and gated on it.

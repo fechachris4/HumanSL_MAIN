@@ -1,25 +1,14 @@
+// Controller — the sole world-frame Cartesian pose/twist law.
 //
-// Controller — THE controller: it drives the arm toward this cycle's
-// Reference, whichever channel the source filled.
-//
-//   pose channel   -> the reactive law (ReactiveLaw.h) — FK + 6×7 Jacobian
-//   joint channel  -> the joint tracking law below — no model at all
-//   no reference   -> the reactive law toward the pose captured at Reset,
-//                     i.e. "hold here": a silent source never causes motion
-//
-// This file contains composition only. It does no frame conversion, command
-// integration, timing, hardware access, printing, or allocation. The
-// equations live in ReactiveLaw.h; the reference sources
-// in Targets.h; gains in Config.h.
-//
-// Implementation in Controller.cpp — the one place the laws meet the
-// Pinocchio model, so this header stays Pinocchio-free.
-//
+// Measurement is explicit and happens once per cycle. DesiredVelocity then
+// consumes only a WORLD PoseReference and maps reference-minus-measurement
+// errors through the existing reactive DLS/null-space solver. It performs no
+// frame selection, joint-reference tracking, I/O, command integration, or
+// safety bypass.
 
 #pragma once
 
 #include <cstdint>
-#include <limits>
 #include <memory>
 
 #include <Eigen/Dense>
@@ -27,120 +16,52 @@
 #include "Arrival.h"
 #include "ReactiveLaw.h"
 #include "State.h"
-#include "WorldHold.h"
 
-class DualArmKinematics;      // Kinematics.h — only the .cpp needs them
+class DualArmKinematics;
 struct KinematicsWorkspace;
-
-// The joint tracking law's output, before the per-joint clip.
-struct JointTrackingCommand {
-    Eigen::Matrix<double, 7, 1> qdot_rad_s = Eigen::Matrix<double, 7, 1>::Zero();
-    double max_abs_error_rad = 0.0;
-    bool following_error_stop = false;
-};
-
-// Joint-space tracking: feed-forward reference velocity plus proportional
-// correction on the position error,
-//
-//     q̇_cmd = q̇_ref + kp wrap(q_ref - q_meas)
-//
-// and the worst joint's wrapped |q_ref - q_meas| against the stop gate. The
-// error is wrapped (WrappedJointError, State.h) because measured positions
-// arrive on [0, 360) while the reference is signed — unwrapped, a joint
-// either side of zero would be commanded a full turn the wrong way. Pure
-// arithmetic on fixed-size vectors: no allocation, no model, no I/O. The
-// gains arrive as arguments so this header stays Config-free; the caller
-// passes config::kKpJointTracking and kTrajFollowingErrorStopDeg in radians.
-// A non-positive gate disables the stop request.
-inline JointTrackingCommand
-SolveJointTracking(const JointReference& reference,
-                   const Eigen::Matrix<double, 7, 1>& q_meas, double kp_s_inv,
-                   double following_error_stop_rad)
-{
-    const Eigen::Matrix<double, 7, 1> error =
-        WrappedJointError(reference.q_rad, q_meas);
-    JointTrackingCommand command;
-    command.qdot_rad_s = reference.qdot_rad_s + kp_s_inv * error;
-    // Eigen's maxCoeff SKIPS a NaN, so a non-finite error on any joint would
-    // otherwise report 0.0 and leave the stop unrequested while the command
-    // itself is NaN. A safety flag fails toward stopping.
-    command.max_abs_error_rad = error.allFinite()
-                                    ? error.cwiseAbs().maxCoeff()
-                                    : std::numeric_limits<double>::infinity();
-    command.following_error_stop =
-        following_error_stop_rad > 0.0 &&
-        !(command.max_abs_error_rad <= following_error_stop_rad);
-    return command;
-}
+struct ExecutionConfig;
 
 class TrackingController
 {
 public:
-    // The model adapter is validated before any hardware connection and
-    // exposes only the CONTROLLED arm's 6x7 Jacobian (DualArmKinematics
-    // fixes which arm that is at construction). Every gain, term switch and
-    // tolerance comes straight from Config.h, read in the .cpp — there is
-    // nothing to pass in and nothing to forward.
+    // Every gain, limit and tolerance is copied from the snapshot at
+    // construction; no config:: value is read again at runtime.
+    TrackingController(DualArmKinematics& model,
+                       const ExecutionConfig& config);
+    // Production convenience: identical to injecting
+    // ProductionExecutionConfig() (the runner is rewired to explicit
+    // injection in Plan 01 Task 4).
     explicit TrackingController(DualArmKinematics& model);
     ~TrackingController();
 
-    // T5 of takeover: captures the CURRENT end-effector pose as the hold
-    // pose and disarms the arrival notice.
-    void Reset(const RobotState& state);
+    // T_W_E, J_W and V_W_E from measured q/qdot and the latest Mount
+    // pose/twist. No allocation, locks, or I/O.
+    MeasuredCartesianState Measure(const RobotState& state);
 
-    // Desired joint velocity BEFORE clamping, rad/s. dt_s is the Runner's
-    // measured, clamped cycle time.
-    Eigen::Matrix<double, 7, 1> DesiredVelocity(const RobotState& state,
-                                                const Reference& reference,
-                                                double dt_s,
-                                                ControllerStatus& status);
+    // Raw desired joint velocity before the shared clamp/integration/safety
+    // path. Exact law:
+    // V_task = Kp poseError(T_W_E,d,T_W_E) + Kd(V_W_E,d - V_W_E).
+    Eigen::Matrix<double, 7, 1> DesiredVelocity(
+        const RobotState& state,
+        const MeasuredCartesianState& measured,
+        const PoseReference& reference,
+        double dt_s,
+        ControllerStatus& status);
 
 private:
     DualArmKinematics& model_;
-    std::unique_ptr<KinematicsWorkspace> workspace_; // sized in the .cpp
-
-    // Built once from Config.h in the constructor, because the null-space
-    // targets need a deg->rad conversion and the loop must not repeat it.
+    std::unique_ptr<KinematicsWorkspace> workspace_;
     ReactivePoseGains gains_;
     Eigen::Matrix<double, 7, 1> limit_rad_;
     double zone_rad_ = 0.0;
+    // Immutable after construction (ExecutionConfig snapshot values).
+    double arrival_position_tolerance_m_ = 0.0;
+    double arrival_orientation_tolerance_rad_ = 0.0;
+    double null_ramp_duration_s_ = 0.0;
 
-    // The takeover pose: the target when a reference has no pose channel or
-    // no orientation. BASE frame (it is FK at the re-seat instant); the
-    // world hold below supersedes it whenever Vicon is trusted, and its
-    // world image is used when it is not.
-    Eigen::Vector3d hold_position_ = Eigen::Vector3d::Zero();
-    Eigen::Matrix3d hold_rotation_ = Eigen::Matrix3d::Identity();
-
-    // The world anchor (spec 2026-08-13): engage/freeze/re-anchor/latch
-    // state machine over the hold pose. Constructed from Config.h in the
-    // .cpp. Runs ONLY on hold cycles (no pose, no joint reference).
-    WorldHold world_hold_;
-    // True while the hold provided the target last cycle; the transition
-    // out re-seats the base-frame fallback pose (latch-off step guard).
-    bool hold_was_active_ = false;
-    // True once the hold has engaged at all this run: before that, idle
-    // joint references are followed exactly as before this slice; after,
-    // the source's idle q is stale and the Cartesian fallback is used.
-    bool world_hold_ever_engaged_ = false;
-    // The current cycle's reference twist resolved to world (framed
-    // PoseReference semantics); scratch, valid only within one call.
-    Twist resolved_reference_twist_;
-
-    // True once a joint reference has been followed, cleared by the re-seat
-    // it triggers on the first pose-channel cycle after it. Without that
-    // re-seat the takeover hold pose would still be the one captured before
-    // the trajectory ran.
-    bool followed_joint_reference_ = false;
-
-    // Arrival notice: armed only when the pose-reference sequence changes,
-    // so the hold pose never fires and each target fires once.
-    std::uint64_t last_pose_sequence_ = 0;
-    bool pose_sequence_seen_ = false;
+    std::uint64_t last_trajectory_id_ = 0;
+    bool trajectory_seen_ = false;
     bool arrival_reported_ = true;
-
-    // Positive/negative arrival gates. Constructed from Config.h in the .cpp
-    // (this header stays Config-free). Declared last so init order matches.
     ArrivalSettlingMonitor arrival_monitor_;
     ArrivalTimeoutMonitor timeout_monitor_;
 };

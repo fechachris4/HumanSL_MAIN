@@ -6,8 +6,6 @@
 #include "GenerateTrajectory.h"
 #include "PathAssembly.h"
 #include "PathIk.h"
-#include "ReconstructBlock.h"
-#include "TrajectoryEmit.h"
 #include "TrajectoryOptimization.h"
 #include "ValidatePath.h"
 #include "TrajectoryInitiation.h"
@@ -20,7 +18,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
     try
     {
         const auto [pos_limits, vel_limits] = createJointLimits(joint_limits_yaml);
-        const gtsam::Pose3 start_pose = ToolPoseInMount(model, request.q_start_rad);
+        const gtsam::Pose3 start_pose = ToolPoseInWorld(model, request.q_start_rad);
         // An explicitly requested orientation wins; otherwise inherit the
         // start pose's, as this has always done (PlanRequest::goal_rotation
         // explains why inheriting is a trap and BridgeMain says so on every
@@ -53,7 +51,8 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         outcome.init_source = init.source;
         outcome.init_position_error_m = init.position_error_m;
         outcome.init_orientation_error_rad = init.orientation_error_rad;
-        const auto sdf = MakeWorldSdf(request.obstacle);
+        const GridGeometry grid = WorldGridGeometry(model.world_T_mount);
+        const auto sdf = MakeWorldSdf(grid, request.obstacle);
         outcome.result = optimizeJointTrajectory(
             *model.arm_model, sdf, init.values, goal_pose,
             gtsam::Vector(request.q_start_rad), pos_limits, vel_limits,
@@ -65,7 +64,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         }
         Eigen::Matrix<double, 7, 1> q_final(outcome.result.trajectory_pos.back());
         outcome.final_goal_error_m =
-            (ToolPositionInMount(model, q_final) - request.goal_position_m).norm();
+            (ToolPositionInWorld(model, q_final) - request.goal_position_m).norm();
         outcome.ok = true;
     }
     catch (const std::exception& exception)
@@ -102,9 +101,98 @@ double TimeScalingFactor(const PathValidationReport& report,
     return alpha;
 }
 
-std::string DescribeSdf(const std::optional<AxisAlignedBox>& obstacle) {
+// Plain-Eigen view of the exact final dense GPMP2 artefact. The old path
+// converted it through a 1,000-row joint wire block before validation,
+// which necessarily discarded most states of a multi-second dense solve.
+TimedJointTrajectory DenseValidationTrajectory(
+    const TrajectoryResult& result, double duration_s)
+{
+    TimedJointTrajectory dense;
+    if (result.trajectory_pos.size() < 2 ||
+        result.trajectory_pos.size() != result.trajectory_vel.size() ||
+        !(duration_s > 0.0)) {
+        dense.error = "invalid dense trajectory dimensions or duration";
+        return dense;
+    }
+    dense.valid = true;
+    dense.duration_s = duration_s;
+    dense.samples.reserve(result.trajectory_pos.size());
+    const double dt_s =
+        duration_s / static_cast<double>(result.trajectory_pos.size() - 1);
+    for (std::size_t index = 0; index < result.trajectory_pos.size(); ++index) {
+        if (result.trajectory_pos[index].size() != 7 ||
+            result.trajectory_vel[index].size() != 7) {
+            dense = TimedJointTrajectory{};
+            dense.error = "dense trajectory contains a non-seven-dimensional state";
+            return dense;
+        }
+        TimedJointSample sample;
+        sample.t_s = static_cast<double>(index) * dt_s;
+        sample.q_rad = result.trajectory_pos[index];
+        sample.qdot_rad_s = result.trajectory_vel[index];
+        dense.samples.push_back(sample);
+    }
+    return dense;
+}
+
+// Hermite sampler over the dense result. ValidatePlannedPath asks for this
+// only at the dense timestamps when attributing transport loss, but keeping
+// arbitrary-time semantics makes the boundary explicit and testable.
+TimedJointSampler MakeDenseSampler(
+    const TrajectoryResult& result, double duration_s)
+{
+    return [&result, duration_s](double t_s) {
+        TimedJointSample sample;
+        sample.t_s = t_s;
+        const std::size_t count = result.trajectory_pos.size();
+        if (count < 2 || result.trajectory_vel.size() != count ||
+            !(duration_s > 0.0))
+            return sample;
+        if (!(t_s > 0.0)) {
+            sample.q_rad = result.trajectory_pos.front();
+            sample.qdot_rad_s = result.trajectory_vel.front();
+            return sample;
+        }
+        if (t_s >= duration_s) {
+            sample.q_rad = result.trajectory_pos.back();
+            sample.qdot_rad_s = result.trajectory_vel.back();
+            return sample;
+        }
+
+        const double dt_s = duration_s / static_cast<double>(count - 1);
+        const std::size_t lower = std::min(
+            count - 2, static_cast<std::size_t>(std::floor(t_s / dt_s)));
+        const std::size_t upper = lower + 1;
+        const double u = (t_s - static_cast<double>(lower) * dt_s) / dt_s;
+        const double u2 = u * u;
+        const double u3 = u2 * u;
+        const double h00 = 2.0 * u3 - 3.0 * u2 + 1.0;
+        const double h10 = u3 - 2.0 * u2 + u;
+        const double h01 = -2.0 * u3 + 3.0 * u2;
+        const double h11 = u3 - u2;
+        const double d00 = 6.0 * u2 - 6.0 * u;
+        const double d10 = 3.0 * u2 - 4.0 * u + 1.0;
+        const double d01 = -6.0 * u2 + 6.0 * u;
+        const double d11 = 3.0 * u2 - 2.0 * u;
+        sample.q_rad =
+            h00 * result.trajectory_pos[lower] +
+            h10 * dt_s * result.trajectory_vel[lower] +
+            h01 * result.trajectory_pos[upper] +
+            h11 * dt_s * result.trajectory_vel[upper];
+        sample.qdot_rad_s =
+            (d00 * result.trajectory_pos[lower] +
+             d01 * result.trajectory_pos[upper]) /
+                dt_s +
+            d10 * result.trajectory_vel[lower] +
+            d11 * result.trajectory_vel[upper];
+        return sample;
+    };
+}
+
+std::string DescribeSdf(const std::optional<AxisAlignedBox>& obstacle,
+                        const GridGeometry& geometry) {
     std::ostringstream text;
-    const GridBounds bounds = WorldGridBounds();
+    const GridBounds bounds = WorldGridBounds(geometry);
     text << "arm-workspace grid x [" << bounds.min_m.x() << ", " << bounds.max_m.x()
          << "] y [" << bounds.min_m.y() << ", " << bounds.max_m.y() << "] z ["
          << bounds.min_m.z() << ", " << bounds.max_m.z() << "] m; "
@@ -203,8 +291,9 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             init_values.insert(gtsam::Symbol('v', i), velocity);
         }
 
-        const auto sdf = MakeWorldSdf(obstacle);
-        const std::string sdf_contents = DescribeSdf(obstacle);
+        const GridGeometry grid = WorldGridGeometry(model.world_T_mount);
+        const auto sdf = MakeWorldSdf(grid, obstacle);
+        const std::string sdf_contents = DescribeSdf(obstacle, grid);
 
         // ---- 3. solve -------------------------------------------------
         OptimizeTrajectory optimizer;
@@ -218,10 +307,10 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             return outcome;
         }
 
-        // ---- 4. emit -> reconstruct -> validate, scaling if needed -----
-        // Time scaling changes the emitted block, so the block is rebuilt
-        // and re-measured on every pass: what is validated is always what
-        // would be sent, never a proxy for it.
+        // ---- 4. validate the exact dense result, scaling if needed ------
+        // Time scaling changes qdot and timestamps, so the dense view is
+        // rebuilt and re-measured on every pass. No wire decimation sits
+        // between the final GPMP2 artefact and this validation.
         constexpr int kMaxScalingPasses = 3;
         ValidationInputs inputs = validation_template;
         inputs.desired_task_path = &task_path;
@@ -251,20 +340,22 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             outcome.time_scaling_passes = pass + 1;
             inputs.task_start_time_s = duration_s * task_start_fraction;
 
-            const std::string block = FormatTrajectoryBlock(
-                solved.trajectory_pos, solved.trajectory_vel, duration_s);
-            const ReconstructedTrajectory reconstructed =
-                ReconstructEmittedBlock(block, inputs.validation_dt_s);
-            if (!reconstructed.parsed) {
-                outcome.error = "emitted block did not parse: " + reconstructed.error;
+            const TimedJointTrajectory reconstructed =
+                DenseValidationTrajectory(solved, duration_s);
+            if (!reconstructed.valid) {
+                outcome.error = "dense trajectory is invalid: " +
+                                reconstructed.error;
                 return outcome;
             }
-            const auto sample_at = MakeReconstructionSampler(block);
+            inputs.validation_dt_s =
+                duration_s /
+                static_cast<double>(solved.trajectory_pos.size() - 1);
+            const auto sample_at = MakeDenseSampler(solved, duration_s);
             const PathValidationReport report = ValidatePlannedPath(
                 model, reconstructed, solved.trajectory_pos, duration_s, sample_at,
                 sdf, sdf_contents, inputs, /*optimiser_converged=*/true);
 
-            outcome.emitted_block = block;
+            outcome.result = solved;
             outcome.report = report;
             outcome.total_time_sec = duration_s;
 

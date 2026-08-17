@@ -1,5 +1,15 @@
 # AGENTS.md
 
+## Binding engineering contract
+
+Before editing anything, read `docs/engineering/humansl-engineering-contract.md`.
+It is binding for motion control, Vicon, kinematics, planning, low-level
+command generation, simulation, testing and experimental claims. A conflicting
+implementation must not proceed until the conflict is documented and
+explicitly approved. Significant robotics tasks additionally require the
+Robotics Analysis Packet gate described in
+`docs/engineering/robotics-analysis-workflow.md`.
+
 ## Project purpose
 
 This repository implements the control system for a wearable

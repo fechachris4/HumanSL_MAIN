@@ -14,7 +14,7 @@ namespace {
 // Pose of the tool at a configuration, in the frame the planner works in.
 Eigen::Isometry3d ToolPose(const PlannerModel& model,
                            const Eigen::Matrix<double, 7, 1>& q) {
-    const gtsam::Pose3 pose = ToolPoseInMount(model, q);
+    const gtsam::Pose3 pose = ToolPoseInWorld(model, q);
     Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
     out.linear() = pose.rotation().matrix();
     out.translation() = pose.translation();
@@ -63,10 +63,10 @@ double Percentile(std::vector<double> values, double fraction) {
 
 PathValidationReport ValidatePlannedPath(
     const PlannerModel& model,
-    const ReconstructedTrajectory& reconstructed,
+    const TimedJointTrajectory& trajectory,
     const std::vector<gtsam::Vector>& gp_dense,
     double gp_dense_duration_s,
-    const std::function<ReconstructedSample(double)>& reconstruction_at,
+    const TimedJointSampler& sample_at,
     const gpmp2::SignedDistanceField& sdf,
     const std::string& sdf_contents,
     const ValidationInputs& inputs,
@@ -76,27 +76,32 @@ PathValidationReport ValidatePlannedPath(
     report.optimiser_converged = optimiser_converged;
     report.sdf_contents = sdf_contents;
 
-    if (!reconstructed.parsed || reconstructed.samples.empty() ||
+    if (!trajectory.valid || trajectory.samples.empty() ||
         !inputs.desired_task_path)
         return report;
 
     const double dt = inputs.validation_dt_s > 0.0 ? inputs.validation_dt_s : 0.002;
 
-    // ---- dense sweep over the RECONSTRUCTION ---------------------------
-    // Everything below is evaluated on the controller's own cubic-Hermite
-    // reconstruction of the emitted block, because that — not the GP-dense
-    // solve — is the joint path the arm follows.
+    // ---- dense sweep over the final internal joint trajectory -----------
     std::vector<double> command_position_errors;
     double worst_command = -1.0;
     double min_clearance = std::numeric_limits<double>::infinity();
     double min_clearance_t = 0.0;
     double max_velocity = 0.0, max_acceleration = 0.0;
+    // Per-joint maxima for the dynamic verdict: limits differ per joint
+    // (76 deg/s for 1-4, 66.5 deg/s for 5-7), so each joint must be
+    // checked against its own limit — comparing the overall max against
+    // the largest limit would let joints 5-7 exceed theirs unnoticed.
+    Eigen::Matrix<double, 7, 1> max_velocity_per_joint =
+        Eigen::Matrix<double, 7, 1>::Zero();
+    Eigen::Matrix<double, 7, 1> max_acceleration_per_joint =
+        Eigen::Matrix<double, 7, 1>::Zero();
     double min_limit_margin = std::numeric_limits<double>::infinity();
     bool finite = true;
     Eigen::Matrix<double, 7, 1> previous_velocity = Eigen::Matrix<double, 7, 1>::Zero();
     bool have_previous = false;
 
-    for (const ReconstructedSample& sample : reconstructed.samples) {
+    for (const TimedJointSample& sample : trajectory.samples) {
         const double t = sample.t_s;
         if (!sample.q_rad.allFinite() || !sample.qdot_rad_s.allFinite()) {
             finite = false;
@@ -104,11 +109,15 @@ PathValidationReport ValidatePlannedPath(
         }
 
         max_velocity = std::max(max_velocity, sample.qdot_rad_s.cwiseAbs().maxCoeff());
+        max_velocity_per_joint =
+            max_velocity_per_joint.cwiseMax(sample.qdot_rad_s.cwiseAbs());
         if (have_previous) {
             const Eigen::Matrix<double, 7, 1> acceleration =
                 (sample.qdot_rad_s - previous_velocity) / dt;
             max_acceleration =
                 std::max(max_acceleration, acceleration.cwiseAbs().maxCoeff());
+            max_acceleration_per_joint =
+                max_acceleration_per_joint.cwiseMax(acceleration.cwiseAbs());
         }
         previous_velocity = sample.qdot_rad_s;
         have_previous = true;
@@ -211,8 +220,9 @@ PathValidationReport ValidatePlannedPath(
                 std::max(report.planner.max_orientation_rad,
                          OrientationDistance(desired.linear(), gp_pose.linear()));
 
-            // Transport loss: the same instant, GP versus reconstruction.
-            const ReconstructedSample at = reconstruction_at(t);
+            // Projection input fidelity: same instant, dense GP versus the
+            // trajectory sampler that feeds world-Cartesian projection.
+            const TimedJointSample at = sample_at(t);
             const Eigen::Isometry3d reconstructed_pose = ToolPose(model, at.q_rad);
             transport_errors.push_back(
                 (reconstructed_pose.translation() - gp_pose.translation()).norm());
@@ -235,7 +245,7 @@ PathValidationReport ValidatePlannedPath(
     fill(report.reconstruction, transport_errors);
 
     // ---- start state ----------------------------------------------------
-    const ReconstructedSample& first = reconstructed.samples.front();
+    const TimedJointSample& first = trajectory.samples.front();
     report.start_configuration_error_rad =
         (first.q_rad - inputs.measured_start).cwiseAbs().maxCoeff();
     report.start_velocity_rad_s = first.qdot_rad_s.cwiseAbs().maxCoeff();
@@ -255,13 +265,15 @@ PathValidationReport ValidatePlannedPath(
     report.minimum_joint_limit_margin_rad =
         std::isfinite(min_limit_margin) ? min_limit_margin : 0.0;
     report.joint_limits_valid = report.minimum_joint_limit_margin_rad > 0.0;
-    report.dynamic_limits_valid =
-        (inputs.joint_velocity_limits_rad_s.array() <= 0.0).any()
-            ? false
-            : max_velocity <= inputs.joint_velocity_limits_rad_s.maxCoeff() &&
-                  ((inputs.joint_acceleration_limits_rad_s2.array() <= 0.0).any() ||
-                   max_acceleration <=
-                       inputs.joint_acceleration_limits_rad_s2.maxCoeff());
+    // Each joint against ITS OWN limit (DynamicLimitsValid,
+    // PathValidationReport.h). The previous max-vs-max comparison was
+    // equivalent only while every joint shared one limit; with the
+    // 76/66.5 deg/s split it would have passed a joint 5-7 running up to
+    // the joint 1-4 limit.
+    report.dynamic_limits_valid = DynamicLimitsValid(
+        max_velocity_per_joint, max_acceleration_per_joint,
+        inputs.joint_velocity_limits_rad_s,
+        inputs.joint_acceleration_limits_rad_s2);
 
     report.task_fidelity_valid =
         report.command.max_position_m <= inputs.maximum_planning_error_m &&

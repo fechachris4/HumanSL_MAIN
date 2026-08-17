@@ -32,7 +32,8 @@ bool Throws(Callable&& callable) {
 
 int main(int argc, char** argv) {
     assert(argc == 2 && "usage: test_sphere_scaling <generated dh_params_tool.yaml>");
-    const PlannerModel baseline = LoadPlannerModel(argv[1]);
+    const PlannerModel baseline = LoadPlannerModel(
+        argv[1], /*has_tool=*/true, Eigen::Isometry3d::Identity());
     const size_t sphere_count = baseline.arm_model->nr_body_spheres();
     assert(sphere_count > 0);
 

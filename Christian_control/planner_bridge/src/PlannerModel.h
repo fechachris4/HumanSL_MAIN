@@ -2,21 +2,25 @@
 #include <memory>
 #include <string>
 #include <Eigen/Dense>
+#include <Eigen/Geometry>
 #include "GenerateArmModel.h"
 #include "utils.h"
 
-// Where the arm's DH root sits in the `mount` frame: the URDF mounting
+// Where the arm's DH root sits in Vicon `world`: the immutable planning
+// snapshot composed with the URDF mounting
 // transform composed with the DH convention's pi-about-x offset from
 // base_link (measured 2026-08-05, thesis notes §7). Building the gpmp2 arm
 // with this base pose is what makes EVERY planner-side quantity — FK, the
 // collision spheres, the goal, the SDF it is paired with — come out in one
 // shared frame rather than in whichever arm's base_link happens to be
 // running. `left_arm` selects which mount.
-gtsam::Pose3 DhRootInMount(bool left_arm);
+gtsam::Pose3 DhRootInWorld(bool left_arm,
+                           const Eigen::Isometry3d& world_T_mount);
 
 struct PlannerModel {
     DHParameters dh;
-    gtsam::Pose3 base_pose;                      // = DhRootInMount(left_arm)
+    gtsam::Pose3 base_pose;                      // = DhRootInWorld(...)
+    Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
     std::unique_ptr<gpmp2::ArmModel> arm_model;  // collision-sphere model
     // Which arm this model describes, for every Pinocchio-backed evaluation
     // (utils::forwardKinematics, analytical_ik) that must query the SAME
@@ -34,11 +38,12 @@ struct PlannerModel {
 // which arm/frame the returned model's Pinocchio-backed evaluations query
 // (tool <-> right and flange <-> left are physically one-to-one: the tool
 // is mounted on the right flange only).
-PlannerModel LoadPlannerModel(const std::string& yaml_path, bool has_tool = true);
+PlannerModel LoadPlannerModel(const std::string& yaml_path, bool has_tool,
+                              const Eigen::Isometry3d& world_T_mount);
 
-// Tool position in `mount`, metres. q_rad: Kortex actuator order.
-Eigen::Vector3d ToolPositionInMount(const PlannerModel& model,
-                                    const Eigen::Matrix<double, 7, 1>& q_rad);
+// Tool position in Vicon world, metres. q_rad: Kortex actuator order.
+Eigen::Vector3d ToolPositionInWorld(const PlannerModel& model,
+                                   const Eigen::Matrix<double, 7, 1>& q_rad);
 // Full pose counterpart (rotation used for the goal-pose prior).
-gtsam::Pose3 ToolPoseInMount(const PlannerModel& model,
-                             const Eigen::Matrix<double, 7, 1>& q_rad);
+gtsam::Pose3 ToolPoseInWorld(const PlannerModel& model,
+                            const Eigen::Matrix<double, 7, 1>& q_rad);

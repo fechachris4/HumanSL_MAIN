@@ -3,10 +3,10 @@
 #include <string>
 #include <vector>
 
-// Runs one plan: resolves the start state, solves, validates, and writes
-// one target line per waypoint to `targets` (the stream the operator
-// connects to the controller's stdin). Diagnostics go to `diagnostics`
-// (stderr in main). Returns a process exit code: 0 = targets emitted, OR
+// Offline preview wrapper: resolves the start state, solves, validates, and
+// writes one text CART_TRAJ block to `targets`. This stream is not connected
+// to the production controller; production uses the typed runtime API.
+// Diagnostics go to `diagnostics` (stderr in main). Returns a process exit code: 0 = targets emitted, OR
 // --help/-h was requested (usage text goes to `diagnostics`, nothing to
 // `targets` either way); 1 bad arguments (including a --box outside the
 // SDF grid volume); 2 start-state unavailable; 3 solve failed; 4

@@ -47,9 +47,6 @@ KNOBS: dict[str, tuple[str, str]] = {
     "kNullSpaceEnabled": ("bool", "Null-space joint-limit avoidance on/off"),
     "kLimitAvoidZoneDeg": ("double", "Zone before a software limit where avoidance wakes up"),
     "kLimitAvoidGain": ("double", "1/s push per degree of zone intrusion"),
-    "kKpJointTracking": ("double", "1/s on joint error (joint mode only)"),
-    "kTrajStartToleranceDeg": ("double", "Splice guard: reject a plan starting farther than this"),
-    "kTrajFollowingErrorStopDeg": ("double", "Joint-mode plan-deviation stop (deg)"),
     "kArrivalToleranceM": ("double", "Arrival position tolerance (m)"),
     "kArrivalOrientationToleranceRad": ("double", "Arrival orientation tolerance (rad)"),
     "kStopOnFault": ("bool", "DANGER: stop automatically on any live base or actuator fault"),
@@ -97,8 +94,6 @@ THRESHOLDS: dict[str, tuple[str, str, str]] = {
     "kArrivalToleranceM": ("double", "m", "arrival"),
     "kArrivalOrientationToleranceRad": ("double", "rad", "arrival only — nothing stops the arm on orientation error"),
     "kFollowingErrorLimitDeg": ("double", "deg", "stop — commanded minus measured, any joint"),
-    "kTrajFollowingErrorStopDeg": ("double", "deg", "stop — measured against the plan's joint reference"),
-    "kTrajStartToleranceDeg": ("double", "deg", "plan rejected at activation (splice guard)"),
     "kControlDtS": ("double", "s", "control period"),
     "kJointSoftwareLimitMarginDeg": ("double", "deg", "how far inside the model range the software limit sits"),
 }

@@ -26,24 +26,23 @@
 #include <tuple>
 #include <vector>
 
-#include <sys/stat.h>
-#include <sys/types.h>
-
 #include <KDetailedException.h>
 
-#include "Actuation.h"
 #include "BasePose.h"
+#include "CartesianTrajectoryMailbox.h"
 #include "Config.h"
-#include "Controller.h"
+#include "ExecutionConfig.h"
+#include "ExecutionCore.h"
 #include "FramePrint.h"
 #include "Hardware.h"
+#include "InProcessPlanner.h"
 #include "Kinematics.h"
 #include "MainArgs.h"
 #include "ProcessLock.h"
+#include "PlannerRuntime.h"
 #include "Runner.h"
 #include "Safety.h"
 #include "State.h"
-#include "Targets.h"
 #include "ViconSource.h"
 
 namespace k_api = Kinova::Api;
@@ -92,18 +91,8 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("orientation_enabled", config::kOrientationEnabled ? "true" : "false");
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");
-    // The measured takeover state the run starts from. Kept in the preamble
-    // even though there is now only one source, so every CSV keeps saying
-    // which motion path produced it.
-    line("reference_source", "joint_trajectory");
-    line("startup_hold", "measured_q");
-    // The joint path's three settings: tracking gain, the activation splice
-    // guard, and the joint-space following-error stop.
-    line("kp_joint_tracking", FormatDouble(config::kKpJointTracking));
-    line("traj_start_tolerance_deg",
-         FormatDouble(config::kTrajStartToleranceDeg));
-    line("traj_following_error_stop_deg",
-         FormatDouble(config::kTrajFollowingErrorStopDeg));
+    line("reference_source", "world_cartesian_trajectory");
+    line("startup_hold", "first_fresh_world_pose");
     line("target_hold_s", FormatDouble(config::kTargetHoldS));
     line("fixed_target_use_rpy", config::kFixedTargetUseRpy ? "true" : "false");
     if (config::kFixedTargetUseRpy)
@@ -133,28 +122,25 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     out << prefix << "log_file = " << (log_file.empty() ? "<timestamped>" : log_file)
         << (log_file.empty() ? " (default)\n" : " (--log)\n");
     line("control_dt_s", FormatDouble(config::kControlDtS));
-    line("world_hold_auto_engage",
-         config::kWorldHoldAutoEngage ? "true" : "false");
-    line("world_hold_fresh_max_age_s",
-         FormatDouble(config::kWorldHoldFreshMaxAgeS));
-    line("world_hold_ramp_s", FormatDouble(config::kWorldHoldRampS));
-    line("world_hold_max_error_m",
-         FormatDouble(config::kWorldHoldMaxErrorM));
-    line("world_hold_max_rot_error_rad",
-         FormatDouble(config::kWorldHoldMaxRotErrorRad));
-    line("world_hold_reanchor_after_s",
-         FormatDouble(config::kWorldHoldReanchorAfterS));
+    line("world_fresh_max_age_s", FormatDouble(config::kWorldFreshMaxAgeS));
+    line("vicon_mount_twist_filter_tau_s",
+         FormatDouble(config::kViconMountTwistFilterTauS));
+    line("vicon_mount_twist_reset_gap_s",
+         FormatDouble(config::kViconMountTwistResetGapS));
+    line("world_prolonged_stale_s",
+         FormatDouble(config::kWorldProlongedStaleS));
 }
 
 void WriteCsvPreamble(const std::string& log_file, const config::ArmConfig& arm_config,
                       std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 11 (compiled)\n";
+    csv << "# log_format = 13 (compiled)\n";
     // Why a log's vicon_* columns are all-NaN: source compiled out
     // ("absent"), or compiled in but never connected (age stays NaN).
     csv << "# vicon_source = " << kViconSourceBuildMode << " ("
         << kViconSourceHost << ")\n";
     csv << "# arm = " << arm_config.name << " (" << arm_config.ip << ")\n";
+    csv << "# planner_handoff = in_process_typed_world_cartesian\n";
     WriteConfigLines(log_file, csv, "# ");
 }
 } // namespace
@@ -173,9 +159,11 @@ void WriteCsvPreamble(const std::string& log_file, const config::ArmConfig& arm_
  *        Connect); readiness check on one feedback frame (before any
  *        takeover); print the current joint state and end-effector
  *        position; run the control loop (RunControlLoop — MOVES THE ARM:
- *        takeover sequence T1-T6, the joint-trajectory reference source
- *        feeding the TrackingController + PositionIntegration actuation,
- *        single-level servoing restored on every exit path); drain the
+ *        takeover sequence T1-T6, one ArmExecutionCore composing the
+ *        world-Cartesian reference source, tracking controller and
+ *        position integration from one immutable production configuration
+ *        snapshot, single-level servoing restored on every exit path);
+ *        drain the
  *        last of the loop log (the rest of the CSV was written by the
  *        writer thread as the run happened); a non-clean stop on either
  *        arm signals the shared stop flag, so a fault on one arm brings
@@ -291,18 +279,17 @@ void on_stop_signal(int)
 
 namespace
 {
-    // The pipe input thread only polls the target pipe; it never touches
-    // the robot connection. But it must never outlive the mailbox it
-    // writes. This guard covers normal loop exit and exceptions from
-    // RunControlLoop alike.
-    class InputThreadStopJoiner
+    // The planner worker never touches the robot connection, but it must never
+    // outlive the typed request/trajectory slots it uses. This guard covers
+    // normal loop exit and exceptions from RunControlLoop alike.
+    class WorkerThreadStopJoiner
     {
     public:
-        InputThreadStopJoiner(std::thread& thread, std::atomic<bool>& stop)
+        WorkerThreadStopJoiner(std::thread& thread, std::atomic<bool>& stop)
             : thread_(thread), stop_(stop)
         {}
 
-        ~InputThreadStopJoiner()
+        ~WorkerThreadStopJoiner()
         {
             Join();
         }
@@ -429,7 +416,7 @@ namespace
             }
             WriteCsvPreamble(log_file_arg, arm_config, csv);
 
-            // World-pose observation (slice 1). Slot + acquisition thread
+            // World-pose input. Slot + acquisition thread
             // are per-arm because the slot is strictly single-reader and
             // --arm both runs one RunOneArm per arm: two arms mean two SDK
             // connections, which DataStream serves fine. The source starts
@@ -441,7 +428,7 @@ namespace
                 StartViconSource(base_pose_slot);
             std::cout << tag << "vicon world-pose source: "
                       << kViconSourceBuildMode << " (" << kViconSourceHost
-                      << ", observe/log only)\n";
+                      << ", controller measurement + telemetry)\n";
 
             // From here the CSV writes itself: the writer thread drains the log
             // to disk every kLogDrainInterval for as long as it is alive. It is
@@ -450,9 +437,19 @@ namespace
             // destructor performs the final drain.
             LoopLogWriter log_writer(log, csv, config::kLogDrainInterval);
 
-            // Controller + reference source + actuation: a bad end-effector
-            // frame name must fail here, before any takeover.
-            TrackingController controller(controlled_model);
+            // The execution core: ONE immutable production configuration
+            // snapshot (the only place config:: constants enter the
+            // per-cycle path) feeding the controller, reference source and
+            // position integration it composes. A bad end-effector frame
+            // name or a physically meaningless configuration value must
+            // fail here, before any takeover. The nominal period below
+            // must be — and is — the same config::kCyclePeriod the loop
+            // paces with.
+            CartesianTrajectoryMailbox trajectory_targets;
+            ArmExecutionCore execution_core(
+                controlled_model, ProductionExecutionConfig(),
+                trajectory_targets,
+                std::chrono::duration<double>(config::kCyclePeriod).count());
 
             Eigen::Matrix<double, 7, 1> q_now_rad;
             for (int j = 0; j < 7; ++j)
@@ -491,49 +488,40 @@ namespace
                       << startup_mount.x() << " " << startup_mount.y() << " "
                       << startup_mount.z() << " m in mount (goal-file frame)"
                       << "; the arm will hold here\n";
-            // The arm holds the measured takeover q until the first validated
-            // trajectory block arrives. Joint trajectories are the only motion
-            // path: the Cartesian pose source was retired in stage 2.
-            JointTrajectoryMailbox trajectory_targets;
-            JointTrajectorySource joint_reference(q_now_rad, trajectory_targets);
-            ReferenceSource& reference = joint_reference;
-            PositionIntegration actuation(config::kCommandLeadLimitDeg);
+            // Before the first fresh world sample the core's reference
+            // source returns the measured world pose each cycle (zero
+            // Cartesian error). The first fresh sample captures a fixed
+            // world hold; validated trajectories splice into that same
+            // reference path through the mailbox constructed above.
+            PlanningRequestSlot planning_requests;
 
-            std::cout << tag << "HOLD AT START: the arm holds the measured startup "
-                         "joint position until the first validated trajectory; "
+            std::cout << tag << "HOLD AT START: zero-error Cartesian hold until "
+                         "the first fresh world sample, then fixed WORLD pose; "
                          "Ctrl+C to stop\n";
-            std::cout << tag << "  trajectories: write TRAJ_BEGIN/TRAJ_END blocks to "
-                      << arm_config.target_pipe_path
-                      << " (planner_bridge --arm " << arm_config.name << " does this)\n";
-
-            struct stat pipe_stat{};
-            if (stat(arm_config.target_pipe_path, &pipe_stat) == 0) {
-                if (!S_ISFIFO(pipe_stat.st_mode)) {
-                    std::cerr << tag << "Error: " << arm_config.target_pipe_path
-                              << " exists and is not a FIFO — not starting\n";
-                    return 1;
-                }
-            } else if (mkfifo(arm_config.target_pipe_path, 0600) != 0) {
-                std::cerr << tag << "Error: cannot create target pipe "
-                          << arm_config.target_pipe_path << " — not starting\n";
-                return 1;
-            }
-            std::thread input_thread(RunTargetInputFromPipe,
-                                     std::ref(trajectory_targets),
-                                     std::cref(g_stop),
-                                     std::string(arm_config.target_pipe_path));
-            InputThreadStopJoiner input_thread_joiner(input_thread, g_stop);
+            const PlannerRuntimeConfig planner_config{
+                PLANNER_GOAL_FILE,
+                PLANNER_CONFIG_FILE,
+                PLANNER_JOINT_LIMITS_FILE,
+                PLANNER_RIGHT_DH_FILE,
+                PLANNER_LEFT_DH_FILE,
+                RUNS_ROOT_DIR};
+            std::thread planner_thread(
+                RunInProcessPlanner, std::ref(planning_requests),
+                std::ref(trajectory_targets), std::cref(planner_config),
+                std::cref(g_stop), &SolveWorldTrajectoryForRequest);
+            WorkerThreadStopJoiner planner_thread_joiner(planner_thread, g_stop);
 
             // MOVES THE ARM: servoing mode is entered and restored inside the
             // Runner on every exit path (T2/D1).
             const LoopResult result = RunControlLoop(
-                connection.base(), connection.base_cyclic(), reference,
-                controller, actuation,
-                log, g_stop, config::kCyclePeriod, config::kQdotLimitDegS,
+                connection.base(), connection.base_cyclic(), execution_core,
+                log, g_stop, config::kCyclePeriod,
                 config::kFollowingErrorLimitDeg, robot_ready,
-                arm_config.base_frame, &base_pose_slot);
+                controlled_arm == Arm::kLeft ? PlanningArm::kLeft
+                                              : PlanningArm::kRight,
+                &planning_requests, &base_pose_slot);
 
-            input_thread_joiner.Join();
+            planner_thread_joiner.Join();
 
             // A non-clean stop on this arm signals the shared stop flag, so
             // it also stops any other arm this process is running. A

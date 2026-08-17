@@ -27,17 +27,21 @@ bool Queryable(const gpmp2::SignedDistanceField& field, const gtsam::Point3& poi
 }  // namespace
 
 int main() {
-    const GridBounds bounds = WorldGridBounds();
+    const Eigen::Isometry3d world_T_mount =
+        Eigen::Translation3d(1.0, 2.0, 3.0) *
+        Eigen::AngleAxisd(M_PI / 2.0, Eigen::Vector3d::UnitZ());
+    const GridGeometry geometry = WorldGridGeometry(world_T_mount);
+    const GridBounds bounds = WorldGridBounds(geometry);
     const Eigen::Vector3d centre = (bounds.min_m + bounds.max_m) / 2.0;
 
     // ---- SDF construction ------------------------------------------------
     // Probes are derived from the grid rather than written as literals, so
     // they stay meaningful if the grid's frame or extents ever move.
-    const auto empty = MakeWorldSdf(std::nullopt);
+    const auto empty = MakeWorldSdf(geometry, std::nullopt);
     assert(empty.getSignedDistance(gtsam::Point3(centre)) > 1.0);
 
     AxisAlignedBox box{centre, {0.1, 0.1, 0.1}};
-    const auto world = MakeWorldSdf(box);
+    const auto world = MakeWorldSdf(geometry, box);
     assert(world.getSignedDistance(gtsam::Point3(centre)) < 0.0);   // inside
 
     // 15 cm above the centre is 5 cm clear of the box's +z face.
@@ -69,6 +73,28 @@ int main() {
             (corner & 4) ? bounds.max_m.z() - kJustInside : bounds.min_m.z());
         assert(Queryable(world, gtsam::Point3(point)) &&
                "every corner of WorldGridBounds() must be queryable");
+    }
+
+    // Every corner of the measured Mount-frame grid, transformed by the
+    // same snapshot used for the model, remains queryable with at least the
+    // established collision-envelope margin on every WORLD AABB face.
+    const Eigen::Vector3d measured_mount_min(
+        kGridOriginXM, kGridOriginYM, kGridOriginZM);
+    const Eigen::Vector3d measured_mount_max =
+        measured_mount_min +
+        Eigen::Vector3d(kGridNx - 1, kGridNy - 1, kGridNz - 1) * kGridCellM;
+    for (int corner = 0; corner < 8; ++corner) {
+        const Eigen::Vector3d mount_corner(
+            (corner & 1) ? measured_mount_max.x() : measured_mount_min.x(),
+            (corner & 2) ? measured_mount_max.y() : measured_mount_min.y(),
+            (corner & 4) ? measured_mount_max.z() : measured_mount_min.z());
+        const Eigen::Vector3d world_corner = world_T_mount * mount_corner;
+        assert(Queryable(world, gtsam::Point3(world_corner)) &&
+               "every transformed Mount-workspace corner must be queryable");
+        assert(((world_corner - bounds.min_m).array() >=
+                kCollisionEnvelopeMarginM).all());
+        assert(((bounds.max_m - world_corner).array() >=
+                kCollisionEnvelopeMarginM).all());
     }
 
     // One micrometre past each of the six faces must be refused. Any larger

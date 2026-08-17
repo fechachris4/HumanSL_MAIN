@@ -35,36 +35,40 @@ position_limits:
     upper_limit: 1e20   #  (continuous rotation)
     unit: "radians"
 
-# Joint velocity limits (Table 41)
-# For admittance and force control modes
+# Joint velocity limits — 95% of the LIVE kinematic hard limits the base
+# reports at startup (80.0021 deg/s actuators 1-4, 70.004 deg/s actuators
+# 5-7), matching the controller's clip in basic_control Config.h, which
+# must move with this table (decision 2026-08-13, docs/motion-limits-map.md).
+# The previous 50 deg/s values came from Table 41, which governs admittance
+# and force modes, not the low-level stream this planner feeds.
 velocity_limits:
   actuator_1:
-    lower_limit: -0.8727  # -50.0°/s
-    upper_limit: 0.8727   # +50.0°/s
+    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
+    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
     unit: "rad/s"
   actuator_2:
-    lower_limit: -0.8727  # -50.0°/s
-    upper_limit: 0.8727   # +50.0°/s
+    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
+    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
     unit: "rad/s"
   actuator_3:
-    lower_limit: -0.8727  # -50.0°/s
-    upper_limit: 0.8727   # +50.0°/s
+    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
+    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
     unit: "rad/s"
   actuator_4:
-    lower_limit: -0.8727  # -50.0°/s
-    upper_limit: 0.8727   # +50.0°/s
+    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
+    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
     unit: "rad/s"
   actuator_5:
-    lower_limit: -0.8727  # -50.0°/s
-    upper_limit: 0.8727   # +50.0°/s
+    lower_limit: -1.1606  # -66.5°/s (95% of live 70.004)
+    upper_limit: 1.1606   # +66.5°/s (95% of live 70.004)
     unit: "rad/s"
   actuator_6:
-    lower_limit: -0.8727  # -50.0°/s
-    upper_limit: 0.8727   # +50.0°/s
+    lower_limit: -1.1606  # -66.5°/s (95% of live 70.004)
+    upper_limit: 1.1606   # +66.5°/s (95% of live 70.004)
     unit: "rad/s"
   actuator_7:
-    lower_limit: -0.8727  # -50.0°/s
-    upper_limit: 0.8727   # +50.0°/s
+    lower_limit: -1.1606  # -66.5°/s (95% of live 70.004)
+    upper_limit: 1.1606   # +66.5°/s (95% of live 70.004)
     unit: "rad/s"
 
 # Joint acceleration limits (Table 43)

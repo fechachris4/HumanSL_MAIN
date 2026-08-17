@@ -25,9 +25,7 @@
 #include <unistd.h>
 
 #include "Config.h"
-#include "JointTrajectory.h"
 #include "ReactiveLaw.h"
-#include "Targets.h"
 #include "reactive_fixtures.h"
 
 namespace
@@ -371,141 +369,6 @@ namespace
         }
     }
 
-    bool WaitFor(const std::atomic<bool>& flag, std::chrono::milliseconds timeout)
-    {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (!flag.load(std::memory_order_acquire) &&
-               std::chrono::steady_clock::now() < deadline)
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        return flag.load(std::memory_order_acquire);
-    }
-
-    bool WaitForPipeDrain(int fd, std::chrono::milliseconds timeout)
-    {
-        const auto deadline = std::chrono::steady_clock::now() + timeout;
-        while (std::chrono::steady_clock::now() < deadline) {
-            int bytes_available = -1;
-            if (ioctl(fd, FIONREAD, &bytes_available) == 0 && bytes_available == 0)
-                return true;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        return false;
-    }
-
-    bool WriteAll(int fd, const std::string& text)
-    {
-        std::size_t written = 0;
-        while (written < text.size()) {
-            const ssize_t result = write(fd, text.data() + written, text.size() - written);
-            if (result <= 0)
-                return false;
-            written += static_cast<std::size_t>(result);
-        }
-        return true;
-    }
-
-    // A minimal valid block: two rows, all joints at zero, one second apart.
-    // Any q inside the compiled limits works — these tests are about the
-    // fd-level plumbing (partial lines, EOF, writer reconnect), not the
-    // trajectory contents.
-    const char* const kBlock =
-        "TRAJ_BEGIN 2\n"
-        "0    0 0 0 0 0 0 0    0 0 0 0 0 0 0\n"
-        "1.0  0 0 0 0 0 0 0    0 0 0 0 0 0 0\n"
-        "TRAJ_END\n";
-
-    void TestTrajectoryInputHandlesPartialAndCompletePipeLines()
-    {
-        int partial_pipe[2] = {-1, -1};
-        Check(pipe(partial_pipe) == 0, "partial-line test creates a pipe");
-        if (partial_pipe[0] >= 0 && partial_pipe[1] >= 0) {
-            JointTrajectoryMailbox mailbox;
-            std::atomic<bool> stop{false};
-            std::atomic<bool> exited{false};
-            std::thread reader([&] {
-                RunTargetInput(mailbox, stop, partial_pipe[0]);
-                exited.store(true, std::memory_order_release);
-            });
-
-            Check(WriteAll(partial_pipe[1], "TRAJ_BEGIN 2\n0    0 0 0"),
-                  "partial line is written while the pipe stays open");
-            Check(WaitForPipeDrain(partial_pipe[0], std::chrono::milliseconds(250)),
-                  "reader consumes the partial line into its owned buffer");
-            stop.store(true, std::memory_order_release);
-            Check(WaitFor(exited, std::chrono::milliseconds(250)),
-                  "input reader stops while a partial pipe line remains open");
-
-            // Cleanup keeps a failing implementation from leaving a blocked
-            // test thread behind: closing the writer supplies EOF.
-            close(partial_pipe[1]);
-            reader.join();
-            close(partial_pipe[0]);
-            Check(mailbox.Take() == nullptr,
-                  "an incomplete block is never published");
-        }
-
-        int complete_pipe[2] = {-1, -1};
-        Check(pipe(complete_pipe) == 0, "complete-line test creates a pipe");
-        if (complete_pipe[0] >= 0 && complete_pipe[1] >= 0) {
-            JointTrajectoryMailbox mailbox;
-            std::atomic<bool> stop{false};
-            std::atomic<bool> exited{false};
-            std::thread reader([&] {
-                RunTargetInput(mailbox, stop, complete_pipe[0]);
-                exited.store(true, std::memory_order_release);
-            });
-
-            Check(WriteAll(complete_pipe[1], kBlock),
-                  "a complete trajectory block is written to the pipe");
-            close(complete_pipe[1]);
-            Check(WaitFor(exited, std::chrono::milliseconds(250)),
-                  "input reader exits after pipe EOF");
-            reader.join();
-            close(complete_pipe[0]);
-
-            // Latest-wins single slot: one block in, one block out.
-            Check(mailbox.Take() != nullptr,
-                  "the complete block is validated and published");
-        }
-    }
-
-    void TestPipeInputSurvivesWriterReconnect()
-    {
-        const std::string pipe_path = "./test_target_pipe_tmp";
-        unlink(pipe_path.c_str());
-        Check(mkfifo(pipe_path.c_str(), 0600) == 0, "mkfifo succeeds");
-
-        JointTrajectoryMailbox mailbox;
-        std::atomic<bool> stop{false};
-        std::thread reader([&] {
-            RunTargetInputFromPipe(mailbox, stop, pipe_path);
-        });
-
-        // Two independent writer sessions — the Stage 1 EOF failure mode.
-        // The mailbox is latest-wins, so each block is collected before the
-        // next writer opens; both must be seen despite the intervening EOF.
-        int received = 0;
-        for (int session = 0; session < 2; ++session) {
-            {
-                std::ofstream writer(pipe_path); // blocks until the reader opens
-                Check(static_cast<bool>(writer), "writer opens pipe");
-                writer << kBlock;
-            }                                    // close = EOF for the reader
-            for (int attempt = 0; attempt < 200; ++attempt) {
-                if (mailbox.Take() != nullptr) { ++received; break; }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-        }
-        Check(received == 2, "blocks from both writer sessions arrive");
-
-        stop.store(true);
-        const auto join_start = std::chrono::steady_clock::now();
-        reader.join();
-        Check(std::chrono::steady_clock::now() - join_start
-                  < std::chrono::seconds(1), "reader joins promptly on stop");
-        unlink(pipe_path.c_str());
-    }
-
 } // namespace
 
 int main()
@@ -521,8 +384,6 @@ int main()
     TestLimitAvoidance();
     TestDetailedSolveDecomposition();
     TestAgainstSimulationFixtures();
-    TestTrajectoryInputHandlesPartialAndCompletePipeLines();
-    TestPipeInputSurvivesWriterReconnect();
 
     if (failures == 0) {
         std::cout << "all reactive-law tests passed\n";

@@ -52,9 +52,18 @@ int main()
     {
         BasePoseSample sample;
         Check(sample.sequence == 0, "default sample has sequence 0");
+        Check(std::isnan(sample.frame_rate_hz),
+              "default frame rate is NaN");
         Check(std::isnan(sample.latency_reported_s),
               "default latency is NaN");
         Check(std::isnan(sample.t_receive_s), "default receive time is NaN");
+        Check(!sample.mount_twist_valid, "default Mount twist is invalid");
+        for (int i = 0; i < 3; ++i) {
+            Check(std::isnan(sample.mount_linear_world_m_s[i]),
+                  "default Mount linear velocity is NaN");
+            Check(std::isnan(sample.mount_angular_world_rad_s[i]),
+                  "default Mount angular velocity is NaN");
+        }
         for (int seg = 0; seg < kBasePoseSegmentCount; ++seg) {
             Check(!sample.segments[seg].valid,
                   "default segment invalid: " +
@@ -75,6 +84,7 @@ int main()
         ViconSnapshot snapshot;
         snapshot.frame_number = 668410;
         snapshot.host_time_s = 41.5;
+        snapshot.frame_rate_hz = 100.0;
         snapshot.latency_total_s = 0.012;
         snapshot.segments.push_back(MakeSegment("Mount", 1.0, true));
         snapshot.segments.push_back(MakeSegment("LeftBase", 2.0, true));
@@ -82,11 +92,25 @@ int main()
         snapshot.segments.push_back(MakeSegment("SomethingElse", 9.0, true));
         // RightBase and RightEE deliberately absent.
 
-        const BasePoseSample sample = ToBasePoseSample(snapshot, 7);
+        MountTwistEstimate twist;
+        twist.linear_m_s = Eigen::Vector3d(0.1, 0.2, 0.3);
+        twist.angular_rad_s = Eigen::Vector3d(-0.4, 0.5, -0.6);
+        twist.source_frame_number = snapshot.frame_number;
+        twist.valid = true;
+        twist.updated = true;
+        const BasePoseSample sample = ToBasePoseSample(snapshot, 7, twist);
         Check(sample.sequence == 7, "sequence carried through");
         Check(sample.vicon_frame_number == 668410, "frame number carried");
         Check(sample.t_receive_s == 41.5, "receive time carried");
+        Check(sample.frame_rate_hz == 100.0, "frame rate carried");
         Check(sample.latency_reported_s == 0.012, "latency carried");
+        Check(sample.mount_twist_valid, "Mount twist validity carried");
+        Check(sample.mount_linear_world_m_s[0] == 0.1 &&
+                  sample.mount_linear_world_m_s[2] == 0.3,
+              "Mount linear velocity carried in world axes");
+        Check(sample.mount_angular_world_rad_s[0] == -0.4 &&
+                  sample.mount_angular_world_rad_s[2] == -0.6,
+              "Mount angular velocity carried in world axes");
 
         Check(sample.segments[kBasePoseMount].valid, "Mount valid");
         Check(sample.segments[kBasePoseMount].position_m[0] == 1.0 &&
@@ -149,7 +173,15 @@ int main()
                 sample.vicon_frame_number =
                     static_cast<std::uint32_t>(seq);
                 sample.t_receive_s = static_cast<double>(seq);
+                sample.frame_rate_hz = static_cast<double>(seq);
                 sample.latency_reported_s = 0.0;
+                sample.mount_twist_valid = true;
+                for (int i = 0; i < 3; ++i) {
+                    sample.mount_linear_world_m_s[i] =
+                        static_cast<double>(seq);
+                    sample.mount_angular_world_rad_s[i] =
+                        static_cast<double>(seq);
+                }
                 for (int seg = 0; seg < kBasePoseSegmentCount; ++seg) {
                     sample.segments[seg].valid = true;
                     for (int i = 0; i < 3; ++i)
@@ -174,6 +206,13 @@ int main()
                 backwards = true;
             last_seq = sample.sequence;
             const double expected = static_cast<double>(sample.sequence);
+            if (sample.frame_rate_hz != expected ||
+                !sample.mount_twist_valid)
+                torn = true;
+            for (int i = 0; i < 3; ++i)
+                if (sample.mount_linear_world_m_s[i] != expected ||
+                    sample.mount_angular_world_rad_s[i] != expected)
+                    torn = true;
             for (int seg = 0; seg < kBasePoseSegmentCount && !torn; ++seg)
                 for (int i = 0; i < 3; ++i)
                     if (sample.segments[seg].position_m[i] != expected)

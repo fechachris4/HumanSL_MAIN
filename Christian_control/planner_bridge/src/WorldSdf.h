@@ -3,7 +3,7 @@
 #include <Eigen/Dense>
 #include <gpmp2/obstacle/SignedDistanceField.h>
 
-struct AxisAlignedBox {           // metres, mount frame
+struct AxisAlignedBox {           // metres, Vicon world frame
     Eigen::Vector3d center;
     Eigen::Vector3d half_extent;
 };
@@ -35,12 +35,29 @@ inline constexpr double kGridCellM = 0.04;
 inline constexpr int kGridNx = 57;
 inline constexpr int kGridNy = 69;
 inline constexpr int kGridNz = 58;
+inline constexpr double kCollisionEnvelopeMarginM = 0.05;
+
+struct GridGeometry {
+    Eigen::Vector3d origin_world_m = Eigen::Vector3d::Zero();
+    int nx = 0;
+    int ny = 0;
+    int nz = 0;
+    double cell_m = kGridCellM;
+};
+
+// Axis-aligned WORLD grid enclosing all eight transformed corners of the
+// measured Mount-frame workspace. Extra padding keeps those corners away
+// from gpmp2's non-interpolatable upper face and preserves the established
+// 0.05 m collision-envelope margin after arbitrary Mount rotations.
+GridGeometry WorldGridGeometry(const Eigen::Isometry3d& world_T_mount);
 
 // One grid covering both arms' workspaces, in the `mount` frame. ("World"
 // here means the scene the arms move through, not a coordinate frame — the
 // frame is named in the constants block above.) Cells hold distance to the
 // box surface (negative inside); with no box, a uniform large free distance.
-gpmp2::SignedDistanceField MakeWorldSdf(const std::optional<AxisAlignedBox>& box);
+gpmp2::SignedDistanceField MakeWorldSdf(
+    const GridGeometry& geometry,
+    const std::optional<AxisAlignedBox>& box_world);
 
 // The volume the SDF grid can actually be QUERIED over, in `mount`:
 // [origin, origin + (n-1)*cell] per axis — see the (n-1) note in the .cpp.
@@ -52,4 +69,4 @@ struct GridBounds {
     Eigen::Vector3d min_m;
     Eigen::Vector3d max_m;
 };
-GridBounds WorldGridBounds();
+GridBounds WorldGridBounds(const GridGeometry& geometry);

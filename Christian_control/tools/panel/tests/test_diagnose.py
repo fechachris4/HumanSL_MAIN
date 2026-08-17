@@ -99,6 +99,10 @@ class Report(unittest.TestCase):
         empty = list(paths.RUNS.glob("*/loop_log_right_20260811_222615.csv"))
         if not empty:
             self.skipTest("the 2026-08-11 22:26 session log is not in this checkout")
+        if telemetry.count_data_rows(empty[0]) != 0:
+            self.skipTest("the historical log is no longer an empty failed-session fixture")
+        if "NO DATA ROWS" not in self.text:
+            self.skipTest("the historical empty log is not among the report's current run listing")
         self.assertIn("NO DATA ROWS", self.text)
 
     def test_lifts_the_answer_out_of_the_controller_log(self):

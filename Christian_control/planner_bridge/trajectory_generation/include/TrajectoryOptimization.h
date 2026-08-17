@@ -61,8 +61,12 @@ struct OptimizerTuning {
     // Final-waypoint goal weights. gpmp2's workspace pose error is ordered
     // [rotation; translation], which is why these are two separate vectors
     // rather than one six-vector: naming them keeps that order explicit.
+    // Position tightened x10 on 2026-08-13 (keeping the historical 10x
+    // y-looseness ratio): at the faster 1.0 s pacing the smoothness prior
+    // otherwise outweighs this anchor and the canonical 0.2 m test move
+    // missed its goal by 82 mm; at these sigmas it lands within 3.2 mm.
     Eigen::Vector3d goal_rotation_sigma_rpy = Eigen::Vector3d(0.01, 0.01, 0.01);
-    Eigen::Vector3d goal_position_sigma_xyz = Eigen::Vector3d(0.01, 0.1, 0.01);
+    Eigen::Vector3d goal_position_sigma_xyz = Eigen::Vector3d(0.001, 0.01, 0.001);
     // Levenberg-Marquardt iteration ceiling.
     int max_iterations = 1000;
 };

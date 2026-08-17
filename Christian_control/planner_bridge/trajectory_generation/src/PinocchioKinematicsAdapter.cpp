@@ -61,7 +61,11 @@ Eigen::Isometry3d MountFromBase(bool left_arm)
     // they come from the model, not the end-effector frame or which arm is
     // controlled — so reuse the one already built for the right arm's
     // configured tool frame rather than constructing another.
-    const pinocchio::SE3& mount =
+    // Copy the cached transform before converting it. Keeping a reference
+    // through the conditional-return expression in MountFromBase triggered a
+    // compiler dangling-reference warning even though the cache is static;
+    // this fixed-size copy makes the lifetime unambiguous.
+    const pinocchio::SE3 mount =
         SharedKinematics(config::kRightEndEffectorFrame, /*left_arm=*/false)
             .MountFromBase(left_arm ? Arm::kLeft : Arm::kRight);
     Eigen::Isometry3d transform = Eigen::Isometry3d::Identity();

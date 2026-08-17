@@ -59,6 +59,7 @@
   <button type="button" role="tab" class="tab" data-view="targets" id="tab-targets" aria-controls="view-targets" aria-selected="false">TARGETS</button>
   <button type="button" role="tab" class="tab" data-view="runs"    id="tab-runs"    aria-controls="view-runs"    aria-selected="false">RUNS</button>
   <button type="button" role="tab" class="tab" data-view="session" id="tab-session" aria-controls="view-session" aria-selected="false">SESSION</button>
+  <button type="button" role="tab" class="tab" data-view="plots"   id="tab-plots"   aria-controls="view-plots"   aria-selected="false">PLOTS</button>
   <span class="tabs-spacer"></span>
   <!-- One line of connection truth, repeated here because the tab strip is
        the one row present in every view. -->
@@ -444,6 +445,36 @@
       </div>
       <textarea id="diagnostics-text" class="code-area" rows="16" spellcheck="false" readonly hidden></textarea>
     </section>
+  </section>
+
+  <!-- ============================ PLOTS ============================ -->
+  <section class="view" id="view-plots" role="tabpanel" aria-labelledby="tab-plots" hidden>
+    <div class="runs-grid">
+      <section class="card">
+        <div class="card-head">
+          <h2>Choose a run</h2>
+          <span class="card-note" id="plots-runs-count"></span>
+        </div>
+        <div id="plots-runs-list" class="runs-list"></div>
+        <div class="empty inline-empty" id="plots-runs-empty" hidden>
+          <p>No runs recorded yet.</p>
+        </div>
+      </section>
+      <section class="card">
+        <div class="card-head">
+          <h2>Generate a plot</h2>
+          <span class="card-note" id="plots-selected-run">choose a run on the left</span>
+        </div>
+        <div id="plots-script-list" class="plots-script-list"></div>
+        <div class="button-row">
+          <button type="button" id="plots-generate" class="action" disabled>GENERATE</button>
+          <span class="hint" id="plots-status"></span>
+        </div>
+        <div id="plots-images" class="plots-images"></div>
+        <h3 class="sub-head" id="plots-output-head" hidden>Script output</h3>
+        <pre class="log-pane" id="plots-output" hidden></pre>
+      </section>
+    </div>
   </section>
 
 </main>

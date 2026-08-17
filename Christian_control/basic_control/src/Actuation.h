@@ -20,6 +20,8 @@
 #include "Config.h"
 #include "State.h"
 
+struct ExecutionConfig;
+
 // The dt Apply may integrate over: the measured elapsed cycle time, but
 // never more than twice the nominal period — a scheduler stall must not
 // integrate into one large position jump (the base faults on those).
@@ -72,6 +74,14 @@ public:
         std::optional<int> joint_limit_warning_joint;
     };
 
+    // The command-lead bound and the bounded-joint software boundaries are
+    // copied from the snapshot at construction; no config:: value is read
+    // again at runtime.
+    explicit PositionIntegration(const ExecutionConfig& config);
+
+    // Test/tool convenience: the given lead bound (default: disabled) with
+    // the PRODUCTION software boundaries — identical boundary behaviour to
+    // injecting ProductionExecutionConfig().
     explicit PositionIntegration(double command_lead_limit_deg =
                                      std::numeric_limits<double>::infinity());
 
@@ -100,6 +110,9 @@ public:
 
 private:
     double command_lead_limit_rad_;
+    // Bounded-joint software boundary magnitudes, deg (0 = continuous
+    // joint). Immutable after construction (ExecutionConfig snapshot).
+    JointVector software_limit_deg_{};
     Eigen::Matrix<double, 7, 1> q_command_rad_ =
         Eigen::Matrix<double, 7, 1>::Zero();
 };

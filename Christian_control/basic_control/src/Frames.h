@@ -18,10 +18,14 @@
 // the assembly mathematics, which is what the fixtures pin, is unchanged.
 //
 // Pure Eigen, header-only, no allocation beyond fixed-size values. Nothing
-// here reads sensors or knows about freshness — WorldHold.h owns time.
+// here reads sensors or owns freshness policy — Runner and
+// CartesianReference provide the coherent state and clock decision.
 //
 
 #pragma once
+
+#include <algorithm>
+#include <cmath>
 
 #include <Eigen/Dense>
 #include <Eigen/Geometry>
@@ -30,12 +34,45 @@
 
 namespace world_frames {
 
-// A pose as frames.py's Pose: position (m) + rotation, no unit checks here
-// — callers keep frames explicit in their variable names.
-struct FramePose {
-    Eigen::Vector3d position_m = Eigen::Vector3d::Zero();
-    Eigen::Matrix3d rotation = Eigen::Matrix3d::Identity();
-};
+// A stale sample retains the last trustworthy measured Mount twist, decayed
+// from the freshness boundary. Computing from absolute sample age avoids a
+// loop-rate-dependent result when one cycle is delayed or skipped.
+inline double StaleTwistDecayMultiplier(double sample_age_s,
+                                        double fresh_max_age_s,
+                                        double tau_s)
+{
+    if (!std::isfinite(sample_age_s) || !std::isfinite(fresh_max_age_s))
+        return 0.0;
+    const double stale_age_s =
+        std::max(0.0, sample_age_s - fresh_max_age_s);
+    if (stale_age_s == 0.0)
+        return 1.0;
+    if (!std::isfinite(tau_s) || tau_s <= 0.0)
+        return 0.0;
+    return std::exp(-stale_age_s / tau_s);
+}
+
+// Vicon can continue delivering low-age frames while the Mount segment alone
+// is invalid. Control-time staleness covers that case; source age covers a
+// delayed cycle or complete stream loss. Taking the maximum prevents either
+// clock from making stale motion look newer than it is.
+inline double EffectiveStaleDurationS(double sample_age_s,
+                                      double stale_elapsed_s,
+                                      double fresh_max_age_s)
+{
+    const double elapsed = std::isfinite(stale_elapsed_s)
+        ? std::max(0.0, stale_elapsed_s)
+        : 0.0;
+    const double beyond_age =
+        std::isfinite(sample_age_s) && std::isfinite(fresh_max_age_s)
+        ? std::max(0.0, sample_age_s - fresh_max_age_s)
+        : 0.0;
+    return std::max(elapsed, beyond_age);
+}
+
+// State.h owns the shared fixed-size pose value; this name preserves the
+// simulation port's vocabulary without creating a second representation.
+using FramePose = CartesianPose;
 
 // frames.py compose_pose: parent_to_child ∘ child_to_object.
 inline FramePose ComposePose(const FramePose& parent_to_child,
@@ -61,14 +98,13 @@ struct WorldArmState {
 // frames.py arm_controller_state (:120), inputs made explicit:
 //   world_T_moving — the tracked body's pose in world (sim: torso from
 //                    MuJoCo; hardware: Mount segment from Vicon, ZOH)
-//   moving_T_base  — the fixed calibration (sim: MountCalibration from the
-//                    model file; hardware: MSeg_T_mount · mount_T_base)
+//   moving_T_base  — the fixed model transform (sim: MountCalibration;
+//                    hardware: mount_T_base, with tracked Mount segment
+//                    currently assumed coincident with model Mount)
 //   T_B_E, J_B     — FK pose and LOCAL_WORLD_ALIGNED Jacobian in base axes
 //   qdot_rad_s     — measured joint velocities
 //   moving_twist_world — the tracked body's world twist (sim: ground
-//                    truth; hardware slice 2: ZERO by the feedback-only
-//                    decision — the transport below then contributes
-//                    nothing, and V_base,E later lands here unchanged)
+//                    truth; hardware: filtered Vicon Mount twist)
 inline WorldArmState
 ArmControllerState(const FramePose& world_T_moving,
                    const FramePose& moving_T_base,

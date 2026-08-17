@@ -1,6 +1,6 @@
 //
-// ViconSource — the acquisition thread that feeds BasePoseSlot (slice 1 of
-// the world-frame work: observe and log only).
+// ViconSource — the acquisition/filter thread that feeds the controller's
+// coherent BasePoseSlot.
 //
 // The seam that keeps the standalone build true: this header names no SDK
 // type, and CMake picks one of two implementations —
@@ -41,7 +41,8 @@ extern const char* const kViconSourceHost;
 
 // Starts acquisition into `slot`, which must outlive the returned object.
 // nullptr means this binary has no Vicon source (stub build) — callers
-// print the reason and continue; nothing else changes.
+// print the reason and continue in zero-error awaiting-world hold. No world
+// trajectory can activate until a fresh sample exists.
 std::unique_ptr<class ViconSource> StartViconSource(BasePoseSlot& slot);
 
 class ViconSource

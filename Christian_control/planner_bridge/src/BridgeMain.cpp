@@ -1,10 +1,12 @@
-#include "BridgeMain.h"
+#include "PlannerRuntime.h"
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <climits>
 #include <cmath>
 #include <iostream>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -17,7 +19,7 @@
 #include "PlannerModel.h"
 #include "PlanSolver.h"
 #include "StartState.h"
-#include "TrajectoryEmit.h"
+#include "WorldTrajectoryProjection.h"
 #include "WorldSdf.h"
 #include "PathFrames.h"
 #include "PathValidation.h"
@@ -26,6 +28,12 @@
 
 namespace {
 
+// The inherited optimizer writes progress to process-global std::cout. Keep
+// concurrent arm workers from redirecting that stream over one another. This
+// mutex is touched only by non-real-time planner calls; the 500 Hz path never
+// waits on it.
+std::mutex g_planner_solve_mutex;
+
 constexpr char kUsageText[] =
     "usage: planner_bridge --arm <right|left>\n"
     "                       [--goal X Y Z | --goal-file PATH]\n"
@@ -33,13 +41,13 @@ constexpr char kUsageText[] =
     "                       [--runs-root PATH] [--dh PATH]\n"
     "                       [--joint-limits PATH]\n"
     "                       [--box CX CY CZ HX HY HZ]\n"
+    "                       [--output world-cartesian]\n"
+    "                       [--world-mount-pose-m-quat PX PY PZ QX QY QZ QW\n"
+    "                        --vicon-sequence N --trajectory-id N]\n"
     "\n"
-    "Output (stdout): one timed joint-trajectory block —\n"
-    "  TRAJ_BEGIN <count>, then <count> rows of\n"
-    "  `<t_s> <q1..q7 deg> <v1..v7 deg/s>`, then TRAJ_END. Times start at\n"
-    "  0 and run to the planned duration. The solver densifies to ~1 kHz,\n"
-    "  more rows than the controller accepts, so the block carries an\n"
-    "  evenly spread subset of at most 1000 of those states.\n"
+    "Output (stdout): one versioned CART_TRAJ world-frame pose/twist block.\n"
+    "GPMP2 remains joint-space internally; planned q/qdot never cross the\n"
+    "controller boundary.\n"
     "\n"
     "  --arm <right|left>     Required — which physical arm this plan is\n"
     "                         for. Selects the default DH file (right:\n"
@@ -102,6 +110,17 @@ constexpr char kUsageText[] =
     "                         SDF grid volume (WorldSdf.h WorldGridBounds())\n"
     "                         or the run is rejected — outside that volume\n"
     "                         gpmp2 silently reports no obstacle.\n"
+    "  --output MODE          Optional compatibility spelling; the only\n"
+    "                         accepted mode is `world-cartesian`, also the\n"
+    "                         default and sole output.\n"
+    "  --world-mount-pose-m-quat PX PY PZ QX QY QZ QW\n"
+    "                         Immutable Vicon T_W_M snapshot: translation in\n"
+    "                         metres and unit quaternion x y z w. Required\n"
+    "                         for every plan.\n"
+    "  --vicon-sequence N     Vicon frame sequence associated with T_W_M.\n"
+    "                         Required for every plan.\n"
+    "  --trajectory-id N      Caller-assigned trajectory identity. Required\n"
+    "                         for every plan.\n"
     "\n"
     "Exit codes: 0 targets emitted (also returned by --help), 1 bad\n"
     "arguments, 2 start-state unavailable, 3 solve failed, 4 validation\n"
@@ -183,6 +202,16 @@ double ParseDouble(const std::string& token) {
     return value;
 }
 
+std::uint64_t ParseUint64(const std::string& token) {
+    std::uint64_t value = 0;
+    const char* const begin = token.data();
+    const char* const end = begin + token.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (token.empty() || result.ec != std::errc() || result.ptr != end)
+        throw std::invalid_argument("not an unsigned integer: '" + token + "'");
+    return value;
+}
+
 struct ParsedArgs {
     std::optional<Eigen::Vector3d> goal;
     // The frame `goal` and `box` were written in, before conversion. Set from
@@ -208,6 +237,9 @@ struct ParsedArgs {
     std::string planner_config_path = DefaultPlannerConfigPath();
     std::string runs_root = DefaultRunsRootPath();
     std::optional<AxisAlignedBox> box;
+    std::optional<Eigen::Isometry3d> world_T_mount;
+    std::optional<std::uint64_t> vicon_sequence;
+    std::optional<std::uint64_t> trajectory_id;
 };
 
 
@@ -215,38 +247,42 @@ struct ParsedArgs {
 // Frame boundary
 // ---------------------------------------------------------------
 //
-// The planner is `mount` INTERNALLY, everywhere: the gpmp2 arm model and the
+// The planner is Vicon `world` internally, everywhere: the gpmp2 arm model and the
 // SDF are paired in one ObstacleSDFFactorArm, so they must share a frame or
 // every collision check is silently wrong — and since PlannerModel builds the
-// arm at DhRootInMount(), that shared frame is mount for both arms. Input
-// written in an arm's base frame is therefore converted here, once, at the
-// edge; input already in mount passes through untouched.
+// arm at DhRootInWorld(), that shared frame is world for both arms. Input
+// written in mount or an arm's base frame is converted here once at the edge;
+// input already in world passes through untouched.
 //
 // The transform comes from the URDF through Pinocchio, never from a constant
 // in this file, so surveying the rig and regenerating the URDF needs no code
-// change. A room frame, when one exists, composes ABOVE mount here
-// (T_room_mount, identity while the rig is bolted down) — mount is rigidly
-// attached to the arm bases and travels with them, so it is NOT that frame.
+// change. Every production and one-shot solve receives an explicit immutable
+// Vicon T_W_M snapshot at this application boundary.
 
 const char* FrameName(config::ReferenceFrame frame) {
     return config::kReferenceFrameNames[static_cast<int>(frame)];
 }
 
 config::ReferenceFrame FrameFromName(const std::string& name) {
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         if (name == config::kReferenceFrameNames[i])
             return static_cast<config::ReferenceFrame>(i);
     throw std::invalid_argument(
-        "unknown frame '" + name + "' (expected mount, right_base or left_base)");
+        "unknown frame '" + name +
+        "' (expected mount, right_base, left_base or world)");
 }
 
-// declared frame -> mount, the one frame everything downstream uses.
-Eigen::Vector3d ToMount(const Eigen::Vector3d& point,
-                        config::ReferenceFrame frame) {
-    if (frame == config::ReferenceFrame::kMount)
+// Declared frame -> Vicon world, the one frame everything downstream uses.
+Eigen::Vector3d ToWorld(const Eigen::Vector3d& point,
+                        config::ReferenceFrame frame,
+                        const Eigen::Isometry3d& world_T_mount) {
+    if (frame == config::ReferenceFrame::kWorld)
         return point;
+    if (frame == config::ReferenceFrame::kMount)
+        return world_T_mount * point;
     const bool declared_left_arm = frame == config::ReferenceFrame::kLeftBase;
-    return pinocchio_kinematics_adapter::MountFromBase(declared_left_arm) * point;
+    return world_T_mount *
+           pinocchio_kinematics_adapter::MountFromBase(declared_left_arm) * point;
 }
 
 // Rotation matrix from roll/pitch/yaw, R = Rz*Ry*Rx — the convention
@@ -265,15 +301,19 @@ Eigen::Vector3d RpyFromRotation(const Eigen::Matrix3d& rotation) {
     return rotation.eulerAngles(2, 1, 0).reverse();  // R = Rz*Ry*Rx
 }
 
-// declared frame -> mount, for an ORIENTATION. Unlike a point (ToMount), a
+// Declared frame -> world, for an ORIENTATION. Unlike a point (ToWorld), a
 // rotation carries no translation, so only the rotational parts compose.
 // Getting this wrong is silent — the goal still looks like a valid rotation.
-Eigen::Matrix3d RotationToMount(const Eigen::Matrix3d& rotation,
-                                config::ReferenceFrame frame) {
-    if (frame == config::ReferenceFrame::kMount)
+Eigen::Matrix3d RotationToWorld(const Eigen::Matrix3d& rotation,
+                                config::ReferenceFrame frame,
+                                const Eigen::Isometry3d& world_T_mount) {
+    if (frame == config::ReferenceFrame::kWorld)
         return rotation;
+    if (frame == config::ReferenceFrame::kMount)
+        return world_T_mount.linear() * rotation;
     const bool declared_left_arm = frame == config::ReferenceFrame::kLeftBase;
-    return pinocchio_kinematics_adapter::MountFromBase(declared_left_arm).linear() *
+    return world_T_mount.linear() *
+           pinocchio_kinematics_adapter::MountFromBase(declared_left_arm).linear() *
            rotation;
 }
 
@@ -455,6 +495,30 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             box.half_extent = Eigen::Vector3d(ParseDouble(next()), ParseDouble(next()),
                                                ParseDouble(next()));
             parsed.box = box;
+        } else if (flag == "--output") {
+            const std::string value = next();
+            if (value != "world-cartesian")
+                throw std::invalid_argument(
+                    "--output must be 'world-cartesian' (got '" +
+                    value + "')");
+        } else if (flag == "--world-mount-pose-m-quat") {
+            std::array<double, 7> pose{};
+            for (double& value : pose)
+                value = ParseDouble(next());
+            Eigen::Quaterniond world_q_mount(pose[6], pose[3], pose[4], pose[5]);
+            if (std::abs(world_q_mount.norm() - 1.0) > 1e-3)
+                throw std::invalid_argument(
+                    "--world-mount-pose-m-quat must contain a unit quaternion");
+            world_q_mount.normalize();
+            Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+            world_T_mount.linear() = world_q_mount.toRotationMatrix();
+            world_T_mount.translation() =
+                Eigen::Vector3d(pose[0], pose[1], pose[2]);
+            parsed.world_T_mount = world_T_mount;
+        } else if (flag == "--vicon-sequence") {
+            parsed.vicon_sequence = ParseUint64(next());
+        } else if (flag == "--trajectory-id") {
+            parsed.trajectory_id = ParseUint64(next());
         } else {
             throw std::invalid_argument("unrecognized flag: '" + flag + "'");
         }
@@ -471,6 +535,15 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
     if (parsed.state_csv && parsed.start_deg)
         throw std::invalid_argument(
             "at most one of --state-csv or --start-deg may be given");
+    if (!parsed.world_T_mount)
+        throw std::invalid_argument(
+            "--world-mount-pose-m-quat is required for world-cartesian output");
+    if (!parsed.vicon_sequence || *parsed.vicon_sequence == 0)
+        throw std::invalid_argument(
+            "--vicon-sequence must be nonzero for world-cartesian output");
+    if (!parsed.trajectory_id || *parsed.trajectory_id == 0)
+        throw std::invalid_argument(
+            "--trajectory-id must be nonzero for world-cartesian output");
     return parsed;
 }
 
@@ -479,7 +552,7 @@ constexpr double kDegToRad = M_PI / 180.0;
 // Redirects std::cout's stream buffer to another stream for the guard's
 // lifetime, restoring the original buffer on destruction — including via
 // an exception unwinding through the guarded scope. Used to keep the
-// legacy optimizer's stdout chatter out of `targets` during the solve
+// legacy optimizer's stdout chatter out of the preview `targets` stream
 // (see the call site below).
 class CoutRedirectGuard {
 public:
@@ -494,12 +567,15 @@ private:
 
 }  // namespace
 
-int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
-              std::ostream& diagnostics) {
+PlannerSolveResult SolveWorldTrajectory(const std::vector<std::string>& args,
+                                        std::ostream& diagnostics) {
+    std::lock_guard<std::mutex> solve_lock(g_planner_solve_mutex);
+    PlannerSolveResult result;
     for (const std::string& arg : args) {
         if (arg == "--help" || arg == "-h") {
             diagnostics << kUsageText;
-            return 0;
+            result.exit_code = 0;
+            return result;
         }
     }
 
@@ -508,17 +584,28 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         parsed = ParseArgs(args);
     } catch (const std::exception& error) {
         diagnostics << "error: " << error.what() << "\n\n" << kUsageText;
-        return 1;
+        result.exit_code = 1;
+        return result;
     }
 
     const bool left_arm = *parsed.left_arm;
+    const Eigen::Isometry3d world_T_mount = *parsed.world_T_mount;
+    const Eigen::Quaterniond world_q_mount(world_T_mount.linear());
+    diagnostics << "planner Vicon sequence: " << *parsed.vicon_sequence << "\n"
+                << "trajectory ID: " << *parsed.trajectory_id << "\n"
+                << "T_W_M position [" << world_T_mount.translation().x() << ", "
+                << world_T_mount.translation().y() << ", "
+                << world_T_mount.translation().z() << "] m, quaternion xyzw ["
+                << world_q_mount.x() << ", " << world_q_mount.y() << ", "
+                << world_q_mount.z() << ", " << world_q_mount.w() << "]\n"
+                << "output frame: WORLD\n";
 
-    // THE frame boundary. Everything below this point is `mount`: the
+    // THE frame boundary. Everything below this point is `world`: the
     // grid-bounds check, the solve, and the SDF all share that one frame.
     const config::ReferenceFrame declared_frame = parsed.frame;
     try {
         if (parsed.goal)
-            parsed.goal = ToMount(*parsed.goal, declared_frame);
+            parsed.goal = ToWorld(*parsed.goal, declared_frame, world_T_mount);
         if (parsed.box) {
             // A box declared in an arm's base frame is axis-aligned THERE,
             // and the arm bases are rolled ~69 deg from mount, so the rotated
@@ -528,17 +615,25 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
             // smaller, which is the safe direction for obstacle avoidance.
             // The inflation is printed rather than applied quietly.
             const Eigen::Vector3d requested_half = parsed.box->half_extent;
-            parsed.box->center = ToMount(parsed.box->center, declared_frame);
-            if (parsed.goal && declared_frame != config::ReferenceFrame::kMount) {
-                const bool declared_left = declared_frame == config::ReferenceFrame::kLeftBase;
-                const Eigen::Matrix3d mount_R_declared =
-                    pinocchio_kinematics_adapter::MountFromBase(declared_left).linear();
+            parsed.box->center =
+                ToWorld(parsed.box->center, declared_frame, world_T_mount);
+            if (declared_frame != config::ReferenceFrame::kWorld) {
+                Eigen::Matrix3d world_R_declared = world_T_mount.linear();
+                if (declared_frame == config::ReferenceFrame::kRightBase ||
+                    declared_frame == config::ReferenceFrame::kLeftBase) {
+                    const bool declared_left =
+                        declared_frame == config::ReferenceFrame::kLeftBase;
+                    world_R_declared *=
+                        pinocchio_kinematics_adapter::MountFromBase(declared_left)
+                            .linear();
+                }
                 // Enclosing AABB of a rotated box: |R| * half_extent, the
                 // standard result (each mount axis picks up every declared
                 // axis in proportion to |cos| of the angle between them).
-                parsed.box->half_extent = mount_R_declared.cwiseAbs() * requested_half;
+                parsed.box->half_extent =
+                    world_R_declared.cwiseAbs() * requested_half;
                 diagnostics << "obstacle box: " << FrameName(declared_frame) << " -> "
-                            << FrameName(config::ReferenceFrame::kMount)
+                            << FrameName(config::ReferenceFrame::kWorld)
                             << "; half-extent inflated to the enclosing axis-aligned "
                             << "box, [" << requested_half.x() << ", " << requested_half.y()
                             << ", " << requested_half.z() << "] -> ["
@@ -549,7 +644,8 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         }
     } catch (const std::exception& error) {
         diagnostics << "error: " << error.what() << "\n";
-        return 1;
+        result.exit_code = 1;
+        return result;
     }
     // Printed on every POINT-GOAL run, not only when a conversion happened:
     // the goal the planner will actually aim at, in the one frame everything
@@ -558,20 +654,22 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     if (parsed.goal) {
         diagnostics << "goal: [" << parsed.goal->x() << ", " << parsed.goal->y() << ", "
                     << parsed.goal->z() << "] m in "
-                    << FrameName(config::ReferenceFrame::kMount);
-        if (declared_frame != config::ReferenceFrame::kMount)
+                    << FrameName(config::ReferenceFrame::kWorld);
+        if (declared_frame != config::ReferenceFrame::kWorld)
             diagnostics << " (converted from " << FrameName(declared_frame) << ")";
         diagnostics << "\n";
     }
 
     if (parsed.box) {
-        const GridBounds bounds = WorldGridBounds();
+        const GridBounds bounds =
+            WorldGridBounds(WorldGridGeometry(world_T_mount));
         if (!BoxWithinGridBounds(*parsed.box, bounds)) {
             diagnostics << "error: obstacle box extends outside the SDF grid volume ("
-                        << DescribeGridBounds(bounds) << ", mount frame); gpmp2 reports "
+                        << DescribeGridBounds(bounds) << ", world frame); gpmp2 reports "
                         << "no obstacle for out-of-grid queries, so this box "
                         << "cannot be honoured\n";
-            return 1;
+            result.exit_code = 1;
+            return result;
         }
     }
 
@@ -598,7 +696,8 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
                             << "(--arm " << (left_arm ? "left" : "right")
                             << ") first (it creates the log), or pass "
                             << "--state-csv/--start-deg\n";
-                return 2;
+                result.exit_code = 2;
+                return result;
             }
             state_csv = *found;
         }
@@ -607,7 +706,8 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
             ReadLatestMeasuredQ(state_csv, error);
         if (!q) {
             diagnostics << "error: start state unavailable: " << error << "\n";
-            return 2;
+            result.exit_code = 2;
+            return result;
         }
         q_start_rad = *q;
     }
@@ -617,29 +717,30 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     try {
         // Same reason as the solve below: constructing the model builds a
         // Dynamics, and anything the Pinocchio/legacy stack prints to
-        // std::cout here would land in the target pipe, because this
-        // binary's stdout IS that pipe. The guard cannot simply wrap all of
-        // RunBridge — `targets` is std::cout in the real binary, so the
-        // final block write must happen with std::cout restored.
+        // std::cout here would corrupt the standalone preview stream. The
+        // final block is written only after the guard restores std::cout.
         const CoutRedirectGuard cout_guard(diagnostics);
         // has_tool = !left_arm: the right chain ends at the mounted tool,
         // the left chain at a bare flange (GenerateArmModel.h has_tool).
-        model = LoadPlannerModel(dh_path, /*has_tool=*/!left_arm);
+        model = LoadPlannerModel(dh_path, /*has_tool=*/!left_arm,
+                                 world_T_mount);
     } catch (const std::exception& error) {
         diagnostics << "error: solve failed: could not load planner model from "
                     << dh_path << ": " << error.what() << "\n";
-        return 3;
+        result.exit_code = 3;
+        return result;
     }
 
     // Loaded before the solve and echoed whole, so a session log records
     // the tuning that produced its trajectory. A bad key fails here, with
-    // the arm still holding at start and nothing written to the pipe.
+    // the arm still holding at start and nothing written to the preview.
     PlannerConfig planner_config;
     try {
         planner_config = LoadPlannerConfig(parsed.planner_config_path);
     } catch (const std::exception& error) {
         diagnostics << "error: " << error.what() << "\n";
-        return 1;
+        result.exit_code = 1;
+        return result;
     }
     diagnostics << EffectiveConfigText(planner_config);
 
@@ -659,31 +760,33 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
 
         CartesianPath task_path;
         try {
-            task_path = PathToMount(GenerateCircle(circle));
+            task_path = PathToWorld(GenerateCircle(circle), world_T_mount);
         } catch (const std::exception& error) {
             diagnostics << "error: " << error.what() << "\n";
-            return 1;
+            result.exit_code = 1;
+            return result;
         }
         diagnostics << "path: circle, radius " << circle.radius_m << " m, "
                     << circle.samples << " samples (chord error <= "
                     << planner_config.path_following.max_chord_error_m * 1000.0
                     << " mm), lap " << circle.duration_s << " s, declared in "
                     << FrameName(declared_frame) << " -> "
-                    << FrameName(config::ReferenceFrame::kMount) << "\n";
+                    << FrameName(config::ReferenceFrame::kWorld) << "\n";
 
         ValidationInputs validation;
         validation.circle_applicable = true;
-        validation.circle_centre = PoseToMount(
+        validation.circle_centre = PoseToWorld(
             Eigen::Isometry3d(Eigen::Translation3d(circle.centre_m)),
-            declared_frame).translation();
+            declared_frame, world_T_mount).translation();
         validation.circle_normal =
-            PoseToMount(Eigen::Isometry3d(Eigen::Quaterniond::Identity()),
-                        declared_frame).linear() * circle.normal.normalized();
+            PoseToWorld(Eigen::Isometry3d(Eigen::Quaterniond::Identity()),
+                        declared_frame, world_T_mount).linear() *
+            circle.normal.normalized();
         validation.circle_radius_m = circle.radius_m;
 
         // The legacy optimiser prints progress straight to std::cout, and in
-        // the real binary std::cout IS the target pipe (main.cpp), read by
-        // the controller as wire input. Guarding the solve is not optional:
+        // the standalone binary's stdout is the preview stream. Guarding the
+        // solve is not optional:
         // without it "Creating arm trajectory..." is the first line of the
         // emitted block (observed 2026-08-07).
         PathPlanOutcome plan;
@@ -695,7 +798,8 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         }
         if (!plan.ok) {
             diagnostics << "error: solve failed: " << plan.error << "\n";
-            return 3;
+            result.exit_code = 3;
+            return result;
         }
 
         diagnostics << "continuation IK: largest joint step "
@@ -716,13 +820,27 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
             // this trajectory should not reach the arm.
             diagnostics << "error: plan rejected — one or more validity checks "
                            "failed (see the report above). Nothing was emitted.\n";
-            return 4;
+            result.exit_code = 4;
+            return result;
         }
-        targets << plan.emitted_block;
+        try {
+            WorldCartesianTrajectory projected = ProjectWorldTrajectory(
+                model, plan.result.trajectory_pos, plan.result.trajectory_vel,
+                plan.total_time_sec, *parsed.trajectory_id,
+                *parsed.vicon_sequence);
+            result.trajectory =
+                std::make_unique<WorldCartesianTrajectory>(std::move(projected));
+        } catch (const std::exception& error) {
+            diagnostics << "error: plan rejected: " << error.what() << "\n";
+            result.exit_code = 4;
+            return result;
+        }
         diagnostics << "arm: " << (left_arm ? "left" : "right")
-                    << ", traced circle emitted, duration " << plan.total_time_sec
-                    << " s\n";
-        return 0;
+                    << ", traced circle emitted, trajectory points: "
+                    << result.trajectory->points.size() << ", duration "
+                    << plan.total_time_sec << " s\n";
+        result.exit_code = 0;
+        return result;
     }
 
     PlanRequest request;
@@ -731,16 +849,17 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     request.obstacle = parsed.box;
     if (parsed.goal_rpy_rad) {
         request.goal_rotation =
-            RotationToMount(RotationFromRpy(*parsed.goal_rpy_rad), declared_frame);
+            RotationToWorld(RotationFromRpy(*parsed.goal_rpy_rad), declared_frame,
+                            world_T_mount);
         // Echoed in mount, like the goal position above — reporting one in
         // the declared frame and the other post-conversion put two frames in
         // one block and made them impossible to compare.
-        const Eigen::Vector3d rpy_mount = RpyFromRotation(*request.goal_rotation);
-        diagnostics << "goal orientation: explicit, rpy [" << rpy_mount.x() * 180.0 / M_PI
-                    << ", " << rpy_mount.y() * 180.0 / M_PI << ", "
-                    << rpy_mount.z() * 180.0 / M_PI << "] deg in "
-                    << FrameName(config::ReferenceFrame::kMount);
-        if (declared_frame != config::ReferenceFrame::kMount)
+        const Eigen::Vector3d rpy_world = RpyFromRotation(*request.goal_rotation);
+        diagnostics << "goal orientation: explicit, rpy [" << rpy_world.x() * 180.0 / M_PI
+                    << ", " << rpy_world.y() * 180.0 / M_PI << ", "
+                    << rpy_world.z() * 180.0 / M_PI << "] deg in "
+                    << FrameName(config::ReferenceFrame::kWorld);
+        if (declared_frame != config::ReferenceFrame::kWorld)
             diagnostics << " (converted from " << FrameName(declared_frame) << ")";
         diagnostics << "\n";
     } else {
@@ -756,9 +875,7 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
     }
 
     // The legacy optimizer prints its own progress chatter straight to
-    // std::cout. In the real binary `targets` IS std::cout (see main.cpp),
-    // piped directly into the controller's stdin over the operator FIFO,
-    // so that chatter must never reach it. Redirect std::cout into
+    // std::cout. Redirect std::cout into
     // `diagnostics` for the duration of the solve; the guard restores it
     // on scope exit, including if an exception unwinds through here.
     PlanOutcome outcome;
@@ -770,7 +887,8 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
 
     if (!outcome.ok) {
         diagnostics << "error: solve failed: " << outcome.error << "\n";
-        return 3;
+        result.exit_code = 3;
+        return result;
     }
 
     // How the optimiser's starting sketch was built. Reported HERE, before
@@ -810,30 +928,28 @@ int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
         ValidateJointPath(outcome.result.trajectory_pos);
     if (validation_error) {
         diagnostics << "error: plan rejected: " << *validation_error << "\n";
-        return 4;
+        result.exit_code = 4;
+        return result;
     }
 
-    // Buffer everything and write to `targets` only once validation has
-    // fully passed, so no non-zero exit path can leave partial output
-    // there.
-    std::ostringstream buffered_targets;
-    std::size_t emitted_count = 0;
     try {
-        buffered_targets << FormatTrajectoryBlock(outcome.result.trajectory_pos,
-                                                  outcome.result.trajectory_vel,
-                                                  outcome.total_time_sec);
+        WorldCartesianTrajectory projected = ProjectWorldTrajectory(
+            model, outcome.result.trajectory_pos,
+            outcome.result.trajectory_vel, outcome.total_time_sec,
+            *parsed.trajectory_id, *parsed.vicon_sequence);
+        result.trajectory =
+            std::make_unique<WorldCartesianTrajectory>(std::move(projected));
     } catch (const std::exception& error) {
         diagnostics << "error: plan rejected: " << error.what() << "\n";
-        return 4;
+        result.exit_code = 4;
+        return result;
     }
-    emitted_count = std::min(outcome.result.trajectory_pos.size(),
-                             kMaxTrajectoryBlockPoints);
-    targets << buffered_targets.str();
 
     diagnostics << "arm: " << (left_arm ? "left" : "right")
-                << ", trajectory points: " << emitted_count
+                << ", trajectory points: " << result.trajectory->points.size()
                 << ", solve: " << outcome.result.optimization_duration.count()
                 << " ms, final goal error: " << (outcome.final_goal_error_m * 1000.0)
                 << " mm\n";
-    return 0;
+    result.exit_code = 0;
+    return result;
 }
