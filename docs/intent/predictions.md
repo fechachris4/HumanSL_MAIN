@@ -192,7 +192,7 @@ it is the only option that keeps the speed he just chose AND the accuracy,
 and his pattern all day has been capability first. Second guess: he asks
 for anchor + qc_scale combined.
 
-**Actual:** (pending)
+**Actual:** the ×10 tighter goal anchor. **Hit.**
 
 ### 2026-08-13 — scoping questions for "controller logs world pose"
 
@@ -331,3 +331,104 @@ beside it. Engineering answer recorded in the design: respect both
 choices, shape the risk — ramp-in on engage, divergence latch that
 degrades to joint hold. Predict future gate questions from "he gates
 with his hands, not with process".
+
+### 2026-08-13 — world-hold first run: gains and authorization
+
+**Predicted:** authorized, and at CURRENT gains (Kp=10) rather than a
+lowered first pass — every gate question today resolved the same way:
+he gates with his hands and the e-stop, not with extra steps, and the
+ramp + authority-scaled latch exist precisely so the first engage is
+survivable at full gains. The spec's low-gain step was my framing.
+
+**Actual:** authorized at current gains.
+
+**Result:** hit — the "gates with his hands" model holds.
+
+### 2026-08-13 — re-authorization after the engage fix
+
+**Predicted:** immediate yes — same session, same conditions, he watched
+the whole find-fix-test cycle and the demo is the thing he has been
+driving toward for nine hours.
+
+**Actual:** run it.
+
+**Result:** hit.
+
+### 2026-08-13 — plot viewer: tab placement and generation model
+
+**Predicted:** (1) Placement: a card inside the existing RUNS tab, not a
+new top-level tab — the panel's own precedent (diagnostics lives inside
+SESSION, not its own tab) plus his general minimalism on panel surface
+(rejected a speculative accel table earlier this project) both point
+the same way. (2) Generation: synchronous with a timeout, matching
+plan.py's solve() pattern, not a new background+poll mechanism — CLAUDE.md
+explicitly says no new registries/managers, and a second async pattern
+duplicating build.py's for a feature this small would be exactly that
+kind of unjustified abstraction.
+
+**Actual:** (1) new top-level PLOTS tab. (2) synchronous with a timeout.
+
+**Result:** miss, hit. The miss: he wants a dedicated, visible surface for
+analysis rather than folding it into an existing tab as a card — debugging
+plots is enough of its own activity to deserve first-class navigation, not
+a precedent match to diagnostics-as-card. Update the model: not everything
+new is a card by default; ask when the feature is a distinct WORKFLOW
+(generate-and-inspect) rather than a fact display bolted onto existing
+context.
+
+### 2026-08-14 — audit update: file target and architecture.md
+
+**Predicted:** nothing — process miss. The question (where the updated
+architecture/debugging audit should live, and whether to refresh
+docs/architecture.md) was asked before a prediction was written here.
+No prediction is backfilled; one written after seeing the answer would
+be worthless.
+
+**Actual:** (1) not a fresh repo filename — he pointed at the existing
+published artifact ("You previously created an artifact with something
+like this. Can you check it?"), i.e. the Gen3 Command Path page is the
+thing to bring current. (2) architecture.md table refresh: yes,
+recommended option.
+
+**Result:** unscored for (1) by the miss above. Model note anyway: he
+tracks deliverables he already has and prefers updating them in place
+over new parallel documents — check the artifact list before proposing
+a new file.
+
+### 2026-08-14 — which Vicon recordings to make for the weekend
+
+**Predicted:** nothing — process miss. The question (which of four
+candidate recordings he could make at the rig tonight) was asked before a
+prediction was written here. Not backfilled; one written after seeing the
+answer would be worthless.
+
+**Actual:** wearer motion, occlusion test, and handheld rigid motion — all
+three of the ones needing only the torso cluster. Declined the fourth,
+torso-plus-mount, which required re-adding the arm subject in Nexus.
+
+**Result:** unscored. Model note anyway: with limited lab time he takes
+everything that needs no reconfiguration and drops the one item gated on
+changing the Nexus setup, even though that item answers a longer-standing
+open question (mount-plate rigidity). Time at the rig is the binding
+constraint, not the value of the measurement.
+
+### 2026-08-17 — alignment questions for the Christian_control refactor goal
+
+**Predicted:** nothing — process miss. Four alignment questions (relation
+to the in-flight execution-twin work, how to create the separate working
+folder, scope boundary, audit depth) were asked before a prediction was
+written here. Not backfilled.
+
+**Actual:** (1) finish Plan 02 first, then audit — not the recommended
+pause-and-refactor-now; (2) plain directory copy, not the recommended
+checkpoint-commit-plus-worktree; (3) Christian_control plus its entry
+points (recommended); (4) thorough audit with committed docs
+(recommended).
+
+**Result:** unscored, but two of four answers rejected the recommended
+option, which is information: (1) he treats the working humansl_sim as a
+prerequisite baseline for the refactor, not competing work — the sim is
+his reference implementation and he wants it standing before anything is
+reorganized around it; (2) he prefers a plain copy over git plumbing for
+the sandbox — simpler mental model, no checkpoint commit forced onto his
+branch before he has approved anything.

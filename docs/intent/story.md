@@ -194,6 +194,14 @@ commit.
   acquisition+logging+panel with no control change and explicit exit
   criteria; slice 2 the pose-only world hold behind its own design gate.
   (Prompt: raw-prompt-log 2026-08-13 17:26; answers same hour.)
+  *Status, 2026-08-13 evening:* slice 2 was approved ("go ahead", 19:10:58),
+  committed and taken to hardware ("commit slice 2 and lets run it",
+  19:42:41). The first run exposed a dispatch gap — production always
+  carries a joint reference, so the hold was unreachable — fixed the same
+  night as `02348ecc` (world hold engages through the idle joint hold);
+  a re-run was authorized after the fix (interactive answer "run it",
+  recorded in docs/intent/predictions.md the same date). Three format-11
+  run logs from 19:45–19:52 are the evidence on disk.
 - The simulation is the reference implementation of world-frame
   control, not an estimate: "You're treating world hold as a new control
   problem, but it isn't." Hardware work maps msc_project's implementation
@@ -221,6 +229,44 @@ commit.
   mount-rigidity experiment gains a second purpose: measuring
   mount-vs-torso flex. (Interactive answer, 2026-08-13 ~16:30, to a
   direct frame question; his notation table names T throughout.)
+- Debugging happens inside the panel: the run-evidence plots are generated
+  and viewed from the browser, per run, "so I can debug within the UI"
+  (his words). The sequence was: he asked what graphs the project needs
+  (19:56:53, 19:59:42), approved building the plotting scripts (20:02:35),
+  then asked for them in the UI — twice, nearly verbatim (20:12:25,
+  20:41:20) — which reads as emphasis, not accident. Built the same
+  evening as the panel's PLOTS tab plus plot_world_hold.py (uncommitted,
+  2026-08-13). Consistent with the earlier one-live-chain choice: the
+  panel reads what the controller logged, it computes nothing of its own.
+  (Prompts: raw-prompt-log 2026-08-13 19:56:53 through 20:41:20.)
+- A reusable Vicon recording exists for testing: "can you record vicon
+  data for 30 seconds so i can reuse for testing" (20:46:48). Recorded
+  goal: a short captured stream that tests can replay offline, so Vicon
+  code is exercisable without the lab. My reading of how this coexists
+  with the "live stream only, no captures" supersession of 2026-08-13
+  ~16:40: that decision removed captures as the *calibration data path*;
+  this is a *test fixture*, which the recorder was explicitly kept for
+  ("tested, and useful for synthetic tests") — not a reversal. If that
+  reading is wrong, the supersession entry needs revisiting instead.
+  (Prompt: raw-prompt-log 2026-08-13 20:46:48.)
+- The written record of the system describes the current implementation,
+  not the historical one. Commissioned 2026-08-14 in detail: current
+  verified architecture, a gate/limit/stop inventory, the observability
+  surface, and a worked read-only debugging method with a
+  dissertation-ready causal template — with three standing rules in his
+  own framing: historical audits are preserved as evidence, never
+  silently overwritten or reinterpreted; source evidence stays separate
+  from assumptions and from physical-robot proof; and nothing
+  robot-facing runs for documentation work. Existing published artifacts
+  are updated in place rather than duplicated — asked where a new audit
+  file should live, he redirected to the artifact he already had ("You
+  previously created an artifact with something like this. Can you check
+  it?"), then extended the same treatment to the second one ("update the
+  architecture map artifact too"). Delivered 2026-08-14:
+  docs/architecture_and_debugging_audit.md, a refreshed
+  docs/architecture.md, and both artifacts brought to HEAD 02348ecc.
+  (Prompts: raw-prompt-log 2026-08-14 13:06:50/13:07:06, 13:57:40;
+  redirect recorded in docs/intent/predictions.md 2026-08-14.)
 - Working mode, standing: equations before code, always. Every
   control-behaviour change is presented first as the equation that
   changes, in his notation, then as the code diff realising it, with a
@@ -229,6 +275,55 @@ commit.
   changes" without the math — the math is how he audits the work and how
   the thesis gets written. (Prompt: raw-prompt-log 2026-08-13 16:25;
   interactive answer same turn.)
+- The final planner/controller architecture has one production world-frame
+  Cartesian pose/twist controller. GPMP2 remains internally joint-space and
+  unchanged, but the world-aware planner application uses a fresh
+  `world_T_mount` snapshot and densely projects its final validated
+  `q(t), qdot(t)` through world FK and `J qdot`; only timed world-frame
+  end-effector pose/twist, frame, timing, and Vicon provenance cross the
+  boundary. No planned joint posture crosses it. The controller follows the
+  existing Python simulation law exactly: filtered measured Mount twist is
+  transported into measured end-effector world twist, while planned twist
+  appears through Cartesian twist error, with no separate base-motion
+  feedforward term. Planning remains asynchronous and outside 500 Hz; newer
+  requests coalesce, valid old references remain until atomic replacement,
+  and brief/prolonged Vicon loss pauses or cancels/re-anchors explicitly.
+  The existing Kinova safety/actuation path remains common. Christian's why:
+  two production controllers are difficult to explain when the intended
+  system behaviour is one world-frame Cartesian objective. Design approved
+  2026-08-15; spec at
+  docs/superpowers/specs/2026-08-15-world-cartesian-planner-controller-design.md.
+  Implemented in the approved working-tree migration on 2026-08-16 and
+  verified only with hardware-free builds/tests; physical world tracking,
+  dropout tuning, calibration, and person-nearby safety remain unproven.
+  (Prompts and interactive approvals: session transcript, 2026-08-15 through
+  2026-08-16.)
+- HumanSL has one dual-arm simulation execution twin inside `HumanSL_MAIN` so
+  planner/controller ideas can be tested interactively before hardware. It
+  shares the exact hardware-independent C++ execution core with production:
+  world measurement, Cartesian reference handling and law, generic software
+  safety, limits, position integration, and telemetry semantics. A separate
+  `humansl_sim` target can never connect to Kortex; MuJoCo and simulated Vicon
+  replace only the hardware boundaries. Scope includes the full GPMP2-to-world
+  Cartesian pipeline, atomic dual-arm activation, mid-run replanning, exact
+  HumanSL frames/TCPs, 500 Hz control, switchable ideal or 100 Hz realistic
+  Vicon, scripted Mount motion, panel integration, parity/experiment tuning,
+  and optional shared obstacles disabled by default. Generic actuator dynamics
+  are accepted; Kinova firmware emulation, functional grippers, recorded/manual
+  Mount motion, and claims of physical proof are excluded. The existing Python
+  simulation remains an independent comparison implementation. Sharing the
+  execution core necessarily refactors the hardware executable: pre-extraction
+  trace characterization and post-extraction replay equivalence are gates, and
+  "hardware parity" means code/configuration parity only until a separately
+  authorized physical revalidation. The pose/twist-only boundary remains
+  binding after review: planned GPMP2 posture does not cross, so planned
+  collision/inter-arm clearance is planner-path evidence while executed
+  clearance is monitored in simulation, never claimed as guaranteed.
+  Christian's why: he needs to see whether ideas he implements work correctly
+  in simulation before taking them to hardware. Design approved interactively
+  and review correction confirmed on 2026-08-16; spec at
+  docs/superpowers/specs/2026-08-16-humansl-execution-twin-design.md.
+  (Prompts and interactive approvals: session transcript, 2026-08-16.)
 
 ## Interpretations (hypotheses)
 
@@ -246,6 +341,17 @@ commit.
   whys — tracking the wearer, characterising the platform, and demo
   credibility — so "refuted" was itself too strong: tracking is among the
   reasons, it is just not the only one. The pattern note above stands.
+- **The 2026-08-14 audit request is preparation for a tuning day, plus
+  thesis defence.** Likely because: the world-hold work of 2026-08-13
+  inverted the two headline facts of every existing architecture document
+  within twenty-four hours (the "dead" Cartesian channel went live, "no
+  world-frame feedback" became a wired Vicon path), a dozen code comments
+  and the operator-facing startup print still said the opposite, and the
+  next session is log-driven tuning (the Day 301 video, 20:40:42) — so
+  stale documentation was about to be actively misleading during hardware
+  work. The dissertation-template deliverable points the same way: he must
+  defend every diagnosis in the report. Awaiting confirmation. (Prompts:
+  raw-prompt-log 2026-08-14 13:06:50; 2026-08-13 20:40:42.)
 - **The frustration at 14:56:57 and 14:59:04 was about process that
   produced nothing, not about process as such.** In the same session a
   one-line question ("why are there such bounds") drew a fifteen-agent
@@ -314,6 +420,22 @@ system's guardrails are what they are is never lost, only superseded.
   Anyone reading git history should read that revert as "wrong boundary
   corrected", never "goal dropped" — for the thesis it is the
   found-and-fixed part of the story.
+- **Joint trajectory as the planner/controller boundary, 2026-08-12
+  rollback through 2026-08-15.** The rollback correctly removed a
+  controller-side conversion carrying joint posture, and the repository then
+  retained `q_ref(t), qdot_ref(t)` as the production boundary. Superseded by
+  Christian's 2026-08-15 approval: GPMP2 may retain joints internally, but the
+  planner application now owns dense world FK/Jacobian projection and exposes
+  only timed world end-effector pose/twist. The old reason survives — keep
+  conversion on the planner side and do not smuggle posture into control —
+  while the boundary type changes.
+- **Feedback-only world hold with zero measured base twist, 2026-08-13.**
+  This was deliberately the first hardware slice for establishing world pose.
+  Superseded for the final architecture on 2026-08-15: measured Mount velocity
+  is now required to calculate measured end-effector world twist accurately.
+  This is not a separate explicit feedforward term; it is the same measured
+  twist construction used by Christian's Python simulation. Planned twist
+  enters through twist error only.
 - **Mechanical steward reminders, 2026-08-13.** Prior decision
   (2026-08-12, Exposure log below): a per-prompt steward reminder injected
   by hook was dismissed with "CLAUDE.md is enough". That dismissal named
@@ -332,27 +454,31 @@ system's guardrails are what they are is never lost, only superseded.
 Unconfirmed whys and ambiguities, ranked by (chance I'm wrong) x (cost if
 wrong). Proceeding on anything listed here must be said out loud.
 
-- **`min_duration_s` blocks the confirmed goal, and nobody has decided
-  what to do about it.** With the 4.0 s floor, a 90 degree joint move
-  peaks near 22 deg/s — so the arm cannot approach 79.64 deg/s however
-  high the velocity clip is set. Demonstrating full capability therefore
-  needs the floor lowered, not just the clip raised, and a short fast move
-  is a different hardware risk from a long slow one. Ranked highest here
-  because the goal is confirmed while the means to it is not, which is
-  exactly the state that invites someone to act without asking.
-- **Does Christian want the commanded clip raised now, and to what?** It
-  sits at 50 deg/s (raised from 45 in the working tree, uncommitted)
-  against live hard limits of 80.0021 and 70.004 deg/s.
-  `qdot-limit-raise.md` says raising it back toward the table limits "is a
-  deliberate decision, not a cleanup", and its safety note asks for small
-  nearby targets and an e-stop in hand on the first runs after. Asking
-  costs one question; guessing wrong moves a real arm faster.
-- **Should `motion.min_duration_s` change?** At 4.0 s it, not
-  `nominal_speed_mps`, is what actually paces every reachable
-  point-to-point move: the distance term only exceeds the floor beyond
-  1.0 m at the current 0.25 m/s cap. Christian asked about the speed knob
-  he had found; he may not know it is inert at that setting. Recorded here
-  rather than acted on because it is a motion-path behaviour change.
+- ~~**`min_duration_s` blocks the confirmed goal**~~ / ~~**Does Christian
+  want the commanded clip raised now?**~~ / ~~**Should
+  `motion.min_duration_s` change?**~~ **Resolved 2026-08-13** by the
+  limits decision already recorded under Approved goals (~15:32/15:35):
+  the working tree now carries the clip at 76.0/66.5 deg/s (95% of the
+  live hard limits), `min_duration_s` at 1.0 s (down from 4.0), and the
+  planner's velocity table raised to match, with the per-joint validator
+  fix that the split limits made necessary
+  (Christian_control/docs/motion-limits-map.md, "Applied" section, and
+  docs/decisions/qdot-limit-raise.md as modified in the working tree).
+  Residue worth keeping: all of it is **uncommitted**, and every built
+  `controller` binary predates it — so the decision is not on the robot
+  until a rebuild, and `qdot-limit-raise.md`'s safety note (small nearby
+  targets, e-stop in hand) applies to the first runs after.
+
+- **What does the "Day 301 decreasing test" video test?** Recorded on the
+  Vicon PC on 2026-08-13 evening "so I can basically tune it tomorrow"
+  (20:40:42, 20:44:26) — but what "it" is (which behaviour the video
+  captures, and which parameter gets tuned from it) was never stated.
+  Cheap to ask at the start of the tuning session; guessing wrong wastes
+  the recording.
+- **Was the 30 s Vicon test recording actually captured, and is it the
+  blessed fixture?** The request (20:46:48) came at session end; the vicon
+  build tree shows output activity at 20:47, but no recording has been
+  confirmed as the standing test input.
 
 ## Examples
 
@@ -412,3 +538,48 @@ and why. Dismissals are binding — do not re-pitch.
   the minimal surface) versus all five segments — all five adopted, on the
   grounds that an unused control is clutter but an unrecorded segment is
   lost thesis evidence.
+- 2026-08-15 (single-controller architecture): considered (1) retaining the
+  joint-trajectory controller beside Cartesian hold, (2) exporting world
+  Cartesian pose/twist from the planner application while GPMP2 remains
+  internally joint-space, and (3) changing the planning problem to operate
+  directly in world coordinates. Adopted a combination of (2) and a
+  world-aware planner application: a fresh `world_T_mount` snapshot makes the
+  solve and export world-consistent, without changing GPMP2 internals.
+  Dismissed retaining two production controllers because it obscures the one
+  Cartesian system objective.
+- 2026-08-15 (base motion and redundancy): adopted the Python simulation's
+  measured-world-twist construction using filtered Mount translation and
+  rotation; dismissed a separate explicit base-twist feedforward term.
+  Considered an offline resolved-rate rollout validator to check whether the
+  posture actually executed from Cartesian references preserves the planned
+  collision clearance. Dismissed from this migration: Christian accepted the
+  limitation that a pose/twist-only boundary cannot guarantee GPMP2's 7-DoF
+  joint branch, while retaining null-space joint-limit avoidance and honest
+  documentation of that limitation.
+- 2026-08-16 (execution twin): considered (1) a shared hardware-independent
+  execution kernel with explicit Kortex/Vicon and MuJoCo/simulated-Vicon
+  adapters, (2) fake Kortex and Vicon devices around the hardware executable,
+  and (3) a separate simulation runner sharing only controller components.
+  Adopted (1) because it shares the behaviours under test while keeping the
+  simulation physically separate from robot I/O. Dismissed (2) because
+  protocol/firmware emulation is costly and misleading, and (3) because timing,
+  reference, safety, and integration logic would drift.
+- 2026-08-16 (simulation scope): adopted full dual-arm GPMP2 integration,
+  exact HumanSL frame/TCP parity, switchable ideal and 100 Hz realistic Vicon,
+  scripted repeatable Mount motion, asynchronous replanning, full panel
+  integration, and explicit hardware-parity/experiment modes. Shared obstacle
+  support is included but defaults off. Dismissed for this version: identified
+  Kinova actuator dynamics, firmware acknowledgement emulation, functional
+  grippers/object manipulation, recorded Vicon replay, and manual Mount motion.
+- 2026-08-16 (external spec review): the review exposed that extracting a
+  shared core is also a hardware refactor, generic MuJoCo tracking metrics do
+  not predict Kinova performance, live asynchronous planner completion cannot
+  drive deterministic thresholds, and long world holds can become infeasible.
+  Adopted trace-replay gating, explicit pending hardware revalidation,
+  physics-substep freedom under a fixed 2 ms control period, deterministic
+  planner-output injection for numeric acceptance, and explicit hold-stop and
+  Vicon-noise semantics. Considered passing GPMP2 `q(t)` as a low-priority
+  null-space posture bias. Christian explicitly kept the pose/twist-only
+  boundary; therefore planned clearance is labelled planner-path evidence and
+  executed clearance is monitored rather than guaranteed. (Pasted review and
+  interactive choice, session transcript 2026-08-16.)

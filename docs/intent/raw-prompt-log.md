@@ -1004,3 +1004,3538 @@ ok lets go ahead with the hold slice
 look at the msc project as reference because i used it tfor the way to control and improve my my ideas so those should give rough estimates of what i want but yh. You're treating world hold as a new control problem, but it isn't. The simulation already contains the working reference implementation of the world-frame controller and has already validated the frame maths under base motion. Before finalising this hardware design, inspect the simulation implementation and use it as the source of truth. Trace exactly how the simulation constructs the world/base/EE transforms, computes the desired world pose, position/orientation errors, transforms those quantities for the Jacobian/controller, and handles base translation/rotation. Then map that implementation onto hardware rather than re-deriving an alternative architecture.
 
 The new hardware work should be limited to the things simulation did not need: obtaining the equivalent world_T_B from Vicon, establishing the fixed relationship between the Vicon Mount frame and the model's mount/base frame if one exists, handling the 100 Hz Vicon versus 500 Hz controller rate, Vicon validity/staleness/dropout behaviour, and arbitration between world hold and trajectory/planner references. Show me a side-by-side mapping of simulation component → hardware equivalent → genuinely new hardware logic, and call out anywhere the proposed hardware maths differs from the simulation. If there is no reason for a difference, reuse the simulation convention rather than introducing a new one.
+
+## 2026-08-13 19:10:58 BST
+
+go ahead
+
+## 2026-08-13 19:42:41 BST
+
+commit slice 2 and lets run it
+
+## 2026-08-13 19:54:43 BST
+
+what has been implemented
+
+## 2026-08-13 19:55:03 BST
+
+what has been implemented
+
+## 2026-08-13 19:56:53 BST
+
+what graphs should i have or need
+
+## 2026-08-13 19:59:42 BST
+
+what graphs should i have or need
+
+## 2026-08-13 20:02:35 BST
+
+go ahead and build the plotting scripts
+
+## 2026-08-13 20:12:25 BST
+
+there should be a way to see all the plotting scripts in the UI, so I can basically generate or like see them live in the UI, so I can debug within the UI.
+
+## 2026-08-13 20:33:58 BST
+
+&lt;&lt;autonomous-loop-dynamic&gt;&gt;
+
+## 2026-08-13 20:40:42 BST
+
+continue I've recorded a video offline called Day 301 decreasing test, so I can basically tune it tomorrow.
+
+## 2026-08-13 20:41:20 BST
+
+there should be a way to see all the plotting scripts in the UI, so I can basically generate or like see them live in the UI, so I can debug within the UI.n the vicon
+
+## 2026-08-13 20:44:26 BST
+
+I've recorded a video offline called Day 301 decreasing test, so I can basically tune it tomorrow. This is on Vicon PC
+
+## 2026-08-13 20:46:48 BST
+
+can yout= record vicon data for 30 senonds so i can reuse for testing
+
+## 2026-08-14 13:06:50 BST
+
+Update the existing codebase audit and architecture artifact so it accurately describes the current HumanSL_MAIN controller, not the historical implementation.
+
+Scope:
+- Work in /home/christian/Desktop/HumanSL_MAIN.
+- Begin with a read-only verification of the active branch, commit, dirty working-tree state, standalone build targets, and actual controller entry point.
+- Do not run the physical robot, controller executable, hardware-facing binaries, or Vicon acquisition.
+- Do not modify controller logic, safety gates, limits, configuration, or user work in progress.
+- Preserve the previous audit as historical evidence. Do not silently overwrite or reinterpret its historical claims as current facts.
+
+The updated artifact should clearly separate:
+1. Current verified architecture
+   - Active standalone projects and build boundaries.
+   - The current runtime path from startup through the control loop, command generation, safety supervision, Kortex send/feedback, logging, and shutdown.
+   - The planner versus controller responsibility boundary.
+   - Current Vicon and world-hold involvement, including any mismatch between stale comments and the actual call path.
+
+2. Gates, limits, and stop conditions
+   - Inventory each relevant gate or limit.
+   - For every item, state where it is implemented, its input, action, what it protects, what it may impede, and whether it is safety-critical, experimental, diagnostic, or legacy.
+   - Keep source evidence separate from assumptions and from physical-robot proof.
+
+3. Current observability and visualization
+   - Identify the browser panel, replay capability, scene view, CSV plots, run analysis, and world-hold/Vicon plots.
+   - State exactly what each visualization consumes and whether it shows replay/logged data, live growing logs, source-derived reconstruction, or independently measured physical behavior.
+   - Document the requested → sent → measured telemetry chain, timestamp alignment requirements, and the available fault, limit, freshness, hold, and stop-event fields.
+
+4. Worked debugging method
+   - Give a safe, read
+
+## 2026-08-14 13:07:06 BST
+
+Update the existing codebase audit and architecture artifact so it accurately describes the current HumanSL_MAIN controller, not the historical implementation.
+
+Scope:
+- Work in /home/christian/Desktop/HumanSL_MAIN.
+- Begin with a read-only verification of the active branch, commit, dirty working-tree state, standalone build targets, and actual controller entry point.
+- Do not run the physical robot, controller executable, hardware-facing binaries, or Vicon acquisition.
+- Do not modify controller logic, safety gates, limits, configuration, or user work in progress.
+- Preserve the previous audit as historical evidence. Do not silently overwrite or reinterpret its historical claims as current facts.
+
+The updated artifact should clearly separate:
+1. Current verified architecture
+   - Active standalone projects and build boundaries.
+   - The current runtime path from startup through the control loop, command generation, safety supervision, Kortex send/feedback, logging, and shutdown.
+   - The planner versus controller responsibility boundary.
+   - Current Vicon and world-hold involvement, including any mismatch between stale comments and the actual call path.
+
+2. Gates, limits, and stop conditions
+   - Inventory each relevant gate or limit.
+   - For every item, state where it is implemented, its input, action, what it protects, what it may impede, and whether it is safety-critical, experimental, diagnostic, or legacy.
+   - Keep source evidence separate from assumptions and from physical-robot proof.
+
+3. Current observability and visualization
+   - Identify the browser panel, replay capability, scene view, CSV plots, run analysis, and world-hold/Vicon plots.
+   - State exactly what each visualization consumes and whether it shows replay/logged data, live growing logs, source-derived reconstruction, or independently measured physical behavior.
+   - Document the requested → sent → measured telemetry chain, timestamp alignment requirements, and the available fault, limit, freshness, hold, and stop-event fields.
+
+4. Worked debugging method
+   - Give a safe, read-only sequence for selecting an existing run, validating the CSV header/preamble, plotting requested/sent/measured values, inspecting gate events, and replaying it in the panel.
+   - Include a concise template for turning one run into a dissertation-ready causal explanation: observed symptom → evidence → relevant gate/design choice → conclusion → next experiment.
+   - Explicitly label what can and cannot be concluded from a CSV or replay alone.
+
+Deliverables:
+- Produce an updated, current architecture-and-debugging audit in the repository documentation.
+- Include a compact system diagram and a gate/telemetry table.
+- Add a short “what changed since the previous audit” section.
+- Before making any documentation edits, show me the proposed file target and outline. After edits, report every file changed and the evidence used.
+
+## 2026-08-14 13:57:40 BST
+
+update the architecture map artifact too
+
+## 2026-08-14 14:13:22 BST
+
+run intent-sync to fold the story up to date
+
+## 2026-08-14 14:17:41 BST
+
+[Image #3] [Image #4] [Image #5] [Image #6] [Image #7] there are currently some formatting issues all over it, and also, can you make sure that the language is there so a student, an engineering student, can actually go through it and understand it and be able to like debug his own code? If an engineering student cannot go through these two artefacts and understand this is, okay, how my entire code works, this is how the controller works, this is how the planner works, and this is how the Viking integration actually works, how like, things are being done, for example, like, how do you find the end effector position on the Viking, and how does that, like a student should be able to do all of that.
+
+So if they're not, if they're not able to do that, that means that it is not, it's not been done correctly. Also fix the formatting issues.
+
+## 2026-08-14 14:33:46 BST
+
+can you go through the artifacts and metadata and see, like, if there are any more issues or, like, anything that is missing that would be useful for a student?
+
+## 2026-08-14 14:34:12 BST
+
+can you go through the artifacts and artifacts and see, like, if there are any more issues or, like, anything that is missing that would be useful for a student?
+
+## 2026-08-14 14:53:27 BST
+
+Please red-team all of the attached artifacts. Review them as a critical but constructive expert, focusing on both:
+Visual issues — layout, hierarchy, readability, spacing, alignment, contrast, typography, consistency, confusing controls, missing feedback, accessibility, and whether the visuals communicate the intended information clearly.
+Technical and explanatory issues — incorrect or unclear explanations, missing assumptions, ambiguous terminology, contradictions, incomplete workflows, unsupported claims, missing edge cases, inaccurate diagrams, missing units or constraints, and places where a student may misunderstand the system.
+Review the artifacts from two perspectives:
+A student using or learning from them
+What would confuse a beginner?
+What prior knowledge is assumed but not stated?
+What information, examples, definitions, or instructions are missing?
+Is it clear what the student is expected to do, observe, calculate, or conclude?
+Are there enough worked examples and explanations to support independent learning?
+An expert checking the quality and correctness
+Are the technical explanations accurate and complete?
+Are the diagrams, labels, equations, terminology, and implementation details consistent?
+Are there hidden assumptions, failure modes, edge cases, or ambiguities?
+Could any statement be interpreted in multiple ways?
+Is anything visually presented in a way that conflicts with the technical explanation?
+Do not merely summarise the artifacts. Actively look for problems, omissions, inconsistencies, and opportunities for improvement. Be particularly attentive to small or subtle issues that may appear acceptable at first glance but could cause confusion or incorrect implementation.
+For every issue you find, provide:
+Artifact and location — page, section, figure, screen, paragraph, or element
+Issue
+Why it matters
+Who is affected — beginner, advanced student, instructor, developer, or all users
+Severity — critical, high, medium, or low
+Recommended change
+Example of improved wording, layout, diagram, or content, where appropriate
+Also identify:
+Missing concepts, definitions, examples, diagrams, instructions, or validation steps
+Information that should be moved, grouped, simplified, or explained earlier
+Places where the visual design and written explanation do not match
+Technical claims that need evidence, clarification, or qualification
+Questions a student is likely to ask that the artifacts currently do not answer
+Any parts that are unnecessarily complex, redundant, or distracting
+Accessibility and usability problems
+Any safety, reliability, privacy, or data-handling concerns
+After reviewing everything, produce the following sections:
+1. Executive summary
+Give the most important findings in a concise list.
+2. Critical and high-priority issues
+List the issues that could cause misunderstanding, incorrect use, failed implementation, or serious accessibility problems.
+3. Detailed visual review
+Review the visual presentation separately from the technical content.
+4. Detailed technical and explanatory review
+Check correctness, completeness, terminology, assumptions, examples, diagrams, equations, and workflows.
+5. Student-readiness review
+Explain whether a student could understand and use the material independently. Identify the missing scaffolding they would need.
+6. Cross-artifact inconsistencies
+Compare all artifacts and identify conflicting terminology, values, labels, workflows, assumptions, or design patterns.
+7. Recommended improvements
+Prioritise the changes into:
+Must fix
+Should fix
+Nice to have
+8. Final completeness checklist
+State whether the artifacts adequately cover:
+Purpose and learning objectives
+Required background knowledge
+Definitions and terminology
+Step-by-step instructions
+Worked examples
+Visual explanations
+Technical correctness
+Edge cases and failure modes
+Validation or testing
+Accessibility
+Expected student outcomes
+If something cannot be verified from the artifacts, explicitly say “Not verifiable from the provided material” rather than guessing. Distinguish between confirmed errors, likely problems, and suggestions for improvement.
+Stronger version for finding subtle problems
+If you want the review to be especially rigorous, add this at the end:
+Before writing the final review, perform a second pass specifically looking for issues that are easy to overlook:
+inconsistent terminology or capitalisation
+undefined acronyms and symbols
+missing units, scales, directions, or reference frames
+unexplained transitions between steps
+diagrams that omit inputs, outputs, feedback, ownership, or timing
+examples that do not match the stated rules
+controls or actions without visible confirmation or error feedback
+assumptions about software, hardware, permissions, files, or prior knowledge
+content that is technically correct but pedagogically difficult
+content that looks visually clear but is technically misleading
+content that is technically complete but visually difficult to use
+cases where a student could follow the instructions successfully but still misunderstand the underlying concept
+Do not soften the criticism to be polite. Be precise, evidence-based, and constructive. use workflows
+
+## 2026-08-14 15:06:14 BST
+
+fix everything the review finds and republish
+
+## 2026-08-14 15:34:01 BST
+
+so was everything added or did you, like, omit some things? For example, like, is there anything that the red team actually found that they said that should have been there that's not there? Or that's saying, oh, like, this is a conflict and that's not been addressed?
+
+## 2026-08-14 15:39:15 BST
+
+use workflows to basically go and add the problems if it requires me and fix the maps and paths and more if gaps are there and add all the issues that each agent mentioned.
+
+## 2026-08-14 19:17:32 BST
+
+write me a script using the vicon code that tracks the pose of the segment that i have identified as torso
+
+## 2026-08-14 19:23:18 BST
+
+why can i not run it ? [Image #1]
+
+## 2026-08-14 19:27:40 BST
+
+why does vicon nexus 2.8.1 not work with the port we mentioned
+
+## 2026-08-14 19:30:21 BST
+
+yeah, but NetSys does not run at 210, on 210 at all. It only works on 206. Can you check on 206 if, like, it connects?
+
+## 2026-08-14 19:32:53 BST
+
+yeah, yeah, I just connected it, so now it should connect to 206, but now it doesn't connect to 801.
+
+## 2026-08-14 19:51:09 BST
+
+fixed it for now i want to know why if torso pose can be accurately measured using segment
+
+## 2026-08-14 19:54:36 BST
+
+is it tracking orientation of what the cluster describes. and what is the fall back plan if it dissapears
+
+## 2026-08-14 19:56:33 BST
+
+but this is all you printed i can tell anything from  this can t(s)   frame          x(m)     y(m)     z(m)   move(mm)  turn(deg)  state
+
+## 2026-08-14 20:03:55 BST
+
+are this recorded? I want to have some recording so i have some data for the weekend for me to work
+
+## 2026-08-14 20:03:59 BST
+
+are this recorded? I want to have some recording so i have some data for the weekend for me to work on
+
+## 2026-08-14 20:14:38 BST
+
+the data is enough, can you just put them in a CSV file that I can find it?
+
+## 2026-08-16 21:49:00 BST
+
+Implementation planning is complete: 26 reviewable tasks across five sequential plans.
+
+1. [Characterize and extract the execution core](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-01-characterize-and-extract-execution-core.md)
+2. [Build the dual-arm MuJoCo twin](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-02-dual-arm-mujoco-twin.md)
+3. [Add realistic Vicon and scripted scenarios](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-03-realistic-vicon-and-scenarios.md)
+4. [Connect the full planner and atomic dual-arm handoff](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-04-full-planner-simulation-handoff.md)
+5. [Integrate the panel and run final acceptance](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-05-panel-and-acceptance.md)
+
+No production code was changed, committed, or run.
+Two execution options:
+
+1. Subagent-driven (recommended): execute Plan 01 task-by-task with a fresh implementer and review gate for each task.
+2. Inline execution: execute Plan 01 in this session with checkpoints.
+
+Which approach do you want?
+Edited 5 files+1,365-0Review changes
+UndoReview
+docs/superpowers/plans/2026-08-16-01-characterize-and-extract-execution-core.mddocs/superpowers/plans/2026-08-16-01-characterize-and-extract-execution-core.md+289-0
+docs/superpowers/plans/2026-08-16-02-dual-arm-mujoco-twin.mddocs/superpowers/plans/2026-08-16-02-dual-arm-mujoco-twin.md+263-0
+docs/superpowers/plans/2026-08-16-03-realistic-vicon-and-scenarios.mddocs/superpowers/plans/2026-08-16-03-realistic-vicon-and-scenarios.md+259-0
+docs/superpowers/plans/2026-08-16-04-full-planner-simulation-handoff.mddocs/superpowers/plans/2026-08-16-04-full-planner-simulation-handoff.md+277-0
+docs/superpowers/plans/2026-08-16-05-panel-and-acceptance.mddocs/superpowers/plans/2026-08-16-05-panel-and-acceptance.md+277-0
+
+
+# Execution Twin Multi-Agent Workflow Plan
+
+> **For the coordinating agent:** REQUIRED SUB-SKILLS: use `superpowers:subagent-driven-development` for task execution and review; use `superpowers:dispatching-parallel-agents` only for independent read-only investigations. Do not dispatch implementation agents in parallel.
+
+**Status:** Proposed orchestration plan. No implementation starts until Christian approves this workflow and the workspace-baseline decision in Gate 0.
+
+**Goal:** Execute the approved HumanSL execution-twin design through multiple focused agents without allowing concurrent edits, hidden scope growth, hardware execution, or evidence created by the new implementation to become its only proof of correctness.
+
+**Architecture:** One coordinating agent owns the dependency graph, safety constraints, progress ledger, integration, and user communication. A fresh implementation agent owns one numbered task at a time. A separate reviewer checks both specification compliance and engineering quality after every task. Independent evidence-gathering agents may run concurrently when they are read-only and operate on disjoint questions. The five existing implementation plans remain the detailed source of task requirements.
+
+**Plan set:**
+
+1. `2026-08-16-01-characterize-and-extract-execution-core.md`
+2. `2026-08-16-02-dual-arm-mujoco-twin.md`
+3. `2026-08-16-03-realistic-vicon-and-scenarios.md`
+4. `2026-08-16-04-full-planner-simulation-handoff.md`
+5. `2026-08-16-05-panel-and-acceptance.md`
+
+## Non-negotiable constraints
+
+- Preserve the pose/twist-only boundary. Planned joint posture, `q_ref`, `qdot_ref`, elbow targets, and planner null-space bias do not enter the controller.
+- The shared execution core is a Level-2 refactor of the hardware controller. Characterization evidence must exist before extraction and replay must pass afterward.
+- No robot-facing executable may be run. Hardware revalidation is a later supervised activity described by a runbook only.
+- `humansl_sim` must be structurally incapable of linking Kortex or selecting hardware at runtime.
+- GPMP2 remains external to the 500 Hz loop and retains its joint-space internals.
+- World pose and twist, including `world_T_mount`, remain explicit in planner and controller frame conversions.
+- Realistic Vicon emits pose at 100 Hz; the production estimator derives Mount twist only for advancing samples; the 500 Hz controller uses coherent zero-order-held state.
+- Both arms share one simulation tick and paired planner results activate atomically.
+- MuJoCo receives the same integrated position requests as hardware, but its actuator dynamics remain a generic plant.
+- Interactive visual testing and plots are the normal development workflow. The comprehensive deterministic acceptance matrix runs once at the end.
+- Preserve unrelated dirty-tree work. No commit, push, or installation without Christian's explicit authorization.
+
+## Why this uses multiple agents but not concurrent writers
+
+The work spans real-time control, kinematics/model provenance, MuJoCo, Vicon timing, planner IPC, panel process ownership, and scientific evidence. Those areas benefit from fresh specialist context and independent review.
+
+They do not all benefit from concurrent implementation. The current feature branch contains substantial uncommitted work, and the plans intentionally build on one another. Two agents editing shared CMake files, controller interfaces, or the simulation runner at once would create ambiguous ownership and make review evidence unreliable. Therefore:
+
+- Read-only audits may fan out in parallel when their questions and outputs are independent.
+- Exactly one agent may modify the production workspace at a time.
+- Review agents are read-only.
+- The coordinator never makes an unreviewed fix; findings return to the task implementer.
+- A later wave does not start until the previous wave's gate is accepted.
+
+## Agent roles
+
+### Coordinating agent
+
+- Reads the approved design, this workflow, the active phase plan, `AGENTS.md`, and `docs/intent/story.md`.
+- Verifies the workspace and creates the per-plan progress ledger.
+- Produces one self-contained task brief per numbered task.
+- Dispatches agents, records their identities, and preserves reports outside conversational memory.
+- Resolves cross-task interfaces and runs independent integration verification.
+- Stops on a load-bearing conflict, unsafe action, or requirement ambiguity.
+- Does not write task fixes itself.
+
+### Read-only investigation agent
+
+- Receives one narrow evidence question and exact paths.
+- May inspect source, logs, build metadata, models, or tests.
+- Does not edit, build hardware targets for execution, install dependencies, or change repository state.
+- Returns evidence with file/symbol/command references and clearly labels unknowns.
+
+### Task implementation agent
+
+- Receives exactly one numbered task brief, earlier interface decisions needed by that task, allowed paths, and global constraints.
+- Reads every file before editing it and follows test-first steps from the task plan.
+- Uses existing installed dependencies and does not install anything.
+- Runs only the task's hardware-free tests.
+- Self-reviews the diff and writes a durable task report containing commands and outputs.
+- Does not broaden scope, commit, push, or operate hardware.
+
+### Task review agent
+
+- Receives the task brief, implementer report, complete task diff, and binding constraints.
+- Gives two explicit verdicts: specification compliance and engineering quality.
+- Checks real-time safety, frame/unit/timestamp clarity, boundary preservation, test independence, and unintended behaviour changes where relevant.
+- Does not edit files or merely repeat the implementer's tests.
+
+### Final red-team agent
+
+- Reviews the complete integrated diff and the progress ledger using the most capable available model.
+- Attempts to show how the implementation could be fundamentally wrong while its new tests still pass.
+- Checks the full call path, Kortex-link exclusion, paired-arm atomicity, deterministic evidence provenance, and hardware-revalidation boundary.
+- Produces one consolidated finding set for at most one final fix wave.
+
+## Gate 0: Workspace and baseline decision
+
+The current branch is `codex/world-cartesian-controller`, and the execution-twin plans depend on substantial uncommitted controller, planner, Vicon, panel, documentation, and test changes. A new worktree created from the current Git `HEAD` would omit those changes.
+
+Before implementation agents are dispatched, Christian chooses one of these execution baselines:
+
+1. **Checkpoint baseline — recommended.** Authorize one explicit checkpoint commit containing the already-approved prerequisite work and planning documents, then create an isolated execution-twin worktree/branch from it. This gives every task and review an exact Git base without changing the intended code.
+2. **Current dirty feature workspace.** Explicitly authorize execution in the present feature workspace. The coordinator enforces one writer at a time and captures per-task patches and SHA-256 snapshots because commit-range review is unavailable.
+
+The coordinator must then:
+
+- record branch, `HEAD`, `git status --short`, dependency versions, source/config/model hashes, and selected baseline mode;
+- identify which dirty files are prerequisites versus unrelated user work;
+- create a separate progress ledger for each of the five phase plans;
+- scan all five plans once for contradictions before Task 01.1;
+- stop if any planned edit would overwrite an unidentified user change.
+
+**Gate 0 passes when:** the baseline is explicit, recoverable, and review packages can represent every task's complete change.
+
+## Per-task agent loop
+
+Every numbered task in Plans 01–05 follows the same loop:
+
+1. The coordinator records the task base and generates a brief from the task plan.
+2. One fresh implementation agent edits and tests only that task.
+3. The coordinator checks the returned report for changed files, test commands, outputs, assumptions, and concerns.
+4. One fresh task reviewer inspects the brief, report, and complete task diff.
+5. Any Critical/Important finding or confirmed specification gap returns to the same implementer for a scoped fix.
+6. A fresh scoped re-review verifies only the findings and fix diff.
+7. After at most five fix rounds, a real load-bearing residual blocks the workflow and is presented to Christian. Minor or contestable findings are recorded with explicit rulings, never silently discarded.
+8. The coordinator runs the independent gate command(s), updates the ledger, and only then releases the next task.
+
+The implementer and reviewer must be different agents. Self-review is required but never substitutes for independent review.
+
+## Wave 0: Parallel read-only reconnaissance
+
+Three read-only agents run concurrently before Plan 01 changes code:
+
+| Agent | Independent question | Required output |
+|---|---|---|
+| W0-A: controller evidence | What pre-existing logs, tests, and call paths can characterize current configured execution behaviour without inventing missing Cartesian fields? | Evidence inventory, usable fields by log schema, gaps, and proposed replay inputs. |
+| W0-B: build/dependency | What compilers, CMake targets, Eigen, Pinocchio, MuJoCo, GPMP2/GTSAM, GLFW, and test runners are already available? | Version/path matrix and hardware-free build commands; no installation. |
+| W0-C: model/frame provenance | Which URDF/MJCF assets, joint order, Mount transforms, base frames, flange/tool/TCP transforms, and units are authoritative? | Frame/model provenance table and conflicts requiring resolution. |
+
+The coordinator reconciles the three reports. They are evidence inputs to Plan 01 Task 1 and Plan 02 Task 1, not permission to skip those tasks.
+
+## Wave 1: Characterize and extract the execution core
+
+Execute Plan 01 Tasks 1–5 sequentially with one implementer and one reviewer per task.
+
+Dependency path:
+
+```text
+01.1 freeze evidence
+  -> 01.2 immutable configuration
+  -> 01.3 explicit execution contract
+  -> 01.4 reusable core + hardware runner wiring
+  -> 01.5 offline-only status and revalidation runbook
+```
+
+Review emphasis:
+
+- 01.1: independent pre-change evidence and source/config hashes.
+- 01.2: no live direct configuration reads remain in the cycle path.
+- 01.3: pose/twist-only input and unchanged controller/safety ordering.
+- 01.4: replay equivalence, real-time restrictions, and unchanged Kortex ownership.
+- 01.5: no claim of physical equivalence before supervised hardware revalidation.
+
+**Gate 1 passes when:** pre-extraction traces and post-extraction replay agree within the frozen tolerances; hardware-free tests pass; the hardware target builds but is not run; and the shared core has no Kortex dependency.
+
+Christian reviews Gate 1 because it is the highest-risk hardware-controller refactor boundary.
+
+## Wave 2: Build the exact dual-arm MuJoCo twin
+
+Execute Plan 02 Tasks 1–5 sequentially. W0-B and W0-C reports seed Task 02.1, but the task implementer independently verifies them.
+
+Dependency path:
+
+```text
+02.1 provenance
+  -> 02.2 exact-frame dual-arm MJCF
+  -> 02.3 MuJoCo/Pinocchio parity
+  -> 02.4 command/feedback adapter
+  -> 02.5 dual-arm coordinator + humansl_sim
+```
+
+Review emphasis:
+
+- Exact right/left joint order, axes, limits, `mount_T_base`, and configured TCPs.
+- MuJoCo/Pinocchio forward-kinematics and Jacobian parity across nontrivial sampled states.
+- Exactly 2 ms control ticks with deterministic physics substeps.
+- Integrated position requests reach generic MuJoCo position actuators through a simulation adapter.
+- Link and symbol evidence proves `humansl_sim` cannot load Kortex.
+
+**Gate 2 passes when:** exact model/frame parity tests pass, both arms execute one shared-core tick coherently, a headless deterministic run succeeds, and Kortex exclusion is proven independently from source assertions.
+
+## Wave 3: Add realistic Vicon and scenarios
+
+Execute Plan 03 Tasks 1–5 sequentially. Before Tasks 03.1 and 03.2, two read-only agents may independently review the analytic motion equations and production estimator contract in parallel. Their findings go to the implementers; they do not edit.
+
+Dependency path:
+
+```text
+03.1 scripted Mount truth ----+
+                               -> 03.3 runner integration
+03.2 100 Hz Vicon emulator ---+
+
+03.4 shared scene -> 03.5 executed clearance and infeasible hold
+03.3 runner integration ------^
+```
+
+Although Tasks 03.1 and 03.2 are logically independent, they both touch build/config surfaces; implementation remains one writer at a time.
+
+Review emphasis:
+
+- Analytic SE(3) truth pose/twist consistency.
+- Exactly one derivative update per advancing 100 Hz Vicon sample.
+- No direct MuJoCo truth velocity in realistic mode.
+- Coherent pose/twist/sequence/timestamp/age zero-order hold at 500 Hz.
+- Raw and filtered estimator outputs remain visible for plots.
+- Planned and executed clearance are clearly separate claims.
+- Infeasible holds eventually use the existing joint-boundary full-frame hold and warning, not an invented escape posture.
+
+**Gate 3 passes when:** identical seeds reproduce sensor/scenario traces, ideal and realistic modes are explicitly switchable, timing tests prove 100/500 Hz behaviour, and executed-clearance monitoring follows actual MuJoCo state.
+
+## Wave 4: Connect the full external planner pipeline
+
+Execute Plan 04 Tasks 1–5 sequentially. The request/result contracts are frozen by Task 04.1 before any process or activation implementation begins.
+
+Dependency path:
+
+```text
+04.1 versioned paired contracts
+  -> 04.2 coherent dual request
+  -> 04.3 paired external planner result
+  -> 04.4 atomic two-arm activation
+  -> 04.5 live and deterministic planner modes
+```
+
+Review emphasis:
+
+- GPMP2 remains unchanged internally and outside the control process.
+- The controller receives only timed world TCP pose/twist and provenance.
+- Both arms derive from one coherent Mount snapshot.
+- Both references activate on one common cycle or neither activates.
+- A rejected replacement cannot disturb the active valid reference.
+- Latest-wins coalescing is bounded and non-blocking for the 500 Hz loop.
+- Planned collision/inter-arm clearance is labelled as applying only to GPMP2's internal joint branch.
+- Deterministic acceptance injects fixed planner outputs; live asynchronous solve timing is tested only as a contract and interactive behaviour.
+
+**Gate 4 passes when:** paired round-trip, coherent request, failure preservation, all-or-neither activation, coalescing, and full live-process contract tests pass without placing planner/file/pipe work in the control thread.
+
+Christian reviews Gate 4 because it freezes the planner/controller boundary and dual-arm activation semantics.
+
+## Wave 5: Panel, telemetry, plots, and final evidence
+
+Execute Plan 05 Tasks 1–6 sequentially. After Task 05.4 freezes telemetry names, independent read-only agents may review plot completeness and acceptance evidence design in parallel before Tasks 05.5 and 05.6.
+
+Dependency path:
+
+```text
+05.1 simulation process ownership
+  -> 05.2 parity/experiment manifests
+  -> 05.3 panel controls
+  -> 05.4 telemetry schema
+  -> 05.5 plots
+  -> 05.6 final acceptance matrix
+```
+
+Review emphasis:
+
+- Hardware and simulation sessions are mutually exclusive.
+- Hardware-parity mode locks production values and displays `offline-validated only`.
+- Experiment overrides are simulation-only, explicit, and fully recorded.
+- Shared telemetry retains hardware semantics; simulator truth uses `sim_` names.
+- Plots expose raw and filtered 100 Hz Vicon twist, ZOH stepping, world Cartesian error, command limiting/integration, actuator response, joint margins, replans, clearance/contact, and timing.
+- Acceptance thresholds are frozen before reading the C++ acceptance result.
+- Python comparison is permitted only for identical plant/scenario hashes.
+- First failing evidence is retained and investigated; the suite is not repeatedly tuned until green.
+
+**Gate 5 passes when:** panel visual testing works for both modes, plots are generated from recorded runs, all hardware-free builds/tests pass, deterministic acceptance completes once against pre-frozen thresholds, and the hardware revalidation runbook remains unexecuted.
+
+## Final whole-system review
+
+After Gate 5, dispatch one final red-team reviewer over the complete implementation range and all five ledgers. The reviewer must answer:
+
+1. Can the hardware and simulation paths diverge before the intended adapter seam?
+2. Can `humansl_sim` reach Kortex through direct or transitive linkage?
+3. Can planned joint posture influence the controller despite the pose/twist-only contract?
+4. Can stale or repeated Vicon samples create false velocity updates?
+5. Can one arm activate a new plan without the other?
+6. Can planner latency or C++ output influence acceptance thresholds?
+7. Can a test pass while using inconsistent frames, TCPs, units, hashes, or timestamps?
+8. Are planned-path and executed-path clearance claims kept distinct?
+9. Does every hardware-parity claim still say `offline-validated only`?
+
+There is at most one consolidated final fix wave, followed by one scoped re-review. Any remaining load-bearing finding blocks completion and is reported rather than explained away.
+
+## Progress and evidence records
+
+Each phase gets its own ignored Subagent-Driven Development workspace and ledger. Durable project evidence belongs in the run directories and documentation required by the five plans; agent chatter does not become architecture.
+
+For every task, record:
+
+- task brief and exact base snapshot;
+- implementer identity/model and report;
+- files changed;
+- test commands and exact outcomes;
+- review verdicts and fix rounds;
+- hashes/provenance where the task produces scientific evidence;
+- any deferred minor with an explicit ruling.
+
+The coordinator may mark a task complete only after its review gate is clean or the formal fix-round breaker has been handled. A plan may be marked complete only after its phase gate passes.
+
+## Human approval checkpoints
+
+- **Before implementation:** choose and authorize the Gate 0 baseline.
+- **After Gate 1:** approve the characterized execution-core extraction before building simulation on it.
+- **After Gate 2:** visually inspect exact dual-arm model/frame/TCP behaviour.
+- **After Gate 4:** approve the final paired planner/controller boundary.
+- **After Gate 5:** review plots and acceptance evidence.
+- **Before any future robot run:** separately authorize and supervise the hardware revalidation runbook. This workflow never implies that authorization.
+
+## Completion condition
+
+The workflow is complete only when all 26 numbered tasks, all five phase gates, and the final red-team review are complete; the simulation remains Kortex-free; the controller boundary remains world pose/twist only; deterministic evidence and interactive plots are available; and no physical-hardware equivalence claim is made without later supervised revalidation.
+
+
+
+review the plans and then set yourself a goal aligned with me and execute it make no mistakes
+
+## 2026-08-16 21:49:55 BST
+
+Implementation planning is complete: 26 reviewable tasks across five sequential plans.
+
+1. [Characterize and extract the execution core](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-01-characterize-and-extract-execution-core.md)
+2. [Build the dual-arm MuJoCo twin](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-02-dual-arm-mujoco-twin.md)
+3. [Add realistic Vicon and scripted scenarios](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-03-realistic-vicon-and-scenarios.md)
+4. [Connect the full planner and atomic dual-arm handoff](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-04-full-planner-simulation-handoff.md)
+5. [Integrate the panel and run final acceptance](/home/christian/Desktop/HumanSL_MAIN/docs/superpowers/plans/2026-08-16-05-panel-and-acceptance.md)
+
+No production code was changed, committed, or run.
+Two execution options:
+
+1. Subagent-driven (recommended): execute Plan 01 task-by-task with a fresh implementer and review gate for each task.
+2. Inline execution: execute Plan 01 in this session with checkpoints.
+
+Which approach do you want?
+Edited 5 files+1,365-0Review changes
+UndoReview
+docs/superpowers/plans/2026-08-16-01-characterize-and-extract-execution-core.mddocs/superpowers/plans/2026-08-16-01-characterize-and-extract-execution-core.md+289-0
+docs/superpowers/plans/2026-08-16-02-dual-arm-mujoco-twin.mddocs/superpowers/plans/2026-08-16-02-dual-arm-mujoco-twin.md+263-0
+docs/superpowers/plans/2026-08-16-03-realistic-vicon-and-scenarios.mddocs/superpowers/plans/2026-08-16-03-realistic-vicon-and-scenarios.md+259-0
+docs/superpowers/plans/2026-08-16-04-full-planner-simulation-handoff.mddocs/superpowers/plans/2026-08-16-04-full-planner-simulation-handoff.md+277-0
+docs/superpowers/plans/2026-08-16-05-panel-and-acceptance.mddocs/superpowers/plans/2026-08-16-05-panel-and-acceptance.md+277-0
+
+
+# Execution Twin Multi-Agent Workflow Plan
+
+> **For the coordinating agent:** REQUIRED SUB-SKILLS: use `superpowers:subagent-driven-development` for task execution and review; use `superpowers:dispatching-parallel-agents` only for independent read-only investigations. Do not dispatch implementation agents in parallel.
+
+**Status:** Proposed orchestration plan. No implementation starts until Christian approves this workflow and the workspace-baseline decision in Gate 0.
+
+**Goal:** Execute the approved HumanSL execution-twin design through multiple focused agents without allowing concurrent edits, hidden scope growth, hardware execution, or evidence created by the new implementation to become its only proof of correctness.
+
+**Architecture:** One coordinating agent owns the dependency graph, safety constraints, progress ledger, integration, and user communication. A fresh implementation agent owns one numbered task at a time. A separate reviewer checks both specification compliance and engineering quality after every task. Independent evidence-gathering agents may run concurrently when they are read-only and operate on disjoint questions. The five existing implementation plans remain the detailed source of task requirements.
+
+**Plan set:**
+
+1. `2026-08-16-01-characterize-and-extract-execution-core.md`
+2. `2026-08-16-02-dual-arm-mujoco-twin.md`
+3. `2026-08-16-03-realistic-vicon-and-scenarios.md`
+4. `2026-08-16-04-full-planner-simulation-handoff.md`
+5. `2026-08-16-05-panel-and-acceptance.md`
+
+## Non-negotiable constraints
+
+- Preserve the pose/twist-only boundary. Planned joint posture, `q_ref`, `qdot_ref`, elbow targets, and planner null-space bias do not enter the controller.
+- The shared execution core is a Level-2 refactor of the hardware controller. Characterization evidence must exist before extraction and replay must pass afterward.
+- No robot-facing executable may be run. Hardware revalidation is a later supervised activity described by a runbook only.
+- `humansl_sim` must be structurally incapable of linking Kortex or selecting hardware at runtime.
+- GPMP2 remains external to the 500 Hz loop and retains its joint-space internals.
+- World pose and twist, including `world_T_mount`, remain explicit in planner and controller frame conversions.
+- Realistic Vicon emits pose at 100 Hz; the production estimator derives Mount twist only for advancing samples; the 500 Hz controller uses coherent zero-order-held state.
+- Both arms share one simulation tick and paired planner results activate atomically.
+- MuJoCo receives the same integrated position requests as hardware, but its actuator dynamics remain a generic plant.
+- Interactive visual testing and plots are the normal development workflow. The comprehensive deterministic acceptance matrix runs once at the end.
+- Preserve unrelated dirty-tree work. No commit, push, or installation without Christian's explicit authorization.
+
+## Why this uses multiple agents but not concurrent writers
+
+The work spans real-time control, kinematics/model provenance, MuJoCo, Vicon timing, planner IPC, panel process ownership, and scientific evidence. Those areas benefit from fresh specialist context and independent review.
+
+They do not all benefit from concurrent implementation. The current feature branch contains substantial uncommitted work, and the plans intentionally build on one another. Two agents editing shared CMake files, controller interfaces, or the simulation runner at once would create ambiguous ownership and make review evidence unreliable. Therefore:
+
+- Read-only audits may fan out in parallel when their questions and outputs are independent.
+- Exactly one agent may modify the production workspace at a time.
+- Review agents are read-only.
+- The coordinator never makes an unreviewed fix; findings return to the task implementer.
+- A later wave does not start until the previous wave's gate is accepted.
+
+## Agent roles
+
+### Coordinating agent
+
+- Reads the approved design, this workflow, the active phase plan, `AGENTS.md`, and `docs/intent/story.md`.
+- Verifies the workspace and creates the per-plan progress ledger.
+- Produces one self-contained task brief per numbered task.
+- Dispatches agents, records their identities, and preserves reports outside conversational memory.
+- Resolves cross-task interfaces and runs independent integration verification.
+- Stops on a load-bearing conflict, unsafe action, or requirement ambiguity.
+- Does not write task fixes itself.
+
+### Read-only investigation agent
+
+- Receives one narrow evidence question and exact paths.
+- May inspect source, logs, build metadata, models, or tests.
+- Does not edit, build hardware targets for execution, install dependencies, or change repository state.
+- Returns evidence with file/symbol/command references and clearly labels unknowns.
+
+### Task implementation agent
+
+- Receives exactly one numbered task brief, earlier interface decisions needed by that task, allowed paths, and global constraints.
+- Reads every file before editing it and follows test-first steps from the task plan.
+- Uses existing installed dependencies and does not install anything.
+- Runs only the task's hardware-free tests.
+- Self-reviews the diff and writes a durable task report containing commands and outputs.
+- Does not broaden scope, commit, push, or operate hardware.
+
+### Task review agent
+
+- Receives the task brief, implementer report, complete task diff, and binding constraints.
+- Gives two explicit verdicts: specification compliance and engineering quality.
+- Checks real-time safety, frame/unit/timestamp clarity, boundary preservation, test independence, and unintended behaviour changes where relevant.
+- Does not edit files or merely repeat the implementer's tests.
+
+### Final red-team agent
+
+- Reviews the complete integrated diff and the progress ledger using the most capable available model.
+- Attempts to show how the implementation could be fundamentally wrong while its new tests still pass.
+- Checks the full call path, Kortex-link exclusion, paired-arm atomicity, deterministic evidence provenance, and hardware-revalidation boundary.
+- Produces one consolidated finding set for at most one final fix wave.
+
+## Gate 0: Workspace and baseline decision
+
+The current branch is `codex/world-cartesian-controller`, and the execution-twin plans depend on substantial uncommitted controller, planner, Vicon, panel, documentation, and test changes. A new worktree created from the current Git `HEAD` would omit those changes.
+
+Before implementation agents are dispatched, Christian chooses one of these execution baselines:
+
+1. **Checkpoint baseline — recommended.** Authorize one explicit checkpoint commit containing the already-approved prerequisite work and planning documents, then create an isolated execution-twin worktree/branch from it. This gives every task and review an exact Git base without changing the intended code.
+2. **Current dirty feature workspace.** Explicitly authorize execution in the present feature workspace. The coordinator enforces one writer at a time and captures per-task patches and SHA-256 snapshots because commit-range review is unavailable.
+
+The coordinator must then:
+
+- record branch, `HEAD`, `git status --short`, dependency versions, source/config/model hashes, and selected baseline mode;
+- identify which dirty files are prerequisites versus unrelated user work;
+- create a separate progress ledger for each of the five phase plans;
+- scan all five plans once for contradictions before Task 01.1;
+- stop if any planned edit would overwrite an unidentified user change.
+
+**Gate 0 passes when:** the baseline is explicit, recoverable, and review packages can represent every task's complete change.
+
+## Per-task agent loop
+
+Every numbered task in Plans 01–05 follows the same loop:
+
+1. The coordinator records the task base and generates a brief from the task plan.
+2. One fresh implementation agent edits and tests only that task.
+3. The coordinator checks the returned report for changed files, test commands, outputs, assumptions, and concerns.
+4. One fresh task reviewer inspects the brief, report, and complete task diff.
+5. Any Critical/Important finding or confirmed specification gap returns to the same implementer for a scoped fix.
+6. A fresh scoped re-review verifies only the findings and fix diff.
+7. After at most five fix rounds, a real load-bearing residual blocks the workflow and is presented to Christian. Minor or contestable findings are recorded with explicit rulings, never silently discarded.
+8. The coordinator runs the independent gate command(s), updates the ledger, and only then releases the next task.
+
+The implementer and reviewer must be different agents. Self-review is required but never substitutes for independent review.
+
+## Wave 0: Parallel read-only reconnaissance
+
+Three read-only agents run concurrently before Plan 01 changes code:
+
+| Agent | Independent question | Required output |
+|---|---|---|
+| W0-A: controller evidence | What pre-existing logs, tests, and call paths can characterize current configured execution behaviour without inventing missing Cartesian fields? | Evidence inventory, usable fields by log schema, gaps, and proposed replay inputs. |
+| W0-B: build/dependency | What compilers, CMake targets, Eigen, Pinocchio, MuJoCo, GPMP2/GTSAM, GLFW, and test runners are already available? | Version/path matrix and hardware-free build commands; no installation. |
+| W0-C: model/frame provenance | Which URDF/MJCF assets, joint order, Mount transforms, base frames, flange/tool/TCP transforms, and units are authoritative? | Frame/model provenance table and conflicts requiring resolution. |
+
+The coordinator reconciles the three reports. They are evidence inputs to Plan 01 Task 1 and Plan 02 Task 1, not permission to skip those tasks.
+
+## Wave 1: Characterize and extract the execution core
+
+Execute Plan 01 Tasks 1–5 sequentially with one implementer and one reviewer per task.
+
+Dependency path:
+
+```text
+01.1 freeze evidence
+  -> 01.2 immutable configuration
+  -> 01.3 explicit execution contract
+  -> 01.4 reusable core + hardware runner wiring
+  -> 01.5 offline-only status and revalidation runbook
+```
+
+Review emphasis:
+
+- 01.1: independent pre-change evidence and source/config hashes.
+- 01.2: no live direct configuration reads remain in the cycle path.
+- 01.3: pose/twist-only input and unchanged controller/safety ordering.
+- 01.4: replay equivalence, real-time restrictions, and unchanged Kortex ownership.
+- 01.5: no claim of physical equivalence before supervised hardware revalidation.
+
+**Gate 1 passes when:** pre-extraction traces and post-extraction replay agree within the frozen tolerances; hardware-free tests pass; the hardware target builds but is not run; and the shared core has no Kortex dependency.
+
+Christian reviews Gate 1 because it is the highest-risk hardware-controller refactor boundary.
+
+## Wave 2: Build the exact dual-arm MuJoCo twin
+
+Execute Plan 02 Tasks 1–5 sequentially. W0-B and W0-C reports seed Task 02.1, but the task implementer independently verifies them.
+
+Dependency path:
+
+```text
+02.1 provenance
+  -> 02.2 exact-frame dual-arm MJCF
+  -> 02.3 MuJoCo/Pinocchio parity
+  -> 02.4 command/feedback adapter
+  -> 02.5 dual-arm coordinator + humansl_sim
+```
+
+Review emphasis:
+
+- Exact right/left joint order, axes, limits, `mount_T_base`, and configured TCPs.
+- MuJoCo/Pinocchio forward-kinematics and Jacobian parity across nontrivial sampled states.
+- Exactly 2 ms control ticks with deterministic physics substeps.
+- Integrated position requests reach generic MuJoCo position actuators through a simulation adapter.
+- Link and symbol evidence proves `humansl_sim` cannot load Kortex.
+
+**Gate 2 passes when:** exact model/frame parity tests pass, both arms execute one shared-core tick coherently, a headless deterministic run succeeds, and Kortex exclusion is proven independently from source assertions.
+
+## Wave 3: Add realistic Vicon and scenarios
+
+Execute Plan 03 Tasks 1–5 sequentially. Before Tasks 03.1 and 03.2, two read-only agents may independently review the analytic motion equations and production estimator contract in parallel. Their findings go to the implementers; they do not edit.
+
+Dependency path:
+
+```text
+03.1 scripted Mount truth ----+
+                               -> 03.3 runner integration
+03.2 100 Hz Vicon emulator ---+
+
+03.4 shared scene -> 03.5 executed clearance and infeasible hold
+03.3 runner integration ------^
+```
+
+Although Tasks 03.1 and 03.2 are logically independent, they both touch build/config surfaces; implementation remains one writer at a time.
+
+Review emphasis:
+
+- Analytic SE(3) truth pose/twist consistency.
+- Exactly one derivative update per advancing 100 Hz Vicon sample.
+- No direct MuJoCo truth velocity in realistic mode.
+- Coherent pose/twist/sequence/timestamp/age zero-order hold at 500 Hz.
+- Raw and filtered estimator outputs remain visible for plots.
+- Planned and executed clearance are clearly separate claims.
+- Infeasible holds eventually use the existing joint-boundary full-frame hold and warning, not an invented escape posture.
+
+**Gate 3 passes when:** identical seeds reproduce sensor/scenario traces, ideal and realistic modes are explicitly switchable, timing tests prove 100/500 Hz behaviour, and executed-clearance monitoring follows actual MuJoCo state.
+
+## Wave 4: Connect the full external planner pipeline
+
+Execute Plan 04 Tasks 1–5 sequentially. The request/result contracts are frozen by Task 04.1 before any process or activation implementation begins.
+
+Dependency path:
+
+```text
+04.1 versioned paired contracts
+  -> 04.2 coherent dual request
+  -> 04.3 paired external planner result
+  -> 04.4 atomic two-arm activation
+  -> 04.5 live and deterministic planner modes
+```
+
+Review emphasis:
+
+- GPMP2 remains unchanged internally and outside the control process.
+- The controller receives only timed world TCP pose/twist and provenance.
+- Both arms derive from one coherent Mount snapshot.
+- Both references activate on one common cycle or neither activates.
+- A rejected replacement cannot disturb the active valid reference.
+- Latest-wins coalescing is bounded and non-blocking for the 500 Hz loop.
+- Planned collision/inter-arm clearance is labelled as applying only to GPMP2's internal joint branch.
+- Deterministic acceptance injects fixed planner outputs; live asynchronous solve timing is tested only as a contract and interactive behaviour.
+
+**Gate 4 passes when:** paired round-trip, coherent request, failure preservation, all-or-neither activation, coalescing, and full live-process contract tests pass without placing planner/file/pipe work in the control thread.
+
+Christian reviews Gate 4 because it freezes the planner/controller boundary and dual-arm activation semantics.
+
+## Wave 5: Panel, telemetry, plots, and final evidence
+
+Execute Plan 05 Tasks 1–6 sequentially. After Task 05.4 freezes telemetry names, independent read-only agents may review plot completeness and acceptance evidence design in parallel before Tasks 05.5 and 05.6.
+
+Dependency path:
+
+```text
+05.1 simulation process ownership
+  -> 05.2 parity/experiment manifests
+  -> 05.3 panel controls
+  -> 05.4 telemetry schema
+  -> 05.5 plots
+  -> 05.6 final acceptance matrix
+```
+
+Review emphasis:
+
+- Hardware and simulation sessions are mutually exclusive.
+- Hardware-parity mode locks production values and displays `offline-validated only`.
+- Experiment overrides are simulation-only, explicit, and fully recorded.
+- Shared telemetry retains hardware semantics; simulator truth uses `sim_` names.
+- Plots expose raw and filtered 100 Hz Vicon twist, ZOH stepping, world Cartesian error, command limiting/integration, actuator response, joint margins, replans, clearance/contact, and timing.
+- Acceptance thresholds are frozen before reading the C++ acceptance result.
+- Python comparison is permitted only for identical plant/scenario hashes.
+- First failing evidence is retained and investigated; the suite is not repeatedly tuned until green.
+
+**Gate 5 passes when:** panel visual testing works for both modes, plots are generated from recorded runs, all hardware-free builds/tests pass, deterministic acceptance completes once against pre-frozen thresholds, and the hardware revalidation runbook remains unexecuted.
+
+## Final whole-system review
+
+After Gate 5, dispatch one final red-team reviewer over the complete implementation range and all five ledgers. The reviewer must answer:
+
+1. Can the hardware and simulation paths diverge before the intended adapter seam?
+2. Can `humansl_sim` reach Kortex through direct or transitive linkage?
+3. Can planned joint posture influence the controller despite the pose/twist-only contract?
+4. Can stale or repeated Vicon samples create false velocity updates?
+5. Can one arm activate a new plan without the other?
+6. Can planner latency or C++ output influence acceptance thresholds?
+7. Can a test pass while using inconsistent frames, TCPs, units, hashes, or timestamps?
+8. Are planned-path and executed-path clearance claims kept distinct?
+9. Does every hardware-parity claim still say `offline-validated only`?
+
+There is at most one consolidated final fix wave, followed by one scoped re-review. Any remaining load-bearing finding blocks completion and is reported rather than explained away.
+
+## Progress and evidence records
+
+Each phase gets its own ignored Subagent-Driven Development workspace and ledger. Durable project evidence belongs in the run directories and documentation required by the five plans; agent chatter does not become architecture.
+
+For every task, record:
+
+- task brief and exact base snapshot;
+- implementer identity/model and report;
+- files changed;
+- test commands and exact outcomes;
+- review verdicts and fix rounds;
+- hashes/provenance where the task produces scientific evidence;
+- any deferred minor with an explicit ruling.
+
+The coordinator may mark a task complete only after its review gate is clean or the formal fix-round breaker has been handled. A plan may be marked complete only after its phase gate passes.
+
+## Human approval checkpoints
+
+- **Before implementation:** choose and authorize the Gate 0 baseline.
+- **After Gate 1:** approve the characterized execution-core extraction before building simulation on it.
+- **After Gate 2:** visually inspect exact dual-arm model/frame/TCP behaviour.
+- **After Gate 4:** approve the final paired planner/controller boundary.
+- **After Gate 5:** review plots and acceptance evidence.
+- **Before any future robot run:** separately authorize and supervise the hardware revalidation runbook. This workflow never implies that authorization.
+
+## Completion condition
+
+The workflow is complete only when all 26 numbered tasks, all five phase gates, and the final red-team review are complete; the simulation remains Kortex-free; the controller boundary remains world pose/twist only; deterministic evidence and interactive plots are available; and no physical-hardware equivalence claim is made without later supervised revalidation.
+
+
+
+review the plans and critically review implementation
+
+## 2026-08-16 21:59:47 BST
+
+this should clarify things a little on where we stand
+
+## 2026-08-16 21:59:51 BST
+
+this should clarify things a little on where we standcan you explain current architecture
+
+
+
+
+
+
+Saturday 1:15 AM
+
+
+
+
+
+
+Worked for 2m 8s
+
+
+
+The current system is an offline planner feeding a 500 Hz feedback controller. Only basic_control/controller communicates with the Kinova arms; planning, Vicon acquisition, logging, and the browser UI remain outside the control loop.
+```mermaid
+flowchart LR
+    UI["Control panel"] --> Planner["Offline planner_bridge<br/>IK + GPMP2 + validation"]
+    Planner --> FIFO["Per-arm FIFO<br/>timed joint trajectory"]
+    FIFO --> Source["JointTrajectorySource<br/>Hermite sampling"]
+
+    Vicon["Vicon acquisition thread<br/>validated snapshots"] --> Slot["Wait-free latest-value slot<br/>zero-order hold"]
+    Slot --> State["RobotState + world freshness"]
+    Source --> Dispatch["TrackingController"]
+    State --> Dispatch
+
+    Dispatch --> Joint["Joint tracking law"]
+    Dispatch --> Cartesian["Cartesian/world-hold law"]
+    Joint --> Raw["Raw joint velocity"]
+    Cartesian --> Raw
+
+    Raw --> Limits["Non-finite guard<br/>velocity clamp<br/>joint/lead limits"]
+    Limits --> Integrator["Persistent position integration"]
+    Integrator --> Kortex["Kortex POSITION command"]
+    Kortex --> Feedback["Measured joint feedback"]
+    Feedback --> State
+
+    Kortex --> Log["Buffered CSV writer"]
+    Slot --> Log
+    Log --> UI
+```
+
+
+
+Repository-level structure
+There are four active standalone projects under Christian_control/:
+basic_control: the only arm-moving program, containing control, safety, Kortex communication, Vicon consumption and logging.
+planner_bridge: hardware-free GPMP2/GTSAM planning and trajectory validation.
+vicon: sensing-only connection, snapshot validation, recording and replay.
+tools/panel: browser UI for configuration, planning, sessions, telemetry and offline analysis.
+The inherited root TrajectoryGeneration/, TrajectoryExecution/, ViconDataStream/ and root main.cpp are frozen and are not part of any active build. There is no root build; each active project has its own CMake or Python entry point. See [docs/architecture.md (line 10)](/home/christian/Desktop/HumanSL_MAIN/docs/architecture.md:10).
+Planning and reference handoff
+The planner:
+Reads an initial joint state, normally from a previous controller CSV.
+Reads an arm-specific goal and planner configuration.
+Converts goals from mount, right_base, or left_base into the common mount frame.
+Runs IK and GPMP2.
+Time-parameterises and validates the result.
+Emits a complete TRAJ_BEGIN … TRAJ_END block only after validation succeeds.
+The emitted block contains time, seven joint positions, and seven joint velocities. It is buffered so a failed solve cannot leave a partial trajectory in the controller input. This is visible in [BridgeMain.cpp (line 809)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/planner_bridge/src/BridgeMain.cpp:809).
+A per-arm FIFO passes that block to the controller:
+Right: /tmp/humansl_bridge_targets_right
+Left: /tmp/humansl_bridge_targets_left
+The controller validates the trajectory again, then applies a 2° splice guard before replacing the current trajectory. It samples accepted trajectories using cubic Hermite interpolation in [Targets.cpp (line 237)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Targets.cpp:237).
+Importantly, the planner generates a reference, not a hardware command.
+Control-law dispatch
+TrackingController selects between two real control laws:
+Situation    Active law
+Timed trajectory is running    Joint tracking
+Idle hold with trusted Vicon    Cartesian world-frame hold
+No Vicon has ever engaged    Original joint-position hold
+Explicit PoseReference    Cartesian pose tracking, but no production source currently creates one
+
+
+For an active trajectory:
+\[
+\dot q_{\text{raw}}
+=
+\dot q_{\text{ref}}
++
+K_{p,j}\,\mathrm{wrap}(q_{\text{ref}}-q_{\text{measured}})
+\]The wrapped error avoids false full-turn errors where Kortex reports angles in \([0,360^\circ)\). The dispatch and equation are in [Controller.cpp (line 70)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Controller.cpp:70).
+During an idle hold, fresh Vicon data allows the Cartesian law to hold the end-effector pose in the room:
+\[
+e_p = p_d^W-p^W,\qquad
+e_R=\log(R_d^W R^{W\top})
+\]\[
+\dot x =
+K_p e_{\text{pose}}+
+K_d(\dot x_{\text{ref}}-\dot x_{\text{measured}})
+\]\[
+\dot q_{\text{raw}}
+=
+J_W^\top
+(J_WJ_W^\top+\lambda^2I)^{-1}\dot x
++
+\dot q_{\text{null}}
+\]The world-frame assembly and DLS solve are in [Controller.cpp (line 105)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Controller.cpp:105) and [ReactiveLaw.h (line 184)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/ReactiveLaw.h:184).
+Active trajectories always take precedence over world hold. When a trajectory ends, its endpoint becomes an idle hold and the world hold can re-anchor there.
+Vicon/world-hold path
+Vicon runs on its own acquisition thread. It validates segment poses, suppresses duplicate frames and publishes the newest fixed-size snapshot into a wait-free triple buffer. The 500 Hz loop performs one non-blocking read per cycle; blocking Vicon SDK calls never enter the control thread. See [ViconSource.cpp (line 39)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/ViconSource.cpp:39) and [BasePose.h (line 123)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/BasePose.h:123).
+The controller currently computes:
+\[
+{}^WT_B
+=
+{}^WT_{\text{MountSegment}}\;
+{}^{\text{MountSegment}}T_{\text{mount}}\;
+{}^{\text{mount}}T_B
+\]However, the Mount-segment-to-mount calibration is currently treated as identity. The last transform comes from the URDF.
+The world hold has four states:
+Inactive: waiting for a fresh Mount sample.
+Engaged: holding the captured end-effector world pose.
+Frozen: Vicon is stale or invalid; the last transform is retained.
+LatchedOff: excessive translation or rotation error permanently disables world hold for the run.
+Current parameters are a 50 ms freshness threshold, 2 s authority ramp, 80 mm translation latch, 0.5 rad rotation latch, and re-anchoring after a dropout longer than 200 ms. See [Config.h (line 325)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Config.h:325) and [WorldHold.h (line 102)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/WorldHold.h:102).
+Shared actuation and safety path
+Both laws produce only a raw joint velocity. From there, they share exactly the same path:
+Replace non-finite output with zero for that cycle.
+Clamp each joint’s velocity.
+Integrate into persistent joint-position setpoints.
+Limit command lead over measured position.
+Enforce the per-cycle rate envelope.
+Hold the entire frame if a bounded joint would move farther outside its software boundary.
+Send one Kortex POSITION command and receive feedback.
+That common path is explicit in [Runner.cpp (line 432)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Runner.cpp:432) and [Actuation.cpp (line 48)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Actuation.cpp:48).
+The current uncommitted configuration clips joints 1–4 at 76°/s and joints 5–7 at 66.5°/s—95% of the live hard limits reported by the robot. These values have not necessarily reached the existing binaries because the working tree is dirty.
+Before control begins, each arm goes through:
+Per-arm process lock.
+Kortex connection and fault clear.
+Readiness checks.
+Live hard-limit verification.
+Firmware joint-limit write/readback.
+Switch to low-level servoing.
+A fixed 50 ms unchanged-position takeover hold.
+Integrator and controller seeding from final measured feedback.
+Runtime stops include following error, leaving low-level servoing, live faults, joint-boundary violations, stale cyclic acknowledgements, repeated non-finite commands, repeated overruns and communication failures. Their precedence is defined in [StopPriority.h (line 43)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/StopPriority.h:43).
+There is no software e-stop. SIGINT or the panel stop follows the graceful shutdown path; the physical e-stop remains outside the software architecture.
+Main architectural gaps
+The important remaining gaps are:
+Planning is still mount-relative. planner_bridge does not yet consume live Vicon or define goals in the external room frame.
+World-frame compensation operates during idle hold, not while a planned joint trajectory is active.
+PoseReference is implemented, but no production reference source populates it.
+The Mount-segment-to-mount calibration is still identity.
+Measured base twist is currently zero, so world hold is feedback-only; base-motion feedforward has not been added.
+The production Vicon snapshot currently carries five segments and does not yet include the separately intended torso segment.
+Inter-arm clearance code exists but is not called by the production planner.
+The panel orchestrates and observes; it does not independently enforce motion safety or currently expose all world-hold/Vicon telemetry.
+So the architecture has the correct central separation—reference generation, feedback control, limits, integration and hardware actuation—but the complete “plan and move in world coordinates while the wearer moves” chain is only wired on the idle-control side today.
+
+
+Saturday 1:17 AM
+
+
+
+
+
+
+
+
+the are 2 controllers
+
+
+
+
+
+
+Saturday 1:25 AM
+
+
+
+
+
+
+Worked for 12s
+
+
+
+You’re correct: there are two controllers.
+Joint-space trajectory controller:
+\[
+\dot q_{\text{raw}}=\dot q_{\text{ref}}+K_{p,j}\,\mathrm{wrap}(q_{\text{ref}}-q_{\text{measured}})
+\]Cartesian resolved-velocity controller:
+\[
+\dot q_{\text{raw}}=J^\#\left(K_p e_{\text{pose}}+K_d e_{\text{twist}}\right)+\dot q_{\text{null}}
+\]The Cartesian controller is used by the Vicon world-frame hold during idle periods. Its explicit PoseReference input remains unwired, but the controller itself is reachable.
+They are packaged behind one TrackingController C++ class, which caused my imprecise wording. Architecturally, the correct description is:
+reference
+    ↓
+controller selection
+    ├── joint-space controller
+    └── Cartesian controller
+              ↓
+          qdot_raw
+              ↓
+shared velocity limits
+              ↓
+shared position integration
+              ↓
+shared safety and Kortex actuation
+So: two feedback controllers, one dispatch point, and one shared command/safety pipeline.
+
+
+Saturday 1:25 AM
+
+
+
+
+
+
+
+
+q reference is from where 
+
+
+
+
+
+
+Saturday 1:30 AM
+
+
+
+
+
+
+Worked for 16s
+
+
+
+q_ref comes from the timed joint trajectory produced by planner_bridge.
+Cartesian goal
+    ↓
+IK + GPMP2 planner
+    ↓
+timed trajectory: [t, q, qdot]
+    ↓
+TRAJ block through per-arm FIFO
+    ↓
+JointTrajectorySource samples it at current time
+    ↓
+q_ref(t), qdot_ref(t)
+    ↓
+joint controller
+More precisely:
+planner_bridge converts the Cartesian goal into a joint trajectory and emits rows containing:
+time_s  q1...q7_deg  qdot1...qdot7_deg_s
+The output is created in [BridgeMain.cpp (line 816)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/planner_bridge/src/BridgeMain.cpp:816).
+The controller’s input thread reads the TRAJ_BEGIN … TRAJ_END block from the per-arm FIFO, validates it and places it in a single-slot mailbox.
+
+At 500 Hz, JointTrajectorySource samples the trajectory using cubic Hermite interpolation:
+
+\[
+(q_{\text{ref}}(t),\dot q_{\text{ref}}(t))
+=
+\text{SampleJointTrajectory}(\text{trajectory},t)
+\]This happens in [Targets.cpp (line 289)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Targets.cpp:289) and [JointTrajectory.cpp (line 188)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/JointTrajectory.cpp:188).
+The sampled values become:
+joint.q_rad = sample.q_rad;             // q_ref
+joint.qdot_rad_s = sample.qdot_rad_s;   // qdot_ref
+They are passed through Reference to the joint controller.
+There are two special cases:
+Before the first trajectory, q_ref is the measured joint position captured at startup, with qdot_ref = 0. This creates the initial joint hold in [Main.cpp (line 494)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Main.cpp:494).
+After a trajectory finishes, q_ref is its final joint point and qdot_ref = 0.
+When fresh Vicon world hold is active, that idle q_ref is present but not used—the Cartesian controller takes control. During an active trajectory, the planner-generated q_ref(t) takes precedence.
+So q_ref is not from Vicon and is not the Kortex position command. It is a planner-generated reference that the joint controller tracks; the resulting velocity is subsequently limited and integrated into the actual Kortex position command.
+
+
+Saturday 1:30 AM
+
+
+
+
+
+
+
+
+is there any way the planner can output cartesian poses 
+
+
+
+
+
+
+Saturday 1:48 AM
+
+
+
+
+
+
+Worked for 41s
+
+
+
+Yes. The planner already contains timed Cartesian poses internally; it simply does not expose them through the current controller interface.
+Current flow:
+Cartesian goal/path
+    ↓
+CartesianPath: [t, pose]
+    ↓
+IK + GPMP2
+    ↓
+validated joint trajectory: [t, q, qdot]
+    ↓
+TRAJ block
+CartesianPath is explicitly an ordered, timed sequence of poses in one declared frame in [CartesianPath.h (line 33)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/planner_bridge/src/CartesianPath.h:33). But FormatTrajectoryBlock() serializes only joint positions and velocities, and Main.cpp wires only JointTrajectorySource.
+There are three realistic options:
+Export poses for analysis only
+Forward-kinematics the validated joint trajectory and write:
+t, frame, position, quaternion, linear velocity, angular velocity
+This would not change robot behaviour. It is the safest first step if you only want to inspect the planner’s Cartesian trajectory.
+Execute a Cartesian pose trajectory
+Add a pose-trajectory wire format and a CartesianTrajectorySource that interpolates it and populates the existing PoseReference:
+pose.p_desired
+pose.rotation
+pose.twist
+pose.frame
+The Cartesian controller already consumes this contract in [Controller.cpp (line 151)](/home/christian/Desktop/HumanSL_MAIN/Christian_control/basic_control/src/Controller.cpp:151).
+Output both joint and Cartesian references
+TimedReference {
+    t
+    q_ref, qdot_ref
+    pose_ref, twist_ref, frame
+}
+This is my recommendation for eventual execution. It preserves the planner’s intended joint branch while making the Cartesian reference available for world-frame control and evaluation.
+The important warning is that replacing the validated joint trajectory with pose-only execution changes what the planner has proved. The Cartesian controller’s online inverse kinematics can choose a different joint path, so GPMP2’s joint-limit and collision validation would no longer necessarily describe the executed motion.
+Therefore:
+For plotting/debugging: export Cartesian poses only.
+For controlling the arm: emit both joint and Cartesian references, then explicitly decide how the two controllers use them.
+Every pose must carry its frame and timestamp; the present planner supports mount, right_base, and left_base, but not yet a calibrated Vicon-world frame.
+This would be an architecture change, so I have not modified anything.
+
+
+Saturday 1:49 AM
+
+
+
+
+
+
+
+
+my plan is now to replace the now two controllers with the cartesian one that follows the plans given by the planner because its hard to explain 2 controllers
+
+
+
+
+
+
+Saturday 1:57 AM
+
+
+
+
+
+
+Worked for 59s
+
+
+
+That is a coherent direction. My reading is that you want one production feedback law for every phase:
+planner
+  → timed Cartesian pose/twist reference
+  → world-frame transformation
+  → Cartesian resolved-velocity controller
+  → shared limits/integration/safety
+  → Kinova
+The repository previously implemented almost exactly this in commit b3ec71e1: TrajectoryPoseSource converted the planner’s \(q_{\text{nom}}(t)\) into:
+\[
+X_{\text{ref}}(t)=FK(q_{\text{nom}}(t)), \qquad
+V_{\text{ref}}(t)=J(q_{\text{nom}})\dot q_{\text{nom}}(t)
+\]The Cartesian controller was the sole primary controller. That implementation was later rolled back because you then wanted the joint-planner/controller split restored—not because the approach was technically impossible.
+One important decision: because the Gen3 is redundant, pose tracking alone does not guarantee the arm follows GPMP2’s planned joint branch. The previous implementation retained \(q_{\text{nom}}(t)\) only as a null-space posture guide:
+\[
+\dot q =
+J^\# V_{\text{Cartesian}}
++
+N\left[\dot q_{\text{nom}}+
+K_q\,\mathrm{wrap}(q_{\text{nom}}-q)\right]
+\]That remains one hierarchical Cartesian controller, not two competing controllers, while helping preserve the planner’s collision-checked posture.
+Do you want \(q_{\text{nom}}(t)\) retained only as this secondary null-space guide, or should the controller receive strictly Cartesian pose/twist references with no planned joint posture at all?
+
+
+Saturday 1:58 AM
+
+
+
+
+
+
+
+
+One genome can only receive joint Cartesian pose twist references with no planned joint posture
+
+
+
+
+
+
+Saturday 2:04 AM
+
+
+
+
+
+
+Worked for 27s
+
+
+
+Confirmed: the controller-facing reference will contain only:
+\[
+\{t,\;X_{\mathrm{ref}},\;V_{\mathrm{ref}},\;\text{frame}\}
+\]No \(q_{\text{nom}}\), \(\dot q_{\text{nom}}\), or posture guidance.
+Should GPMP2 still calculate its joint trajectory internally and convert it at the output boundary using
+\[
+X_{\mathrm{ref}}=FK(q_{\mathrm{plan}}),\qquad
+V_{\mathrm{ref}}=J(q_{\mathrm{plan}})\dot q_{\mathrm{plan}},
+\]or do you want the planner itself changed to plan directly in Cartesian pose space? I recommend retaining GPMP2 internally and exposing only its Cartesian image initially.
+
+
+Saturday 2:04 AM
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Full access
+
+## 2026-08-16 22:08:58 BST
+
+what is wrong with the fabricated simbols
+
+## 2026-08-17 00:15:46 BST
+
+fix the plans, vendor mujoco into third_party
+
+## 2026-08-17 00:54:47 BST
+
+The reliable way is to stop depending on the agent remembering your preference. Put the important rules into repository structure, automated checks, and mandatory review gates.
+
+Think of it as four layers.
+
+## 1. A permanent engineering contract
+
+Create one short authoritative document, for example:
+
+```text
+docs/engineering/humansl-engineering-contract.md
+```
+
+Then require every implementation agent to read it through `AGENTS.md`.
+
+It should contain hard rules such as:
+
+- Equations, frames, units and measured/reference distinctions are written before control code.
+- Simulator ground truth cannot enter production control calculations.
+- The execution core cannot depend on MuJoCo, Kortex, file I/O, terminal I/O or the panel.
+- GPMP2 and Vicon operations remain outside the 500 Hz path.
+- Comments explain physical assumptions and decisions, not syntax.
+- Tests must use an independent oracle where feasible.
+- Generic managers, factories and services are prohibited unless they replace existing complexity.
+- Existing behaviour is characterised before refactoring.
+- Simulation results are never described as physical proof.
+
+Keep it concise. If it becomes a fifty-page style guide, agents will satisfy it superficially.
+
+## 2. Make violations fail mechanically
+
+This is the strongest enforcement. Arrange the CMake targets so shortcuts do not compile.
+
+For example:
+
+```text
+humansl_execution_core
+    allowed: Eigen, frame contracts, controller mathematics
+    forbidden: MuJoCo, Kortex, panel, CSV/file code
+
+humansl_kortex_adapter
+    depends on: execution_core + Kortex
+
+humansl_mujoco_adapter
+    depends on: execution_core + MuJoCo
+```
+
+Add architecture tests that fail when:
+
+- A core file includes MuJoCo or Kortex headers.
+- Core code accesses `mjData`, sites or bodies.
+- Core code writes files or prints to the terminal.
+- Sim-only fields enter production state contracts.
+- A new source file bypasses the shared limits/integration path.
+- More than one module writes the run-log schema.
+- A 500 Hz source calls planner or blocking APIs.
+
+Even a simple repository check is useful:
+
+```text
+test_no_mujoco_in_execution_core
+test_no_kortex_in_execution_core
+test_no_io_in_execution_core
+test_sim_target_has_no_kortex_linkage
+test_hardware_and_sim_link_same_core
+```
+
+The key principle is:
+
+> If an agent takes the tempting shortcut, the build or architecture test should fail.
+
+## 3. Give every agent a constrained change packet
+
+Do not give an agent “build the simulator.” Give it one bounded slice.
+
+Each slice should include:
+
+```text
+Outcome
+Physical meaning
+Equations
+Inputs and outputs
+Frames and units
+Files it may modify
+Files it must not modify
+Existing behaviour that must remain
+Required tests
+Independent evidence
+Explicitly excluded work
+```
+
+A useful agent instruction is:
+
+```text
+Before editing:
+
+1. Read AGENTS.md and the HumanSL engineering contract.
+2. Trace the current call path.
+3. State the equation, frames and units involved.
+4. List the files you intend to change and why.
+5. Identify the independent evidence that will validate the change.
+6. Stop if the proposed implementation requires changing an approved
+   interface or architectural boundary.
+
+During implementation:
+
+- Make one coherent change.
+- Do not introduce generic infrastructure.
+- Do not use simulator-only state in controller calculations.
+- Keep blocking work outside the cyclic path.
+- Add the smallest test that would fail for a frame, sign or timing error.
+
+Before completion:
+
+- Run unit, architecture and replay tests.
+- Show the resulting call path.
+- Report any physical behaviour not proven.
+```
+
+That prompt should accompany every dispatched task, not only the first one.
+
+## 4. Separate implementation from judgment
+
+One agent should not be the sole author and validator of a safety-relevant slice.
+
+Use these roles:
+
+1. **Implementer:** makes the bounded change.
+2. **Mathematics reviewer:** verifies equations, frames, units and signs.
+3. **Architecture reviewer:** checks ownership, dependencies and readability.
+4. **Test reviewer:** asks whether fundamentally wrong physics could still pass.
+5. **Integration owner:** accepts or rejects the slice against the full pipeline.
+
+The reviewers should inspect the code independently rather than merely reading the implementer’s summary.
+
+For parallel work, freeze the shared contracts first. Agents working on MuJoCo, Vicon, the planner and panel should consume those contracts, not each invent a variation.
+
+## Required gates for every slice
+
+A slice should not be integrated unless all of these are true:
+
+- The physical purpose can be explained in a paragraph.
+- Its equation-to-code map is visible.
+- Frames and units appear in names or explicit contracts.
+- The main call path is easy to follow.
+- There is one obvious owner for each responsibility.
+- No duplicate logging, configuration or safety path was introduced.
+- Tests include at least one independent or negative check.
+- Architecture tests pass.
+- Pre-refactor trace replay still matches where behaviour should be preserved.
+- The diff contains no unrelated refactoring.
+- Unproven hardware behaviour is stated explicitly.
+
+## Specific protection against the MuJoCo shortcut
+
+Make the simulation adapter expose only what hardware could provide:
+
+```cpp
+struct MeasuredArmState {
+    JointVector q_rad;
+    JointVector qdot_rad_s;
+};
+
+struct WorldMountSample {
+    Pose world_T_mount;
+    Twist estimated_mount_twist_world;
+    double age_s;
+    std::uint64_t sequence;
+};
+```
+
+The execution core receives those structures. It does not receive `mjModel`, `mjData`, body IDs or site positions.
+
+MuJoCo end-effector ground truth should go through a completely separate validation contract:
+
+```cpp
+struct SimulationGroundTruth {
+    Pose mujoco_world_T_ee;
+};
+```
+
+Only plotting and validation code can see it. A dependency test should enforce that separation.
+
+## Preventing gradual drift
+
+At each major milestone:
+
+- Regenerate or review the architecture call-path map.
+- Run the architecture dependency checks.
+- Replay the golden execution traces.
+- Review newly added public interfaces.
+- Search for duplicated configuration, logging and frame conversions.
+- Confirm the simulation target still has no Kortex linkage.
+- Confirm controller code still has no MuJoCo dependency.
+- Have a fresh reviewer explain one complete 500 Hz cycle from the source.
+
+If the reviewer cannot explain the cycle without jumping unpredictably between many files, the milestone is not finished even if tests pass.
+
+The central lesson is: prose tells agents what you value; compilation boundaries, tests and review gates keep the project that way.Use separate reviews:
+Controls reviewer: stability, Jacobian inversion, saturation and sampled-data behaviour.
+State-estimation reviewer: Vicon timing, differentiation, filtering and calibration.
+Experimental-design reviewer: hypotheses, baselines, confounders and metrics.
+Wearable-robotics reviewer: Mount flex, wearer geometry, dual-arm interaction and physical feasibility.
+Safety reviewer: checks that diagnostics were not accidentally converted into stops.
+Simplification reviewer: removes unnecessary abstractions and generic AI-style structure.
+Then have one synthesis pass reconcile disagreements. You remain the decision-maker.
+What a supervisor-level decomposition should produce
+It should result in testable hypotheses, for example:
+World-Cartesian control produces less world-pose drift than a frozen-joint baseline under identical Mount motion.
+Including measured Mount twist reduces dynamic error compared with pose feedback alone.
+Vicon filtering reduces twist noise but increases phase lag.
+Tracking degradation correlates with \(\rho_v>1\), saturation and singular-value reduction.
+A world-fixed hold gradually consumes joint margin under sustained Mount displacement.
+The executed redundant posture can diverge from GPMP2’s planned branch despite similar end-effector tracking.
+Ideal MuJoCo actuation validates kinematics and logic but does not predict hardware gain performance.
+Those are scientific statements you can test. None inherently requires introducing a new robot stop.You’re right. Frame transformations are only one part of the engineering. The deeper SRL problem is:
+
+> Can two redundant arms maintain useful world-frame behaviour while their wearable base moves, measurements are delayed/noisy, joint range is finite, and the robot remains safe around its wearer?
+
+Every part of that question needs mathematical treatment.
+
+## 1. What state is actually observable?
+
+The controller needs:
+
+\[
+x =
+\{q,\dot q,{}^WT_M,{}^WV_M\}
+\]
+
+But these quantities arrive differently:
+
+- \(q,\dot q\): Kinova feedback at approximately 500 Hz.
+- \( {}^WT_M \): Vicon pose at approximately 100 Hz.
+- \( {}^WV_M \): not directly measured; estimated by differentiating pose.
+- Calibration \( {}^MT_B \): assumed fixed but physically affected by backpack flex.
+
+The design must define:
+
+- Timestamp alignment between Kinova and Vicon.
+- Whether a Vicon sample represents capture time or receive time.
+- Zero-order hold versus prediction.
+- What happens when samples are late, repeated or missing.
+- How much filter delay is acceptable.
+- Whether Mount-to-base flex is small enough to model as rigid.
+
+This is state-estimation engineering, not just transformation code.
+
+## 2. Mount-twist estimation
+
+Translation and rotation must be differentiated correctly:
+
+\[
+v^W_M =
+\frac{p^W_{M,k}-p^W_{M,k-1}}{\Delta t}
+\]
+
+\[
+\omega^W_M =
+\frac{\log(R^W_{M,k}R^{W\top}_{M,k-1})}{\Delta t}
+\]
+
+Important decisions include:
+
+- Differentiating only when the Vicon sequence advances.
+- Resetting after occlusion instead of differentiating across a gap.
+- Filtering noise without introducing too much delay.
+- Handling orientation discontinuities and quaternion sign.
+- Representing estimator validity separately from pose validity.
+
+A smoother twist estimate is not automatically better: filtering reduces noise but delays the measured disturbance.
+
+## 3. Correct end-effector motion decomposition
+
+For the wearable system:
+
+\[
+v^W_E =
+v^W_M
++
+\omega^W_M\times(p^W_E-p^W_M)
++
+J_v^W(q)\dot q
+\]
+
+\[
+\omega^W_E =
+\omega^W_M+J_\omega^W(q)\dot q
+\]
+
+This decomposition separates:
+
+- Motion caused by the wearer/backpack.
+- Motion caused by the robot joints relative to the backpack.
+
+Tests must independently excite each term:
+
+- Mount translation with stationary joints.
+- Mount rotation with stationary joints.
+- Joint motion with a stationary Mount.
+- Combined Mount and joint motion.
+
+## 4. Pose error on \(SE(3)\)
+
+Position subtraction is straightforward, but orientation error is not:
+
+\[
+e_p=p_d-p
+\]
+
+\[
+e_R=\log(R_dR^\top)
+\]
+
+The design must establish:
+
+- Error direction and sign.
+- Whether angular error is expressed in world or body coordinates.
+- Behaviour near \(180^\circ\).
+- Quaternion normalisation and sign equivalence.
+- Separate translational and rotational gains.
+- Whether orientation can be disabled without changing translation behaviour.
+
+A sign error here can make the wearable robot amplify base motion.
+
+## 5. Closed-loop control and inner-servo assumptions
+
+The proposed controller is approximately:
+
+\[
+V_{\text{task}}
+=
+K_p e_{\text{pose}}
++
+K_d(V_d-V_{\text{measured}})
+\]
+
+But this is not commanding Cartesian velocity directly to an ideal robot. It produces joint velocity, integrates that into joint position, and sends position commands to Kinova’s internal servo.
+
+The actual cascade is:
+
+```text
+Cartesian controller
+→ resolved joint velocity
+→ software integration
+→ joint-position request
+→ Kinova internal position servo
+→ physical arm
+```
+
+The engineering questions are:
+
+- What inner-servo bandwidth is being assumed?
+- Are the outer-loop gains reasonable for that bandwidth?
+- How do delay and filtering affect stability?
+- What happens after saturation?
+- Is the discrete 2 ms implementation stable?
+- Are gains dimensionally correct?
+
+MuJoCo with arbitrary position-actuator gains cannot answer whether hardware gains are stable. It can validate the controller structure and sampled-data logic.
+
+## 6. Jacobian inversion and singularities
+
+The DLS inverse is:
+
+\[
+J^\#_\lambda =
+J^\top(JJ^\top+\lambda^2I)^{-1}
+\]
+
+The design must define:
+
+- How \(\lambda\) is chosen.
+- Whether damping changes with singularity proximity.
+- What minimum singular value generates a warning.
+- How much Cartesian tracking is intentionally sacrificed near singularities.
+- Whether translational and rotational tasks require scaling because their units differ.
+- What happens if the requested task velocity is infeasible.
+
+Without this, “DLS” is only a formula with an arbitrary tuning constant.
+
+## 7. Redundancy and posture evolution
+
+Each arm has seven joints but a six-dimensional Cartesian task. Therefore:
+
+\[
+\dot q =
+J^\#V_{\text{task}}
++
+(I-J^\#J)\dot q_{\text{null}}
+\]
+
+The null-space policy determines:
+
+- Elbow motion.
+- Joint-limit approach.
+- Clearance from the wearer.
+- Inter-arm clearance.
+- Whether the executed posture follows GPMP2’s collision-free branch.
+- Whether prolonged world hold consumes the remaining joint range.
+
+This is central to the SRL because the arm may hold the same end-effector pose using several radically different elbow configurations.
+
+A joint-limit objective alone does not solve wearer avoidance or preserve GPMP2’s branch.
+
+## 8. Feasibility of world stabilisation
+
+World hold is not always physically possible.
+
+The joint velocity required to reject Mount motion is related to:
+
+\[
+\dot q_{\text{required}}
+\approx
+-J^\#V_{\text{base at EE}}
+\]
+
+If the wearer moves too quickly, or the arm approaches a singularity or joint limit, the required velocity can exceed the arm’s limits.
+
+The system needs a defined feasibility concept:
+
+- Required versus available joint velocity.
+- Remaining joint-position margin.
+- Singular-value margin.
+- Predicted time until a bounded joint reaches its limit.
+- Whether to warn, replan, relax orientation or stop.
+- How to report that perfect world hold was impossible.
+
+Otherwise tracking failure looks like controller failure when it may be a physical reachability failure.
+
+## 9. Saturation and command shaping
+
+Independent per-joint clipping:
+
+\[
+\dot q_i\leftarrow
+\operatorname{clip}(\dot q_i,-\dot q_{i,\max},\dot q_{i,\max})
+\]
+
+can change the Cartesian direction of motion.
+
+The project should explicitly decide between:
+
+- Independent joint clipping.
+- Uniform scaling of the full joint-velocity vector.
+- Task-priority saturation.
+- Acceleration and jerk limiting.
+- Preserving null-space motion versus task motion under saturation.
+
+This affects tracking, stability and how honestly the commanded task is represented.
+
+## 10. Position-command integration
+
+The software sends position requests:
+
+\[
+q_{\text{cmd},k+1}
+=
+q_{\text{cmd},k}
++
+\Delta t\,\dot q_{\text{limited},k}
+\]
+
+That requires decisions about:
+
+- Seeding from fresh measured position.
+- Measured versus nominal \(\Delta t\).
+- Command lead over measured position.
+- Missed cycles and overruns.
+- Continuous-joint wrapping.
+- Bounded-joint limits.
+- Whether integration freezes during stale world state.
+- What happens when feedback stops following the request.
+
+This integration is part of the controller, not a trivial conversion.
+
+## 11. Reference trajectory consistency
+
+A pose and twist trajectory must be mathematically consistent:
+
+\[
+\dot T_d(t)\leftrightarrow V_d(t)
+\]
+
+Questions include:
+
+- Does interpolation reproduce the projected GPMP2 trajectory?
+- Is angular velocity consistent with orientation interpolation?
+- Is the final twist exactly zero?
+- What happens when trajectory time pauses?
+- Is a replacement continuous in pose and twist?
+- Do both arms activate on the same logical tick?
+- What state does the non-planned arm hold?
+
+A smooth-looking pose trajectory can still have an inconsistent twist reference.
+
+## 12. Planning versus executed posture
+
+GPMP2 validates a joint path:
+
+\[
+q_{\text{GPMP2}}(t)
+\]
+
+The Cartesian controller may execute another path:
+
+\[
+q_{\text{executed}}(t)\neq q_{\text{GPMP2}}(t)
+\]
+
+even when both produce a similar end-effector trajectory.
+
+Therefore the project must distinguish:
+
+- Planner-path collision clearance.
+- Predicted controller-executed clearance.
+- MuJoCo-observed clearance.
+- Physical clearance.
+
+These are different claims. A planner clearance result cannot automatically be called an execution guarantee.
+
+## 13. Dual-arm coupling
+
+The arms are not two unrelated single-arm systems. They share:
+
+- One Mount.
+- One wearer.
+- Overlapping workspaces.
+- A shared stop policy.
+- Potentially conflicting redundant postures.
+- Physical reaction forces through the backpack.
+
+The design must consider:
+
+- Inter-arm distance using executed configurations.
+- Synchronized trajectory activation.
+- One arm holding while the other replans.
+- Whether one arm’s fault stops both.
+- Whether both controllers simultaneously demand motion that the wearable base cannot physically resist.
+- Whether the simulated Mount is prescribed or dynamically affected by arm reaction forces.
+
+A scripted, immovable Mount ignores the reaction forces transmitted into the wearer. That limitation needs to be explicit.
+
+## 14. Wearer and human safety geometry
+
+This is specific to a wearable SRL. Avoiding a box in the room is not sufficient.
+
+The model eventually needs to distinguish:
+
+- Torso.
+- Head.
+- Shoulders and arms.
+- Backpack/Mount.
+- Right SRL.
+- Left SRL.
+- External obstacles.
+
+Safety margins should account for:
+
+- Vicon uncertainty.
+- Calibration error.
+- Latency.
+- Human movement between samples.
+- Collision-model approximation.
+- Tracking error.
+- Redundant elbow motion.
+
+The required margin is not simply a geometric number; it is an uncertainty and response-time problem.
+
+## 15. Hold infeasibility and escape behaviour
+
+Holding a world pose while the wearer moves can walk the arm toward a joint limit.
+
+The system must define:
+
+- When a hold is becoming infeasible.
+- Whether orientation may be relaxed.
+- Whether a new posture should be planned.
+- Whether the target should be projected to a nearby achievable pose.
+- Whether the arm enters a controlled stop.
+- What happens to the other arm.
+
+“Continue world hold until a joint-boundary stop” is a valid policy only if it is deliberate and documented.
+
+## 16. Calibration and structural flex
+
+The model assumes:
+
+\[
+{}^MT_B=\text{constant}
+\]
+
+On a backpack, that may be only approximately true.
+
+Engineering questions include:
+
+- How is \( {}^MT_B \) calibrated?
+- Is the marker cluster attached rigidly enough?
+- How much does the plate flex under arm load?
+- Does the torso move relative to the Mount?
+- Is the tool/TCP transform correct?
+- What world-position error does each calibration uncertainty create?
+
+This establishes the minimum error floor. No controller tuning can remove an unobserved changing calibration transform.
+
+## 17. External loads and interaction
+
+A Cartesian position controller may hold well in free space but behave differently while:
+
+- Carrying a payload.
+- Contacting an object.
+- Being pushed by the wearer.
+- Experiencing cable or clothing forces.
+- Accelerating both arms simultaneously.
+
+The project must state whether it assumes free-space motion or includes interaction. If contact is expected, stiffness, force limiting and impedance become relevant—not just pose tracking.
+
+## 18. A proper SRL error budget
+
+World tracking error should be decomposed into:
+
+\[
+e_{\text{total}}
+=
+e_{\text{Vicon}}
++
+e_{\text{calibration}}
++
+e_{\text{kinematics}}
++
+e_{\text{timing}}
++
+e_{\text{controller}}
++
+e_{\text{actuation}}
++
+e_{\text{flex}}
+\]
+
+Not literally as simple scalar addition, but as separate measurable contributors.
+
+The simulator should expose:
+
+- True Mount state versus estimated Mount state.
+- True end-effector state versus kinematically estimated state.
+- Reference versus estimated state.
+- Reference versus simulator ground truth.
+- Commanded versus simulated joint response.
+
+That lets you identify whether an error came from estimation, control, actuation or modelling.
+
+## What every agent should be required to answer
+
+For every robotics-related change:
+
+1. What physical behaviour is being implemented?
+2. What equations define it?
+3. What are the frames, units and signs?
+4. Which quantities are measured, estimated, referenced or simulated?
+5. At what rates and timestamps do they exist?
+6. What assumptions make the method valid?
+7. When is the requested behaviour physically infeasible?
+8. What happens near limits, singularities or stale data?
+9. What safety claim does the implementation support—and what does it not?
+10. What independent test would fail if the mathematics were wrong?
+11. How is this specific to the wearable dual-arm SRL?
+12. What remains unverified on physical hardware?
+
+That broader checklist—not transformations alone—is what should become the permanent mathematical and robotics engineering standard for the project. I want you to use a workflow implementation plan to follow the previous plans that we've set before. It might be a bit like off the chart, but I want you to basically create the workflow to achieve those plans.Instead, require a visible Robotics Analysis Packet before every significant implementation task. The agent earns the right to edit code by demonstrating the physical and mathematical model.
+For HumanSL, every packet should contain:
+Physical objective
+State the actual phenomenon, not the software feature.
+\[
+{}^W T_E(t) \rightarrow {}^W T_{E,d}(t)
+\]Meaning: maintain or track the end-effector pose in the world while the wearable base moves.
+
+System decomposition
+\[
+{}^W T_E =
+{}^W T_M\,
+{}^M T_B\,
+{}^B T_E(q)
+\]This separates:
+Vicon world-to-Mount measurement
+Mount-to-robot-base calibration
+Robot forward kinematics
+Tool/TCP definition
+The agent must explain which component each task changes.
+
+Motion decomposition
+Using one explicitly declared twist convention:
+\[
+{}^W V_E =
+{}^W V_{E,\text{base motion}}
++
+{}^W J_E(q)\dot q
+\]This forces the agent to distinguish motion caused by the wearer from motion produced by the joints. It must then show mathematically how the controller’s measured-twist term compensates for base motion, rather than casually adding an unexplained feedforward term.
+
+Error decomposition
+At first order:
+\[
+\delta x_E \approx
+A_M\delta x_{\text{Vicon}}
++ A_C\delta x_{\text{calibration}}
++ J(q)\delta q
++ \delta x_{\text{actuator}}
++ \delta x_{\text{delay}}
+\]This creates an error budget. If simulation tracking is poor, the agent knows which physical contribution to investigate.
+
+Time decomposition
+The packet must state:
+Physics substep rate
+Controller: 500 Hz
+Vicon: 100 Hz
+Planner: asynchronous
+Reference sampling/interpolation
+Timestamps, age and zero-order-hold behaviour
+
+Limiting cases
+Before coding, the agent predicts what should happen when:
+Mount is stationary.
+Mount translates at constant velocity.
+Mount rotates about the TCP.
+Vicon repeats the same sample five times.
+Calibration is deliberately wrong.
+Reference pose is constant.
+Planner output is infeasible.
+One arm’s replacement trajectory is rejected.
+
+Falsifiable predictions
+The agent must state expected plots and signs before seeing results—for example:
+Reusing a Vicon sequence produces no new derivative.
+Constant Mount translation produces opposite compensating relative arm motion.
+World TCP error remains bounded while base-relative TCP position changes.
+Increasing simulated Vicon latency increases phase lag.
+Wrong transform direction amplifies rather than rejects Mount motion.
+
+Multi-agent structure
+Each significant task should pass through four different perspectives:
+Robotics analyst
+Produces the model, equations, frames, assumptions, limiting cases and predicted evidence. Read-only.
+
+Adversarial analysis reviewer
+Tries to break the derivation:
+Are transforms multiplied in the right order?
+Are spatial and body twists mixed?
+Is the Jacobian relative to the moving base?
+Are angular and linear components expressed at the same point?
+Does the proposed experiment distinguish two competing explanations?
+
+Implementation agent
+Implements only the accepted mathematical contract. Every code change must map to an equation, invariant or measurable requirement.
+
+Evidence reviewer
+Compares the result against predictions written before implementation—not merely against tests created by the implementation agent.
+
+Only the implementation agent writes code, and only one writing agent operates at a time.
+The task anchor
+Every agent brief should begin with this:
+Your job is to resolve the stated robotics question, not merely complete file edits. Before implementation, define the physical system, frames, units, timestamps, governing equations, assumptions, controllable and observed variables, limiting cases and falsifiable predictions. Decompose end-effector behaviour into reference, Mount motion, calibration, kinematics, sensing, latency, control and actuation contributions. Do not implement until the analysis reviewer accepts this model. Every implementation change must trace to an accepted equation, invariant or measurement. If the mathematics is ambiguous, stop and report the ambiguity rather than selecting a convenient convention.
+
+Keeping it practical
+Not every task needs a thesis-length derivation.
+Frame, controller, Vicon, kinematics and model tasks require the full packet.
+IPC and serialization tasks require contracts, timing and invariants.
+Panel tasks need only state ownership, safety boundaries and evidence provenance.
+Mechanical build changes need a short dependency argument.
+This prevents “thinking mathematically” from becoming another form of procrastination.
+The main workflow should therefore gain a Robotics Analysis Gate before implementation, not just more code reviewers. That is the mechanism that keeps the agents doing the MSc as an engineering investigation instead of merely assembling software. I have not changed the workflow file from this side conversation. I want you to also follow this to make sure that you keep yourself on task. This might be a very, very, very long task, so I want you to set yourself a goal and don't stop until, like, um, until the goal, which is the one that I wanted to basically connect the, create a Mujoco simulation so I can test it out.
+
+So, yeah, what is it called, that Mujoco, the, the things, the simulation should already be there. I want to also make sure that everything is, um, working as it should according to the engineering plan that we have. So this is a very long task. I need you to create yourself a goal with multiagent workflow and use the things I have pasted to keep yourself correct.
+
+## 2026-08-17 00:56:23 BST
+
+The reliable way is to stop depending on the agent remembering your preference. Put the important rules into repository structure, automated checks, and mandatory review gates.
+
+Think of it as four layers.
+
+## 1. A permanent engineering contract
+
+Create one short authoritative document, for example:
+
+```text
+docs/engineering/humansl-engineering-contract.md
+```
+
+Then require every implementation agent to read it through `AGENTS.md`.
+
+It should contain hard rules such as:
+
+- Equations, frames, units and measured/reference distinctions are written before control code.
+- Simulator ground truth cannot enter production control calculations.
+- The execution core cannot depend on MuJoCo, Kortex, file I/O, terminal I/O or the panel.
+- GPMP2 and Vicon operations remain outside the 500 Hz path.
+- Comments explain physical assumptions and decisions, not syntax.
+- Tests must use an independent oracle where feasible.
+- Generic managers, factories and services are prohibited unless they replace existing complexity.
+- Existing behaviour is characterised before refactoring.
+- Simulation results are never described as physical proof.
+
+Keep it concise. If it becomes a fifty-page style guide, agents will satisfy it superficially.
+
+## 2. Make violations fail mechanically
+
+This is the strongest enforcement. Arrange the CMake targets so shortcuts do not compile.
+
+For example:
+
+```text
+humansl_execution_core
+    allowed: Eigen, frame contracts, controller mathematics
+    forbidden: MuJoCo, Kortex, panel, CSV/file code
+
+humansl_kortex_adapter
+    depends on: execution_core + Kortex
+
+humansl_mujoco_adapter
+    depends on: execution_core + MuJoCo
+```
+
+Add architecture tests that fail when:
+
+- A core file includes MuJoCo or Kortex headers.
+- Core code accesses `mjData`, sites or bodies.
+- Core code writes files or prints to the terminal.
+- Sim-only fields enter production state contracts.
+- A new source file bypasses the shared limits/integration path.
+- More than one module writes the run-log schema.
+- A 500 Hz source calls planner or blocking APIs.
+
+Even a simple repository check is useful:
+
+```text
+test_no_mujoco_in_execution_core
+test_no_kortex_in_execution_core
+test_no_io_in_execution_core
+test_sim_target_has_no_kortex_linkage
+test_hardware_and_sim_link_same_core
+```
+
+The key principle is:
+
+> If an agent takes the tempting shortcut, the build or architecture test should fail.
+
+## 3. Give every agent a constrained change packet
+
+Do not give an agent “build the simulator.” Give it one bounded slice.
+
+Each slice should include:
+
+```text
+Outcome
+Physical meaning
+Equations
+Inputs and outputs
+Frames and units
+Files it may modify
+Files it must not modify
+Existing behaviour that must remain
+Required tests
+Independent evidence
+Explicitly excluded work
+```
+
+A useful agent instruction is:
+
+```text
+Before editing:
+
+1. Read AGENTS.md and the HumanSL engineering contract.
+2. Trace the current call path.
+3. State the equation, frames and units involved.
+4. List the files you intend to change and why.
+5. Identify the independent evidence that will validate the change.
+6. Stop if the proposed implementation requires changing an approved
+   interface or architectural boundary.
+
+During implementation:
+
+- Make one coherent change.
+- Do not introduce generic infrastructure.
+- Do not use simulator-only state in controller calculations.
+- Keep blocking work outside the cyclic path.
+- Add the smallest test that would fail for a frame, sign or timing error.
+
+Before completion:
+
+- Run unit, architecture and replay tests.
+- Show the resulting call path.
+- Report any physical behaviour not proven.
+```
+
+That prompt should accompany every dispatched task, not only the first one.
+
+## 4. Separate implementation from judgment
+
+One agent should not be the sole author and validator of a safety-relevant slice.
+
+Use these roles:
+
+1. **Implementer:** makes the bounded change.
+2. **Mathematics reviewer:** verifies equations, frames, units and signs.
+3. **Architecture reviewer:** checks ownership, dependencies and readability.
+4. **Test reviewer:** asks whether fundamentally wrong physics could still pass.
+5. **Integration owner:** accepts or rejects the slice against the full pipeline.
+
+The reviewers should inspect the code independently rather than merely reading the implementer’s summary.
+
+For parallel work, freeze the shared contracts first. Agents working on MuJoCo, Vicon, the planner and panel should consume those contracts, not each invent a variation.
+
+## Required gates for every slice
+
+A slice should not be integrated unless all of these are true:
+
+- The physical purpose can be explained in a paragraph.
+- Its equation-to-code map is visible.
+- Frames and units appear in names or explicit contracts.
+- The main call path is easy to follow.
+- There is one obvious owner for each responsibility.
+- No duplicate logging, configuration or safety path was introduced.
+- Tests include at least one independent or negative check.
+- Architecture tests pass.
+- Pre-refactor trace replay still matches where behaviour should be preserved.
+- The diff contains no unrelated refactoring.
+- Unproven hardware behaviour is stated explicitly.
+
+## Specific protection against the MuJoCo shortcut
+
+Make the simulation adapter expose only what hardware could provide:
+
+```cpp
+struct MeasuredArmState {
+    JointVector q_rad;
+    JointVector qdot_rad_s;
+};
+
+struct WorldMountSample {
+    Pose world_T_mount;
+    Twist estimated_mount_twist_world;
+    double age_s;
+    std::uint64_t sequence;
+};
+```
+
+The execution core receives those structures. It does not receive `mjModel`, `mjData`, body IDs or site positions.
+
+MuJoCo end-effector ground truth should go through a completely separate validation contract:
+
+```cpp
+struct SimulationGroundTruth {
+    Pose mujoco_world_T_ee;
+};
+```
+
+Only plotting and validation code can see it. A dependency test should enforce that separation.
+
+## Preventing gradual drift
+
+At each major milestone:
+
+- Regenerate or review the architecture call-path map.
+- Run the architecture dependency checks.
+- Replay the golden execution traces.
+- Review newly added public interfaces.
+- Search for duplicated configuration, logging and frame conversions.
+- Confirm the simulation target still has no Kortex linkage.
+- Confirm controller code still has no MuJoCo dependency.
+- Have a fresh reviewer explain one complete 500 Hz cycle from the source.
+
+If the reviewer cannot explain the cycle without jumping unpredictably between many files, the milestone is not finished even if tests pass.
+
+The central lesson is: prose tells agents what you value; compilation boundaries, tests and review gates keep the project that way.Use separate reviews:
+Controls reviewer: stability, Jacobian inversion, saturation and sampled-data behaviour.
+State-estimation reviewer: Vicon timing, differentiation, filtering and calibration.
+Experimental-design reviewer: hypotheses, baselines, confounders and metrics.
+Wearable-robotics reviewer: Mount flex, wearer geometry, dual-arm interaction and physical feasibility.
+Safety reviewer: checks that diagnostics were not accidentally converted into stops.
+Simplification reviewer: removes unnecessary abstractions and generic AI-style structure.
+Then have one synthesis pass reconcile disagreements. You remain the decision-maker.
+What a supervisor-level decomposition should produce
+It should result in testable hypotheses, for example:
+World-Cartesian control produces less world-pose drift than a frozen-joint baseline under identical Mount motion.
+Including measured Mount twist reduces dynamic error compared with pose feedback alone.
+Vicon filtering reduces twist noise but increases phase lag.
+Tracking degradation correlates with \(\rho_v>1\), saturation and singular-value reduction.
+A world-fixed hold gradually consumes joint margin under sustained Mount displacement.
+The executed redundant posture can diverge from GPMP2’s planned branch despite similar end-effector tracking.
+Ideal MuJoCo actuation validates kinematics and logic but does not predict hardware gain performance.
+Those are scientific statements you can test. None inherently requires introducing a new robot stop.You’re right. Frame transformations are only one part of the engineering. The deeper SRL problem is:
+
+> Can two redundant arms maintain useful world-frame behaviour while their wearable base moves, measurements are delayed/noisy, joint range is finite, and the robot remains safe around its wearer?
+
+Every part of that question needs mathematical treatment.
+
+## 1. What state is actually observable?
+
+The controller needs:
+
+\[
+x =
+\{q,\dot q,{}^WT_M,{}^WV_M\}
+\]
+
+But these quantities arrive differently:
+
+- \(q,\dot q\): Kinova feedback at approximately 500 Hz.
+- \( {}^WT_M \): Vicon pose at approximately 100 Hz.
+- \( {}^WV_M \): not directly measured; estimated by differentiating pose.
+- Calibration \( {}^MT_B \): assumed fixed but physically affected by backpack flex.
+
+The design must define:
+
+- Timestamp alignment between Kinova and Vicon.
+- Whether a Vicon sample represents capture time or receive time.
+- Zero-order hold versus prediction.
+- What happens when samples are late, repeated or missing.
+- How much filter delay is acceptable.
+- Whether Mount-to-base flex is small enough to model as rigid.
+
+This is state-estimation engineering, not just transformation code.
+
+## 2. Mount-twist estimation
+
+Translation and rotation must be differentiated correctly:
+
+\[
+v^W_M =
+\frac{p^W_{M,k}-p^W_{M,k-1}}{\Delta t}
+\]
+
+\[
+\omega^W_M =
+\frac{\log(R^W_{M,k}R^{W\top}_{M,k-1})}{\Delta t}
+\]
+
+Important decisions include:
+
+- Differentiating only when the Vicon sequence advances.
+- Resetting after occlusion instead of differentiating across a gap.
+- Filtering noise without introducing too much delay.
+- Handling orientation discontinuities and quaternion sign.
+- Representing estimator validity separately from pose validity.
+
+A smoother twist estimate is not automatically better: filtering reduces noise but delays the measured disturbance.
+
+## 3. Correct end-effector motion decomposition
+
+For the wearable system:
+
+\[
+v^W_E =
+v^W_M
++
+\omega^W_M\times(p^W_E-p^W_M)
++
+J_v^W(q)\dot q
+\]
+
+\[
+\omega^W_E =
+\omega^W_M+J_\omega^W(q)\dot q
+\]
+
+This decomposition separates:
+
+- Motion caused by the wearer/backpack.
+- Motion caused by the robot joints relative to the backpack.
+
+Tests must independently excite each term:
+
+- Mount translation with stationary joints.
+- Mount rotation with stationary joints.
+- Joint motion with a stationary Mount.
+- Combined Mount and joint motion.
+
+## 4. Pose error on \(SE(3)\)
+
+Position subtraction is straightforward, but orientation error is not:
+
+\[
+e_p=p_d-p
+\]
+
+\[
+e_R=\log(R_dR^\top)
+\]
+
+The design must establish:
+
+- Error direction and sign.
+- Whether angular error is expressed in world or body coordinates.
+- Behaviour near \(180^\circ\).
+- Quaternion normalisation and sign equivalence.
+- Separate translational and rotational gains.
+- Whether orientation can be disabled without changing translation behaviour.
+
+A sign error here can make the wearable robot amplify base motion.
+
+## 5. Closed-loop control and inner-servo assumptions
+
+The proposed controller is approximately:
+
+\[
+V_{\text{task}}
+=
+K_p e_{\text{pose}}
++
+K_d(V_d-V_{\text{measured}})
+\]
+
+But this is not commanding Cartesian velocity directly to an ideal robot. It produces joint velocity, integrates that into joint position, and sends position commands to Kinova’s internal servo.
+
+The actual cascade is:
+
+```text
+Cartesian controller
+→ resolved joint velocity
+→ software integration
+→ joint-position request
+→ Kinova internal position servo
+→ physical arm
+```
+
+The engineering questions are:
+
+- What inner-servo bandwidth is being assumed?
+- Are the outer-loop gains reasonable for that bandwidth?
+- How do delay and filtering affect stability?
+- What happens after saturation?
+- Is the discrete 2 ms implementation stable?
+- Are gains dimensionally correct?
+
+MuJoCo with arbitrary position-actuator gains cannot answer whether hardware gains are stable. It can validate the controller structure and sampled-data logic.
+
+## 6. Jacobian inversion and singularities
+
+The DLS inverse is:
+
+\[
+J^\#_\lambda =
+J^\top(JJ^\top+\lambda^2I)^{-1}
+\]
+
+The design must define:
+
+- How \(\lambda\) is chosen.
+- Whether damping changes with singularity proximity.
+- What minimum singular value generates a warning.
+- How much Cartesian tracking is intentionally sacrificed near singularities.
+- Whether translational and rotational tasks require scaling because their units differ.
+- What happens if the requested task velocity is infeasible.
+
+Without this, “DLS” is only a formula with an arbitrary tuning constant.
+
+## 7. Redundancy and posture evolution
+
+Each arm has seven joints but a six-dimensional Cartesian task. Therefore:
+
+\[
+\dot q =
+J^\#V_{\text{task}}
++
+(I-J^\#J)\dot q_{\text{null}}
+\]
+
+The null-space policy determines:
+
+- Elbow motion.
+- Joint-limit approach.
+- Clearance from the wearer.
+- Inter-arm clearance.
+- Whether the executed posture follows GPMP2’s collision-free branch.
+- Whether prolonged world hold consumes the remaining joint range.
+
+This is central to the SRL because the arm may hold the same end-effector pose using several radically different elbow configurations.
+
+A joint-limit objective alone does not solve wearer avoidance or preserve GPMP2’s branch.
+
+## 8. Feasibility of world stabilisation
+
+World hold is not always physically possible.
+
+The joint velocity required to reject Mount motion is related to:
+
+\[
+\dot q_{\text{required}}
+\approx
+-J^\#V_{\text{base at EE}}
+\]
+
+If the wearer moves too quickly, or the arm approaches a singularity or joint limit, the required velocity can exceed the arm’s limits.
+
+The system needs a defined feasibility concept:
+
+- Required versus available joint velocity.
+- Remaining joint-position margin.
+- Singular-value margin.
+- Predicted time until a bounded joint reaches its limit.
+- Whether to warn, replan, relax orientation or stop.
+- How to report that perfect world hold was impossible.
+
+Otherwise tracking failure looks like controller failure when it may be a physical reachability failure.
+
+## 9. Saturation and command shaping
+
+Independent per-joint clipping:
+
+\[
+\dot q_i\leftarrow
+\operatorname{clip}(\dot q_i,-\dot q_{i,\max},\dot q_{i,\max})
+\]
+
+can change the Cartesian direction of motion.
+
+The project should explicitly decide between:
+
+- Independent joint clipping.
+- Uniform scaling of the full joint-velocity vector.
+- Task-priority saturation.
+- Acceleration and jerk limiting.
+- Preserving null-space motion versus task motion under saturation.
+
+This affects tracking, stability and how honestly the commanded task is represented.
+
+## 10. Position-command integration
+
+The software sends position requests:
+
+\[
+q_{\text{cmd},k+1}
+=
+q_{\text{cmd},k}
++
+\Delta t\,\dot q_{\text{limited},k}
+\]
+
+That requires decisions about:
+
+- Seeding from fresh measured position.
+- Measured versus nominal \(\Delta t\).
+- Command lead over measured position.
+- Missed cycles and overruns.
+- Continuous-joint wrapping.
+- Bounded-joint limits.
+- Whether integration freezes during stale world state.
+- What happens when feedback stops following the request.
+
+This integration is part of the controller, not a trivial conversion.
+
+## 11. Reference trajectory consistency
+
+A pose and twist trajectory must be mathematically consistent:
+
+\[
+\dot T_d(t)\leftrightarrow V_d(t)
+\]
+
+Questions include:
+
+- Does interpolation reproduce the projected GPMP2 trajectory?
+- Is angular velocity consistent with orientation interpolation?
+- Is the final twist exactly zero?
+- What happens when trajectory time pauses?
+- Is a replacement continuous in pose and twist?
+- Do both arms activate on the same logical tick?
+- What state does the non-planned arm hold?
+
+A smooth-looking pose trajectory can still have an inconsistent twist reference.
+
+## 12. Planning versus executed posture
+
+GPMP2 validates a joint path:
+
+\[
+q_{\text{GPMP2}}(t)
+\]
+
+The Cartesian controller may execute another path:
+
+\[
+q_{\text{executed}}(t)\neq q_{\text{GPMP2}}(t)
+\]
+
+even when both produce a similar end-effector trajectory.
+
+Therefore the project must distinguish:
+
+- Planner-path collision clearance.
+- Predicted controller-executed clearance.
+- MuJoCo-observed clearance.
+- Physical clearance.
+
+These are different claims. A planner clearance result cannot automatically be called an execution guarantee.
+
+## 13. Dual-arm coupling
+
+The arms are not two unrelated single-arm systems. They share:
+
+- One Mount.
+- One wearer.
+- Overlapping workspaces.
+- A shared stop policy.
+- Potentially conflicting redundant postures.
+- Physical reaction forces through the backpack.
+
+The design must consider:
+
+- Inter-arm distance using executed configurations.
+- Synchronized trajectory activation.
+- One arm holding while the other replans.
+- Whether one arm’s fault stops both.
+- Whether both controllers simultaneously demand motion that the wearable base cannot physically resist.
+- Whether the simulated Mount is prescribed or dynamically affected by arm reaction forces.
+
+A scripted, immovable Mount ignores the reaction forces transmitted into the wearer. That limitation needs to be explicit.
+
+## 14. Wearer and human safety geometry
+
+This is specific to a wearable SRL. Avoiding a box in the room is not sufficient.
+
+The model eventually needs to distinguish:
+
+- Torso.
+- Head.
+- Shoulders and arms.
+- Backpack/Mount.
+- Right SRL.
+- Left SRL.
+- External obstacles.
+
+Safety margins should account for:
+
+- Vicon uncertainty.
+- Calibration error.
+- Latency.
+- Human movement between samples.
+- Collision-model approximation.
+- Tracking error.
+- Redundant elbow motion.
+
+The required margin is not simply a geometric number; it is an uncertainty and response-time problem.
+
+## 15. Hold infeasibility and escape behaviour
+
+Holding a world pose while the wearer moves can walk the arm toward a joint limit.
+
+The system must define:
+
+- When a hold is becoming infeasible.
+- Whether orientation may be relaxed.
+- Whether a new posture should be planned.
+- Whether the target should be projected to a nearby achievable pose.
+- Whether the arm enters a controlled stop.
+- What happens to the other arm.
+
+“Continue world hold until a joint-boundary stop” is a valid policy only if it is deliberate and documented.
+
+## 16. Calibration and structural flex
+
+The model assumes:
+
+\[
+{}^MT_B=\text{constant}
+\]
+
+On a backpack, that may be only approximately true.
+
+Engineering questions include:
+
+- How is \( {}^MT_B \) calibrated?
+- Is the marker cluster attached rigidly enough?
+- How much does the plate flex under arm load?
+- Does the torso move relative to the Mount?
+- Is the tool/TCP transform correct?
+- What world-position error does each calibration uncertainty create?
+
+This establishes the minimum error floor. No controller tuning can remove an unobserved changing calibration transform.
+
+## 17. External loads and interaction
+
+A Cartesian position controller may hold well in free space but behave differently while:
+
+- Carrying a payload.
+- Contacting an object.
+- Being pushed by the wearer.
+- Experiencing cable or clothing forces.
+- Accelerating both arms simultaneously.
+
+The project must state whether it assumes free-space motion or includes interaction. If contact is expected, stiffness, force limiting and impedance become relevant—not just pose tracking.
+
+## 18. A proper SRL error budget
+
+World tracking error should be decomposed into:
+
+\[
+e_{\text{total}}
+=
+e_{\text{Vicon}}
++
+e_{\text{calibration}}
++
+e_{\text{kinematics}}
++
+e_{\text{timing}}
++
+e_{\text{controller}}
++
+e_{\text{actuation}}
++
+e_{\text{flex}}
+\]
+
+Not literally as simple scalar addition, but as separate measurable contributors.
+
+The simulator should expose:
+
+- True Mount state versus estimated Mount state.
+- True end-effector state versus kinematically estimated state.
+- Reference versus estimated state.
+- Reference versus simulator ground truth.
+- Commanded versus simulated joint response.
+
+That lets you identify whether an error came from estimation, control, actuation or modelling.
+
+## What every agent should be required to answer
+
+For every robotics-related change:
+
+1. What physical behaviour is being implemented?
+2. What equations define it?
+3. What are the frames, units and signs?
+4. Which quantities are measured, estimated, referenced or simulated?
+5. At what rates and timestamps do they exist?
+6. What assumptions make the method valid?
+7. When is the requested behaviour physically infeasible?
+8. What happens near limits, singularities or stale data?
+9. What safety claim does the implementation support—and what does it not?
+10. What independent test would fail if the mathematics were wrong?
+11. How is this specific to the wearable dual-arm SRL?
+12. What remains unverified on physical hardware?
+
+That broader checklist—not transformations alone—is what should become the permanent mathematical and robotics engineering standard for the project. I want you to use a workflow implementation plan to follow the previous plans that we've set before. It might be a bit like off the chart, but I want you to basically create the workflow to achieve those plans.Instead, require a visible Robotics Analysis Packet before every significant implementation task. The agent earns the right to edit code by demonstrating the physical and mathematical model.
+For HumanSL, every packet should contain:
+Physical objective
+State the actual phenomenon, not the software feature.
+\[
+{}^W T_E(t) \rightarrow {}^W T_{E,d}(t)
+\]Meaning: maintain or track the end-effector pose in the world while the wearable base moves.
+
+System decomposition
+\[
+{}^W T_E =
+{}^W T_M\,
+{}^M T_B\,
+{}^B T_E(q)
+\]This separates:
+Vicon world-to-Mount measurement
+Mount-to-robot-base calibration
+Robot forward kinematics
+Tool/TCP definition
+The agent must explain which component each task changes.
+
+Motion decomposition
+Using one explicitly declared twist convention:
+\[
+{}^W V_E =
+{}^W V_{E,\text{base motion}}
++
+{}^W J_E(q)\dot q
+\]This forces the agent to distinguish motion caused by the wearer from motion produced by the joints. It must then show mathematically how the controller’s measured-twist term compensates for base motion, rather than casually adding an unexplained feedforward term.
+
+Error decomposition
+At first order:
+\[
+\delta x_E \approx
+A_M\delta x_{\text{Vicon}}
++ A_C\delta x_{\text{calibration}}
++ J(q)\delta q
++ \delta x_{\text{actuator}}
++ \delta x_{\text{delay}}
+\]This creates an error budget. If simulation tracking is poor, the agent knows which physical contribution to investigate.
+
+Time decomposition
+The packet must state:
+Physics substep rate
+Controller: 500 Hz
+Vicon: 100 Hz
+Planner: asynchronous
+Reference sampling/interpolation
+Timestamps, age and zero-order-hold behaviour
+
+Limiting cases
+Before coding, the agent predicts what should happen when:
+Mount is stationary.
+Mount translates at constant velocity.
+Mount rotates about the TCP.
+Vicon repeats the same sample five times.
+Calibration is deliberately wrong.
+Reference pose is constant.
+Planner output is infeasible.
+One arm’s replacement trajectory is rejected.
+
+Falsifiable predictions
+The agent must state expected plots and signs before seeing results—for example:
+Reusing a Vicon sequence produces no new derivative.
+Constant Mount translation produces opposite compensating relative arm motion.
+World TCP error remains bounded while base-relative TCP position changes.
+Increasing simulated Vicon latency increases phase lag.
+Wrong transform direction amplifies rather than rejects Mount motion.
+
+Multi-agent structure
+Each significant task should pass through four different perspectives:
+Robotics analyst
+Produces the model, equations, frames, assumptions, limiting cases and predicted evidence. Read-only.
+
+Adversarial analysis reviewer
+Tries to break the derivation:
+Are transforms multiplied in the right order?
+Are spatial and body twists mixed?
+Is the Jacobian relative to the moving base?
+Are angular and linear components expressed at the same point?
+Does the proposed experiment distinguish two competing explanations?
+
+Implementation agent
+Implements only the accepted mathematical contract. Every code change must map to an equation, invariant or measurable requirement.
+
+Evidence reviewer
+Compares the result against predictions written before implementation—not merely against tests created by the implementation agent.
+
+Only the implementation agent writes code, and only one writing agent operates at a time.
+The task anchor
+Every agent brief should begin with this:
+Your job is to resolve the stated robotics question, not merely complete file edits. Before implementation, define the physical system, frames, units, timestamps, governing equations, assumptions, controllable and observed variables, limiting cases and falsifiable predictions. Decompose end-effector behaviour into reference, Mount motion, calibration, kinematics, sensing, latency, control and actuation contributions. Do not implement until the analysis reviewer accepts this model. Every implementation change must trace to an accepted equation, invariant or measurement. If the mathematics is ambiguous, stop and report the ambiguity rather than selecting a convenient convention.
+
+Keeping it practical
+Not every task needs a thesis-length derivation.
+Frame, controller, Vicon, kinematics and model tasks require the full packet.
+IPC and serialization tasks require contracts, timing and invariants.
+Panel tasks need only state ownership, safety boundaries and evidence provenance.
+Mechanical build changes need a short dependency argument.
+This prevents “thinking mathematically” from becoming another form of procrastination.
+The main workflow should therefore gain a Robotics Analysis Gate before implementation, not just more code reviewers. That is the mechanism that keeps the agents doing the MSc as an engineering investigation instead of merely assembling software. I have not changed the workflow file from this side conversation. I want you to also follow this to make sure that you keep yourself on task. This might be a very, very, very long task, so I want you to set yourself a goal and don't stop until, like, um, until the goal, which is the one that I wanted to basically connect the, create a Mujoco simulation so I can test it out.
+
+So, yeah, what is it called, that Mujoco, the, the things, the simulation should already be there. I want to also make sure that everything is, um, working as it should according to the engineering plan that we have. So this is a very long task. I need you to create yourself a goal with multiagent workflow and use the things I have pasted to keep yourself correct.use ultracode
+
+## 2026-08-17 01:01:45 BST
+
+keep going until the sim is working
+
+## 2026-08-17 01:10:49 BST
+
+Multi-agent structure
+Each significant task should pass through four different perspectives:
+Robotics analyst
+Produces the model, equations, frames, assumptions, limiting cases and predicted evidence. Read-only.
+
+Adversarial analysis reviewer
+Tries to break the derivation:
+Are transforms multiplied in the right order?
+Are spatial and body twists mixed?
+Is the Jacobian relative to the moving base?
+Are angular and linear components expressed at the same point?
+Does the proposed experiment distinguish two competing explanations?
+
+Implementation agent
+Implements only the accepted mathematical contract. Every code change must map to an equation, invariant or measurable requirement.
+
+Evidence reviewer
+Compares the result against predictions written before implementation—not merely against tests created by the implementation agent.
+
+Only the implementation agent writes code, and only one writing agent operates at a time. is this happening?
+
+## 2026-08-17 01:18:26 BST
+
+You’re right: the mathematical reasoning gate I described would improve correctness, but it would not prevent bloated, scattered, over-defensive code.
+
+You are describing three separate problems:
+
+- **Comprehension distance:** understanding one behaviour requires opening 15 files.
+- **Change radius:** modifying one concern requires unrelated edits across the repository.
+- **Policy leakage:** telemetry and safety checks appear inside controller logic instead of having clear owners.
+
+The workflow therefore needs a second gate: a **code-shape and simplicity gate**.
+
+## Agent safety is not robot safety
+
+This distinction must be explicit:
+
+- **Agent safety:** don’t run hardware without permission, preserve user files, audit before editing. These belong in the agent workflow.
+- **Robot safety:** joint limits, finite-value checks, stale feedback, stop priority, communication failure and shutdown. These belong in a small, explicit runtime safety boundary.
+- **Research diagnostics:** unusual conditions worth measuring but which do not require stopping. These belong in telemetry.
+- **Speculative defensive checks:** guards added because something “might be unsafe” without a defined hazard. These should not be added.
+
+The LLM must not translate its own cautious operating instructions into extra production-code gates.
+
+Every proposed runtime guard should answer:
+
+1. What specific physical or software hazard does it address?
+2. Where is that hazard first observable?
+3. What response is required: reject, limit, hold, stop, or only log?
+4. Which single component owns it?
+5. How is it tested?
+6. Is an equivalent check already present?
+
+If those questions cannot be answered, the guard does not enter production code.
+
+## The intended readable pipeline
+
+The principal execution flow should be understandable from one orchestration file:
+
+```text
+CycleInput
+    ↓
+ControllerLaw
+    ↓
+raw joint velocity
+    ↓
+SafetyPolicy              ← one generic runtime-safety stage
+    ↓
+limited joint velocity
+    ↓
+PositionIntegrator
+    ↓
+ActuatorRequest
+    ↓
+CycleResult ─────────────→ TelemetrySnapshot → asynchronous writer
+```
+
+Hardware lifecycle safety sits outside this core:
+
+```text
+KortexSession:
+connection → startup gates → control cycles → fault/stop → restoration
+
+SimulationAdapter:
+MuJoCo state → control cycles → simulated position requests
+```
+
+Someone reading the execution core should not encounter CSV formatting, plotting, Kortex startup policy, terminal output or planner IPC.
+
+## Telemetry should observe the pipeline
+
+Telemetry should not be implemented as logging statements scattered through controller functions.
+
+Instead, the components return meaningful results:
+
+```text
+ControllerResult
+- Cartesian error
+- measured/reference twist
+- raw joint velocity
+
+SafetyResult
+- limited joint velocity
+- joint margins
+- saturation flags
+- stop reason
+
+CycleResult
+- controller result
+- safety result
+- integrated command
+```
+
+At the outer execution boundary:
+
+```text
+TelemetrySnapshot = makeTelemetrySnapshot(CycleInput, CycleResult)
+```
+
+One asynchronous writer serializes that snapshot.
+
+This means:
+
+- Controller mathematics does not know CSV exists.
+- Safety does not know how it is plotted.
+- The logger does not reconstruct controller state.
+- Simulation-only truth has an explicit `sim_` extension.
+- Adding telemetry usually changes a predictable cluster: result/schema, writer, parser and test.
+
+That may still be three or four files, but they are always the same obvious files. The goal is not literally “one file per change”; it is **predictable locality**.
+
+## Code-shape rules for the agents
+
+Every implementation task should have these constraints:
+
+1. **One owner per concern**
+
+   Telemetry, controller mathematics, safety policy, integration and hardware communication each have one canonical owner.
+
+2. **No cross-cutting side effects**
+
+   Pure controller and safety functions return results. They do not log, write files, print or mutate global diagnostic state.
+
+3. **Validate once at the boundary**
+
+   Do not repeatedly check the same condition in the parser, runner, controller, safety stage and writer.
+
+4. **No speculative abstractions**
+
+   No manager, service, registry, event bus or factory unless it replaces existing complexity or has two genuine current implementations.
+
+5. **File-touch budget**
+
+   Before editing, the agent predicts which production files must change. If a conceptually small task unexpectedly requires many production files, it stops and reports the hidden coupling instead of continuing to spread the implementation.
+
+6. **Concept budget**
+
+   The task report lists:
+
+   - Production concepts added
+   - Production concepts removed
+   - New classes/structs
+   - New runtime branches
+   - New safety gates
+   - Why each is unavoidable
+
+7. **Readable main path**
+
+   A reviewer must be able to trace one 500 Hz cycle without jumping through numerous wrapper layers.
+
+8. **Prefer deletion or consolidation**
+
+   A refactor should replace or consolidate existing complexity, not put a new abstraction over the old implementation while leaving both paths alive.
+
+## The additional agent review
+
+After mathematical review, a separate simplicity reviewer should ask:
+
+- Can I understand the control cycle from one file?
+- Does this feature have one obvious owner?
+- Did telemetry enter controller mathematics?
+- Was the same validation added in several layers?
+- Was an agent-operational precaution accidentally turned into runtime policy?
+- Could one result struct replace several callbacks/helpers?
+- Did the change introduce more concepts than it removed?
+- Will the next person know exactly where to modify this behaviour?
+- Could the same outcome be achieved with fewer branches, files or abstractions?
+
+A task fails this review even if every test passes.
+
+## Recommended workflow
+
+Each task should pass through:
+
+```text
+Robotics analysis
+    ↓
+Mathematical review
+    ↓
+Code-shape proposal
+    ↓
+Simplicity review
+    ↓
+Implementation
+    ↓
+Behaviour/evidence review
+    ↓
+Final readability review
+```
+
+The important addition is that the agent must propose the **shape of the code before writing it**:
+
+> “This concern will be owned by X. The main flow remains visible in Y. Telemetry is assembled only at Z. The change touches these files. It adds one concept and removes two duplicated paths.”
+
+That is what prevents mathematically correct work from turning into an unreadable codebase.
+
+My reading of your desired outcome is: **the complete 500 Hz command flow should be readable from one central file, while details live in small components, and telemetry or safety should never obscure that flow.** Is that the right standard?
+
+## 2026-08-17 01:19:50 BST
+
+keep going until the sim is working
+
+## 2026-08-17 01:20:52 BST
+
+keep going until the goal is achieved
+
+## 2026-08-17 08:18:42 BST
+
+keep going until the sim is working
+
+## 2026-08-17 08:22:23 BST
+
+this images should ground you more to the real world problem
+
+## 2026-08-17 10:35:24 BST
+
+keep going until the sim is working
+
+## 2026-08-17 11:02:28 BST
+
+i believe this is a ultracode workflow that needs to be do in a different folder and it should probably ask questions before executing like brainstorm before so we are aligned./goal Transform /home/christian/Desktop/HumanSL_MAIN/Christian_control into
+one coherent, readable, maintainable MSc robotics software project without
+changing its intended physical behaviour or weakening robot safety.
+
+PRIMARY OUTCOME
+
+A robotics PhD who has not worked on this repository must be able to understand:
+
+1. how a goal becomes a planned world-frame trajectory;
+2. how Vicon and joint feedback become measured robot state;
+3. how the controller computes raw joint velocity;
+4. how safety and limits transform that into an actuator command;
+5. how the command and measured response become telemetry;
+6. how simulation uses the same relevant production logic;
+7. how the panel configures, runs, and diagnoses the system;
+
+without reading tens of unrelated files or reconstructing duplicated concepts.
+
+This is not a request to apply superficial formatting, blindly split large
+files, create more abstraction layers, or optimize only for line count. The
+goal is lower cognitive load, lower change-propagation cost, one owner per
+concept, and a visibly unified system.
+
+MANDATORY FIRST PHASE: AUDIT, DO NOT EDIT
+
+Before modifying code:
+
+- Read AGENTS.md, the engineering contract, robotics analysis workflow,
+  intent story, architecture documents, every active build file, and relevant
+  current diffs.
+- Preserve all existing uncommitted work. Never discard or overwrite changes.
+- Inventory every file under Christian_control and classify it as:
+  active production, test, tooling/UI, generated artifact, configuration,
+  current documentation, historical documentation, or unused/superseded.
+- Trace the real end-to-end workflows:
+  configure → build → plan → simulate/run → command → telemetry → diagnosis.
+- Build a dependency and ownership map based on actual calls, includes,
+  subprocesses, file formats, FIFOs, configuration reads, and generated files.
+- Do not assume a file is obsolete merely because it is currently unreachable.
+- Do not run any robot-facing executable.
+
+SEMANTIC DUPLICATION AUDIT
+
+Find concepts that exist in multiple forms or locations, including:
+
+- duplicated variables or fields representing the same physical quantity;
+- duplicated configuration constants or limits;
+- multiple names for the same frame, pose, timestamp, state, or command;
+- duplicate radians/degrees or metres/millimetres conversions;
+- duplicate kinematics or transform implementations;
+- duplicate trajectory parsing, validation, and serialization;
+- duplicate safety predicates or stop decisions;
+- duplicate telemetry definitions, derivations, schemas, and readers;
+- duplicate session/build/freshness checks across shell, Python, C++, and JS;
+- duplicated UI interpretations of production state;
+- old and new implementations that coexist.
+
+For every duplicate, identify:
+
+- its physical or software meaning;
+- all readers and writers;
+- its authoritative owner today, if one exists;
+- whether the copies can disagree;
+- which representation should become canonical;
+- which copies should be deleted, generated, or reduced to boundary adapters.
+
+Do not merge variables merely because their names look similar. Frames, units,
+timestamps, measured state, estimated state, reference state, requested command,
+limited command, sent command, acknowledgement, and measured response must
+remain explicitly distinct.
+
+TARGET ARCHITECTURE RULES
+
+Propose a target architecture satisfying these rules:
+
+- One canonical owner for every concept.
+- One clear root-level workflow for building and operating the project.
+- One readable end-to-end data flow.
+- Plain structs, pure functions, and explicit control flow are preferred.
+- Do not introduce managers, services, registries, factories, event buses,
+  plugin systems, or generic frameworks unless they replace more complexity
+  than they add and have at least two genuine current uses.
+- Do not create an interface merely to move code behind another file.
+- A module boundary must correspond to a real responsibility or runtime
+  boundary.
+- Shared physical mathematics and contracts must not be copied between the
+  controller, planner, simulation, Vicon, and panel.
+- Hardware, simulation, and UI adapters may differ, but they must consume
+  canonical contracts rather than redefining their meaning.
+- Historical reasoning belongs in versioned documentation, not large production
+  header comments.
+- Generated files must be visibly generated and must not become competing
+  sources of truth.
+- Prefer deletion and consolidation over adding wrappers around old paths.
+
+READABILITY AND LOCALITY REQUIREMENTS
+
+For every important concept, a reader must find:
+
+- one owner file;
+- at most two closely related implementation files;
+- one clearly named test location;
+- no competing implementation elsewhere.
+
+A reader must be able to understand the normal control cycle from one
+orchestration file:
+
+CycleInput
+→ measurement/state estimation
+→ reference
+→ controller law
+→ raw joint velocity
+→ safety and limits
+→ position integration
+→ actuator request
+→ CycleResult
+→ TelemetrySnapshot.
+
+Detailed mathematics may live in focused supporting files, but the main flow
+must remain visible without chasing callbacks or hidden state.
+
+SAFETY REQUIREMENTS
+
+Do not remove, weaken, reorder, or reinterpret a safety behavior simply to
+reduce code.
+
+Create one safety inventory. Every runtime guard must state:
+
+- the specific hazard;
+- the signal where the hazard is first observable;
+- units and timing semantics;
+- its single owning component;
+- its action: reject, limit, hold, stop, warn, or log only;
+- its precedence relative to other stop reasons;
+- its test or independent evidence;
+- whether an equivalent check exists elsewhere.
+
+Consolidate duplicated safety decisions. All controller modes and both hardware
+and simulation execution must pass through the same applicable command-safety
+pipeline.
+
+Keep these separate:
+
+- agent/workflow caution;
+- experimental diagnostics;
+- operator warnings;
+- command limits;
+- runtime robot stops;
+- firmware protections;
+- physical laboratory procedures.
+
+Do not turn diagnostic metrics into motion changes or stops without Christian’s
+explicit approval.
+
+TELEMETRY REQUIREMENTS
+
+Telemetry must become one coherent subsystem:
+
+- one canonical TelemetrySnapshot contract;
+- one assembly boundary;
+- one schema definition;
+- one asynchronous serialization path;
+- one documented place for derived offline metrics;
+- one compatibility/versioning policy.
+
+Controller, planner, Vicon, safety, actuation, simulation, CSV tooling, and the
+panel must not independently redefine telemetry field meaning.
+
+Adding a raw telemetry field should normally require changing:
+
+1. the canonical snapshot/schema;
+2. the single assembly location;
+3. focused tests or consumers that actually use it.
+
+Controller mathematics must not know about CSV, plotting, browser rendering,
+or file formatting.
+
+CONFIGURATION REQUIREMENTS
+
+Identify one canonical source for every configurable quantity. Remove situations
+where the panel parses C++ source or multiple YAML/C++/JavaScript values must be
+manually synchronized.
+
+Configuration must make units, frames, arm identity, applicability, defaults,
+and validation ownership explicit.
+
+A value may be repeated in a generated artifact or recorded run manifest, but
+not as another hand-maintained authority.
+
+MIGRATION METHOD
+
+Do not perform a one-shot rewrite.
+
+After the audit:
+
+1. Present the proposed target architecture and concept-ownership table.
+2. Present two credible alternatives and their tradeoffs.
+3. Show the intended files and concepts to add, consolidate, move, and delete.
+4. Show how current behaviour will be characterized independently.
+5. Stop and obtain Christian’s explicit approval before architecture changes.
+
+After approval, work in small vertical slices. Each slice must:
+
+- begin with current behaviour and independent evidence;
+- state the files and concepts it will touch;
+- have a strict file-touch budget;
+- consolidate one ownership boundary or remove one duplicated path;
+- preserve behaviour unless separately approved;
+- run focused tests and affected hardware-free suites;
+- compare against pre-refactor traces, contracts, or existing behaviour;
+- review the diff for accidental complexity;
+- update current documentation;
+- report production concepts/files/branches added and removed;
+- leave the repository working before continuing.
+
+If a slice unexpectedly spreads across many files, stop. Treat that spread as
+evidence of hidden coupling and redesign the boundary before continuing.
+
+QUALITY GATES
+
+A slice does not pass merely because tests pass. It must also improve at least
+one of:
+
+- number of canonical concept owners;
+- duplicate definitions;
+- dependency cycles;
+- files touched by a representative change;
+- branches in the main workflow;
+- oversized mixed-responsibility modules;
+- production line count;
+- concept count;
+- configuration authorities;
+- telemetry definition locations.
+
+It must not worsen another measure without a documented reason.
+
+Use representative change scenarios as architecture tests:
+
+- Change one controller gain.
+- Change one joint limit.
+- Add one planner parameter.
+- Add one raw telemetry measurement.
+- Add one derived diagnostic.
+- Trace one Vicon sample into the controller.
+- Trace one stop reason from hazard to code and test.
+- Trace one planned pose into the actuator request.
+- Run the same controller logic in simulation.
+
+For each scenario, report how many production files a developer must inspect
+and modify. Important concepts should require no more than three closely related
+production files. If they require more, the architecture is not yet complete.
+
+PROHIBITED SHORTCUTS
+
+- No wholesale rewrite.
+- No deleting tests to simplify the tree.
+- No weakening assertions or acceptance thresholds.
+- No mocks that merely repeat the new implementation’s assumptions.
+- No new abstraction layer that leaves the old path alive underneath.
+- No duplicate compatibility path without a defined removal checkpoint.
+- No moving complexity from C++ into Python, shell, JavaScript, or documentation.
+- No hiding unclear code behind a façade while retaining duplicated ownership.
+- No claims of physical safety or equivalence from offline tests.
+- No robot-facing execution.
+- No commit or push unless Christian explicitly requests it.
+
+VERIFIABLE END STATE
+
+Continue until all of the following are true:
+
+- The active architecture is explainable in one concise document.
+- The normal system path has one visible owner at every boundary.
+- Every important concept has one canonical representation.
+- Safety guards have one traceable, predictable decision path.
+- Telemetry has one canonical contract and assembly path.
+- Configuration values have one authoritative source.
+- Planner, controller, Vicon, simulation, and panel do not duplicate physical
+  mathematics or semantic validation without an explicitly justified boundary.
+- Superseded production paths are removed.
+- Historical documents are clearly separated from current operating guidance.
+- All relevant hardware-free builds and tests pass.
+- Pre-refactor characterization evidence still matches where behaviour was
+  meant to remain unchanged.
+- The final report shows reduced change-propagation cost using the representative
+  change scenarios above.
+- The final report lists all production files, concepts, branches, safety gates,
+  and configuration authorities added and removed.
+- No robot-facing command was executed.
+
+Begin with the read-only audit and target-architecture proposal. Do not start
+implementation until Christian approves the architecture.
+
+## 2026-08-17 11:19:37 BST
+
+this simulation is only for a few secods is not attached to a possibly moving base like in the other msc_project or in the real worls
+
+## 2026-08-17 13:19:34 BST
+
+can you keep going
+
+## 2026-08-17 13:24:52 BST
+
+let go
+
+## 2026-08-17 13:25:50 BST
+
+keep going
+
+## 2026-08-17 16:42:23 BST
+
+run it with the viewer
