@@ -764,6 +764,7 @@ function renderRun() {
   renderErrorRows(row, worst);
   renderJointBars(row);
   renderScalars(row);
+  renderWorldReadiness(row, state.frame?.worst || {});
   renderOtherArm();
 
   // The scene keeps a setter per thing it draws rather than one update(),
@@ -841,6 +842,50 @@ function renderScalars(row) {
   };
   for (const [key, value] of Object.entries(values)) {
     call(state.slots[key], 'set', value);
+  }
+}
+
+function renderWorldReadiness(row, worst) {
+  const fields = [
+    ['vicon_mount_valid', 'vicon-mount-valid'],
+    ['world_fresh', 'world-fresh'],
+    ['cart_replan_requested', 'cart-replan-requested'],
+    ['cart_traj_activated', 'cart-traj-activated'],
+  ];
+
+  const values = {};
+  for (const [field, id] of fields) {
+    const current = numOrNull(row[field]);
+    const edgeSeen = numOrNull(worst[field]);
+    const value = (field === 'cart_replan_requested' ||
+                   field === 'cart_traj_activated') && edgeSeen === 1
+      ? 1 : current;
+    values[field] = value;
+    const node = $(id);
+    if (!node) continue;
+    node.textContent = value === null ? '—' : String(value === 0 ? 0 : 1);
+    node.className = `readiness-value num ${value === null
+      ? 'is-unknown' : value === 0 ? 'is-warn' : 'is-ok'}`;
+  }
+
+  const note = $('world-readiness-note');
+  if (!note) return;
+  const mount = values.vicon_mount_valid;
+  const fresh = values.world_fresh;
+  const requested = values.cart_replan_requested;
+  const activated = values.cart_traj_activated;
+  if (mount === null) {
+    note.textContent = 'waiting for telemetry';
+  } else if (mount === 0) {
+    note.textContent = 'Vicon Mount pose invalid or occluded — planner waits for world_fresh = 1';
+  } else if (fresh === 0) {
+    note.textContent = 'Mount pose received — waiting for a fresh world sample';
+  } else if (requested === 0) {
+    note.textContent = 'world_fresh = 1 — waiting for the controller to request a plan';
+  } else if (activated === 0) {
+    note.textContent = 'cart_replan_requested = 1 — waiting for trajectory activation';
+  } else {
+    note.textContent = 'world pose and planner handoff are active';
   }
 }
 

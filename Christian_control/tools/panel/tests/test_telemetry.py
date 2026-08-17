@@ -265,7 +265,9 @@ class AggregatorTest(unittest.TestCase):
              "cmd_j4": 0.0, "meas_j4": 2.5,
              "pd_x": 0.0, "pd_y": 0.0, "pd_z": 0.0,
              "p_x": 0.04, "p_y": 0.0, "p_z": 0.0,
-             "traj_rejected": 1.0, "traj_start_error_deg": 4.1},
+             "traj_rejected": 1.0, "traj_start_error_deg": 4.1,
+             "cart_replan_requested": 1.0,
+             "cart_traj_activated": 1.0},
             {"dt_s": 0.002, "rot_error_rad": 0.02,
              "cmd_j1": 0.0, "meas_j1": 0.4,
              "pd_x": 0.0, "pd_y": 0.0, "pd_z": 0.0,
@@ -289,6 +291,8 @@ class AggregatorTest(unittest.TestCase):
     def test_a_single_cycle_edge_flag_survives_the_window(self) -> None:
         worst = self.worst_of(self.rows())
         self.assertTrue(worst["traj_rejected"])
+        self.assertTrue(worst["cart_replan_requested"])
+        self.assertTrue(worst["cart_traj_activated"])
         self.assertFalse(worst["traj_activated"])
         self.assertFalse(worst["joint_follow_stop"])
         self.assertAlmostEqual(worst["traj_start_error_deg"], 4.1)

@@ -62,6 +62,11 @@ EDGE_FLAGS = (
     "traj_rejected",
     "traj_complete",
     "joint_follow_stop",
+    # Current world-Cartesian format-13 edge fields. They are true for one
+    # 2 ms controller cycle, so include them in the panel frame window or the
+    # browser can step over the event at its ~20 Hz display rate.
+    "cart_replan_requested",
+    "cart_traj_activated",
 )
 
 

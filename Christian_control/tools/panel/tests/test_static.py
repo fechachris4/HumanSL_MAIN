@@ -144,6 +144,24 @@ class WiringMatchesTheMarkup(unittest.TestCase):
         for target in re.findall(r'data-goto="([a-z]+)"', HTML):
             self.assertIn(target, views)
 
+    def test_world_planner_readiness_readout_is_wired(self):
+        ids = html_ids(HTML)
+        for element in (
+            "world-readiness-card",
+            "vicon-mount-valid",
+            "world-fresh",
+            "cart-replan-requested",
+            "cart-traj-activated",
+        ):
+            self.assertIn(element, ids, element)
+        for field in (
+            "vicon_mount_valid",
+            "world_fresh",
+            "cart_replan_requested",
+            "cart_traj_activated",
+        ):
+            self.assertIn(field, JS, field)
+
 
 class EndpointsMatchTheServer(unittest.TestCase):
     def test_every_endpoint_the_page_calls_is_routed(self):

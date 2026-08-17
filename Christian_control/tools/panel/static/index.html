@@ -112,6 +112,32 @@
           </p>
         </section>
 
+        <section class="card" id="world-readiness-card">
+          <div class="card-head">
+            <h2>World / planner</h2>
+            <span class="card-note">live handoff conditions</span>
+          </div>
+          <div class="readiness-list" aria-live="polite">
+            <div class="readiness-row">
+              <span class="readiness-key">vicon_mount_valid</span>
+              <span class="readiness-value num" id="vicon-mount-valid">—</span>
+            </div>
+            <div class="readiness-row">
+              <span class="readiness-key">world_fresh</span>
+              <span class="readiness-value num" id="world-fresh">—</span>
+            </div>
+            <div class="readiness-row">
+              <span class="readiness-key">cart_replan_requested</span>
+              <span class="readiness-value num" id="cart-replan-requested">—</span>
+            </div>
+            <div class="readiness-row">
+              <span class="readiness-key">cart_traj_activated</span>
+              <span class="readiness-value num" id="cart-traj-activated">—</span>
+            </div>
+          </div>
+          <p class="card-foot" id="world-readiness-note">waiting for telemetry</p>
+        </section>
+
         <section class="card" id="joints-card">
           <div class="card-head">
             <h2>Joints</h2>
