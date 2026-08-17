@@ -325,6 +325,23 @@ commit.
   docs/superpowers/specs/2026-08-16-humansl-execution-twin-design.md.
   (Prompts and interactive approvals: session transcript, 2026-08-16.)
 
+- The Pinocchio model wrapper is named for what it does. Christian's own
+  conclusion (raw-prompt-log 2026-08-17 20:22): the `Dynamics` class was
+  never doing dynamics — no mass/Coriolis/gravity call exists anywhere in
+  the controller; it existed to load and hold the URDF model for
+  kinematics, a `RobotModel` with a misleading name inherited from
+  TrajectoryExecution's impedance work. The velocity-level controller
+  needs no rigid-body dynamics; a real dynamics component returns only
+  if torque/impedance/operational-space control does, and git history of
+  Dynamics.cpp keeps the removed methods. He chose the full slice — record
+  + build dedup + rename — over the staged options (interactive question,
+  2026-08-17 evening session; prediction log same date). Companion fact,
+  same session: the build-memory failure traced chiefly to thirteen
+  targets each recompiling Dynamics.cpp/Kinematics.cpp instead of linking
+  humansl_execution_core once; the dedup was approved in the same answer.
+  (Questions asked out of order with prediction logging twice that session
+  — recorded as process misses in predictions.md.)
+
 ## Interpretations (hypotheses)
 
 "He asked for X, likely because Y" — cited, awaiting confirmation.
@@ -583,3 +600,14 @@ and why. Dismissals are binding — do not re-pitch.
   boundary; therefore planned clearance is labelled planner-path evidence and
   executed clearance is monitored rather than guaranteed. (Pasted review and
   interactive choice, session transcript 2026-08-16.)
+- 2026-08-17 (Pinocchio warnings and the Dynamics split): options shown
+  for the `-Wmaybe-uninitialized` noise (extern-template instantiation,
+  targeted suppression, both, leave) were all rejected — Christian
+  corrected the premise instead: the warning is real, caused by how
+  Pinocchio's mimic-joint code is written (`nv()`==0 at run time vs
+  `NV`==1 at compile time; unreachable for our mimic-free URDFs). The
+  false-positive framing was the agent's verification failure, logged in
+  predictions.md. Options for the follow-up (record only / + CMake dedup /
+  + full RobotModel split / nothing): adopted the full slice; job-count
+  cap in the panel explicitly deferred ("lets wait for now"). Upstream
+  bug report to Pinocchio remains open as an option nobody has taken.

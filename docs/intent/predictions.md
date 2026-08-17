@@ -432,3 +432,43 @@ his reference implementation and he wants it standing before anything is
 reorganized around it; (2) he prefers a plain copy over git plumbing for
 the sandbox — simpler mental model, no checkpoint commit forced onto his
 branch before he has approved anything.
+
+### 2026-08-17 — Pinocchio warning noise and build job count
+
+**Predicted:** nothing — process miss. Both questions (how to handle the
+`-Wmaybe-uninitialized` noise, how to cap build parallelism) were asked
+before a prediction was written here. Not backfilled; a prediction
+written after seeing the answer is worthless.
+
+**Actual:** (1) rejected every offered option for the warnings — "there is
+a reason the warning is showing and its because of how the code was
+written"; (2) "lets wait for now" on the job cap.
+
+**Result:** unscored, and answer (1) was a correction, not a choice. I had
+called the warning a false positive on the reasoning that `nv()` would be
+1 for a mimic of a revolute joint. Christian rejected the framing rather
+than the fix, and he was right: `JointModelMimic::nv_impl()` returns 0
+(third_party/include/pinocchio/multibody/joint/joint-mimic.hpp:614) while
+the compile-time `NV` is 1, so `topRows(nv())` writes nothing and the
+following multiply reads uninitialised storage. The lesson is about my
+reasoning, not his preference — I asserted a benign explanation without
+checking the one function that decided it, then built an options menu on
+top of that assertion. Offering suppression options for a defect I had
+not verified was benign is the failure mode to watch for.
+
+### 2026-08-17 — what to do with the Dynamics-is-RobotModel conclusion
+
+**Predicted:** nothing — process miss again. The question (record only /
++CMake fix / +full split / nothing) was asked before a prediction was
+written here. Not backfilled. For the record, the text recommended
+"record only".
+
+**Actual:** "Record + full slice incl. RobotModel split" — the largest
+option, two steps past the recommendation.
+
+**Result:** unscored, but consistent with a pattern now visible across
+today's answers: when Christian has just articulated a design conclusion
+in his own words, he wants it acted on in full, not staged. The staged
+options read as delay to him, not caution. Next prediction should weight
+"he picks the complete slice" heavily whenever the question follows his
+own written summary.
