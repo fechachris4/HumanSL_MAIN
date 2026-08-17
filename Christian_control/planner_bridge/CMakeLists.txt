@@ -25,7 +25,7 @@ set(TP_LIB "${HUMANSL_ROOT}/third_party/lib")
 
 # The one canonical URDF (basic_control/config/GEN3_dual_mounted.urdf) — same
 # macro name basic_control's CMakeLists.txt defines, so both projects parse
-# the same file through the same Dynamics/Kinematics code.
+# the same file through the same RobotModel/Kinematics code.
 set(GEN3_DUAL_URDF
     "${HUMANSL_ROOT}/Christian_control/basic_control/config/GEN3_dual_mounted.urdf")
 add_compile_definitions(GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
@@ -33,7 +33,7 @@ add_compile_definitions(GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
 # trajectory_generation/ is this project's own copy of the GPMP2 pipeline,
 # taken from the inherited TrajectoryGeneration tree on 2026-08-10. The
 # upstream tree is frozen and no longer compiled from; this copy is the live
-# one. Dynamics.cpp/Kinematics.cpp are basic_control's Pinocchio-based URDF
+# one. RobotModel.cpp/Kinematics.cpp are basic_control's Pinocchio-based URDF
 # model and FK/Jacobian adapter, reused by source path
 # (PinocchioKinematicsAdapter.cpp wraps them for utils.cpp/analytical_ik.h —
 # see trajectory_generation/include).
@@ -45,7 +45,7 @@ set(TG_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/OptimisationWaypoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/trajectory_generation/src/PinocchioKinematicsAdapter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/GenerateTrajectory.cpp
-    ${HUMANSL_ROOT}/Christian_control/basic_control/src/Dynamics.cpp
+    ${HUMANSL_ROOT}/Christian_control/basic_control/src/RobotModel.cpp
     ${HUMANSL_ROOT}/Christian_control/basic_control/src/Kinematics.cpp
 )
 

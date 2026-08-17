@@ -36,7 +36,7 @@
 #include <vector>
 
 #include "Config.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "Kinematics.h"
 
 namespace {
@@ -251,10 +251,10 @@ int main(int argc, char** argv) {
                    "_poses.csv";
     }
 
-    Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-    DualArmKinematics model(dynamics, arm, arm_config.other_arm_nominal_rad,
+    RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+    DualArmKinematics model(robot_model, arm, arm_config.other_arm_nominal_rad,
                             config::kRightBaseFrame, config::kRightEndEffectorFrame);
-    KinematicsWorkspace workspace(dynamics);
+    KinematicsWorkspace workspace(robot_model);
 
     std::ofstream out(out_path);
     if (!out) {

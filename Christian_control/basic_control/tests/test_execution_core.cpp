@@ -239,14 +239,14 @@ void CheckAllocationHookCounts()
 // fixture per case mirrors one run of the controller (the Task 1 harness
 // did the same).
 struct CoreFixture {
-    Dynamics dynamics;
+    RobotModel robot_model;
     DualArmKinematics model;
     CartesianTrajectoryMailbox mailbox;
     ArmExecutionCore core;
 
     explicit CoreFixture(const ExecutionConfig& execution_config)
-        : dynamics(GEN3_DUAL_URDF_PATH),
-          model(dynamics, Arm::kRight, config::kLeftNominalRad,
+        : robot_model(GEN3_DUAL_URDF_PATH),
+          model(robot_model, Arm::kRight, config::kLeftNominalRad,
                 config::kRightBaseFrame, config::kRightEndEffectorFrame),
           core(model, execution_config, mailbox, config::kControlDtS)
     {

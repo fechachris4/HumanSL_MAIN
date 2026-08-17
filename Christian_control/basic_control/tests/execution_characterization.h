@@ -225,8 +225,8 @@ struct CharacterizationExpected {
 class CharacterizationHarness {
 public:
     CharacterizationHarness()
-        : dynamics_(GEN3_DUAL_URDF_PATH),
-          model_(dynamics_, Arm::kRight, config::kLeftNominalRad,
+        : robot_model_(GEN3_DUAL_URDF_PATH),
+          model_(robot_model_, Arm::kRight, config::kLeftNominalRad,
                  config::kRightBaseFrame, config::kRightEndEffectorFrame),
           controller_(model_),
           reference_(mailbox_),
@@ -496,7 +496,7 @@ public:
     }
 
 private:
-    Dynamics dynamics_;
+    RobotModel robot_model_;
     DualArmKinematics model_;
     CartesianTrajectoryMailbox mailbox_;
     TrackingController controller_;

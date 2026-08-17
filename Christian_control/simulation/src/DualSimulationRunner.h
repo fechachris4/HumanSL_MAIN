@@ -73,7 +73,7 @@
 #include <optional>
 
 #include "CartesianTrajectoryMailbox.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "ExecutionCore.h"
 #include "Kinematics.h"
 #include "MujocoBackend.h"
@@ -130,7 +130,7 @@ private:
     // Production kinematic authority: one Pinocchio model, one
     // DualArmKinematics per controlled arm (constructed exactly as the
     // parity test constructs them against the same URDF).
-    Dynamics dynamics_;
+    RobotModel robot_model_;
     DualArmKinematics kinematics_right_;
     DualArmKinematics kinematics_left_;
 

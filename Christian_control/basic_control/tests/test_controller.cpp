@@ -59,15 +59,15 @@ RobotState MovingState()
 
 void CheckMeasurementAndBaseMotionOnce()
 {
-    Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-    DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
+    RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+    DualArmKinematics model(robot_model, Arm::kRight, config::kLeftNominalRad,
                             config::kRightBaseFrame,
                             config::kRightEndEffectorFrame);
     TrackingController controller(model);
     const RobotState state = MovingState();
     const MeasuredCartesianState measured = controller.Measure(state);
 
-    KinematicsWorkspace workspace(model.dynamics());
+    KinematicsWorkspace workspace(model.robot_model());
     const PoseJacobian base =
         model.ControlledPoseAndJacobian(state.q_rad, workspace);
     const pinocchio::SE3& mount_T_base =
@@ -186,8 +186,8 @@ void CheckCustomConfigInjection()
     const ExecutionConfig custom = CustomExecutionConfig();
     ValidateExecutionConfig(custom); // must not throw: values are physical
 
-    Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-    DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
+    RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+    DualArmKinematics model(robot_model, Arm::kRight, config::kLeftNominalRad,
                             config::kRightBaseFrame,
                             config::kRightEndEffectorFrame);
     TrackingController controller(model, custom);

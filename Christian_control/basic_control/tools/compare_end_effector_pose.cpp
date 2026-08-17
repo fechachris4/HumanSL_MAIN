@@ -20,7 +20,7 @@
 //
 
 #include "Config.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "Hardware.h"
 #include "Kinematics.h"
 
@@ -73,8 +73,8 @@ int main(int argc, char** argv)
         arm_config.name == std::string("right") ? Arm::kRight : Arm::kLeft;
     try
     {
-        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-        DualArmKinematics model(dynamics, controlled_arm,
+        RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+        DualArmKinematics model(robot_model, controlled_arm,
                                 arm_config.other_arm_nominal_rad,
                                 config::kRightBaseFrame,
                                 config::kRightEndEffectorFrame);
@@ -90,7 +90,7 @@ int main(int argc, char** argv)
         for (int i = 0; i < fb.actuators_size() && i < 7; ++i)
             q_rad[i] = fb.actuators(i).position() * M_PI / 180.0;
 
-        KinematicsWorkspace workspace(model.dynamics());
+        KinematicsWorkspace workspace(model.robot_model());
         const PoseJacobian ee = model.ControlledPoseAndJacobian(q_rad, workspace);
         const Eigen::Vector3d zyx = ee.rotation.eulerAngles(2, 1, 0);
 

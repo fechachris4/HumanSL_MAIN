@@ -52,7 +52,7 @@
 #include <mujoco/mujoco.h>
 
 #include "Config.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "Kinematics.h"
 #include "ModelContract.h"
 #include "model_parity_cases.h"
@@ -356,14 +356,14 @@ namespace
 int main()
 {
     // --- production Pinocchio side (the kinematic authority) -------------
-    Dynamics dynamics(SIM_URDF_PATH);
+    RobotModel robot_model(SIM_URDF_PATH);
     DualArmKinematics kinematics_right(
-        dynamics, Arm::kRight, config::kLeftNominalRad,
+        robot_model, Arm::kRight, config::kLeftNominalRad,
         config::kRightBaseFrame, config::kRightEndEffectorFrame);
     DualArmKinematics kinematics_left(
-        dynamics, Arm::kLeft, config::kRightNominalRad,
+        robot_model, Arm::kLeft, config::kRightNominalRad,
         config::kRightBaseFrame, config::kRightEndEffectorFrame);
-    KinematicsWorkspace workspace(dynamics);
+    KinematicsWorkspace workspace(robot_model);
 
     // --- MuJoCo side ------------------------------------------------------
     char error[1024] = {0};

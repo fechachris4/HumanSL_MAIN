@@ -8,7 +8,7 @@
 //
 
 #include "Config.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "Hardware.h"
 #include "Kinematics.h"
 
@@ -64,8 +64,8 @@ int main(int argc, char** argv)
     {
         // Same mounted-model + arm adapter the controller runs, so this
         // pose matches what the controller sees at takeover.
-        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-        DualArmKinematics model(dynamics, controlled_arm,
+        RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+        DualArmKinematics model(robot_model, controlled_arm,
                                 arm_config.other_arm_nominal_rad,
                                 config::kRightBaseFrame,
                                 config::kRightEndEffectorFrame);
@@ -81,7 +81,7 @@ int main(int argc, char** argv)
         for (int i = 0; i < fb.actuators_size() && i < 7; ++i)
             q_rad[i] = fb.actuators(i).position() * M_PI / 180.0;
 
-        KinematicsWorkspace workspace(model.dynamics());
+        KinematicsWorkspace workspace(model.robot_model());
         const PoseJacobian ee = model.ControlledPoseAndJacobian(q_rad, workspace);
 
         // Intrinsic Z-Y-X (yaw-pitch-roll) Euler angles, R = Rz*Ry*Rx —

@@ -5,7 +5,7 @@
 // The YAML is the source of truth for where the two bases sit relative to
 // `mount`; the URDF is what Pinocchio actually loads. Nothing generates one
 // from the other, so this test is the link between them: it loads the URDF
-// through the real Dynamics/DualArmKinematics path and checks the composed
+// through the real RobotModel/DualArmKinematics path and checks the composed
 // mount->base transforms against the YAML's separation, tilt and origin
 // convention. Edit the YAML, forget the URDF, and this fails naming the
 // number that disagrees.
@@ -23,7 +23,7 @@
 #include <string>
 
 #include "Config.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "Kinematics.h"
 
 namespace
@@ -119,8 +119,8 @@ int main(int argc, char** argv)
             return 1;
         }
 
-        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-        DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
+        RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+        DualArmKinematics model(robot_model, Arm::kRight, config::kLeftNominalRad,
                                 config::kRightBaseFrame,
                                 config::kRightEndEffectorFrame);
 

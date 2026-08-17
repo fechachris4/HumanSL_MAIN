@@ -716,7 +716,7 @@ PlannerSolveResult SolveWorldTrajectory(const std::vector<std::string>& args,
     PlannerModel model;
     try {
         // Same reason as the solve below: constructing the model builds a
-        // Dynamics, and anything the Pinocchio/legacy stack prints to
+        // RobotModel, and anything the Pinocchio/legacy stack prints to
         // std::cout here would corrupt the standalone preview stream. The
         // final block is written only after the guard restores std::cout.
         const CoutRedirectGuard cout_guard(diagnostics);

@@ -722,7 +722,7 @@ const char* const kProvenanceInputs[] = {
     "src/CartesianReference.cpp", "src/CartesianReference.h",
     "src/CartesianTrajectoryMailbox.cpp", "src/CartesianTrajectoryMailbox.h",
     "src/Config.h", "src/Controller.cpp", "src/Controller.h",
-    "src/Dynamics.cpp", "src/Dynamics.h", "src/Frames.h",
+    "src/RobotModel.cpp", "src/RobotModel.h", "src/Frames.h",
     "src/Kinematics.cpp", "src/Kinematics.h", "src/ReactiveLaw.h",
     "src/Runner.cpp", "src/State.h", "src/StopPriority.h",
     "../cartesian_contract/WorldCartesianTrajectory.cpp",

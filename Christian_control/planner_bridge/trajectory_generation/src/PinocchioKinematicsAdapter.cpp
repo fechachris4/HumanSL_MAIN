@@ -11,15 +11,15 @@
 namespace pinocchio_kinematics_adapter {
 namespace {
 
-Dynamics& SharedDynamics() {
-    static Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-    return dynamics;
+RobotModel& SharedRobotModel() {
+    static RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+    return robot_model;
 }
 
 // One DualArmKinematics per (end-effector frame, controlled arm) requested
-// — both are fixed at construction. All instances share SharedDynamics()'s
+// — both are fixed at construction. All instances share SharedRobotModel()'s
 // model/data; safe because calls are sequential (never interleaved), each
-// call reads its result out of dynamics_.data_ before the next begins.
+// call reads its result out of robot_model_.data_ before the next begins.
 DualArmKinematics& SharedKinematics(const std::string& end_effector_frame,
                                     bool left_arm) {
     static std::map<std::pair<std::string, bool>, std::unique_ptr<DualArmKinematics>>
@@ -32,7 +32,7 @@ DualArmKinematics& SharedKinematics(const std::string& end_effector_frame,
         // end-effector-frame slots that arm owns; the other slot gets the
         // compiled default for a frame it never resolves through.
         auto kinematics = std::make_unique<DualArmKinematics>(
-            SharedDynamics(), left_arm ? Arm::kLeft : Arm::kRight,
+            SharedRobotModel(), left_arm ? Arm::kLeft : Arm::kRight,
             left_arm ? config::kRightNominalRad : config::kLeftNominalRad,
             config::kRightBaseFrame,
             left_arm ? config::kRightEndEffectorFrame : end_effector_frame,
@@ -48,7 +48,7 @@ DualArmKinematics& SharedKinematics(const std::string& end_effector_frame,
 PoseAndJacobian ToolPoseAndJacobianInBaseLink(const Eigen::Matrix<double, 7, 1>& q_rad,
                                               const std::string& end_effector_frame,
                                               bool left_arm) {
-    static KinematicsWorkspace workspace(SharedDynamics());
+    static KinematicsWorkspace workspace(SharedRobotModel());
     const PoseJacobian result =
         SharedKinematics(end_effector_frame, left_arm)
             .ControlledPoseAndJacobian(q_rad, workspace);

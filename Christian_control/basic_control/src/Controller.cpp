@@ -16,7 +16,7 @@ constexpr double kDegToRad = M_PI / 180.0;
 TrackingController::TrackingController(DualArmKinematics& model,
                                        const ExecutionConfig& config)
     : model_(model),
-      workspace_(std::make_unique<KinematicsWorkspace>(model.dynamics())),
+      workspace_(std::make_unique<KinematicsWorkspace>(model.robot_model())),
       gains_(config.gains),
       zone_rad_(config.limit_avoid_zone_rad),
       arrival_position_tolerance_m_(config.arrival_position_tolerance_m),

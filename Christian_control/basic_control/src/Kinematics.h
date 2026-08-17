@@ -15,14 +15,14 @@
 
 #include "Config.h"
 #include "State.h"
-#include "Dynamics.h" // Pinocchio model wrapper (our copy of TrajectoryExecution's)
+#include "RobotModel.h" // Pinocchio model wrapper (was Dynamics; see its header)
 
 // ---------------------------------------------------------------
 // Kinematics — generic Pinocchio FK and Jacobian
 // ---------------------------------------------------------------
 
 //
-// Kinematics: forward kinematics via Pinocchio (model already loaded in Dynamics).
+// Kinematics: forward kinematics via Pinocchio (model already loaded in RobotModel).
 //
 
 
@@ -38,15 +38,15 @@ struct Pose {
 // q_pin is the Pinocchio configuration vector (from measure_configuration).
 // Frame names come from the URDF, e.g. "EndEffector_Link", "gripper_link",
 // "Bracelet_Link".
-Pose forward_kinematics(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
+Pose forward_kinematics(RobotModel& robot_model, const Eigen::VectorXd& q_pin,
                         const std::string& frame_name = "EndEffector_Link");
 
 // Preallocated workspace for the per-cycle kinematics: the full 6×nv frame
 // Jacobian lives here so the cyclic loop never allocates. Construct once,
 // outside the loop, from the model that will be queried.
 struct KinematicsWorkspace {
-    explicit KinematicsWorkspace(const Dynamics& dynamics)
-        : jacobian_full(6, dynamics.model_.nv)
+    explicit KinematicsWorkspace(const RobotModel& robot_model)
+        : jacobian_full(6, robot_model.model_.nv)
     {
         jacobian_full.setZero(); // getFrameJacobian only writes nonzeros
     }
@@ -115,7 +115,7 @@ public:
     // (config::ArmConfig::other_arm_nominal_rad — kLeftNominalRad when
     // controlled_arm is kRight, kRightNominalRad when it is kLeft).
     DualArmKinematics(
-        Dynamics& dynamics, Arm controlled_arm,
+        RobotModel& robot_model, Arm controlled_arm,
         const JointVector& other_arm_nominal_rad,
         const std::string& right_base_frame,
         const std::string& right_end_effector_frame,
@@ -178,7 +178,7 @@ public:
         const Eigen::Matrix<double, 7, 1>& right_q_rad,
         const Eigen::Matrix<double, 7, 1>& left_q_rad);
 
-    Dynamics& dynamics() { return dynamics_; }
+    RobotModel& robot_model() { return robot_model_; }
     pinocchio::FrameIndex right_base_frame_id() const { return right_base_frame_id_; }
     pinocchio::FrameIndex right_frame_id() const { return right_frame_id_; }
     const std::array<int, 7>& right_q_indices() const { return right_q_indices_; }
@@ -190,7 +190,7 @@ private:
     void UpdateFullKinematics(const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
                               KinematicsWorkspace& workspace);
 
-    Dynamics& dynamics_;
+    RobotModel& robot_model_;
     Arm controlled_arm_;
     pinocchio::FrameIndex right_base_frame_id_;
     pinocchio::FrameIndex right_frame_id_;

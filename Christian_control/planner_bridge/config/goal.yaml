@@ -68,7 +68,7 @@ left:
   frame: mount
   path:
     type: circle
-    centre: [ 0.0, 0.386, 0.5213 ]
+    centre: [ 0.39, 0.386, 0.5213 ]
     radius_m: 0.2
     normal: [ 1, 0, 0 ]
     duration_s: 12

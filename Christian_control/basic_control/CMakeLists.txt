@@ -76,7 +76,7 @@ function(add_bundled_eigen_to target)
 endfunction()
 
 # One call wires a target to the bundled Pinocchio: SYSTEM include paths,
-# the Dynamics wrapper's include dir, the two .so files, the runtime RPATH,
+# the RobotModel wrapper's include dir, the two .so files, the runtime RPATH,
 # and the lazy-binding link options. libpinocchio_parsers.so references
 # collision symbols (coal) that are not bundled and that we never call (we
 # only build the model, no collision geometry); --allow-shlib-undefined
@@ -98,6 +98,21 @@ function(add_pinocchio_to target)
     target_link_options(${target} PRIVATE
             -Wl,--allow-shlib-undefined
             -Wl,-z,lazy
+    )
+endfunction()
+
+# One call wires a target to humansl_execution_core: the archive's PUBLIC
+# usage requirements carry the src/ + Cartesian-contract include dirs, the
+# bundled Eigen/Pinocchio SYSTEM includes, the Pinocchio .so files and the
+# lazy-binding link options; only the runtime RPATH is not a propagated
+# usage requirement, so it is set here. Tools and tests that need the
+# Pinocchio model link this instead of recompiling the library's sources —
+# each source then compiles once, into the archive (a static library links
+# only the objects a consumer actually references).
+function(add_execution_core_to target)
+    target_link_libraries(${target} humansl_execution_core)
+    set_target_properties(${target} PROPERTIES
+            BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
     )
 endfunction()
 
@@ -128,7 +143,7 @@ message(STATUS "Vicon world-pose source: ${VICON_SOURCE_MODE}")
 #     library (Plan 01 Task 4). It owns the explicit per-cycle contract
 #     (ExecutionCore), the immutable configuration snapshot
 #     (ExecutionConfig), the controller/reference/actuation mathematics,
-#     the Pinocchio kinematics/dynamics, and the Cartesian contracts.
+#     the Pinocchio model and kinematics, and the Cartesian contracts.
 #     Dependencies are ONLY the bundled Eigen/Pinocchio and pthread — a
 #     Kinova::Api or Vicon SDK symbol in this archive is a test failure
 #     (tests/check_execution_core_linkage.cmake), not a review hope. The
@@ -143,7 +158,7 @@ add_library(humansl_execution_core STATIC
         src/CartesianTrajectoryMailbox.cpp
         src/Actuation.cpp
         src/Kinematics.cpp
-        src/Dynamics.cpp
+        src/RobotModel.cpp
         ${CARTESIAN_CONTRACT_DIR}/WorldCartesianTrajectory.cpp
         ${CARTESIAN_CONTRACT_DIR}/PlanningRequest.cpp
 )
@@ -256,11 +271,8 @@ target_link_libraries(clear_faults
 #     direction at a given pose (controller's own model + DLS). No robot. ---
 add_executable(probe_direction
         tools/probe_direction.cpp
-        src/Kinematics.cpp
-        src/Dynamics.cpp
 )
-target_include_directories(probe_direction PRIVATE src)
-add_pinocchio_to(probe_direction)
+add_execution_core_to(probe_direction)
 
 # --- set_joint_limits: WRITES the joint 2/4/6 firmware JOINT_LIMIT
 #     thresholds (joint-position enforcement). No motion. ---
@@ -309,32 +321,26 @@ target_link_libraries(print_joint_positions
 #     kinematics on one live feedback reading. Kortex + Pinocchio, no motion. ---
 add_executable(print_end_effector_pose
         tools/print_end_effector_pose.cpp
-        src/Kinematics.cpp
         src/Hardware.cpp
-        src/Dynamics.cpp
 )
 
-target_include_directories(print_end_effector_pose PRIVATE src)
 target_link_libraries(print_end_effector_pose
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
 )
-add_pinocchio_to(print_end_effector_pose)
+add_execution_core_to(print_end_effector_pose)
 
 # --- compare_end_effector_pose: READ-ONLY diagnostic — firmware tool_pose
 #     (what the web app shows) vs our Pinocchio FK, from one shared
 #     feedback snapshot. Kortex + Pinocchio, no motion. ---
 add_executable(compare_end_effector_pose
         tools/compare_end_effector_pose.cpp
-        src/Kinematics.cpp
         src/Hardware.cpp
-        src/Dynamics.cpp
 )
 
-target_include_directories(compare_end_effector_pose PRIVATE src)
 target_link_libraries(compare_end_effector_pose
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a
 )
-add_pinocchio_to(compare_end_effector_pose)
+add_execution_core_to(compare_end_effector_pose)
 
 # --- print_tool_configuration: READ-ONLY dump of the robot's configured
 #     Tool Frame (ControlConfig::GetToolConfiguration) — the offset firmware
@@ -373,11 +379,8 @@ target_link_libraries(make_synthetic_log
 #     URDF + one CSV only — deliberately NOT linked against Kortex. ---
 add_executable(expand_run_poses
         tools/expand_run_poses.cpp
-        src/Kinematics.cpp
-        src/Dynamics.cpp
 )
-target_include_directories(expand_run_poses PRIVATE src)
-add_pinocchio_to(expand_run_poses)
+add_execution_core_to(expand_run_poses)
 
 # --- print_dual_arm_fk: both arms' FK in world and base_link, for checking
 #     the mounted model against the physical rig. URDF only — deliberately
@@ -385,11 +388,8 @@ add_pinocchio_to(expand_run_poses)
 #     with the robot off. ---
 add_executable(print_dual_arm_fk
         tools/print_dual_arm_fk.cpp
-        src/Kinematics.cpp
-        src/Dynamics.cpp
 )
-target_include_directories(print_dual_arm_fk PRIVATE src)
-add_pinocchio_to(print_dual_arm_fk)
+add_execution_core_to(print_dual_arm_fk)
 
 # --- Tests register only when basic_control is the top-level project (or
 #     when a parent sets BASIC_CONTROL_TESTS=ON). A consuming project
@@ -597,11 +597,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # The full model/mount geometry and explicit right-7-of-14 adapter.
     add_executable(test_dual_arm_model
             tests/test_dual_arm_model.cpp
-            src/Kinematics.cpp
-            src/Dynamics.cpp
     )
-    target_include_directories(test_dual_arm_model PRIVATE src)
-    add_pinocchio_to(test_dual_arm_model)
+    add_execution_core_to(test_dual_arm_model)
     add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
 
     # The URDF's mounting block against config/dual_arm_mounting.yaml, which
@@ -609,11 +606,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # so this test is what keeps them honest.
     add_executable(test_dual_arm_mounting
             tests/test_dual_arm_mounting.cpp
-            src/Kinematics.cpp
-            src/Dynamics.cpp
     )
-    target_include_directories(test_dual_arm_mounting PRIVATE src)
-    add_pinocchio_to(test_dual_arm_mounting)
+    add_execution_core_to(test_dual_arm_mounting)
     add_test(NAME dual_arm_mounting COMMAND test_dual_arm_mounting
              "${CMAKE_CURRENT_SOURCE_DIR}/config/dual_arm_mounting.yaml")
 
@@ -635,13 +629,8 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # hold pose's forward kinematics, but no robot.
     add_executable(test_controller
             tests/test_controller.cpp
-            src/Controller.cpp
-            src/ExecutionConfig.cpp
-            src/Kinematics.cpp
-            src/Dynamics.cpp
     )
-    target_include_directories(test_controller PRIVATE src)
-    add_pinocchio_to(test_controller)
+    add_execution_core_to(test_controller)
     add_test(NAME controller COMMAND test_controller)
 
     # Pre-extraction characterization (Plan 01 Task 1): drives the REAL
@@ -653,21 +642,12 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
     # Kortex, no Vicon SDK, no robot.
     add_executable(test_execution_characterization
             tests/test_execution_characterization.cpp
-            src/Controller.cpp
-            src/CartesianReference.cpp
-            src/ExecutionConfig.cpp
-            src/CartesianTrajectoryMailbox.cpp
-            ${CARTESIAN_CONTRACT_DIR}/WorldCartesianTrajectory.cpp
-            src/Actuation.cpp
-            src/Kinematics.cpp
-            src/Dynamics.cpp
     )
-    target_include_directories(test_execution_characterization PRIVATE
-            src tests ${CARTESIAN_CONTRACT_DIR})
+    target_include_directories(test_execution_characterization PRIVATE tests)
     target_compile_definitions(test_execution_characterization PRIVATE
             EXECUTION_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/execution_preextract_v1.csv"
             BASIC_CONTROL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-    add_pinocchio_to(test_execution_characterization)
+    add_execution_core_to(test_execution_characterization)
     add_test(NAME execution_characterization
              COMMAND test_execution_characterization)
 

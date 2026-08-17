@@ -29,7 +29,7 @@
 #include <utility>
 
 #include "Config.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "FramePrint.h"
 #include "Kinematics.h"
 
@@ -80,12 +80,12 @@ int main(int argc, char** argv)
         return 2;
 
     try {
-        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
+        RobotModel robot_model(GEN3_DUAL_URDF_PATH);
         // controlled_arm is irrelevant here: this tool only calls
         // MountFromBase and the fully-explicit ToolPoseInMount(arm, right_q,
         // left_q), neither of which reads it. Right is passed for
         // concreteness only.
-        DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
+        DualArmKinematics model(robot_model, Arm::kRight, config::kLeftNominalRad,
                                 config::kRightBaseFrame,
                                 config::kRightEndEffectorFrame);
 

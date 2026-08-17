@@ -33,11 +33,11 @@ int main(int argc, char** argv)
     for (int i = 0; i < 7; ++i)
         q_rad[i] = std::atof(argv[i + 1]) * M_PI / 180.0;
 
-    Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-    DualArmKinematics model(dynamics, Arm::kRight, config::kLeftNominalRad,
+    RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+    DualArmKinematics model(robot_model, Arm::kRight, config::kLeftNominalRad,
                             config::kRightBaseFrame,
                             config::kRightEndEffectorFrame);
-    KinematicsWorkspace workspace(dynamics);
+    KinematicsWorkspace workspace(robot_model);
 
     const PositionJacobian pj = model.ControlledPositionAndJacobian(q_rad, workspace);
     const PoseJacobian pose = model.ControlledPoseAndJacobian(q_rad, workspace);

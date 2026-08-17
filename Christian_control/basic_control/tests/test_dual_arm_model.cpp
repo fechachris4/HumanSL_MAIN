@@ -11,7 +11,7 @@
 
 #include "Config.h"
 #include "Kinematics.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 
 #include <pinocchio/algorithm/frames.hpp>
 #include <pinocchio/algorithm/jacobian.hpp>
@@ -59,20 +59,20 @@ int main()
                   "hardware command interface must remain seven-wide");
 
     try {
-        Dynamics dynamics(GEN3_DUAL_URDF_PATH);
-        Check(dynamics.model_.nq == 22,
+        RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+        Check(robot_model.model_.nq == 22,
               "dual model has nq = 22 for eight continuous-joint cos/sin pairs");
-        Check(dynamics.model_.nv == 14, "dual model has nv = 14");
-        Check(dynamics.model_.njoints == 15,
+        Check(robot_model.model_.nv == 14, "dual model has nv = 14");
+        Check(robot_model.model_.njoints == 15,
               "dual model has 14 movable joints plus Pinocchio universe");
-        Check(dynamics.model_.existFrame("mount"), "dual model retains mount frame");
-        Check(dynamics.model_.existFrame("base_link"),
+        Check(robot_model.model_.existFrame("mount"), "dual model retains mount frame");
+        Check(robot_model.model_.existFrame("base_link"),
               "dual model retains mounted right base");
-        Check(dynamics.model_.existFrame("leftbase_link"),
+        Check(robot_model.model_.existFrame("leftbase_link"),
               "dual model retains mounted left base");
 
         DualArmKinematics adapter(
-            dynamics, Arm::kRight, config::kLeftNominalRad,
+            robot_model, Arm::kRight, config::kLeftNominalRad,
             config::kRightBaseFrame,
             config::kRightEndEffectorFrame);
 
@@ -100,59 +100,59 @@ int main()
             adapter.FullConfigurationForControlled(right_q);
         for (int i = 0; i < 7; ++i) {
             const pinocchio::JointIndex right_id =
-                dynamics.model_.getJointId(right_names[static_cast<std::size_t>(i)]);
+                robot_model.model_.getJointId(right_names[static_cast<std::size_t>(i)]);
             const pinocchio::JointIndex left_id =
-                dynamics.model_.getJointId(left_names[static_cast<std::size_t>(i)]);
+                robot_model.model_.getJointId(left_names[static_cast<std::size_t>(i)]);
             const int q_size =
                 DualArmKinematics::kJointConfigurationSizes[static_cast<std::size_t>(i)];
-            Check(dynamics.model_.nqs[right_id] == q_size &&
-                      dynamics.model_.nqs[left_id] == q_size,
+            Check(robot_model.model_.nqs[right_id] == q_size &&
+                      robot_model.model_.nqs[left_id] == q_size,
                   "both arms use the official joint type at actuator " +
                       std::to_string(i + 1));
-            Check(dynamics.model_.nvs[right_id] == 1 &&
-                      dynamics.model_.nvs[left_id] == 1,
+            Check(robot_model.model_.nvs[right_id] == 1 &&
+                      robot_model.model_.nvs[left_id] == 1,
                   "both arms keep one velocity DoF at actuator " +
                       std::to_string(i + 1));
             Check(adapter.right_q_indices()[static_cast<std::size_t>(i)] ==
-                      dynamics.model_.idx_qs[right_id],
+                      robot_model.model_.idx_qs[right_id],
                   "right q mapping follows Kortex joint order " +
                       std::to_string(i + 1));
             Check(adapter.right_v_indices()[static_cast<std::size_t>(i)] ==
-                      dynamics.model_.idx_vs[right_id],
+                      robot_model.model_.idx_vs[right_id],
                   "right Jacobian mapping follows Kortex joint order " +
                       std::to_string(i + 1));
-            const int right_v = dynamics.model_.idx_vs[right_id];
-            const int left_v = dynamics.model_.idx_vs[left_id];
-            Check(std::abs(dynamics.model_.velocityLimit[right_v] -
+            const int right_v = robot_model.model_.idx_vs[right_id];
+            const int left_v = robot_model.model_.idx_vs[left_id];
+            Check(std::abs(robot_model.model_.velocityLimit[right_v] -
                            official_velocity_rad_s[static_cast<std::size_t>(i)]) < 1e-12 &&
-                      std::abs(dynamics.model_.velocityLimit[left_v] -
+                      std::abs(robot_model.model_.velocityLimit[left_v] -
                                official_velocity_rad_s[static_cast<std::size_t>(i)]) < 1e-12,
                   "both arms use the official URDF velocity at actuator " +
                       std::to_string(i + 1));
-            Check(std::abs(dynamics.model_.effortLimit[right_v] -
+            Check(std::abs(robot_model.model_.effortLimit[right_v] -
                            official_effort_nm[static_cast<std::size_t>(i)]) < 1e-12 &&
-                      std::abs(dynamics.model_.effortLimit[left_v] -
+                      std::abs(robot_model.model_.effortLimit[left_v] -
                                official_effort_nm[static_cast<std::size_t>(i)]) < 1e-12,
                   "both arms use the official URDF effort at actuator " +
                       std::to_string(i + 1));
             if (q_size == 1) {
                 const double limit =
                     official_position_limit_rad[static_cast<std::size_t>(i)];
-                const int right_q_index = dynamics.model_.idx_qs[right_id];
-                const int left_q_index = dynamics.model_.idx_qs[left_id];
-                Check(std::abs(dynamics.model_.lowerPositionLimit[right_q_index] + limit) < 1e-12 &&
-                          std::abs(dynamics.model_.upperPositionLimit[right_q_index] - limit) < 1e-12 &&
-                          std::abs(dynamics.model_.lowerPositionLimit[left_q_index] + limit) < 1e-12 &&
-                          std::abs(dynamics.model_.upperPositionLimit[left_q_index] - limit) < 1e-12,
+                const int right_q_index = robot_model.model_.idx_qs[right_id];
+                const int left_q_index = robot_model.model_.idx_qs[left_id];
+                Check(std::abs(robot_model.model_.lowerPositionLimit[right_q_index] + limit) < 1e-12 &&
+                          std::abs(robot_model.model_.upperPositionLimit[right_q_index] - limit) < 1e-12 &&
+                          std::abs(robot_model.model_.lowerPositionLimit[left_q_index] + limit) < 1e-12 &&
+                          std::abs(robot_model.model_.upperPositionLimit[left_q_index] - limit) < 1e-12,
                       "both arms use the official bounded range at actuator " +
                           std::to_string(i + 1));
             }
-            CheckStoredAngle(q_full, dynamics.model_.idx_qs[right_id], q_size,
+            CheckStoredAngle(q_full, robot_model.model_.idx_qs[right_id], q_size,
                              right_q[i],
                              "right measured joint enters its named full-model slot " +
                                  std::to_string(i + 1));
             CheckStoredAngle(
-                q_full, dynamics.model_.idx_qs[left_id], q_size,
+                q_full, robot_model.model_.idx_qs[left_id], q_size,
                 config::kLeftNominalRad[static_cast<std::size_t>(i)],
                 "left joint stays at nominal " + std::to_string(i + 1));
         }
@@ -181,9 +181,9 @@ int main()
             adapter.FullConfigurationForControlled(
                 Eigen::Matrix<double, 7, 1>::Zero());
         const Pose right_base =
-            forward_kinematics(dynamics, q_mount, "base_link");
+            forward_kinematics(robot_model, q_mount, "base_link");
         const Pose left_base =
-            forward_kinematics(dynamics, q_mount, "leftbase_link");
+            forward_kinematics(robot_model, q_mount, "leftbase_link");
         const Eigen::Matrix3d right_rotation = RotX(1.2085);
         const Eigen::Matrix3d left_rotation = RotX(-1.2085);
         constexpr double kHalfSeparation = 0.113415 / 2.0;
@@ -221,7 +221,7 @@ int main()
         const Eigen::Matrix<double, 7, 1> q_probe =
             (Eigen::Matrix<double, 7, 1>() << 0.2, -0.4, 0.1, 0.9, -0.3, 0.5, 0.7)
                 .finished();
-        KinematicsWorkspace probe_workspace(dynamics);
+        KinematicsWorkspace probe_workspace(robot_model);
         const PoseJacobian probe_base =
             adapter.ControlledPoseAndJacobian(q_probe, probe_workspace);
         const Pose probe_mount = adapter.ToolPoseInMount(Arm::kRight, q_probe);
@@ -235,13 +235,13 @@ int main()
         // Full 6x14 Jacobian is computed, then the adapter selects exactly the
         // seven named right columns. The separate left tree contributes zero
         // columns to the right end-effector and is never sent to the controller.
-        KinematicsWorkspace workspace(dynamics);
+        KinematicsWorkspace workspace(robot_model);
         const PoseJacobian selected =
             adapter.ControlledPoseAndJacobian(right_q, workspace);
         const Eigen::VectorXd q_eval =
             adapter.FullConfigurationForControlled(right_q);
         const Pose mount_tool = forward_kinematics(
-            dynamics, q_eval, config::kRightEndEffectorFrame);
+            robot_model, q_eval, config::kRightEndEffectorFrame);
         const Eigen::Matrix3d base_R_mount = right_base.rotation.transpose();
         const Eigen::Vector3d expected_base_position =
             base_R_mount * (mount_tool.position - right_base.position);
@@ -252,11 +252,11 @@ int main()
         Check((selected.rotation - expected_base_rotation).norm() < 1e-12,
               "right tool orientation is expressed in base_link");
 
-        KinematicsWorkspace mount_workspace(dynamics);
-        pinocchio::computeJointJacobians(dynamics.model_, dynamics.data_, q_eval);
-        pinocchio::updateFramePlacements(dynamics.model_, dynamics.data_);
+        KinematicsWorkspace mount_workspace(robot_model);
+        pinocchio::computeJointJacobians(robot_model.model_, robot_model.data_, q_eval);
+        pinocchio::updateFramePlacements(robot_model.model_, robot_model.data_);
         pinocchio::getFrameJacobian(
-            dynamics.model_, dynamics.data_, adapter.right_frame_id(),
+            robot_model.model_, robot_model.data_, adapter.right_frame_id(),
             pinocchio::LOCAL_WORLD_ALIGNED, mount_workspace.jacobian_full);
         for (int i = 0; i < 7; ++i) {
             const int right_v =
@@ -284,7 +284,7 @@ int main()
               "mounted right pose and selected Jacobian are finite");
 
         // --- left-controlled adapter: the same model, mirrored. Reuses
-        // `dynamics` (safe: every call below fully recomputes dynamics.data_
+        // `robot_model` (safe: every call below fully recomputes robot_model.data_
         // before reading it, and nothing here interleaves with `adapter`
         // above). Right's own checks above already cover both arms' index
         // maps, velocity/effort/position limits and cos/sin sizing (those
@@ -293,7 +293,7 @@ int main()
         // half of q_full gets written every cycle, and which base/tool
         // frame ControlledPoseAndJacobian resolves into.
         DualArmKinematics left_adapter(
-            dynamics, Arm::kLeft, config::kRightNominalRad,
+            robot_model, Arm::kLeft, config::kRightNominalRad,
             config::kRightBaseFrame, config::kRightEndEffectorFrame);
         Check(left_adapter.controlled_arm() == Arm::kLeft,
               "left-controlled adapter reports Arm::kLeft");
@@ -319,15 +319,15 @@ int main()
                     std::to_string(i + 1));
         }
 
-        KinematicsWorkspace left_workspace(dynamics);
+        KinematicsWorkspace left_workspace(robot_model);
         const PoseJacobian left_selected =
             left_adapter.ControlledPoseAndJacobian(left_q, left_workspace);
         const Eigen::VectorXd& left_q_eval =
             left_adapter.FullConfigurationForControlled(left_q);
         const Pose left_mount_tool = forward_kinematics(
-            dynamics, left_q_eval, config::kLeftEndEffectorFrame);
+            robot_model, left_q_eval, config::kLeftEndEffectorFrame);
         const Pose left_base_pose =
-            forward_kinematics(dynamics, left_q_eval, "leftbase_link");
+            forward_kinematics(robot_model, left_q_eval, "leftbase_link");
         const Eigen::Matrix3d left_base_R_mount =
             left_base_pose.rotation.transpose();
         const Eigen::Vector3d left_expected_position =

@@ -18,26 +18,26 @@
 // ---------------------------------------------------------------
 
 //
-// Kinematics: forward kinematics via Pinocchio (model already loaded in Dynamics).
+// Kinematics: forward kinematics via Pinocchio (model already loaded in RobotModel).
 //
 
 
 
 
-Pose forward_kinematics(Dynamics& dynamics, const Eigen::VectorXd& q_pin,
+Pose forward_kinematics(RobotModel& robot_model, const Eigen::VectorXd& q_pin,
                         const std::string& frame_name)
 {
-    if (!dynamics.model_.existFrame(frame_name))
+    if (!robot_model.model_.existFrame(frame_name))
         throw std::runtime_error("forward_kinematics: no frame named '" + frame_name +
                                  "' in the model (check the URDF link names)");
 
     // Walk the kinematic tree: place every joint for configuration q_pin,
     // then update the frames attached to them.
-    pinocchio::framesForwardKinematics(dynamics.model_, dynamics.data_, q_pin);
+    pinocchio::framesForwardKinematics(robot_model.model_, robot_model.data_, q_pin);
 
     // oMf = "origin-to-frame": the frame pose in the model root frame.
-    const auto frame_id = dynamics.model_.getFrameId(frame_name);
-    const pinocchio::SE3& oMf = dynamics.data_.oMf[frame_id];
+    const auto frame_id = robot_model.model_.getFrameId(frame_name);
+    const pinocchio::SE3& oMf = robot_model.data_.oMf[frame_id];
 
     return Pose{oMf.translation(), oMf.rotation()};
 }
@@ -140,58 +140,58 @@ namespace
 } // namespace
 
 DualArmKinematics::DualArmKinematics(
-    Dynamics& dynamics, Arm controlled_arm,
+    RobotModel& robot_model, Arm controlled_arm,
     const JointVector& other_arm_nominal_rad,
     const std::string& right_base_frame,
     const std::string& right_end_effector_frame,
     const std::string& left_base_frame,
     const std::string& left_end_effector_frame)
-    : dynamics_(dynamics), controlled_arm_(controlled_arm),
+    : robot_model_(robot_model), controlled_arm_(controlled_arm),
       right_base_frame_id_(0), right_frame_id_(0),
       left_base_frame_id_(0), left_frame_id_(0),
       other_arm_nominal_rad_(other_arm_nominal_rad),
-      q_full_(pinocchio::neutral(dynamics.model_))
+      q_full_(pinocchio::neutral(robot_model.model_))
 {
-    if (dynamics_.model_.nq != kFullConfigurationSize ||
-        dynamics_.model_.nv != kFullDofs)
+    if (robot_model_.model_.nq != kFullConfigurationSize ||
+        robot_model_.model_.nv != kFullDofs)
         throw std::runtime_error(
             "dual runtime URDF must have nq = 22 and nv = 14; got nq = " +
-            std::to_string(dynamics_.model_.nq) + ", nv = " +
-            std::to_string(dynamics_.model_.nv));
-    if (!dynamics_.model_.existFrame(right_base_frame))
+            std::to_string(robot_model_.model_.nq) + ", nv = " +
+            std::to_string(robot_model_.model_.nv));
+    if (!robot_model_.model_.existFrame(right_base_frame))
         throw std::runtime_error("dual model has no right base frame named '" +
                                  right_base_frame + "'");
-    if (!dynamics_.model_.existFrame(right_end_effector_frame))
+    if (!robot_model_.model_.existFrame(right_end_effector_frame))
         throw std::runtime_error("dual model has no right end-effector frame named '" +
                                  right_end_effector_frame + "'");
-    if (!dynamics_.model_.existFrame(left_base_frame))
+    if (!robot_model_.model_.existFrame(left_base_frame))
         throw std::runtime_error("dual model has no left base frame named '" +
                                  left_base_frame + "'");
-    if (!dynamics_.model_.existFrame(left_end_effector_frame))
+    if (!robot_model_.model_.existFrame(left_end_effector_frame))
         throw std::runtime_error("dual model has no left end-effector frame named '" +
                                  left_end_effector_frame + "'");
 
-    ResolveJoints(dynamics_.model_, kRightJointNames, kJointConfigurationSizes,
+    ResolveJoints(robot_model_.model_, kRightJointNames, kJointConfigurationSizes,
                   right_q_indices_, right_v_indices_);
-    ResolveJoints(dynamics_.model_, kLeftJointNames, kJointConfigurationSizes,
+    ResolveJoints(robot_model_.model_, kLeftJointNames, kJointConfigurationSizes,
                   left_q_indices_, left_v_indices_);
     ValidateCover(right_q_indices_, left_q_indices_, kJointConfigurationSizes,
-                  dynamics_.model_.nq, "q");
+                  robot_model_.model_.nq, "q");
     ValidateCover(right_v_indices_, left_v_indices_, kVelocitySizes,
-                  dynamics_.model_.nv, "v");
-    right_base_frame_id_ = dynamics_.model_.getFrameId(right_base_frame);
-    right_frame_id_ = dynamics_.model_.getFrameId(right_end_effector_frame);
-    left_base_frame_id_ = dynamics_.model_.getFrameId(left_base_frame);
-    left_frame_id_ = dynamics_.model_.getFrameId(left_end_effector_frame);
+                  robot_model_.model_.nv, "v");
+    right_base_frame_id_ = robot_model_.model_.getFrameId(right_base_frame);
+    right_frame_id_ = robot_model_.model_.getFrameId(right_end_effector_frame);
+    left_base_frame_id_ = robot_model_.model_.getFrameId(left_base_frame);
+    left_frame_id_ = robot_model_.model_.getFrameId(left_end_effector_frame);
 
     // Both mounts are FIXED joints onto the `mount` root, so each base frame's
     // placement is the same for every configuration. Evaluate once here (at
     // the neutral configuration) and cache; nothing downstream has to redo FK
     // just to convert a point between mount and a base frame.
-    pinocchio::framesForwardKinematics(dynamics_.model_, dynamics_.data_,
-                                       pinocchio::neutral(dynamics_.model_));
-    mount_from_right_base_ = dynamics_.data_.oMf[right_base_frame_id_];
-    mount_from_left_base_ = dynamics_.data_.oMf[left_base_frame_id_];
+    pinocchio::framesForwardKinematics(robot_model_.model_, robot_model_.data_,
+                                       pinocchio::neutral(robot_model_.model_));
+    mount_from_right_base_ = robot_model_.data_.oMf[right_base_frame_id_];
+    mount_from_left_base_ = robot_model_.data_.oMf[left_base_frame_id_];
 
     // Seed the OTHER (uncontrolled) arm's slots once; they are never
     // touched again (no connection in this process). The controlled arm's
@@ -209,8 +209,8 @@ DualArmKinematics::DualArmKinematics(
         const int q_index = other_q_indices[static_cast<std::size_t>(i)];
         const int q_size = kJointConfigurationSizes[static_cast<std::size_t>(i)];
         if (q_size == 1 &&
-            (value < dynamics_.model_.lowerPositionLimit[q_index] ||
-             value > dynamics_.model_.upperPositionLimit[q_index]))
+            (value < robot_model_.model_.lowerPositionLimit[q_index] ||
+             value > robot_model_.model_.upperPositionLimit[q_index]))
             throw std::runtime_error(
                 std::string(other_label) + " nominal joint " +
                 std::to_string(i + 1) + " lies outside the dual URDF position limits");
@@ -281,10 +281,10 @@ Pose DualArmKinematics::ToolPoseInMount(
     const Eigen::Matrix<double, 7, 1>& left_q_rad)
 {
     const Eigen::VectorXd& q = FullConfiguration(right_q_rad, left_q_rad);
-    pinocchio::framesForwardKinematics(dynamics_.model_, dynamics_.data_, q);
+    pinocchio::framesForwardKinematics(robot_model_.model_, robot_model_.data_, q);
     // oMf is already the mount-frame placement: `mount` is the model root.
     const pinocchio::SE3& mount_M_tool =
-        dynamics_.data_.oMf[arm == Arm::kRight ? right_frame_id_ : left_frame_id_];
+        robot_model_.data_.oMf[arm == Arm::kRight ? right_frame_id_ : left_frame_id_];
     return Pose{mount_M_tool.translation(), mount_M_tool.rotation()};
 }
 
@@ -304,15 +304,15 @@ void DualArmKinematics::UpdateFullKinematics(
     KinematicsWorkspace& workspace)
 {
     const Eigen::VectorXd& q = FullConfigurationForControlled(controlled_q_rad);
-    pinocchio::computeJointJacobians(dynamics_.model_, dynamics_.data_, q);
-    pinocchio::updateFramePlacements(dynamics_.model_, dynamics_.data_);
+    pinocchio::computeJointJacobians(robot_model_.model_, robot_model_.data_, q);
+    pinocchio::updateFramePlacements(robot_model_.model_, robot_model_.data_);
     workspace.jacobian_full.setZero();
     const pinocchio::FrameIndex controlled_frame_id =
         controlled_arm_ == Arm::kRight ? right_frame_id_ : left_frame_id_;
     const pinocchio::FrameIndex controlled_base_frame_id =
         controlled_arm_ == Arm::kRight ? right_base_frame_id_ : left_base_frame_id_;
     pinocchio::getFrameJacobian(
-        dynamics_.model_, dynamics_.data_, controlled_frame_id,
+        robot_model_.model_, robot_model_.data_, controlled_frame_id,
         pinocchio::LOCAL_WORLD_ALIGNED, workspace.jacobian_full);
 
     // LOCAL_WORLD_ALIGNED gives the tool-point twist in model-root axes.
@@ -320,7 +320,7 @@ void DualArmKinematics::UpdateFullKinematics(
     // axes. The point is unchanged (the tool origin), so no translational
     // adjoint term applies.
     const Eigen::Matrix3d base_R_mount =
-        dynamics_.data_.oMf[controlled_base_frame_id].rotation().transpose();
+        robot_model_.data_.oMf[controlled_base_frame_id].rotation().transpose();
     for (int col = 0; col < workspace.jacobian_full.cols(); ++col) {
         const Eigen::Vector3d linear_mount =
             workspace.jacobian_full.template block<3, 1>(0, col);
@@ -345,8 +345,8 @@ PositionJacobian DualArmKinematics::ControlledPositionAndJacobian(
     const std::array<int, 7>& controlled_v_indices =
         controlled_arm_ == Arm::kRight ? right_v_indices_ : left_v_indices_;
     const pinocchio::SE3 base_M_tool =
-        dynamics_.data_.oMf[controlled_base_frame_id].inverse() *
-        dynamics_.data_.oMf[controlled_frame_id];
+        robot_model_.data_.oMf[controlled_base_frame_id].inverse() *
+        robot_model_.data_.oMf[controlled_frame_id];
     PositionJacobian result;
     result.position = base_M_tool.translation();
     result.rotation = base_M_tool.rotation();
@@ -369,8 +369,8 @@ PoseJacobian DualArmKinematics::ControlledPoseAndJacobian(
     const std::array<int, 7>& controlled_v_indices =
         controlled_arm_ == Arm::kRight ? right_v_indices_ : left_v_indices_;
     const pinocchio::SE3 base_M_tool =
-        dynamics_.data_.oMf[controlled_base_frame_id].inverse() *
-        dynamics_.data_.oMf[controlled_frame_id];
+        robot_model_.data_.oMf[controlled_base_frame_id].inverse() *
+        robot_model_.data_.oMf[controlled_frame_id];
     PoseJacobian result;
     result.position = base_M_tool.translation();
     result.rotation = base_M_tool.rotation();

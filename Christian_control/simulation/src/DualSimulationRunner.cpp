@@ -56,14 +56,14 @@ namespace
 
 DualSimulationRunner::DualSimulationRunner(const SimulationConfig& config)
     : config_(Validated(config)),
-      dynamics_(config_.urdf_path),
+      robot_model_(config_.urdf_path),
       // Exactly the parity test's construction of the production
       // kinematics: the controlled arm selects the branch; the OTHER
       // arm's slots hold its nominal pose (config::ArmConfig).
-      kinematics_right_(dynamics_, Arm::kRight, config::kLeftNominalRad,
+      kinematics_right_(robot_model_, Arm::kRight, config::kLeftNominalRad,
                         config::kRightBaseFrame,
                         config::kRightEndEffectorFrame),
-      kinematics_left_(dynamics_, Arm::kLeft, config::kRightNominalRad,
+      kinematics_left_(robot_model_, Arm::kLeft, config::kRightNominalRad,
                        config::kRightBaseFrame,
                        config::kRightEndEffectorFrame),
       backend_(config_.model_xml_path, config_.control_dt_s,

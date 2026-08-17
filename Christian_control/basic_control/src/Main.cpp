@@ -151,7 +151,7 @@ void WriteCsvPreamble(const std::string& log_file, const config::ArmConfig& arm_
  *   parse --arm (required: right, left, or both) and --log (the only other
  *   runtime argument; everything else is Config.h)
  *     -> acquire every selected arm's ProcessLock and load its Pinocchio
- *        dynamics model, BEFORE any hardware contact (main(), below)
+ *        RobotModel (Pinocchio), BEFORE any hardware contact (main(), below)
  *     -> for each selected arm, run RunOneArm — on its own thread when
  *        --arm both selects two: bind measured joints + the other arm's
  *        nominal joints through the explicit DualArmKinematics 14-DoF-
@@ -241,7 +241,7 @@ namespace
         PrintRow("position deg", position_deg);
         PrintRow("velocity deg/s", velocity_deg_s);
 
-        KinematicsWorkspace workspace(model.dynamics());
+        KinematicsWorkspace workspace(model.robot_model());
         const PoseJacobian ee = model.ControlledPoseAndJacobian(q_rad, workspace);
         // Print the measured orientation for diagnosis. Position-only targets
         // preserve this takeover orientation rather than accepting RPY input.
@@ -309,7 +309,7 @@ namespace
     // Everything one physical arm's run needs, from a fresh Connect through
     // teardown. Called directly for --arm right/left; called once per arm,
     // each on its own thread, for --arm both (main() has already acquired
-    // every arm's ProcessLock and loaded every arm's Dynamics before any of
+    // every arm's ProcessLock and loaded every arm's RobotModel before any of
     // these run, so no run here ever begins a takeover while another arm's
     // startup is still contesting a lock or a model load).
     //
@@ -319,7 +319,7 @@ namespace
     //
     // Returns 0 only on a clean operator stop with no faults observed.
     int RunOneArm(const config::ArmConfig& arm_config, Arm controlled_arm,
-                  Dynamics& dynamics, const std::string& log_file_arg)
+                  RobotModel& robot_model, const std::string& log_file_arg)
     {
         const std::string tag = std::string("[") + arm_config.name + "] ";
         try {
@@ -327,7 +327,7 @@ namespace
             // mounted model. The adapter validates nq=nv=14 and the exact
             // named mapping to the seven-wide controller interface.
             DualArmKinematics controlled_model(
-                dynamics, controlled_arm, arm_config.other_arm_nominal_rad,
+                robot_model, controlled_arm, arm_config.other_arm_nominal_rad,
                 config::kRightBaseFrame, config::kRightEndEffectorFrame);
 
             Connect connection(arm_config.ip);
@@ -454,7 +454,7 @@ namespace
             Eigen::Matrix<double, 7, 1> q_now_rad;
             for (int j = 0; j < 7; ++j)
                 q_now_rad[j] = initial.actuators(j).position() * M_PI / 180.0;
-            KinematicsWorkspace startup_workspace(controlled_model.dynamics());
+            KinematicsWorkspace startup_workspace(controlled_model.robot_model());
             const PoseJacobian ee_now = controlled_model.ControlledPoseAndJacobian(
                 q_now_rad, startup_workspace);
             if (!ee_now.position.allFinite() || !ee_now.rotation.allFinite()) {
@@ -616,15 +616,15 @@ int main(int argc, char** argv)
                     arm_config.name + " (" + arm_config.ip + ")"));
         }
 
-        // One Dynamics (Pinocchio model) per arm, constructed sequentially,
+        // One RobotModel (Pinocchio model) per arm, constructed sequentially,
         // here, before any thread starts: pinocchio::urdf::buildModel's
         // thread-safety for two concurrent constructions is unverified, so
         // this never races two constructions against each other. A bad URDF
         // path also fails once, loudly, before either arm's takeover.
-        std::vector<std::unique_ptr<Dynamics>> dynamics_list;
-        dynamics_list.reserve(arm_count);
+        std::vector<std::unique_ptr<RobotModel>> robot_model_list;
+        robot_model_list.reserve(arm_count);
         for (std::size_t i = 0; i < arm_count; ++i)
-            dynamics_list.push_back(std::make_unique<Dynamics>(GEN3_DUAL_URDF_PATH));
+            robot_model_list.push_back(std::make_unique<RobotModel>(GEN3_DUAL_URDF_PATH));
 
         // Full configuration is embedded in each arm's own CSV preamble
         // (WriteConfigLines) — the log stays self-describing without
@@ -635,7 +635,7 @@ int main(int argc, char** argv)
         for (std::size_t i = 0; i < arm_count; ++i) {
             threads.emplace_back([&, i]() {
                 exit_codes[i] = RunOneArm(*arm_configs[i], controlled_arms[i],
-                                          *dynamics_list[i], args.log_file);
+                                          *robot_model_list[i], args.log_file);
             });
         }
         for (std::thread& t : threads)

@@ -61,7 +61,7 @@
 #include <Eigen/Geometry>
 
 #include "Config.h"
-#include "Dynamics.h"
+#include "RobotModel.h"
 #include "Kinematics.h" // production FK, the independent check on the moving Mount
 #include "ModelContract.h"
 #include "MujocoBackend.h"
@@ -483,8 +483,8 @@ int main()
     //      a forwarded copy of mjData so they correspond to the same
     //      post-tick joint angles the feedback reports.
     {
-        Dynamics dynamics(SIM_URDF_PATH);
-        DualArmKinematics kinematics(dynamics, Arm::kRight,
+        RobotModel robot_model(SIM_URDF_PATH);
+        DualArmKinematics kinematics(robot_model, Arm::kRight,
                                      config::kLeftNominalRad,
                                      config::kRightBaseFrame,
                                      config::kRightEndEffectorFrame);
