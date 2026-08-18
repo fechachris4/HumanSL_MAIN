@@ -30,7 +30,7 @@ Supersedes the "no command-line flags" rule (old `Config.h` header, `README.md`)
 ## Default config file (amendment, 2026-07-24)
 
 Without `--config`, the compiled default file
-`basic_control/config/control.toml` is loaded when it exists — an absolute
+`model/control.toml` is loaded when it exists — an absolute
 path baked in at build time (`DEFAULT_CONFIG_PATH`, CMake, same mechanism
 as the compiled dual-model path). The workflow this buys: edit one
 checked-in file, run the bare binary. The no-auto-discovery hazard (below)

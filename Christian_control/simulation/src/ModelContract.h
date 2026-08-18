@@ -8,7 +8,7 @@
 // checks the structure against the declared authorities:
 //
 //   - kinematic authority: the production URDF
-//     (basic_control/config/GEN3_dual_mounted.urdf) — 7 hinge joints per
+//     (model/GEN3_dual_mounted.urdf) — 7 hinge joints per
 //     arm about local z, joints 2/4/6 bounded to the URDF ranges, 1/3/5/7
 //     continuous, chain topology mount -> base -> ... -> bracelet, TCP
 //     sites right_tcp (configured tool) / left_tcp (bare flange), and the

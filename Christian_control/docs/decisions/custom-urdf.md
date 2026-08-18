@@ -1,7 +1,7 @@
 # Decision: one mounted dual-arm runtime model, right-only actuation
 
 The controller's single runtime model is
-`basic_control/config/GEN3_dual_mounted.urdf`. Its world root, fixed mounting
+`model/GEN3_dual_mounted.urdf`. Its world root, fixed mounting
 transforms, dual branches, and arm/link names come from the downloaded
 `GEN3_URDF_V802.urdf`. Each arm's Gen3 actuated chain has been cross-checked
 against Kinova's official `ros_kortex` v2.5.2
@@ -45,7 +45,7 @@ intermediate links carried no geometry and are gone. Frame count drops from 44
 to 40; `nq = 22` and `nv = 14` are unaffected, because every mounting joint is
 fixed.
 
-The numbers now live in `basic_control/config/dual_arm_mounting.yaml`, which is
+The numbers now live in `model/dual_arm_mounting.yaml`, which is
 their declared source of truth, and `tests/test_dual_arm_mounting.cpp` (ctest
 `dual_arm_mounting`) fails the test step if the URDF drifts from it.
 

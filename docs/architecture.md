@@ -9,10 +9,10 @@ end-effector pose in the room while the wearer and robot base move.
 | Component | Location | Owns | Does not own |
 | --- | --- | --- | --- |
 | Arm runtime | `Christian_control/basic_control/` | Vicon/robot snapshots, one 500 Hz Cartesian controller, limits, position-command integration, Kortex lifecycle, telemetry | GPMP2 solving |
-| Planner | `Christian_control/planner_bridge/` | world-aware planning problem, GPMP2 joint solve, validation, dense world pose/twist projection, typed non-real-time worker | Kortex or the 500 Hz loop |
-| Motion capture | `Christian_control/vicon/` | Vicon acquisition, snapshot validation, filtered Mount pose/twist publication | control decisions or robot commands |
-| Shared contracts | `Christian_control/cartesian_contract/` | typed planning-request and world-Cartesian trajectory records; preview-only text adapters are separate | SDK or planner internals |
-| Panel/tooling | `Christian_control/tools/panel/`, scripts | configuration editing, replay, plots, diagnosis | command generation in the cyclic thread |
+| Planner | `Christian_control/planning/` | world-aware planning problem, GPMP2 joint solve, validation, dense world pose/twist projection, typed non-real-time worker | Kortex or the 500 Hz loop |
+| Motion capture | `Christian_control/tracking/` | Vicon acquisition, snapshot validation, filtered Mount pose/twist publication | control decisions or robot commands |
+| Shared contracts | `Christian_control/contracts/` | typed planning-request and world-Cartesian trajectory records; preview-only text adapters are separate | SDK or planner internals |
+| Panel/tooling | `Christian_control/panel/`, scripts | configuration editing, replay, plots, diagnosis | command generation in the cyclic thread |
 | Models/config | `Christian_control/*/config/` | authoritative URDF and planner/goal/limit configuration | live state |
 
 The inherited root planning/execution trees are frozen and absent from active
@@ -110,7 +110,7 @@ base-motion feedforward addition. Planned twist contributes through
 The arm runtime's per-cycle command pipeline is extracted into one
 hardware-independent static library, `humansl_execution_core`, whose entry
 point is `ArmExecutionCore`
-(`Christian_control/basic_control/src/ExecutionCore.h`). The hardware
+(`Christian_control/control/ExecutionCore.h`). The hardware
 `controller` executable and the hardware-free test probe link the same
 library, so hardware and offline builds share one set of control
 mathematics; a registered linkage test fails if a Kortex or Vicon SDK
@@ -147,7 +147,7 @@ that runbook is a procedure, not an authorization.
 
 ## Runtime processes and artifacts
 
-`planner_bridge/scripts/run_session.sh` starts one controller process after an
+`planning/scripts/run_session.sh` starts one controller process after an
 explicit `GO` gate. The controller owns one typed planner worker per selected
 arm. Session folders retain planner diagnostics, controller output,
 configuration snapshots, run CSVs, and process metadata; no production FIFO or
@@ -160,7 +160,7 @@ tool is explicitly documented otherwise.
 ## Documentation ownership
 
 - Exact controller behavior and supervised use:
-  `Christian_control/basic_control/README.md`.
+  `Christian_control/runtime/README.md`.
 - Supervised hardware revalidation of the extracted execution core:
   `Christian_control/docs/runbooks/execution-core-hardware-revalidation.md`.
 - Current implementation design and acceptance criteria:

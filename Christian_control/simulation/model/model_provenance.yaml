@@ -29,10 +29,10 @@ mujoco:
   license: Apache-2.0 (third_party/licenses/MUJOCO_LICENSE)
 
 source_urdf:
-  path: Christian_control/basic_control/config/GEN3_dual_mounted.urdf
+  path: Christian_control/model/GEN3_dual_mounted.urdf
   sha256: d6e9d3ac51ebedf18bcdace99943816ff8e19a711b22d5e504216a9e280a743b
   kinematic_authority: true
-  runtime_authority: "DualArmKinematics::MountFromBase (Christian_control/basic_control/src/Kinematics.cpp)"
+  runtime_authority: "DualArmKinematics::MountFromBase (Christian_control/control/Kinematics.cpp)"
 
 source_mjcf:
   path: /home/christian/msc_project/sim/assets/kinova_gen3/gen3.xml

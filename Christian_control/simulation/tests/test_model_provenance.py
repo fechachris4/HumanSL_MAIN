@@ -29,7 +29,7 @@ PROVENANCE_PATH = (
 # The production URDF is the kinematic authority. Pointing provenance at a
 # copy would defeat the record, so the exact repository-relative path is
 # required, not just any existing file.
-EXPECTED_URDF_REL = "Christian_control/basic_control/config/GEN3_dual_mounted.urdf"
+EXPECTED_URDF_REL = "Christian_control/model/GEN3_dual_mounted.urdf"
 EXPECTED_MUJOCO_LIB_REL = "third_party/lib/libmujoco.so.3.10.0"
 EXPECTED_MUJOCO_DOC_REL = "third_party/MUJOCO_PROVENANCE.md"
 

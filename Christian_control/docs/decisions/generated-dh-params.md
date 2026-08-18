@@ -5,16 +5,16 @@
 
 ## Decision
 
-`Christian_control/basic_control/config/GEN3_dual_mounted.urdf` is the
+`Christian_control/model/GEN3_dual_mounted.urdf` is the
 single source of truth for all kinematics. Pinocchio parses it directly for
 the controller and every project-owned FK/IK/Jacobian. The one consumer that
 cannot eat a URDF — the vendored GPMP2 optimizer, whose `gpmp2::Arm` is
 DH-parameter-only with no Pinocchio seam — gets its DH table **generated
 from the URDF at build time** by
-`planner_bridge/tools/generate_dh_params.cpp`. The generated
+`planning/tools/generate_dh_params.cpp`. The generated
 `dh_params_tool.yaml` lives only in the build tree; there is no committed
 copy and hand-editing it is forbidden (it is overwritten on the next build).
-The previously hand-authored YAMLs (`planner_bridge/config/
+The previously hand-authored YAMLs (`planning/config/
 dh_params_tool.yaml`, `TrajectoryGeneration/config/dh_params.yaml`, root
 `config/dh_params.yaml`) are deleted.
 

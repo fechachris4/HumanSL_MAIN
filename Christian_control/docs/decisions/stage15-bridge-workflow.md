@@ -120,7 +120,7 @@ tolerates a writer closing.
 
 ## The launcher's role: sequencing, not authority
 
-`Christian_control/planner_bridge/scripts/run_session.sh` exists to
+`Christian_control/planning/scripts/run_session.sh` exists to
 remove the invisible ordering constraint (controller must be up and
 logging before the bridge can find a state CSV; the pipe must exist
 before `goal` can write to it), not to make any safety decision itself.
@@ -138,7 +138,7 @@ specific run — the script cannot substitute for that. Concretely:
   hardware involved.
 - ~~Its `goal X Y Z [box ...]` REPL is a thin wrapper~~ **Superseded
   2026-08-05, same day:** the REPL is gone. The goal now lives in
-  `planner_bridge/config/goal.yaml`, edited before the session; the
+  `planning/config/goal.yaml`, edited before the session; the
   script waits for the controller's run log, runs the bridge exactly
   once with no `--goal` (the bridge reads the file itself via the
   `--goal-file` default in `BridgeMain.cpp`), and waits for Enter to

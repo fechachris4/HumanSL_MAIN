@@ -1,6 +1,6 @@
 # Main.cpp — line-by-line, in execution order
 
-File: `basic_control/src/Main.cpp`, at HEAD after commit f64325c0 ("remove
+File: `runtime/Main.cpp`, at HEAD after commit f64325c0 ("remove
 trajectory playback: fixed-target-only controller"). The program's entry
 point. Everything below follows the order the CPU actually visits things
 when you run `./controller`, not the order they appear in the file. Helper

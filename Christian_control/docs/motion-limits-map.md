@@ -55,7 +55,7 @@ read from this robot.
 Every one of these is ours. None comes from a Kinova document, except
 where noted as derived.
 
-### Controller (`basic_control`)
+### Controller (`control` + `runtime`)
 
 | Knob | Value | Location | What it gates | Provenance |
 |---|---|---|---|---|

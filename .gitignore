@@ -46,3 +46,10 @@ __pycache__/
 
 # Playwright MCP scratch (screenshots, snapshots) from UI checks
 .playwright-mcp/
+
+# MuJoCo test outputs: the model-contract and parity tests write a mutated
+# copy of the model into their working directory on every run, and MuJoCo
+# writes its own log beside it. Outputs, never sources.
+Christian_control/simulation/mutated_model_*.xml
+Christian_control/simulation/MUJOCO_LOG.TXT
+MUJOCO_LOG.TXT

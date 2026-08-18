@@ -118,7 +118,7 @@ stop. Both starts have a perfectly legal joint 6 themselves (46.9° and
 ## Limit-aware IK: built, and it does not rescue this pose
 
 `solveDampedLeastSquares` now carries a null-space joint-limit avoidance
-term, mirroring `basic_control`'s `ReactiveLaw.h` (same 20° deadband zone,
+term, mirroring `control`'s `ReactiveLaw.h` (same 20° deadband zone,
 same damped projector `N = I − Jᵀ(JJᵀ + λI)⁻¹J`). It is a deadband, so it is
 inert until a bounded joint comes within the zone, leaving the common case
 untouched.

@@ -2,7 +2,7 @@
 
 Binaries in this repository command a physical Kinova Gen3 arm.
 
-- Never execute `Christian_control/basic_control/controller`, root `main`,
+- Never execute `Christian_control/runtime/build/controller`, root `main`,
   `test_kinova`, `test_task_impedance`, or any Kortex-linked binary without
   Christian's explicit authorization for that specific run. Building is
   fine; running is never a test step.
@@ -273,5 +273,5 @@ chosen. Candidate mechanisms, roughly easiest to hardest:
   that provably keeps the arm inside the safe set.
 
 Saturation, command-lead limiting and null-space limit avoidance already in
-`basic_control` are the existing examples of this pattern; prefer extending
-them to adding another stop.
+`Christian_control/control` are the existing examples of this pattern; prefer
+extending them to adding another stop.

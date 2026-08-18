@@ -19,5 +19,5 @@ Checks: >
   cppcoreguidelines-narrowing-conversions
 
 WarningsAsErrors: ''
-HeaderFilterRegex: 'basic_control/src/.*'
+HeaderFilterRegex: '(control|runtime)/.*'
 FormatStyle: file

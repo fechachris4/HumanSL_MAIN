@@ -18,7 +18,7 @@ a feature does not have to refactor its predecessors to avoid adding to them.
 
 ## What was built
 
-- `CartesianPath` (`planner_bridge/src/CartesianPath.h`): an ordered, timed
+- `CartesianPath` (`planning/src/CartesianPath.h`): an ordered, timed
   sequence of poses **carrying its own frame**. That last part is what stops
   frame conversions leaking into every call site as new frames appear. It
   mirrors `msc_project`'s `sample(t) -> FramedTarget`. Eigen-only, so it is

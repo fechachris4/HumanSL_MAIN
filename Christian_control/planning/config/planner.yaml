@@ -1,0 +1,133 @@
+# Planner tuning — the knobs you sweep, in one place.
+#
+# Every key here is required on every run. A missing key, an unknown key, or
+# a value outside its stated range is a hard error naming the key; nothing
+# ever falls back to a silent default. That is the point of the file: the
+# failure a config file most invites is "I changed it and nothing happened",
+# and refusing typos is the only thing that actually prevents it.
+#
+# Read from this path by default (config/ beside the executable's parent),
+# or from --planner-config PATH. Never discovered from the working
+# directory. The effective values and this file's digest are echoed to the
+# bridge's diagnostics on every run, so a session log says exactly what
+# tuning produced its trajectory.
+#
+# NOT here, deliberately:
+#   joint limits         -> config/joint_limits.yaml (beside this file).
+#                           Kinova table values; they already have a file.
+#   SDF grid extent      -> WorldSdf.h. Not a preference: the grid must
+#                           contain the arm's reachable envelope, because
+#                           gpmp2 reports "no obstacle" outside it, silently.
+#                           test_grid_coverage enforces that and would not
+#                           see a change made here.
+#   arm sphere radius    -> GenerateArmModel.cpp. Sets the same envelope
+#                           test_grid_coverage checks, so it cannot move
+#                           without that test moving with it.
+#   speed clip, splice guard, following-error stop
+#                        -> control/Config.h, compiled. Safety
+#                           policy is not runtime-settable
+#                           (docs/decisions/compiled-config.md). Naming one
+#                           of those keys here is an error, not an override.
+
+# How the plan is shaped in time.
+motion:
+  # Metres per second the plan is paced at: goal distance divided by this
+  # gives the trajectory duration, which the controller then follows by
+  # timestamp. This is the knob that makes the arm move slower or faster —
+  # for POINT-TO-POINT goals only; a traced path's lap time is duration_s
+  # in goal.yaml. The controller's own clip (76/66.5 deg/s, Config.h)
+  # rejects a block that exceeds it at ingest, so raising this far enough
+  # fails there, late.
+  nominal_speed_mps: 0.25
+  # Floor on that duration, seconds, so short moves are not abrupt. A
+  # smoothness floor only — at its former 4.0 it silently paced every
+  # reachable move (docs/motion-limits-map.md).
+  min_duration_s: 1.0
+  # Optimizer support states between start and goal. More is a finer plan
+  # and a slower solve — the factor graph is rebuilt per waypoint.
+  waypoints: 10
+
+# What the planner treats as "too close".
+obstacles:
+  # Metres from an obstacle surface at which its cost switches on. With the
+  # arm's 0.05 m collision spheres the effective clearance is about double.
+  epsilon_dist_m: 0.05
+  # Obstacle-avoidance weight. A gtsam sigma: SMALLER avoids harder.
+  collision_sigma: 0.0005
+
+# How far the plan may stray from constant velocity.
+smoothness:
+  # Scales the GP prior covariance Qc. Larger is freer to wander off a
+  # straight line (better at dodging, wigglier); smaller is straighter and
+  # stiffer.
+  qc_scale: 1.0
+
+# How tightly the final waypoint is held to the goal. gtsam sigmas again:
+# SMALLER is stiffer.
+goal:
+  # x, y, z. Note y is deliberately ten times looser than x and z. That is
+  # inherited from an earlier task, and it is why a plan can drift in y
+  # while landing accurately in x and z. Exposed at its historical value on
+  # purpose: making it uniform is a behaviour change on the motion path and
+  # deserves its own verification, not a config edit folded into a refactor.
+  # Tightened x10 on 2026-08-13 (ratio preserved): at the faster 1.0 s
+  # pacing the smoothness prior otherwise outweighs this anchor — the
+  # canonical 0.2 m test move missed by 82 mm at [0.01, 0.1, 0.01] and
+  # lands within 3.2 mm at these values (test_plan_solver measures it).
+  position_sigma_xyz: [0.001, 0.01, 0.001]
+  # roll, pitch, yaw. The goal currently carries the tool orientation the
+  # arm held at takeover, so these do bind.
+  rotation_sigma_rpy: [0.01, 0.01, 0.01]
+
+solver:
+  # Levenberg-Marquardt iteration ceiling. Shapes convergence, not motion.
+  max_iterations: 1000
+
+# Tracing a Cartesian path (a circle, a line). Ignored by point-to-point
+# plans, which use `goal:` above.
+#
+# TWO KINDS OF NUMBER LIVE HERE and must not be conflated. The *_sigma_*
+# values are optimiser WEIGHTS (gtsam sigmas: smaller is stiffer). The
+# maximum_*_error values are the pass/fail REQUIREMENT the finished
+# trajectory is measured against, on the reconstruction the controller will
+# actually execute. Tightening a weight does not tighten the requirement,
+# and no weight guarantees the requirement is met — that is why it is
+# measured after the solve rather than assumed from the sigma.
+path_following:
+  # Weights on each traced waypoint's pose prior.
+  position_prior_sigma_m: 0.005
+  rotation_prior_sigma_rad: 0.01
+  # THE GATE. A plan whose reconstructed trace deviates further than this
+  # is reported as failing task fidelity and is not cleared for hardware.
+  # 5 mm chosen as a starting point to be measured, not asserted: the
+  # sensitivity sweep (1/2/5/10 mm) is what should set it.
+  maximum_planning_error_m: 0.005
+  maximum_orientation_error_rad: 0.1
+  # Dense validation rate. 0.002 s = 500 Hz, the controller's own loop rate,
+  # so validation sees what the arm sees.
+  validation_dt_s: 0.002
+  # Approach phase. Paced from JOINT displacement over joint velocity
+  # limits — it is task-space unconstrained and has no commanded Cartesian
+  # route, so a Cartesian length would be timing a path that does not exist.
+  approach_velocity_fraction: 0.9
+  approach_min_duration_s: 0.1
+  approach_waypoints: 5
+  # Circle sampling by geometry rather than an arbitrary count:
+  # e = r(1 - cos(pi/N)). Halving this roughly doubles the sample count.
+  max_chord_error_m: 0.001
+
+# How the IK's random restarts are drawn.
+#
+# The solver explores by re-solving from randomly drawn configurations. Left
+# unseeded that made the PLANNER non-reproducible: measured 2026-08-07,
+# identical circle requests traced to 2.406-2.409 mm every time but their
+# joint-space routes differed, closure drift swinging 0.04-14 deg. Repeatable
+# controller experiments need the joint route repeatable too.
+seeding:
+  # The seed. Change it to explore a different (still reproducible) set of
+  # restarts. Every planning report prints the seed actually used.
+  ik_seed: 20260807
+  # true = draw a seed at startup for deliberate robustness testing. The
+  # drawn value is REPORTED, so such a run is still reproducible afterwards
+  # by setting ik_seed to it. There is no unrecorded-seed mode.
+  randomised: false

@@ -121,7 +121,7 @@ For each of the five segments, as built in Nexus:
 
 ## Recordings captured
 
-Run from `Christian_control/vicon/build/` (subject name as seen streaming
+Run from `Christian_control/tracking/build/` (subject name as seen streaming
 on 2026-08-13 — adjust if Nexus renames it):
 
 ```

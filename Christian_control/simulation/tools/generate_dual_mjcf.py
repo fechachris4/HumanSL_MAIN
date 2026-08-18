@@ -8,7 +8,7 @@ made here and the file regenerated (the provenance test pins its SHA-256).
 Authority split (model/model_provenance.yaml, Plan 02 Task 1):
 
 - Kinematic truth — the production URDF
-  (Christian_control/basic_control/config/GEN3_dual_mounted.urdf): ALL
+  (Christian_control/model/GEN3_dual_mounted.urdf): ALL
   placements are derived from it at full double precision — the two
   mount->base fixed joints (the same numbers DualArmKinematics::
   MountFromBase reads through Pinocchio), every chain body origin
@@ -610,7 +610,7 @@ def main():
         "  Generator: Christian_control/simulation/tools/"
         "generate_dual_mjcf.py\n"
         "  Kinematic authority (all placements, ranges, TCP sites): "
-        "Christian_control/basic_control/config/GEN3_dual_mounted.urdf\n"
+        "Christian_control/model/GEN3_dual_mounted.urdf\n"
         "  Mechanics source (inertials, meshes, actuator classes, "
         "keyframe): msc_project gen3.xml (generic plant, not a Kinova "
         "servo model)\n"

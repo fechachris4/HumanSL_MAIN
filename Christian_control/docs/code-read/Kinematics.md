@@ -32,10 +32,10 @@ Execution order in a real run:
 `forward_kinematics` is *not* called by the controller binary at all: it is
 used by tests only. Details below.
 
-Since the planning-side Pinocchio refactor (`Christian_control/planner_bridge`
+Since the planning-side Pinocchio refactor (`Christian_control/planning`
 / `TrajectoryGeneration`), `DualArmKinematics` also has a second consumer:
 `TrajectoryGeneration/src/PinocchioKinematicsAdapter.cpp` reuses it
-by source path (same pattern as `basic_control/src/Targets.cpp` being
+by source path (same pattern as the since-removed `Targets.cpp` being
 reused by `planner_bridge`'s tests) to give the GPMP2 trajectory planner
 Pinocchio/URDF-based FK and Jacobians instead of hand-rolled DH math. That
 adapter is deliberately Eigen-only at the header level — see its own

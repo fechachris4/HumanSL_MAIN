@@ -6,7 +6,7 @@ mapped to the code that realises it (or will), in both projects:
 
 - sim: `~/msc_project/controller/` (Python, MuJoCo) — the reference
   architecture, per Christian's decision of 2026-08-13.
-- hardware: `Christian_control/basic_control/src/` (C++).
+- hardware: `Christian_control/control/` (C++).
 
 ## 1. Frames and symbols
 

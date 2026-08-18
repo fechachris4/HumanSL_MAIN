@@ -3,7 +3,7 @@
 //
 // Pins the generated model's structure against the declared authorities:
 //   - kinematic authority: the production URDF
-//     (Christian_control/basic_control/config/GEN3_dual_mounted.urdf) —
+//     (Christian_control/model/GEN3_dual_mounted.urdf) —
 //     joint order, bounded ranges, chain topology, mount placement, TCPs;
 //   - mechanics authority: msc_project gen3.xml — actuator classes and
 //     ctrlranges only (generic plant, explicitly not a Kinova servo model).

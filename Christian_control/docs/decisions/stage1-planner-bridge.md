@@ -1,6 +1,6 @@
 # Decision: `planner_bridge` — Stage 1 stop-and-replan as a separate process
 
-2026-08-05. `Christian_control/planner_bridge/` is a new, standalone CMake
+2026-08-05. `Christian_control/planning/` is a new, standalone CMake
 project: one solve of the existing GPMP2 optimizer (`TrajectoryGeneration/`)
 per invocation, turned into a short list of Cartesian waypoints on the
 controller's existing stdin target grammar. It is Stage 1 of the
@@ -55,7 +55,7 @@ chosen for the interface. The bridge always loads
 > **Superseded (2026-08-05, later the same day):** the hand-authored DH
 > YAMLs described above no longer exist. `dh_params_tool.yaml` is now
 > GENERATED from `GEN3_dual_mounted.urdf` at build time
-> (`planner_bridge/tools/generate_dh_params.cpp`), and the flange-targeted
+> (`planning/tools/generate_dh_params.cpp`), and the flange-targeted
 > planner original plus root `config/dh_params.yaml` were deleted. See
 > `generated-dh-params.md`. The tool-frame *decision* recorded here still
 > stands — the generator derives d7 to the same `ConfiguredTool_Link`
@@ -105,7 +105,7 @@ states to at most `max_count` points (default 8) at least
 evicts trailing kept intermediates that fall within spacing of the goal
 so the last pair still meets the guarantee. The cap of 8 is not
 arbitrary: it is exactly `PoseTargetMailbox::kCapacity` in
-`basic_control/src/Targets.h:43`, the controller's fixed-size SPSC queue.
+`Targets.h:43` (removed 2026-08-04), the controller's fixed-size SPSC queue.
 A ninth waypoint would either block the bridge's single write or be
 silently unqueueable by `Targets.cpp`'s `Enqueue` (`write - read >=
 kCapacity` rejects); capping in the bridge, before any target is written,
@@ -152,7 +152,7 @@ stream (`std::cout`, piped to the controller over the FIFO).
 
 ## Two things the plan didn't foresee
 
-1. **`planner_bridge/src/GenerateTrajectory.cpp` is a new forwarding
+1. **`planning/src/GenerateTrajectory.cpp` is a new forwarding
    shim, not existing legacy code.** `GenerateTrajectory.h` declared a
    free function `optimizeJointTrajectory` that was never defined
    anywhere in the tree — the only implementation was the class method
@@ -167,7 +167,7 @@ stream (`std::cout`, piped to the controller over the FIFO).
    `initiation_duration` is set to zero rather than left indeterminate.
    The shim was first added inside the legacy `TrajectoryGeneration/`
    tree; on 2026-08-05 Christian ruled it should live with the bridge
-   instead, so it sits in `planner_bridge/src/` and compiles only into
+   instead, so it sits in `planning/src/` and compiles only into
    `bridge_core`. The legacy tree remains untouched by this branch.
 2. **`LD_LIBRARY_PATH` test-environment workaround.** All six
    `planner_bridge` ctest targets that link `bridge_core`
@@ -184,7 +184,7 @@ stream (`std::cout`, piped to the controller over the FIFO).
 
 ## Validated state (2026-08-05, this branch)
 
-- 6/6 `ctest --test-dir Christian_control/planner_bridge/build` PASS,
+- 6/6 `ctest --test-dir Christian_control/planning/build` PASS,
   hardware-free (`cmake --build` + `ctest`, this session).
 - `test_planner_model`: 0.445 mm worst-case FK disagreement (< 1 mm gate).
 - `test_plan_solver`: representative run — 3.2 mm final goal error,

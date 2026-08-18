@@ -5,7 +5,7 @@ Status: accepted
 
 ## Decision
 
-`basic_control/src/Config.h` holds every setting the controller has, as
+`control/Config.h` holds every setting the controller has, as
 compiled constants. `--log` is the only runtime argument. Changing
 behaviour means editing that file and rebuilding.
 

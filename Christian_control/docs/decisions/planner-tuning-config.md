@@ -2,7 +2,7 @@
 
 Date: 2026-08-06
 
-Status: adopted. `planner_bridge/config/planner.yaml` is read on every
+Status: adopted. `planning/config/planner.yaml` is read on every
 bridge run.
 
 ## Decision
@@ -41,7 +41,7 @@ they are already the answer to "how does a config file bite me later":
   executable (`config/planner.yaml`, beside `goal.yaml`); `--planner-config
   PATH` overrides it. Program behaviour never depends on where it was
   started from.
-- **No safety keys.** Everything in `basic_control/src/Config.h` stays
+- **No safety keys.** Everything in `control/Config.h` stays
   compiled. Naming one of those keys in this file is an unknown-key error,
   not an override — the same treatment `stop_on_fault` had.
 - **Typos are hard errors.** Every key is required, unknown keys are

@@ -32,7 +32,7 @@ which arm(s) ran, and the payload/tool/marker configuration (contract §1).
    explained file-by-file in the session notes before proceeding.
 2. The frozen characterization fixture is byte-identical to the reviewed
    one:
-   `sha256sum Christian_control/basic_control/tests/fixtures/execution_preextract_v1.csv`
+   `sha256sum Christian_control/runtime/tests/fixtures/execution_preextract_v1.csv`
    must print
    `d0575dec586906f0a2bff0d72fa83443b04565da2cc835d2b80c6fde61954c6a`.
    A different hash means the replay baseline changed; stop and re-review.
@@ -43,12 +43,12 @@ which arm(s) ran, and the payload/tool/marker configuration (contract §1).
    core archive), and `log_schema`:
 
    ```bash
-   cmake --build Christian_control/basic_control/build -j2
-   ctest --test-dir Christian_control/basic_control/build --output-on-failure
+   cmake --build Christian_control/runtime/build -j2
+   ctest --test-dir Christian_control/runtime/build --output-on-failure
    ```
 
 4. Binary freshness is then enforced mechanically by
-   `planner_bridge/scripts/run_session.sh` (`fresh_or_die`): it refuses a
+   `planning/scripts/run_session.sh` (`fresh_or_die`): it refuses a
    `controller` or `planner_bridge` binary older than any source file, and
    a generated DH YAML older than the URDF. Do not pass `--allow-stale`
    for a revalidation session.

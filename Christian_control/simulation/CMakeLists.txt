@@ -1,10 +1,10 @@
 # Dual-arm MuJoCo execution twin — standalone simulation project.
 #
 # Own CMake project by design, matching the repo's per-component pattern
-# (basic_control, planner_bridge, vicon); there is deliberately no
+# (control, runtime, planning, tracking); there is deliberately no
 # top-level CMakeLists. Later plan tasks add the MuJoCo model contract,
 # backend, and the humansl_sim executable here, obtaining
-# humansl_execution_core via add_subdirectory of ../basic_control with an
+# humansl_execution_core via add_subdirectory of ../control with an
 # explicit binary dir. Nothing in this project may link Kortex or contain
 # a robot address (enforced by a link test in a later task).
 #
@@ -43,16 +43,17 @@ set_target_properties(mujoco PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${HUMANSL_ROOT}/third_party/include")
 
 # --- humansl_execution_core (and the production Pinocchio kinematics)
-#     from ../basic_control, with an explicit binary dir (plan global
-#     constraint). EXCLUDE_FROM_ALL keeps the hardware targets (controller,
-#     Kortex tools) and basic_control's test executables out of this
-#     build; only targets something here depends on are built.
-#     basic_control's ctest entries stay out of this project's test list
-#     via its BASIC_CONTROL_TESTS guard (OFF when it is not the top-level
-#     project) — they remain registered and runnable from
-#     basic_control/build exactly as before. ---
-add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../basic_control"
-                 "${CMAKE_CURRENT_BINARY_DIR}/basic_control"
+#     from ../control, with an explicit binary dir (plan global
+#     constraint). EXCLUDE_FROM_ALL keeps control's tools and test
+#     executables out of this build; only targets something here depends on
+#     are built. The hardware targets (controller, Kortex tools) are not
+#     reachable from here at all — they live in ../runtime, which this
+#     project never adds. control's ctest entries stay out of this project's
+#     test list via its CONTROL_TESTS guard (OFF when it is not the
+#     top-level project) — they remain registered and runnable from
+#     control/build and runtime/build exactly as before. ---
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../control"
+                 "${CMAKE_CURRENT_BINARY_DIR}/control"
                  EXCLUDE_FROM_ALL)
 
 # The generated model (tools/generate_dual_mjcf.py writes it; hand edits are
@@ -94,7 +95,7 @@ target_link_libraries(test_model_parity sim_model humansl_execution_core)
 target_compile_definitions(test_model_parity PRIVATE
     SIM_MODEL_XML_PATH="${SIM_MODEL_XML}"
     SIM_MODEL_DIR="${SIM_MODEL_DIR}"
-    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/basic_control/config/GEN3_dual_mounted.urdf")
+    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/model/GEN3_dual_mounted.urdf")
 add_test(NAME sim_model_parity COMMAND test_model_parity)
 set_tests_properties(sim_model_parity PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
@@ -147,7 +148,7 @@ add_executable(test_mujoco_backend tests/test_mujoco_backend.cpp)
 target_link_libraries(test_mujoco_backend sim_backend)
 target_compile_definitions(test_mujoco_backend PRIVATE
     SIM_MODEL_XML_PATH="${SIM_MODEL_XML}"
-    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/basic_control/config/GEN3_dual_mounted.urdf")
+    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/model/GEN3_dual_mounted.urdf")
 add_test(NAME mujoco_backend COMMAND test_mujoco_backend)
 set_tests_properties(mujoco_backend PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
@@ -172,7 +173,7 @@ add_executable(humansl_sim src/SimMain.cpp)
 target_link_libraries(humansl_sim sim_runner)
 target_compile_definitions(humansl_sim PRIVATE
     SIM_MODEL_XML_PATH="${SIM_MODEL_XML}"
-    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/basic_control/config/GEN3_dual_mounted.urdf")
+    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/model/GEN3_dual_mounted.urdf")
 if (HUMANSL_SIM_VIEWER)
     target_sources(humansl_sim PRIVATE src/SimViewer.cpp)
     target_compile_definitions(humansl_sim PRIVATE HUMANSL_SIM_VIEWER)
@@ -189,7 +190,7 @@ add_executable(test_dual_simulation_runner
 target_link_libraries(test_dual_simulation_runner sim_runner)
 target_compile_definitions(test_dual_simulation_runner PRIVATE
     SIM_MODEL_XML_PATH="${SIM_MODEL_XML}"
-    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/basic_control/config/GEN3_dual_mounted.urdf")
+    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/model/GEN3_dual_mounted.urdf")
 add_test(NAME dual_simulation_runner COMMAND test_dual_simulation_runner)
 set_tests_properties(dual_simulation_runner PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
@@ -209,7 +210,7 @@ add_executable(test_moving_mount_control tests/test_moving_mount_control.cpp)
 target_link_libraries(test_moving_mount_control sim_runner)
 target_compile_definitions(test_moving_mount_control PRIVATE
     SIM_MODEL_XML_PATH="${SIM_MODEL_XML}"
-    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/basic_control/config/GEN3_dual_mounted.urdf")
+    SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/model/GEN3_dual_mounted.urdf")
 add_test(NAME moving_mount_control COMMAND test_moving_mount_control)
 set_tests_properties(moving_mount_control PROPERTIES
     ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
@@ -241,7 +242,7 @@ add_test(NAME sim_no_kortex
 # --- sim_model_provenance: verifies model/model_provenance.yaml against
 #     the actual source files (hashes, URDF mount transforms, TCP names,
 #     vendored MuJoCo version). Pure Python file hashing and XML parsing;
-#     no simulator, no robot. Follows the basic_control pattern of
+#     no simulator, no robot. Follows the runtime pattern of
 #     checking the interpreter and required module before registering. ---
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if (Python3_Interpreter_FOUND)

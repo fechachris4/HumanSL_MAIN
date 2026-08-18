@@ -46,7 +46,7 @@ the backend owning whether that means advancing simulation time or waiting
 for a cyclic UDP reply.
 
 The hardware side already has the same shape. In
-`basic_control/src/Hardware.h`:
+`runtime/Hardware.h`:
 
 ```cpp
 k_api::BaseCyclic::Feedback CyclicSession::Send(const JointVector& setpoints_deg);
@@ -62,7 +62,7 @@ new control logic.
 This is the most important result of the comparison, and it changes what
 "pick a core" means.
 
-**`HumanSL_MAIN` safety (`basic_control/src/Safety.h`, 215 + 380 lines) is
+**`HumanSL_MAIN` safety (`runtime/Safety.h`, 215 + 380 lines) is
 hardware supervision.** It classifies why the loop stopped across ten
 `LoopStop` reasons, decodes Kortex actuator and base fault banks, runs the
 pre-takeover readiness gate, watches following error and stale cyclic
@@ -261,7 +261,7 @@ What moves **behind** it (backend-specific, one implementation each):
 |---|---|
 | `MujocoBackend` | `msc_project/cpp/src/sim/` (already there) |
 | **`HardwareBackend`** (to be written) | wraps `Hardware.{h,cpp}` — `Connect`, `CyclicSession::Send`, degrees↔radians, per-arm sessions |
-| Kortex fault decoding, readiness gate, servoing guard, following-error and stale-feedback watches | `basic_control/src/Safety.{h,cpp}`, `Runner.{h,cpp}` |
+| Kortex fault decoding, readiness gate, servoing guard, following-error and stale-feedback watches | `runtime/Safety.{h,cpp}`, `runtime/Runner.{h,cpp}` |
 
 What stays **above** it (shared, backend-independent):
 

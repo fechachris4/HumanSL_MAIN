@@ -12,7 +12,7 @@ thesis.
 The system has a global motion planner (`TrajectoryGeneration/`, a
 GPMP2/GTSAM dual-arm optimiser producing densified 1 kHz joint
 trajectories) and a 1 kHz reactive controller
-(`Christian_control/basic_control`, a task-space reactive law with
+(`Christian_control/control`, a task-space reactive law with
 null-space joint-limit avoidance and a safety-kernel design). Each is
 sound alone, but each fails in a way the other fixes. A planned
 trajectory executed open loop cannot respond to anything that changes

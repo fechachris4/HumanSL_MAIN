@@ -1,7 +1,7 @@
 # Dual-arm MuJoCo execution twin
 
 This project runs two instances of the shared execution core
-(`humansl_execution_core`, built by `../basic_control`) against a dual-arm
+(`humansl_execution_core`, built by `../control`) against a dual-arm
 MuJoCo model with exact HumanSL kinematics. It exists to test execution
 correctness of the world-frame command pipeline — frames, signs, units,
 lever arms, timestamps and stop verdicts — not to model Kinova servo
@@ -12,7 +12,7 @@ dynamics. Every result it produces is labelled `simulation` evidence
 
 - **Kinematic truth** — joint order, axes, limits, mount-to-base
   transforms, TCP frames — comes from the production URDF
-  `../basic_control/config/GEN3_dual_mounted.urdf` through
+  `../model/GEN3_dual_mounted.urdf` through
   `DualArmKinematics`. The right TCP is `ConfiguredTool_Link` (configured
   tool); the left TCP is `leftEndEffector_Link` (bare flange). They are
   different physical points by design.
@@ -28,8 +28,8 @@ the record against the actual files on every test run.
 ## Layout and build
 
 This is its own CMake project, following the per-component pattern
-(`basic_control`, `planner_bridge`, `vicon`). It will obtain
-`humansl_execution_core` via `add_subdirectory` of `../basic_control`;
+(`control`, `runtime`, `planning`, `tracking`). It obtains
+`humansl_execution_core` via `add_subdirectory` of `../control`;
 there is deliberately no top-level CMakeLists.
 
 ```
@@ -196,7 +196,7 @@ scenarios:
 | --- | --- | --- |
 | Mount twist zeroed in the `WorldSample` | passes: 5.12 / 7.11 mm | `ctest dual_simulation_runner` (bit-for-bit sample check): 3 checks fail, twist err 3.142e-02 (translation), 6.283e-02 (rotation, combined) |
 | Mount twist SIGN-FLIPPED in the `WorldSample` | passes: 6.59 / 9.42 mm (55 % / 63 % of the 12 / 15 mm gates) | `ctest dual_simulation_runner` (bit-for-bit sample check) |
-| transport term sign-flipped INSIDE the law (`world_frames::ArmControllerState`, basic_control `src/Frames.h`) | passes: same numbers | nothing in this project; only basic_control's `ctest frames` |
+| transport term sign-flipped INSIDE the law (`world_frames::ArmControllerState`, `control/Frames.h`) | passes: same numbers | nothing in this project; only control's `ctest frames` |
 
 The last row is the one to remember: a bit-equality check on the input
 cannot see what the law does with the input. `ctest frames` catches it

@@ -1,6 +1,6 @@
 # Config.h — line-by-line
 
-File: `basic_control/src/Config.h`, at HEAD after commit f64325c0 ("remove
+File: `control/Config.h`, at HEAD after commit f64325c0 ("remove
 trajectory playback: fixed-target-only controller"). A header has no
 execution order — every value here is fixed at compile time and simply
 *read* by the rest of the program. So this read goes top to bottom, but for
