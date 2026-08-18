@@ -342,6 +342,56 @@ commit.
   (Questions asked out of order with prediction logging twice that session
   — recorded as process misses in predictions.md.)
 
+- Requests to the planner get answers, not vetoes, and requested targets
+  are visible in space before hardware time. Christian's framing, after
+  three supervised sessions were lost to rejected circle plans on
+  2026-08-17: "it is too easy for the planner to reject a trajectory
+  I've requested, and it's too easy for me not to know where the points
+  I've requested are in space." Confirmed the same evening via
+  interactive questions: (1) targets can be authored as poses fixed in
+  the room — "the now target should be in world pose so now we can get
+  a real error" — so wearer motion produces genuine stabilisation
+  error rather than a silently relocated goal (the 174 deg mount
+  re-hang between 14:10 and 15:59 relocated the mount-declared circle);
+  (2) all three capabilities are designed together: pre-flight offline
+  validation on goal edit, a spatial view of the requested path against
+  reach and current pose, and graded planner output that emits the best
+  safety-respecting trajectory with an honest shortfall report while
+  safety-critical checks stay hard. Design drafted, not yet approved:
+  docs/superpowers/specs/2026-08-17-world-targets-preflight-graded-planning-design.md.
+  (Prompts: raw-prompt-log 2026-08-17 20:44:40, 23:36:16; interactive
+  answers recorded in docs/intent/predictions.md the same evening.)
+
+- The repository's shape must be evidence of what the system does, not of
+  how it came to be. Christian's outcome, in his words: the filesystem
+  should reflect "the actual engineering architecture", each top-level
+  area should be named from "what the code actually does rather than
+  forcing these names", and "a normal execution path should be
+  understandable from roughly 3-6 meaningful files". He named the two
+  paths that must be visible: tracking to world/base state to controller
+  to actuation to hardware, and planning request through
+  planner/IK/GPMP2/collision to trajectory to runtime. He also named four
+  architectural decisions the shape must preserve rather than re-open:
+  one URDF geometric model, Pinocchio as the canonical FK/Jacobian
+  implementation, GPMP2 owning optimisation rather than a robot model,
+  and external world/Vicon transforms staying distinct from robot
+  kinematics. Explicitly bounded as structural only — no change to
+  control mathematics, planner behaviour, safety behaviour, numerical
+  constants, APIs, or hardware behaviour — and he required the design to
+  be shown and falsified before anything moved. Delivered 2026-08-18:
+  eight subsystems (model, contracts, control, runtime, tracking,
+  planning, simulation, panel), both flows readable end to end, and the
+  same test counts before and after (22 controller-side, 22 planning, 6
+  tracking, 9 simulation, 289 panel). This entry records the standing
+  principle, not the one migration: a directory named after a vendor, an
+  interface, or its own history is a defect to be fixed when found. It
+  generalises the naming principle Christian reached himself one day
+  earlier for the Pinocchio model wrapper (see the RobotModel entry
+  above) from a class to a directory. (Prompt: raw-prompt-log 2026-08-18
+  19:47:03. Three naming choices confirmed via interactive questions the
+  same evening: control/ over execution/, runtime/ over hardware/,
+  top-level model/ over control/model/.)
+
 ## Interpretations (hypotheses)
 
 "He asked for X, likely because Y" — cited, awaiting confirmation.
@@ -497,6 +547,26 @@ wrong). Proceeding on anything listed here must be said out loud.
   build tree shows output activity at 20:47, but no recording has been
   confirmed as the standing test input.
 
+- **Why the reorganisation, and why now?** The 19:47 prompt states the
+  outcome but not the cost that prompted it. My reading, from the same
+  day's prompts: the layout had started costing Christian answers about
+  his own system. At 14:29:44 he asked "how is redundancy handled in my
+  code", and at 14:57:50 "I have 2 forward kinematic equation that can
+  cause errors because it does not mean the both equal each other" —
+  both are questions the structure should have answered and did not.
+  The second is pointed: the repository does hold two forward-kinematics
+  implementations, Pinocchio's in the controller and the DH-based one in
+  the GPMP2 layer, and nothing in the old directory names said which was
+  canonical. Five hours later he asked for a layout that makes exactly
+  that answerable, and named "Pinocchio as the canonical FK/Jacobian
+  implementation" as a decision to preserve. I think the why is
+  therefore: he must be able to explain and defend this architecture in
+  his MSc report, and a structure he has to re-derive each time is a
+  structure he cannot defend. Proceeding on this reading was not
+  necessary for the migration itself, which was fully specified — but it
+  is the reading that decides how aggressively future naming defects
+  should be chased. A yes or no is enough.
+
 ## Examples
 
 Concrete anchors: one case that must work, one that must not, per goal.
@@ -611,3 +681,40 @@ and why. Dismissals are binding — do not re-pitch.
   + full RobotModel split / nothing): adopted the full slice; job-count
   cap in the panel explicitly deferred ("lets wait for now"). Upstream
   bug report to Pinocchio remains open as an option nobody has taken.
+- 2026-08-18 (repository reorganisation): three naming choices were put to
+  Christian rather than decided for him, each with the argument for the
+  alternative — `control/` versus `execution/` (the latter matching the
+  existing `humansl_execution_core` target name), `runtime/` versus
+  `hardware/` (the latter blunter about which binaries can reach the arm),
+  and a top-level `model/` versus folding the URDF into `control/model/`.
+  He adopted the recommendation in all three. Shown and dismissed as moves
+  in their own right, each for a stated reason, and binding unless he
+  re-opens them: merging `RobotModel.*` back into `Kinematics.*` (reverses
+  his own 2026-08-17 decision); splitting `Config.h` into robot description
+  and controller tuning (correct in principle, and the reason `planning`
+  still depends on `control`; deferred as a content change, not because
+  the line is unclear — every one of the nine constants planning's
+  production code reads is robot description: the four frame names, the
+  two nominal joint vectors, the reference-frame switch and its names,
+  and `kJointSoftwareLimitDeg`. The real coupling is that the panel edits
+  this file by regex against a name whitelist and `WriteConfigLines`
+  embeds it in every run's CSV preamble, so a split must not move a
+  whitelisted name out from under either. An agent claim on 2026-08-18
+  that a panel-writable knob is read by the planner was wrong and is
+  corrected here: `kModelVelocityLimitsDegS` is read only by
+  `planning/tests/test_path_validation.cpp`);
+  merging the three confusably-named planning validators (the defect is
+  their names, and fixing it means renaming C++ types, which the prompt
+  excluded); splitting `BridgeMain.cpp` and `optimisation/utils.*`;
+  a top-level `CMakeLists.txt` (the per-project build is a recorded
+  decision); renaming the `Vicon*` files (those names are correct — only
+  the directory was vendor-named); renaming the CMake targets; a top-level
+  `analysis/` area for the run-log scripts; and deleting the unreferenced
+  `GEN3_custom.urdf` (unreachable is not obsolete). Also shown, not
+  adopted, and worth remembering: only ONE file merge survived scrutiny
+  (`Arrival.h` into `Controller.h`), because most small files in this
+  repository are small so that a dependency-light test can link — the
+  request to "reduce file fragmentation" was answered by separation, not
+  by merging, and the honest count was reported rather than padded.
+  (Prompt: raw-prompt-log 2026-08-18 19:47:03, which asked for rejected
+  moves and for the design to be falsified.)

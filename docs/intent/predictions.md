@@ -472,3 +472,60 @@ in his own words, he wants it acted on in full, not staged. The staged
 options read as delay to him, not caution. Next prediction should weight
 "he picks the complete slice" heavily whenever the question follows his
 own written summary.
+
+### 2026-08-17 — which fix for the rejected circle plan
+
+**Predicted:** process miss — the question (revert circle + offline
+check / revert only / revert + slow lap / diagnose deeper) was asked
+before any prediction was written here. Not backfilled; recorded after
+seeing the answer, so worth nothing as a forecast. For the record, the
+text recommended "revert + offline check".
+
+**Actual:** none of the four. Christian reframed the problem in his own
+words: "it is too easy for the planner to reject a trajectory I've
+requested, and it's too easy for me not to know where the points I've
+requested are in space." He redirected from run-fixing to two capability
+gaps — planner refusal instead of graceful degradation, and no spatial
+visibility of authored goals.
+
+**Result:** miss (both on process and substance). Consistent with the
+day's pattern: options that manage the immediate incident undershoot
+when he has already generalised the lesson. He answered the question one
+level above the one asked.
+
+### 2026-08-17 — which capability to design first (pre-flight / 3D view / degrade)
+
+**Predicted (before asking):** he picks the full program — all three
+designed together — per today's pattern that staged options read as
+delay once he has articulated the conclusion himself. Second most
+likely: graceful degradation first, since it is the half he named first.
+
+**Actual:** the direction question was first rejected at the tool level
+(Christian wanted to answer but the request needed re-issuing), then
+answered on the re-ask: "Design all three together". Recorded below.
+
+### 2026-08-17 — "the now target should be in world pose so now we can
+### get a real error" (re-ask after tool rejection)
+
+**Predicted (before asking):** my reading is that he wants targets
+authored/held as world-fixed poses — not mount-declared — so the
+reported tracking error is a genuine world-stabilisation error when the
+wearer moves (the SRL master goal). Predicted answer: he confirms that
+reading, and picks "design all three together" on the re-asked
+direction question with world-frame targets folded in.
+
+**Actual:** both confirmed exactly as predicted: "Yes — targets fixed
+in the room" and "Design all three together".
+
+**Result:** hit, on both. The pattern held again — once he has stated
+the conclusion himself, he takes the complete slice.
+
+### 2026-08-17 — approve the world-targets / pre-flight / graded design?
+
+**Predicted (before asking):** approve as drafted, likely with the
+recommended answers to the three open decisions accepted wholesale —
+today's pattern is full-slice adoption once the conclusion is his own.
+Risk of miss: he may tighten Part D's confirm thresholds or insist the
+shape-repair projection lands first.
+
+**Actual:** (to be recorded)
