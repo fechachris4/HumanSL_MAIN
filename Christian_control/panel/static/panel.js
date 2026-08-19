@@ -554,6 +554,90 @@ function renderControllerLog() {
   }
   const notable = $('run-log-card');
   if (notable) notable.classList.toggle('has-notice', Boolean(state.lastNotable));
+  renderPlanVerdict();
+}
+
+/* ---------------------------------------------------------------- the plan */
+
+// The validator already computed everything below and printed it into the
+// controller log this page is streaming; this only re-displays its result.
+// Order of the checks mirrors the report's own verdict block, so "the first
+// blocking reason" here is the first NO the validator printed.
+const PLAN_CHECKS = [
+  ['optimiser_converged', 'optimiser convergence'],
+  ['task_fidelity_valid', 'Cartesian fidelity'],
+  ['modelled_collision_valid', 'collision'],
+  ['joint_limits_valid', 'joint limits'],
+  ['dynamic_limits_valid', 'dynamic limits'],
+  ['start_state_valid', 'start splice'],
+];
+
+function planVerdict(lines) {
+  const last = (re) => {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const m = lines[i].match(re);
+      if (m) return { index: i, m };
+    }
+    return null;
+  };
+  const verdict = last(/hardware_execution_allowed\s+(yes|NO)/);
+  const solve = last(/^path: /);
+  const executing = Number(state.frame?.row?.cart_traj_activated) === 1;
+
+  if (executing) return { status: 'EXECUTING', lines: planNumbers(lines, verdict) };
+  if (solve && (!verdict || solve.index > verdict.index))
+    return { status: 'PLANNING', lines: ['solver running — the report follows in the controller log'] };
+  if (!verdict) return { status: 'HOLDING', lines: ['no plan attempted yet'] };
+
+  const accepted = verdict.m[1] === 'yes';
+  const out = [];
+  if (!accepted) {
+    // The validator's verdict block sits just above this line; read its
+    // yes/NO flags back, in its own order.
+    const flags = {};
+    for (let i = Math.max(0, verdict.index - 8); i < verdict.index; i++) {
+      const m = lines[i].match(/(\w+_valid|optimiser_converged)\s+(yes|NO)/);
+      if (m) flags[m[1]] = m[2] === 'yes';
+    }
+    const first = PLAN_CHECKS.find(([key]) => flags[key] === false);
+    out.push(`Reason: ${first ? first[1] : 'see the controller log'}`, '');
+    for (const [key, label] of PLAN_CHECKS)
+      if (key in flags && flags[key]) out.push(`${label}: PASS`);
+  }
+  out.push(...planNumbers(lines, verdict));
+  return { status: accepted ? 'ACCEPTED' : 'REJECTED', lines: out };
+}
+
+// The report's own numbers, quoted: error vs its printed gate, margin,
+// splice, duration. Nothing here recomputes or re-judges them.
+function planNumbers(lines, verdict) {
+  const upTo = verdict ? verdict.index : lines.length;
+  const grab = (re) => {
+    for (let i = upTo; i >= 0 && i > upTo - 40; i--) {
+      const m = (lines[i] || '').match(re);
+      if (m) return m;
+    }
+    return null;
+  };
+  const out = [];
+  const err = grab(/e_command\s+\(.*\)\s+max\s+([\d.]+)\s*mm/);
+  const gate = grab(/maximum_planning_error_m\s+=\s+([\d.]+)/);
+  if (err) out.push(`Cartesian error: ${err[1]} mm${gate ? ` (gate ${(Number(gate[1]) * 1000).toFixed(0)} mm)` : ''}`);
+  const margin = grab(/joint-limit margin\s+(-?[\d.]+)\s*deg/);
+  if (margin) out.push(`Joint margin: ${margin[1]}\u00b0`);
+  const splice = grab(/first command vs measured\s+([\d.]+)\s*deg/);
+  if (splice) out.push(`Start splice: ${splice[1]}\u00b0`);
+  const duration = grab(/final duration\s+([\d.]+)\s*s/);
+  if (duration) out.push(`Duration: ${Number(duration[1]).toFixed(1)} s`);
+  return out;
+}
+
+function renderPlanVerdict() {
+  const node = $('plan-verdict');
+  if (!node) return;
+  const { status, lines } = planVerdict(state.logLines);
+  node.textContent = [`PLAN: ${status}`, ...lines].join('\n');
+  node.classList.toggle('is-stop', status === 'REJECTED');
 }
 
 function renderConnection() {
@@ -2423,6 +2507,7 @@ async function refreshStatus() {
   renderSession();
   renderFreshness();
   renderRequired();
+  renderPlanVerdict();
   renderConnection();
   // renderRun, not renderBanner: the banner, the empty state and the driving
   // mark all read this same status, and rendering only some of them is how

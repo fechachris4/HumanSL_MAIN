@@ -714,3 +714,6 @@ select, input[type="text"] {
 .required-item.is-unused .required-detail { color: var(--ink-dim); }
 .required-item.is-unknown .required-state { color: var(--warn); }
 .required-detail { color: var(--ink-dim); }
+
+/* the plan card quotes the validator; a rejection reads as a stop, visually */
+#plan-verdict.is-stop { color: var(--stop); }
