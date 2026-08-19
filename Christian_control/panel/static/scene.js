@@ -227,6 +227,156 @@ function mountTransform(placement) {
 }
 
 // ---------------------------------------------------------------
+// Goal preview — pure functions, exported so a test runner can pin
+// them without a canvas. Nothing in here talks to a server: a preview
+// is arithmetic on the numbers the operator typed, and that is the
+// property that makes it safe to offer at all.
+// ---------------------------------------------------------------
+
+// The frames a goal block may declare, and what the viewer can do with
+// each. Anything else is refused BY NAME, saying which transform is
+// missing, rather than drawn somewhere misleading.
+const PREVIEW_FRAMES = ['mount', 'right_base', 'left_base'];
+
+// Two orthonormal vectors spanning the plane whose normal is `normal`.
+// The seed-picking is copied line for line from PlaneBasis in
+// planning/src/CartesianPath.cpp, because the circle's START point is
+// centre + r*u and the preview must mark the same rim point the bridge
+// will actually plan from. Returns null for a degenerate normal.
+export function planeBasis(normal) {
+    const n = normalise(normal);
+    if (norm(n) < 0.5) return null; // normalise() zeroed a near-zero vector
+    const ax = Math.abs(n[0]);
+    const ay = Math.abs(n[1]);
+    const az = Math.abs(n[2]);
+    let seed;
+    if (ax > ay) {
+        seed = ay <= az ? [0, 1, 0] : [0, 0, 1];
+    } else {
+        seed = ax <= az ? [1, 0, 0] : [0, 0, 1];
+    }
+    const u = normalise(cross(n, seed));
+    const v = cross(n, u); // already unit: n and u are orthonormal
+    return { u: u, v: v };
+}
+
+function previewNumber(value) {
+    if (value === null || value === undefined) return null;
+    const text = String(value).trim();
+    if (text === '') return null;
+    const number = Number(text);
+    return isFinite(number) ? number : null;
+}
+
+function previewVector(values) {
+    if (!Array.isArray(values) || values.length !== 3) return null;
+    const parsed = values.map(previewNumber);
+    return parsed.every(function (v) { return v !== null; }) ? parsed : null;
+}
+
+// Validate the typed goal fields into a drawable preview, or say what is
+// wrong in words the operator can act on. fields:
+//   { mode: 'point'|'circle', frame, goal, rpy_deg|null,
+//     centre, radius_m, normal, path_rpy_deg|null }
+// rpy fields are null when the orientation is inherited/radial, in which
+// case no triad is drawn. Returns {ok:true, preview} or {ok:false, error}.
+export function parseGoalPreview(fields) {
+    const f = fields || {};
+    const frame = String(f.frame || 'mount');
+    if (PREVIEW_FRAMES.indexOf(frame) < 0) {
+        const missing = frame === 'world'
+            ? 'the mount-in-world transform comes from Vicon and the panel does not have it'
+            : 'no transform from that frame to the mount frame is known to the viewer';
+        return { ok: false, error: 'cannot preview in frame \'' + frame + '\' — '
+            + missing + ' (previewable frames: ' + PREVIEW_FRAMES.join(', ') + ')' };
+    }
+    if (f.mode === 'point') {
+        const goal = previewVector(f.goal);
+        if (!goal) {
+            return { ok: false, error: 'goal xyz must be three finite numbers in metres' };
+        }
+        const rpy = f.rpy_deg === null || f.rpy_deg === undefined
+            ? null : previewVector(f.rpy_deg);
+        if (f.rpy_deg !== null && f.rpy_deg !== undefined && !rpy) {
+            return { ok: false, error: 'orientation rpy must be three finite numbers in degrees' };
+        }
+        return { ok: true, preview: { kind: 'point', frame: frame, point: goal, rpyDeg: rpy } };
+    }
+    if (f.mode === 'circle') {
+        const centre = previewVector(f.centre);
+        if (!centre) {
+            return { ok: false, error: 'circle centre must be three finite numbers in metres' };
+        }
+        const radius = previewNumber(f.radius_m);
+        if (radius === null || radius <= 0) {
+            return { ok: false, error: 'circle radius must be a positive number in metres' };
+        }
+        const normal = previewVector(f.normal);
+        if (!normal || !planeBasis(normal)) {
+            return { ok: false, error: 'circle normal must be three finite numbers and not all zero' };
+        }
+        const rpy = f.rpy_deg === null || f.rpy_deg === undefined
+            ? null : previewVector(f.rpy_deg);
+        if (f.rpy_deg !== null && f.rpy_deg !== undefined && !rpy) {
+            return { ok: false, error: 'orientation rpy must be three finite numbers in degrees' };
+        }
+        return { ok: true, preview: { kind: 'circle', frame: frame, centre: centre,
+                                      radius: radius, normal: normal, rpyDeg: rpy } };
+    }
+    return { ok: false, error: 'preview mode must be point or circle' };
+}
+
+// R = Rz*Ry*Rx from degrees at a position — the composition goal.yaml,
+// the controller and print_dual_arm_fk share (and the same order
+// mountTransform composes in).
+function poseFromRpyDeg(position, rpyDeg) {
+    let m = translation(position[0], position[1], position[2]);
+    m = multiply(m, rotationZ((rpyDeg[2] || 0) * DEG));
+    m = multiply(m, rotationY((rpyDeg[1] || 0) * DEG));
+    return multiply(m, rotationX((rpyDeg[0] || 0) * DEG));
+}
+
+const CIRCLE_PREVIEW_SEGMENTS = 64;
+
+// A parsed preview carried into the mount frame, ready to draw:
+//   { target, points|null, centre|null, triad|null }
+// `target` is the point goal, or the circle's start point (the rim at
+// start angle zero, exactly where GenerateCircle begins). `frameMatrix`
+// is mount<-declared-frame; the scene passes its own baseMatrix so the
+// preview and the arms can never disagree about the mounting.
+export function goalPreviewGeometry(preview, frameMatrix) {
+    const base = frameMatrix || identity();
+    if (preview.kind === 'point') {
+        return {
+            target: transformPoint(base, preview.point),
+            points: null,
+            centre: null,
+            triad: preview.rpyDeg
+                ? multiply(base, poseFromRpyDeg(preview.point, preview.rpyDeg))
+                : null,
+        };
+    }
+    const basis = planeBasis(preview.normal);
+    const points = [];
+    for (let i = 0; i <= CIRCLE_PREVIEW_SEGMENTS; i++) {
+        const angle = (2 * Math.PI * i) / CIRCLE_PREVIEW_SEGMENTS;
+        const rim = add(preview.centre,
+            add(scale(basis.u, preview.radius * Math.cos(angle)),
+                scale(basis.v, preview.radius * Math.sin(angle))));
+        points.push(transformPoint(base, rim));
+    }
+    const start = add(preview.centre, scale(basis.u, preview.radius));
+    return {
+        target: transformPoint(base, start),
+        points: points,
+        centre: transformPoint(base, preview.centre),
+        triad: preview.rpyDeg
+            ? multiply(base, poseFromRpyDeg(start, preview.rpyDeg))
+            : null,
+    };
+}
+
+// ---------------------------------------------------------------
 // Reading what the server sends
 // ---------------------------------------------------------------
 
@@ -369,6 +519,7 @@ export function createScene(canvas, options) {
         dh: { right: null, left: null },
         row: { right: null, left: null },
         plan: { right: null, left: null },
+        goalPreview: { right: null, left: null },
         progress: null,
         obstacle: null,
         clearance: null,
@@ -978,6 +1129,67 @@ export function createScene(canvas, options) {
                     });
                 }
             }
+
+            // The goal preview: what the TYPED, unsaved fields ask for,
+            // drawn in the ask colour and labelled as a preview so it can
+            // never be mistaken for a plan or a measurement. Dashed, for
+            // the same reason. The distance in the label is from this
+            // arm's measured tool to the target (the point, or the
+            // circle's start), in true 3D millimetres.
+            const preview = state.goalPreview[arm];
+            if (preview) {
+                const frameM = preview.frame === 'mount'
+                    ? identity()
+                    : baseMatrix(preview.frame === 'right_base' ? 'right' : 'left');
+                const geometry = goalPreviewGeometry(preview, frameM);
+                if (selected) framed.push(geometry.target);
+                if (geometry.points) {
+                    addPolyline(items, basis, geometry.points, {
+                        colour: palette.ask,
+                        width: selected ? 1.6 : 1.1,
+                        alpha: selected ? 0.85 : 0.4,
+                        dash: [6, 4],
+                    });
+                    addDot(items, basis, geometry.centre, {
+                        colour: palette.ask,
+                        radius: 2.5,
+                        alpha: selected ? 0.8 : 0.4,
+                    });
+                    notes.push({
+                        point: geometry.centre, text: 'centre',
+                        colour: palette.ask, alpha: 0.6, size: 9,
+                    });
+                    if (selected) framed.push(geometry.centre);
+                }
+                addCross(items, basis, geometry.target, {
+                    colour: palette.ask,
+                    radius: 7,
+                    width: selected ? 1.5 : 1,
+                });
+                if (geometry.triad) {
+                    addTriad(items, basis, geometry.triad, {
+                        colour: palette.ask,
+                        alpha: selected ? 0.85 : 0.4,
+                        length: 0.06,
+                        width: 1.4,
+                    });
+                }
+                const measuredChain = measured[arm];
+                const tool = measuredChain
+                    ? measuredChain.points[measuredChain.points.length - 1] : null;
+                const gap = tool
+                    ? formatMetres(norm(subtract(geometry.target, tool)))
+                    : 'no measured arm';
+                const what = geometry.points ? 'circle start' : 'goal';
+                notes.push({
+                    point: geometry.target,
+                    text: arm + ' goal preview · ' + what + ' · ' + gap,
+                    colour: palette.ask,
+                    dx: 10,
+                    dy: -10,
+                    mono: true,
+                });
+            }
         }
 
         // The desired tool point and the dimension between it and where the
@@ -1034,7 +1246,8 @@ export function createScene(canvas, options) {
         paintOverlay(basis, notes);
 
         const nothing = !state.row.right && !state.row.left &&
-            !state.plan.right && !state.plan.left;
+            !state.plan.right && !state.plan.left &&
+            !state.goalPreview.right && !state.goalPreview.left;
         if (nothing) paintEmptyState();
 
         if (!framingOwned && framed.length) {
@@ -1188,6 +1401,14 @@ export function createScene(canvas, options) {
         setPlan: function (arm, planRows) {
             if (!known(arm)) return;
             state.plan[arm] = Array.isArray(planRows) && planRows.length ? planRows : null;
+            schedule();
+        },
+        // preview is parseGoalPreview's output (or null to clear). Drawing
+        // only: setting a preview saves nothing, solves nothing, and sends
+        // nothing — there is no code path from here to a request.
+        setGoalPreview: function (arm, preview) {
+            if (!known(arm)) return;
+            state.goalPreview[arm] = preview || null;
             schedule();
         },
         setProgress: function (fraction) {
