@@ -6176,3 +6176,288 @@ For each combination, verify that only the dependencies mathematically or safely
 ## 2026-08-19 17:08:43 BST
 
 can commit everything to master
+
+## 2026-08-19 17:35:21 BST
+
+```
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_MANUALLY_CONTROLLED, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         88.84    253.09     47.94     29.41    316.57    335.00     50.22
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): -0.2069 0.8337 0.1114 (m, left-arm base frame)
+  orientation rpy: -1.1097 -2.5361 0.1033 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p   -0.206894    0.437178   -0.740069   rpy   -2.929545   -0.284859    2.590949
+    left_base_link p   -0.206894    0.833683    0.111436   rpy   -1.109727   -2.536117    0.103326
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] vicon world-pose source: sdk (192.168.128.206:801, controller measurement + telemetry)
+[left] current startup pose: -0.2069 0.8337 0.1114 m in left_base_link = -0.2069 0.4372 -0.7401 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then fixed WORLD pose; Ctrl+C to stop
+Connecting to Vicon at 192.168.128.206:801...
+takeover hold: PASS (0.05 s unchanged POSITION command)
+Connected to Vicon successfully!
+[vicon] connected to 192.168.128.206:801 (100 Hz server)
+loop stopped by user (Ctrl+C)
+  desired p:  -0.2069 0.4372 -0.7401 m,  current p: -0.2069 0.4372 -0.7401 m
+cycle overruns: 9 of 142166 cycles (dt > 1.5 x nominal)
+[left] 142191 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-19/loop_log_left_20260819_145020.csv
+Disconnected from Vicon
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: vicon
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-19/session_173257
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         88.84    253.10     47.95     29.40    316.55    335.01     50.22
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): -0.2069 0.8337 0.1114 (m, left-arm base frame)
+  orientation rpy: -1.1096 -2.5362 0.1032 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p   -0.206868    0.437174   -0.740094   rpy   -2.929519   -0.284775    2.590992
+    left_base_link p   -0.206868    0.833704    0.111423   rpy   -1.109639   -2.536177    0.103238
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] vicon world-pose source: sdk (192.168.128.206:801, controller measurement + telemetry)
+[left] current startup pose: -0.2069 0.8337 0.1114 m in left_base_link = -0.2069 0.4372 -0.7401 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then fixed WORLD pose; Ctrl+C to stop
+Connecting to Vicon at 192.168.128.206:801...
+Connected to Vicon successfully!
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-19/loop_log_left_20260819_173258.csv
+waiting for telemetry data in the left run log...
+waiting for the left controller thread to activate its first plan...
+[vicon] connected to 192.168.128.206:801 (100 Hz server)
+takeover hold: PASS (0.05 s unchanged POSITION command)
+loop stopped by user (Ctrl+C)
+  desired p:  -0.2069 0.4372 -0.7401 m,  current p: -0.2069 0.4372 -0.7401 m
+cycle overruns: 2 of 22200 cycles (dt > 1.5 x nominal)
+[left] 22225 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-19/loop_log_left_20260819_173258.csv
+Disconnected from Vicon
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-19/session_173356
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 76 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 66.5 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         88.84    253.10     47.96     29.40    316.55    335.01     50.22
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): -0.2069 0.8337 0.1114 (m, left-arm base frame)
+  orientation rpy: -1.1096 -2.5362 0.1032 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p   -0.206852    0.437152   -0.740104   rpy   -2.929495   -0.284723    2.591022
+    left_base_link p   -0.206852    0.833706    0.111399   rpy   -1.109577   -2.536218    0.103187
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: -0.2069 0.8337 0.1114 m in left_base_link = -0.2069 0.4372 -0.7401 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then fixed WORLD pose; Ctrl+C to stop
+takeover hold: PASS (0.05 s unchanged POSITION command)
+planner Vicon sequence: 8
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+output frame: WORLD
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml
+  digest(fnv1a64)          = 0xa19d9e6c3ce12c6f
+  motion.nominal_speed_mps = 0.25
+  motion.min_duration_s    = 1
+  motion.waypoints         = 10
+  obstacles.epsilon_dist_m = 0.05
+  obstacles.collision_sigma= 0.0005
+  smoothness.qc_scale      = 1
+  goal.position_sigma_xyz  = [0.001, 0.01, 0.001]
+  goal.rotation_sigma_rpy  = [0.01, 0.01, 0.01]
+  solver.max_iterations    = 1000
+  path_following.position_prior_sigma_m     = 0.005
+  path_following.rotation_prior_sigma_rad   = 0.01
+  path_following.maximum_planning_error_m   = 0.005
+  path_following.maximum_orientation_error_rad = 0.1
+  path_following.validation_dt_s            = 0.002
+  path_following.approach_velocity_fraction = 0.9
+  path_following.approach_min_duration_s    = 0.1
+  path_following.approach_waypoints         = 5
+  path_following.max_chord_error_m          = 0.001
+  seeding.randomised       = false
+  seeding.EFFECTIVE_IK_SEED = 20260807   <- replan with seeding.ik_seed set to this to reproduce
+path: circle, radius 0.2 m, 32 samples (chord error <= 1 mm), lap 12 s, declared in mount -> world
+error: solve failed: the requested path is not reachable: IK failed at sample 0 of 33 (run probe_path_reachability for the per-sample report)
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-19/loop_log_left_20260819_173357.csv
+waiting for telemetry data in the left run log...
+waiting for the left controller thread to activate its first plan...
+
+
+
+what is the current issue
+```
+
+## 2026-08-19 18:45:34 BST
+
+the circle was reachable
+
+## 2026-08-19 19:04:54 BST
+
+When diagnosing why the robot does not move, do not edit, commit, revert, refactor, or “fix” anything initially. Trace the exact execution path from Run to actuation and identify the first blocking condition. Distinguish observed fact, mathematical inference, and assumption. Do not call something the root cause merely because removing it exposes the next failure. Report only: intended behaviour, actual behaviour, first blocker, evidence, and smallest proposed change. Before changing configuration such as goals, frames, limits, gains or transforms, establish what the value physically represents and where it came from. The long-term goal is that the panel itself exposes this causal state so I never need to inspect logs just to understand why the arm did not move.
+
+## 2026-08-19 19:20:39 BST
+
+Fix only the planner start-state bug, with the smallest clean change.
+Required invariant:
+[
+q^{plan}_0=\operatorname{CanonicalizeForPlanner}(q^{measured})
+]
+The planner must start from the current measured robot joint configuration, converted into the joint convention GPMP2 expects. Do not modify the controller/Kortex representation.
+Trace the existing start-state paths, then make the minimum change so all planner inputs use the same existing wrapping/canonicalisation logic. Prefer reusing `WrapToPrincipalRad`; do not add new classes, abstractions, configuration, refactors, or unrelated cleanup.
+Also ensure `q0` is the actual fixed starting state of the trajectory, not merely an optimiser seed.
+Add only one small regression test proving equivalent representations such as `253°` and `-107°` produce the same planner start state.
+Then run the existing offline circle planner once and report only:
+
+* files changed
+* measured q → planner q0
+* start splice
+* joint-limit margin
+* Cartesian error
+* remaining validation failures
+
+Do not change GPMP2 tuning, validation thresholds, goals, limits, or anything unrelated. Stop after this fix and verification.
+
+## 2026-08-19 19:28:31 BST
+
+Do this as a small cleanup, not a feature expansion. Prefer deleting/reusing code over adding code. I want the final implementation simpler than it is now.
+1. Simplify planner start-state handling
+There should be exactly one path that turns the measured robot configuration into the planner start state:
+[
+q_0^{plan} = \operatorname{CanonicalizeForPlanner}(q^{measured})
+]
+Remove or consolidate duplicate wrapping/conversion logic so CSV, runtime and test/CLI inputs ultimately use the same function.
+Requirements:
+
+* measured joint state is the source of truth
+* `q_plan[0]` must equal the canonicalised measured state
+* keep the controller/Kortex representation unchanged
+* reuse the existing wrapping logic
+* delete redundant conversion code where possible
+* no new classes, frameworks, configuration layers or abstractions
+* keep the change small and obvious
+
+Add only one minimal regression test proving equivalent joint representations produce the same planner start state.
+2. Show the existing planner verdict in the current panel
+Do not build a new telemetry/dashboard system.
+The validation result already exists. Reuse it and show the latest planner state directly in the existing panel.
+Keep it very small, for example:
+
+```text
+PLAN: REJECTED
+Reason: Cartesian fidelity
+
+Joint limits: PASS
+Start: PASS
+Collision: PASS
+Cartesian error: 12.4 mm > 5 mm
+
+```
+
+Or when successful:
+
+```text
+PLAN: ACCEPTED
+Cartesian error: 0.8 mm
+Joint margin: 8.8°
+Duration: 12.3 s
+
+```
+
+The panel should show:
+`HOLDING / PLANNING / ACCEPTED / REJECTED / EXECUTING`
+If rejected, show the first blocking reason.
+Do not duplicate validation calculations in the panel. Display the validator's existing result.
+Important
+Keep this quick. Before adding anything, look for code that can be removed or consolidated.
+Do not change:
+
+* GPMP2 tuning
+* validation thresholds
+* goals
+* controller behaviour
+* safety behaviour
+* unrelated architecture
+
+Afterwards run the existing offline circle test once and tell me only:
+
+1. lines/files removed or simplified,
+2. measured q → canonical q0,
+3. start splice,
+4. joint-limit margin,
+5. Cartesian error,
+6. final planner verdict,
+7. what the panel now displays.
+
+If solving this starts requiring a large refactor, stop and tell me why instead of expanding the scope.
+
+## 2026-08-19 19:39:15 BST
+
+can you commit
