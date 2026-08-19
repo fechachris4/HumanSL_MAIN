@@ -529,3 +529,15 @@ Risk of miss: he may tighten Part D's confirm thresholds or insist the
 shape-repair projection lands first.
 
 **Actual:** (to be recorded)
+
+### 2026-08-19 — how to handle the uncommitted URDF comment edit before
+### pushing
+
+**Not predicted.** The question ("commit just the URDF file / push only
+what's already committed / stop and let him commit himself") was asked
+before a prediction was logged — a process miss, not an honest gap
+recorded in real time. Per the ledger's own rule, recording a guess now
+would be worthless; this entry exists only so the lapse itself is
+visible rather than silently absent.
+
+**Actual:** commit just the URDF file, then push.

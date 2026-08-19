@@ -5782,3 +5782,50 @@ record it as an entry
 ## 2026-08-18 20:49:21 BST
 
 commit to master
+
+## 2026-08-18 21:00:25 BST
+
+is the optimizer allowed to converge
+
+## 2026-08-18 21:00:38 BST
+
+is the optimizer allowed to converge
+
+## 2026-08-19 10:39:18 BST
+
+I want to make sure frames are correctly verified
+
+## 2026-08-19 10:45:11 BST
+
+The Goal Today is to verify the frames are correctly wired and stated. Confirm the world frame definition (origin + axes)
+
+## 2026-08-19 11:48:00 BST
+
+which link in the urdf if the root link
+
+## 2026-08-19 11:51:49 BST
+
+The frame is called `mount`, not `world` this is unnecessary detail this file should be clear of unneccessary comments
+
+## 2026-08-19 11:52:58 BST
+
+are there anytother unnecessary comments
+
+## 2026-08-19 11:55:39 BST
+
+ConfiguredTool_Link (right arm only) is also project-specific: it is
+    NOT part of Kinova's stock arm geometry. It encodes the physical tool
+    presently mounted on the right arm's flange, read from the robot itself
+    via ControlConfig::GetToolConfiguration on 2026-08-05 (tools/
+    print_tool_configuration.cpp): xyz 0 0 0.12 m, no rotation, mass
+    0.831 kg, mass center 0 0 0.0473 m. This is a live robot SETTING, not a
+    fixed property of the Gen3 arm — if the mounted tool ever changes,
+    re-read GetToolConfiguration and update this offset, or FK will again
+    diverge from the Kinova web dashboard's tool_pose the way it did before
+    this was added.
+
+what does this mean
+
+## 2026-08-19 11:59:44 BST
+
+can you push my code
