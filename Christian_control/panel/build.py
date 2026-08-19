@@ -32,14 +32,19 @@ from typing import Any, Callable, Iterable, Optional
 
 from . import paths
 
-# Files that are not sources even though they sit among them. An editor's
-# swap or backup file is written every few seconds while you type, so
-# counting it would report every directory as permanently stale.
-# Build trees are never sources. control/ and runtime/ hold their sources
-# directly, with build/ beside them, so without this a rebuild would make
-# the binary permanently "older than" the ctest output it just produced.
-_IGNORED_DIRECTORY_NAMES = ("__pycache__", ".git", "build")
-_IGNORED_SUFFIXES = (".swp", ".swo", ".bak", ".orig", ".rej", ".tmp")
+# What a binary is actually built from. Nothing else under these directories
+# is compiled into it, so nothing else can make it wrong: a test fixture, a
+# README or an editor's swap file is not a reason to refuse a session. On
+# 2026-08-19 counting every file did exactly that — a rewritten fixture CSV
+# under control/tests/ made the panel refuse to start while run_session.sh's
+# gate, which has always compared only these two suffixes, passed.
+_SOURCE_SUFFIXES = (".cpp", ".h")
+
+# Build trees sit beside the sources they are built from, and cmake writes a
+# CMakeCXXCompilerId.cpp into every one of them at configure time. It is a
+# probe, not a source of anything. .git is skipped because walking it is slow
+# and it holds no source either.
+_IGNORED_DIRECTORY_NAMES = ("build", ".git")
 
 # How many lines of build output are kept for a browser that connects late.
 # A full rebuild prints thousands; the tail is what tells you whether it
@@ -47,22 +52,12 @@ _IGNORED_SUFFIXES = (".swp", ".swo", ".bak", ".orig", ".rej", ".tmp")
 _MAX_BUILD_LINES = 400
 
 
-def _is_ignored(name: str) -> bool:
-    """True for editor droppings and hidden files, which are never sources."""
-    if name.startswith(".") or name.startswith("#") or name.endswith("~"):
-        return True
-    return any(name.endswith(suffix) for suffix in _IGNORED_SUFFIXES)
-
-
 def _newest_file(directories: Iterable[Path]) -> tuple[Optional[Path], Optional[float]]:
-    """The most recently modified real file anywhere under these directories.
+    """The most recently modified C++ source anywhere under these directories.
 
-    run_session.sh looks only at `*.cpp` and `*.h`; this looks at every file
-    it does not recognise as an editor dropping. Today the two directories it
-    is pointed at contain nothing but .cpp and .h, so the two agree — and if
-    something else that affects the build ever lands there, this errs towards
-    saying "stale", which is the direction that costs a rebuild rather than a
-    surprise.
+    The same set of files `fresh_or_die` in run_session.sh compares, so the
+    panel's answer and the gate's answer are one answer. A file that is not
+    compiled is not consulted by either.
     """
     newest_path: Optional[Path] = None
     newest_mtime: Optional[float] = None
@@ -71,12 +66,11 @@ def _newest_file(directories: Iterable[Path]) -> tuple[Optional[Path], Optional[
             continue
         for root, subdirectories, filenames in os.walk(directory):
             subdirectories[:] = [
-                name
-                for name in subdirectories
-                if name not in _IGNORED_DIRECTORY_NAMES and not name.startswith(".")
+                name for name in subdirectories
+                if name not in _IGNORED_DIRECTORY_NAMES
             ]
             for filename in filenames:
-                if _is_ignored(filename):
+                if not filename.endswith(_SOURCE_SUFFIXES):
                     continue
                 candidate = Path(root) / filename
                 try:
@@ -132,6 +126,7 @@ def _binary_freshness(
             "newest_source": str(newest_path) if newest_path is not None else None,
             "binary_mtime": binary_mtime,
             "source_mtime": newest_mtime,
+            "reasons": list(reasons),
         },
         reasons,
     )
@@ -174,6 +169,7 @@ def _dh_freshness(arm: str) -> tuple[dict[str, Any], list[str]]:
             "urdf": str(urdf),
             "generated_mtime": generated_mtime,
             "urdf_mtime": urdf_mtime,
+            "reasons": list(reasons),
         },
         reasons,
     )

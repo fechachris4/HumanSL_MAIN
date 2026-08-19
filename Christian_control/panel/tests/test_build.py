@@ -139,16 +139,37 @@ class FreshnessTest(unittest.TestCase):
         self.assertTrue(report["bridge"]["stale"])
         self.assertIn("GenerateTrajectory.cpp", " ".join(report["reasons"]))
 
-    def test_editor_droppings_are_not_sources(self) -> None:
-        touch(self.config_h.with_name(".Config.h.swp"), NEW + 10)
-        touch(self.config_h.with_name("Config.h~"), NEW + 10)
-        touch(self.config_h.with_name("Config.h.orig"), NEW + 10)
+    def test_touching_a_cpp_makes_the_controller_stale(self) -> None:
+        """The .h case is above; a .cpp is the other half of the contract."""
+        runner = self.root / "Christian_control" / "runtime" / "Runner.cpp"
+        os.utime(runner, (NEW + 10, NEW + 10))
+        report = build.freshness()
+        self.assertTrue(report["controller"]["stale"])
+        self.assertEqual(report["controller"]["newest_source"], str(runner))
+        self.assertIn("Runner.cpp", report["reasons"][0])
+
+    def test_a_rewritten_test_fixture_does_not_make_the_controller_stale(self) -> None:
+        """The 2026-08-19 refusal. A fixture CSV is not compiled into the
+        controller, so rewriting it cannot make the controller wrong, and the
+        panel must not refuse a session over it while run_session.sh passes."""
         touch(
-            self.config_h.parent / "__pycache__" / "generated.pyc",
+            self.root / "Christian_control" / "control" / "tests" / "fixtures"
+            / "execution_preextract_v1.csv",
             NEW + 10,
         )
         report = build.freshness()
-        self.assertFalse(report["controller"]["stale"])
+        self.assertFalse(report["controller"]["stale"], report["reasons"])
+        self.assertFalse(report["stale"], report["reasons"])
+
+    def test_non_source_files_among_the_sources_are_not_sources(self) -> None:
+        """Same rule, everything else it covers: docs, data, editor droppings.
+        No file needs its own exclusion — only .cpp and .h are consulted."""
+        control = self.root / "Christian_control" / "control"
+        for name in ("README.md", "notes.txt", "table.yaml",
+                     ".Config.h.swp", "Config.h~", "Config.h.orig"):
+            touch(control / name, NEW + 10)
+        report = build.freshness()
+        self.assertFalse(report["controller"]["stale"], report["reasons"])
 
     def test_a_urdf_newer_than_the_generated_table_is_stale_per_arm(self) -> None:
         os.utime(self.dh["right"], (OLD - 100, OLD - 100))
