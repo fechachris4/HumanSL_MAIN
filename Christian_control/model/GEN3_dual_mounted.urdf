@@ -35,12 +35,6 @@
       separation 0.113415 m  ->  -+0.0567075 m along mount y
       tilt       1.2085 rad  =  -+69.2419 deg
 
-    The frame is called `mount`, not `world`, because it is rigidly attached
-    to both bases — it is the rig, and it travels with the rig. A room frame
-    would be a parent ABOVE this one (T_room_mount, identity while the rig is
-    bolted down, from motion capture once it is worn); naming this one
-    `world` would collide with that the day it appears.
-
     A URDF <origin> composes as Trans(xyz) then Rot(rpy), so one fixed joint
     per arm expresses this directly. (This replaced a two-joint
     rotate-then-translate chain through intermediate base_linktras /
