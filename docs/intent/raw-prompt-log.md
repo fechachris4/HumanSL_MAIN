@@ -6004,3 +6004,11 @@ Traceback (most recent call last):
   File "/usr/lib/python3.12/socketserver.py", line 473, in server_bind
     self.socket.bind(self.server_address)
 OSError: [Errno 98] Address already in use
+
+## 2026-08-19 14:22:55 BST
+
+commit this
+
+## 2026-08-19 14:23:40 BST
+
+why are we keeping tests dont they add latency
