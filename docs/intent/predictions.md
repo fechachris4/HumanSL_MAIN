@@ -541,3 +541,22 @@ would be worthless; this entry exists only so the lapse itself is
 visible rather than silently absent.
 
 **Actual:** commit just the URDF file, then push.
+
+### 2026-08-19 — how to handle the three recorded-expectation artefacts
+### that the mount-spacing change invalidated
+
+**Not predicted before asking.** A second process miss on the same day:
+the AskUserQuestion went out before anything was logged here, so no
+honest prediction exists. What the ledger can record is the weaker
+signal that the recommendation was visible in the question itself — I
+offered "re-record all three" as the recommended option.
+
+**Actual:** "Fixtures only, not the packet" — regenerate the two frozen
+control fixtures, leave `moving_mount_control` failing because its
+0.739 m / 0.650 m lever arms came from an accepted acceptance packet.
+
+**Result:** miss against the stated recommendation. The lesson worth
+carrying: Christian draws a sharper line than I did between artefacts
+the repository generates (regenerable at will) and artefacts he has
+accepted (his to revisit). Treat "accepted packet" as a stronger claim
+on his attention than "frozen fixture" in future options.

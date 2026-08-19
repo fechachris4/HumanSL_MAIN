@@ -146,7 +146,7 @@ add_custom_command(OUTPUT "${DH_PARAMS_TOOL_YAML}"
     VERBATIM)
 add_custom_target(dh_params_tool ALL DEPENDS "${DH_PARAMS_TOOL_YAML}")
 
-# Left arm's chain, ending at the bare flange (leftEndEffector_Link) rather
+# Left arm's chain, ending at the bare flange (left_end_effector_link) rather
 # than a mounted tool — see generate_dh_params.cpp's header comment. Same
 # generator binary, --arm left, a second output file so neither chain's
 # YAML is ever overwritten by the other's build step.

@@ -56,12 +56,12 @@ Pose forward_kinematics(RobotModel& robot_model, const Eigen::VectorXd& q_pin,
 namespace
 {
     constexpr std::array<const char*, 7> kRightJointNames{
-        "Actuator1", "Actuator2", "Actuator3", "Actuator4",
-        "Actuator5", "Actuator6", "Actuator7"
+        "right_joint_1", "right_joint_2", "right_joint_3", "right_joint_4",
+        "right_joint_5", "right_joint_6", "right_joint_7"
     };
     constexpr std::array<const char*, 7> kLeftJointNames{
-        "leftActuator1", "leftActuator2", "leftActuator3", "leftActuator4",
-        "leftActuator5", "leftActuator6", "leftActuator7"
+        "left_joint_1", "left_joint_2", "left_joint_3", "left_joint_4",
+        "left_joint_5", "left_joint_6", "left_joint_7"
     };
     constexpr std::array<int, 7> kVelocitySizes{1, 1, 1, 1, 1, 1, 1};
 

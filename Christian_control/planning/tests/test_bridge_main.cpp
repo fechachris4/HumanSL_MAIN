@@ -62,9 +62,9 @@ int main(int argc, char** argv) {
     // compiles and runs whatever config::kReferenceFrame is set to. Spelling
     // only two of them would turn a legal config into a build break.
     const char* const kGoalPerFrame[3][3] = {
-        {"0.15", "-1.158774", "0.497919"},   // kMount
+        {"0.15", "-1.139566", "0.497919"},   // kMount
         {"0.15", "0.075", "1.207"},          // kRightBase
-        {"0.15", "-0.896391", "-0.960105"},  // kLeftBase
+        {"0.15", "-0.882776", "-0.924184"},  // kLeftBase
     };
     const char* const* const kGoalInConfiguredFrame =
         kGoalPerFrame[static_cast<int>(config::kReferenceFrame)];

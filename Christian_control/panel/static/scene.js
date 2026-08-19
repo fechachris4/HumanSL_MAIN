@@ -29,7 +29,7 @@ const DEG = Math.PI / 180;
 // Mount-frame placement of each arm's base_link.
 //
 // The source of truth for these two numbers is
-// model/dual_arm_mounting.yaml (separation 0.113415 m, tilt
+// model/dual_arm_mounting.yaml (separation 0.075 m, tilt
 // 1.2085 rad), and tests/test_dual_arm_mounting.cpp fails the build if the
 // URDF ever disagrees with it. They are copied here because /api/dh carries
 // only the per-joint DH table; pass options.mountFromBase to override once
@@ -42,8 +42,8 @@ const DEG = Math.PI / 180;
 // print_dual_arm_fk prints the same pair on its first two lines, which is
 // how these were checked.
 const DEFAULT_MOUNT_FROM_BASE = {
-    right: { xyz: [0, -0.0567075, 0], rpy: [1.2085, 0, 0] },
-    left: { xyz: [0, 0.0567075, 0], rpy: [-1.2085, 0, 0] },
+    right: { xyz: [0, -0.0375, 0], rpy: [1.2085, 0, 0] },
+    left: { xyz: [0, 0.0375, 0], rpy: [-1.2085, 0, 0] },
 };
 
 // The fixed rotation between the DH chain's root and base_link. It is a

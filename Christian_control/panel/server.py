@@ -19,8 +19,11 @@ the connection rather than of the work:
 
 from __future__ import annotations
 
+import errno
 import json
 import mimetypes
+import re
+import subprocess
 import sys
 import threading
 import time
@@ -468,6 +471,44 @@ def status_snapshot() -> dict:
     }
 
 
+def _report_port_in_use(port: int) -> None:
+    """Say who holds the port and give the exact command to free it.
+
+    A bare "Address already in use" traceback leaves you guessing which
+    process to stop; the panel already knows, so it should just say.
+    """
+    holders = _pids_listening_on(port)
+    print(f"port {port} is already in use — another control panel is "
+          f"probably still running.", file=sys.stderr)
+    if holders:
+        print("  stop it with:", file=sys.stderr)
+        print(f"    kill {' '.join(str(pid) for pid in holders)}",
+              file=sys.stderr)
+    else:
+        print("  stop it with:", file=sys.stderr)
+        print(f"    fuser -k {port}/tcp", file=sys.stderr)
+    print("  then start the panel again, or use a different port:",
+          file=sys.stderr)
+    print(f"    python3 Christian_control/panel/control_panel.py "
+          f"--port {port + 1}", file=sys.stderr)
+
+
+def _pids_listening_on(port: int) -> list[int]:
+    """Process ids listening on a TCP port, newest-first, or [] if unknown."""
+    try:
+        found = subprocess.run(["ss", "-ltnpH"], capture_output=True,
+                               text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    pids: list[int] = []
+    for line in found.splitlines():
+        address = line.split()[3] if len(line.split()) > 3 else ""
+        if not address.endswith(f":{port}"):
+            continue
+        pids.extend(int(pid) for pid in re.findall(r"pid=(\d+)", line))
+    return sorted(set(pids))
+
+
 def serve(port: int = 8765, lan: bool = False, replay: str | None = None,
           speed: float = 1.0) -> None:
     _REPLAY["path"] = replay
@@ -475,7 +516,13 @@ def serve(port: int = 8765, lan: bool = False, replay: str | None = None,
     _SERVING["port"] = port
     _SERVING["lan"] = lan
     host = "0.0.0.0" if lan else "127.0.0.1"
-    server = ThreadingHTTPServer((host, port), _Handler)
+    try:
+        server = ThreadingHTTPServer((host, port), _Handler)
+    except OSError as error:
+        if error.errno != errno.EADDRINUSE:
+            raise
+        _report_port_in_use(port)
+        raise SystemExit(1) from None
     server.daemon_threads = True
     print(f"control panel: http://127.0.0.1:{port}   (on this machine)")
     if lan:

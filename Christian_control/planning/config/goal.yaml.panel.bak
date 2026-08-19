@@ -52,7 +52,7 @@ right:
 
 left:
   # UNVERIFIED placeholder (2026-08-06): a conservative offset from the
-  # left arm's own zero-configuration tool position in left_base_link
+  # left arm's own zero-configuration tool position in leftbase_link
   # (-0.000000, -0.024860, 1.187385 — tools/print_dual_arm_fk), never run
   # against physical hardware. Check reachability and clearance before the
   # first real --arm left session; do not treat this as a proven target
@@ -68,10 +68,10 @@ left:
   frame: mount
   path:
     type: circle
-    centre: [ 0.39, 0.386, 0.5213 ]
-    radius_m: 0.2
+    centre: [ 0.3100, 0.386, 0.5213 ]
+    radius_m: 0.1
     normal: [ 1, 0, 0 ]
-    duration_s: 12
+    duration_s: 12.0
     # fixed = hold one orientation for the whole trace (what drawing on a
     # surface wants). radial = keep +z pointed at the circle's centre.
     orientation: fixed

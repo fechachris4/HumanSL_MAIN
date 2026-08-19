@@ -94,7 +94,7 @@ namespace parity_cases
     constexpr unsigned int kRandomSeed = 20260817u;
     constexpr int kRandomCaseCount = 5;
     constexpr double kBoundedMarginRad = 0.05;
-    // URDF bounded ranges (Actuator2/4/6 limits), indexed by joint 0..6;
+    // URDF bounded ranges (right_joint_2/4/6 limits), indexed by joint 0..6;
     // 0 marks a continuous joint. Same numbers ModelContract pins.
     constexpr double kBoundedRangeRad[7] = {0.0, 2.24, 0.0, 2.57,
                                             0.0, 2.09, 0.0};

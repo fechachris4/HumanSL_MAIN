@@ -27,7 +27,7 @@ struct PlannerModel {
     // chain the dh table was generated from — mismatching them offsets
     // every pose by the tool-vs-flange difference (~0.12 m).
     bool left_arm = false;
-    std::string end_effector_frame;  // "ConfiguredTool_Link" / "leftEndEffector_Link"
+    std::string end_effector_frame;  // "right_tool_link" / "left_end_effector_link"
 };
 
 // yaml_path: the build-generated dh_params_tool.yaml (right arm, d7 carries

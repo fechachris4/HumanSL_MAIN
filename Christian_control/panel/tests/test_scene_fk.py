@@ -80,10 +80,10 @@ def _cpp_tool_position(angles: list[float]) -> list[float]:
         capture_output=True, text=True, timeout=60, check=True)
     for line in proc.stdout.splitlines():
         fields = line.split()
-        # "    base_link  p   x   y   z   rpy ..." — the right arm prints first.
-        if len(fields) >= 5 and fields[0] == "base_link" and fields[1] == "p":
+        # "    right_base_link  p   x   y   z   rpy ..." — the right arm prints first.
+        if len(fields) >= 5 and fields[0] == "right_base_link" and fields[1] == "p":
             return [float(fields[2]), float(fields[3]), float(fields[4])]
-    raise AssertionError(f"no base_link line in:\n{proc.stdout}")
+    raise AssertionError(f"no right_base_link line in:\n{proc.stdout}")
 
 
 def _browser_tool_position(angles: list[float], tmp: Path) -> dict:

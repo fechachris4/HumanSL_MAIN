@@ -9,17 +9,22 @@
 # test step fails and names the offending number.
 #
 # PROVENANCE — READ BEFORE TRUSTING THESE NUMBERS.
-# separation and tilt are INHERITED, NOT MEASURED. They arrived fully formed
-# in commit af116a5c ("basic_control: mounted dual-arm model, right-only
-# actuation") with no measurement note, and 0.16 m base-to-mount was a round
-# number. They describe the mount's intended geometry, not a survey of the
-# physical rig. Replace them with measured values when the rig is surveyed;
-# nothing else in the codebase needs to change when you do.
+# The separation below is an APPROXIMATE PHYSICAL MEASUREMENT of the rig
+# (2026-08-19), not a precision calibration: treat it as good to a few
+# millimetres and re-measure before any result that depends on inter-arm
+# geometry. The tilt is still INHERITED, NOT MEASURED — it arrived fully
+# formed in commit af116a5c ("basic_control: mounted dual-arm model,
+# right-only actuation") with no measurement note. Replace it with a
+# measured value when the rig is surveyed; nothing else in the codebase
+# needs to change when you do.
 
 # Distance between the two arms' base_link origins, metres, along mount +y.
-# Derived from the inherited 0.16 m base-to-mount radius at the tilt below:
-# 2 * 0.16 * sin(1.2085) = 0.113415.
-base_separation_m: 0.113415
+# Measured on the rig, 2026-08-19. This supersedes the inherited 0.113415 m,
+# which was DERIVED as 2 * 0.16 * sin(1.2085) from a round 0.16 m
+# base-to-mount radius that was itself never measured. The measurement and
+# that derivation do not agree, and the measurement wins: do not back out a
+# new radius from it, and do not treat 0.16 m as still describing this rig.
+base_separation_m: 0.075
 
 # Roll of each base about mount X, radians. The right arm mounts at
 # +mount_tilt_rad and the left at -mount_tilt_rad, so the pair is mirrored

@@ -13,8 +13,8 @@ dynamics. Every result it produces is labelled `simulation` evidence
 - **Kinematic truth** — joint order, axes, limits, mount-to-base
   transforms, TCP frames — comes from the production URDF
   `../model/GEN3_dual_mounted.urdf` through
-  `DualArmKinematics`. The right TCP is `ConfiguredTool_Link` (configured
-  tool); the left TCP is `leftEndEffector_Link` (bare flange). They are
+  `DualArmKinematics`. The right TCP is `right_tool_link` (configured
+  tool); the left TCP is `left_end_effector_link` (bare flange). They are
   different physical points by design.
 - **Simulator mechanics** — meshes, inertials, generic position-actuator
   gains — come from the audited `msc_project` Gen3 MJCF. Those gains are

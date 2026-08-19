@@ -187,17 +187,17 @@ std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_
 // tool-vs-flange difference (~0.12 m — exactly the bug that produced the
 // constant "final goal error: 120 mm" on the first left-arm runs,
 // 2026-08-06). Defaults preserve every pre-left-arm call site: right arm,
-// mounted tool ("ConfiguredTool_Link").
+// mounted tool ("right_tool_link").
 gtsam::Pose3 forwardKinematics(const DHParameters& dh,
                                const gtsam::Vector& joint_angles,
                                const gtsam::Pose3& base_pose_in_world,
-                               const std::string& end_effector_frame = "ConfiguredTool_Link",
+                               const std::string& end_effector_frame = "right_tool_link",
                                bool left_arm = false);
 
 gtsam::Pose3 inverseForwardKinematics(const DHParameters& dh,
                               const gtsam::Vector& joint_angles,
                               const gtsam::Pose3& ee_pose_in_world,
-                              const std::string& end_effector_frame = "ConfiguredTool_Link",
+                              const std::string& end_effector_frame = "right_tool_link",
                               bool left_arm = false);
 
 std::vector<double> shiftAngle(std::vector<double>& q_cur);

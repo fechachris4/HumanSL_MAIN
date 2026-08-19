@@ -4,8 +4,8 @@
 // planner's kinematic model is generated from the URDF, never maintained by
 // hand. Runs at build time, once per arm (see planner_bridge/CMakeLists.txt):
 // the default (no --arm) derives the right chain, ending at
-// ConfiguredTool_Link (the mounted tool); --arm left derives the left
-// chain, ending at leftEndEffector_Link (the bare flange — no tool is
+// right_tool_link (the mounted tool); --arm left derives the left
+// chain, ending at left_end_effector_link (the bare flange — no tool is
 // mounted on the left arm). A failed derivation exits non-zero and fails
 // the build loudly.
 //
@@ -85,12 +85,12 @@ struct ArmDhConfig {
 
 const ArmDhConfig kRightArmDh{
     false, config::kRightEndEffectorFrame,
-    {"Actuator1", "Actuator2", "Actuator3", "Actuator4",
-     "Actuator5", "Actuator6", "Actuator7_to_configured_tool"}};
+    {"right_joint_1", "right_joint_2", "right_joint_3", "right_joint_4",
+     "right_joint_5", "right_joint_6", "right_joint_7_to_configured_tool"}};
 const ArmDhConfig kLeftArmDh{
     true, config::kLeftEndEffectorFrame,
-    {"leftActuator1", "leftActuator2", "leftActuator3", "leftActuator4",
-     "leftActuator5", "leftActuator6", "leftActuator7_to_flange"}};
+    {"left_joint_1", "left_joint_2", "left_joint_3", "left_joint_4",
+     "left_joint_5", "left_joint_6", "left_joint_7_to_flange"}};
 
 Eigen::Matrix3d RotZ(double angle) {
     return Eigen::AngleAxisd(angle, Eigen::Vector3d::UnitZ()).toRotationMatrix();

@@ -98,7 +98,7 @@ gtsam::Pose3 createPoseFromTube( const TubeInfo& tube_axis, double human_max_y, 
 // file that does not exist). The mounting geometry below — rpy (+-3pi/4, 0,
 // 3pi/2) and +-0.06029 m x offsets, i.e. 0.12058 m apart — disagrees with
 // model/GEN3_dual_mounted.urdf, which mounts the bases
-// 0.113415 m apart with roll +-1.2085 rad about world x. The "Fixed relative
+// 0.075 m apart with roll +-1.2085 rad about world x. The "Fixed relative
 // spacing from XACRO" comment refers to nothing that still exists: the
 // vendored kortex_dual_robots.xacro uses a +-1 m placeholder.
 //
@@ -355,7 +355,7 @@ Eigen::Isometry3d DhRootToTool(const gtsam::Vector& joint_angles,
 // utils.h defaults its end_effector_frame parameters with a string literal
 // (it deliberately does not include control's Config.h); this pins
 // that literal to the one canonical constant so they can never drift apart.
-static_assert(std::string_view("ConfiguredTool_Link") ==
+static_assert(std::string_view("right_tool_link") ==
                   config::kRightEndEffectorFrame,
               "utils.h's default end-effector frame must equal "
               "config::kRightEndEffectorFrame");

@@ -1,5 +1,24 @@
 # Decision: one mounted dual-arm runtime model, right-only actuation
 
+> **Superseded in part, 2026-08-19 — link and joint names.** Every link and
+> joint in `model/GEN3_dual_mounted.urdf` was renamed to a symmetric
+> `right_*` / `left_*` scheme (`base_link` -> `right_base_link`,
+> `Actuator1` -> `right_joint_1`, `ConfiguredTool_Link` -> `right_tool_link`,
+> `leftEndEffector_Link` -> `left_end_effector_link`, and so on), and a
+> `left_tool_link` was added 0.12 m along `left_end_effector_link`'s z to
+> mirror the right arm's tool endpoint. No numeric origin, axis, limit,
+> mount transform or tool offset changed: forward kinematics is bit-identical
+> before and after for every frame that existed in both. The old names below
+> are kept as written so the record still reads as it was decided; read them
+> through the mapping above.
+>
+> **Superseded, 2026-08-19 — mount separation.** The base separation changed
+> from the inherited, derived `0.113415 m` (`±0.0567075 m` half-spacing) to a
+> measured `0.075 m` (`±0.0375 m`). The tilt is unchanged at `±1.2085 rad`,
+> and the mount still sits at the midpoint of the two base origins. Every
+> `0.0567075` and `0.113415` below is superseded by `0.0375` and `0.075`.
+> Treat the new figure as an approximate rig measurement, not a calibration.
+
 The controller's single runtime model is
 `model/GEN3_dual_mounted.urdf`. Its world root, fixed mounting
 transforms, dual branches, and arm/link names come from the downloaded

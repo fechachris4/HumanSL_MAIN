@@ -30,7 +30,7 @@ mujoco:
 
 source_urdf:
   path: Christian_control/model/GEN3_dual_mounted.urdf
-  sha256: d6e9d3ac51ebedf18bcdace99943816ff8e19a711b22d5e504216a9e280a743b
+  sha256: b102ec7a5697e6a18a5b2808dfc2b563b92ce678b486c8c2322b9599011edabb
   kinematic_authority: true
   runtime_authority: "DualArmKinematics::MountFromBase (Christian_control/control/Kinematics.cpp)"
 
@@ -89,10 +89,10 @@ tcp:
   # There is no left tool transform — never invent one. pinch_site is
   # rejected as either production TCP.
   right:
-    frame: ConfiguredTool_Link
+    frame: right_tool_link
     meaning: configured tool frame (right arm)
   left:
-    frame: leftEndEffector_Link
+    frame: left_end_effector_link
     meaning: bare flange frame (left arm)
 
 generated_model:
@@ -102,7 +102,7 @@ generated_model:
   # hash updated. The test recomputes the hash, so a hand edit fails
   # provenance exactly like an edited mesh copy would.
   path: Christian_control/simulation/model/humansl_dual_gen3.xml
-  sha256: 946430c1ac0af2d5973603a2d4e35a806d3fef6d9d29858d6ebd047fe0ac0655
+  sha256: b651167e7d445e60eb4bbe7aee1d87cb77ed35bd8734e425f8108ffbc4314d6e
   generator: Christian_control/simulation/tools/generate_dual_mjcf.py
   hand_edits: forbidden
   # All placements (mount->base, chain body origins, bounded ranges, TCP
@@ -171,8 +171,8 @@ generated_model:
     / 1e-6. Pre-registered mutations detected at predicted magnitudes:
     swapped joints 2/4 -> 1.19 m; inverted joint-5 axis -> FD column
     error 1.99 (~2*||column||); left/right mount swap (which the
-    structural contract accepts, being placement-blind) -> 0.113415 m
-    and 2.417000 rad, exactly 2*0.0567075 and 2*1.2085. Task 2's
+    structural contract accepts, being placement-blind) -> 0.075 m
+    and 2.417000 rad, exactly 2*0.0375 and 2*1.2085. Task 2's
     structural gates plus this numeric gate are the automated defense of
     every placement; no correction to the generator or model was needed.
     RE-VERIFIED unchanged after the mocap Mount rework later the same day
@@ -196,14 +196,14 @@ mount_transforms:
   # DualArmKinematics::MountFromBase(Arm); MJCF placement numbers are
   # script-derived from that in Task 2, never hand-typed from here.
   right:
-    urdf_joint: right_base_mount
+    urdf_joint: right_mount_to_base
     parent: mount
-    child: base_link
+    child: right_base_link
     rpy_rad: [1.2085, 0, 0]
-    xyz_m: [0, -0.0567075, 0]
+    xyz_m: [0, -0.0375, 0]
   left:
-    urdf_joint: left_base_mount
+    urdf_joint: left_mount_to_base
     parent: mount
-    child: leftbase_link
+    child: left_base_link
     rpy_rad: [-1.2085, 0, 0]
-    xyz_m: [0, 0.0567075, 0]
+    xyz_m: [0, 0.0375, 0]

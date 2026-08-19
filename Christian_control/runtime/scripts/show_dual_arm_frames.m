@@ -1,6 +1,6 @@
 function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
 % show_dual_arm_frames — ONE figure: the dual-mounted Gen3 model posed in the
-% MOUNT frame, with the mount/base_link/leftbase_link/tool frames, the two
+% MOUNT frame, with the mount/base_link/left_base_link/tool frames, the two
 % arms' reach shells, and a goal point drawn in whichever frame you declare.
 % Fully interactive (orbit/pan/zoom).
 %
@@ -79,20 +79,20 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     % getJointId/idx_q rather than assuming a layout.
     % ---------------------------------------------------------------
     dualPose = homeConfiguration(dual);
-    rightNames = "Actuator"     + string(1:7);
-    leftNames  = "leftActuator" + string(1:7);
+    rightNames = "right_joint_" + string(1:7);
+    leftNames  = "left_joint_" + string(1:7);
     dualPose = setJointsByName(dualPose, rightNames, deg2rad(rightDeg));
     dualPose = setJointsByName(dualPose, leftNames,  deg2rad(leftDeg));
 
     T_mount = getTransform(dual, dualPose, dual.BaseName);
-    T_rbase = getTransform(dual, dualPose, "base_link");
-    T_lbase = getTransform(dual, dualPose, "leftbase_link");
+    T_rbase = getTransform(dual, dualPose, "right_base_link");
+    T_lbase = getTransform(dual, dualPose, "left_base_link");
     % NOTE: the two tool frames are NOT the same point on the arm. The right
-    % chain ends at ConfiguredTool_Link (the tool physically mounted on the
+    % chain ends at right_tool_link (the tool physically mounted on the
     % right flange); the left has no such tool and ends at its bare flange.
     % Do not read the two tool positions as a symmetry check.
-    T_rtool = getTransform(dual, dualPose, "ConfiguredTool_Link");
-    T_ltool = getTransform(dual, dualPose, "leftEndEffector_Link");
+    T_rtool = getTransform(dual, dualPose, "right_tool_link");
+    T_ltool = getTransform(dual, dualPose, "left_end_effector_link");
 
     % ---------------------------------------------------------------
     % Figure
@@ -111,8 +111,8 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     drawTriad(T_mount, 0.30, "mount (URDF root, = base midpoint)");
     drawTriad(T_rbase, 0.22, "base\_link (right)");
     drawTriad(T_lbase, 0.22, "leftbase\_link");
-    drawTriad(T_rtool, 0.12, "ConfiguredTool\_Link");
-    drawTriad(T_ltool, 0.12, "leftEndEffector\_Link");
+    drawTriad(T_rtool, 0.12, "right_tool_fixed\_Link");
+    drawTriad(T_ltool, 0.12, "left_end_effector_fixed\_Link");
 
     % ---------------------------------------------------------------
     % Check, do not assert: is mount really the midpoint?
@@ -120,7 +120,7 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     midpoint = (T_rbase(1:3,4) + T_lbase(1:3,4)) / 2;
     residual = norm(midpoint - T_mount(1:3,4));
     if residual < 1e-9
-        fprintf(['mount IS the midpoint of base_link/leftbase_link ' ...
+        fprintf(['mount IS the midpoint of base_link/left_base_link ' ...
                  '(residual %.2e m)\n'], residual);
     else
         % Loud, and drawn, because every mount-frame number depends on it.
@@ -141,8 +141,8 @@ function show_dual_arm_frames(rightDeg, leftDeg, goal, goalFrame)
     printMount("right base_link in mount", T_rbase);
     printMount("left  base_link in mount", T_lbase);
     fprintf("\nFK at the requested configuration (angles given in degrees):\n");
-    printArm("right", "ConfiguredTool_Link",  "base_link",     T_rtool, T_rbase);
-    printArm("left ", "leftEndEffector_Link", "leftbase_link", T_ltool, T_lbase);
+    printArm("right", "right_tool_link",  "base_link",     T_rtool, T_rbase);
+    printArm("left ", "left_end_effector_link", "left_base_link", T_ltool, T_lbase);
     fprintf(['\n(left figures are OPEN-LOOP: the left arm has no connection ' ...
              'and no feedback)\n']);
 

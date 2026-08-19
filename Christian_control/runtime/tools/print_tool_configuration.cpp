@@ -49,11 +49,11 @@ int main(int argc, char** argv)
                 std::abs(t.theta_y()) > 1e-6 || std::abs(t.theta_z()) > 1e-6;
             std::cout << (nonzero
                               ? "  NONZERO — the dashboard's tool_pose is "
-                                "offset from this repo's FK (EndEffector_Link) "
+                                "offset from this repo's FK (right_end_effector_link) "
                                 "by roughly this transform.\n"
                               : "  all zero — the dashboard should read "
                                 "the same point as this repo's FK "
-                                "(EndEffector_Link); the gap has another "
+                                "(right_end_effector_link); the gap has another "
                                 "cause.\n");
         }
         else

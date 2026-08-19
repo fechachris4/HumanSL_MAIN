@@ -143,8 +143,8 @@ frame name fails the run before the arm is touched.
   configuration (cos²+sin²=0).
 - **Lines 150-155** — hard check nq=22, nv=14: this binary only makes
   sense against the dual mounted URDF.
-- **Lines 156-161** — both frame names (`base_link`,
-  `ConfiguredTool_Link` from Config.h) must exist.
+- **Lines 156-161** — both frame names (`right_base_link`,
+  `right_tool_link` from Config.h) must exist.
 - **Lines 163-170** — resolve both arms' joints and run both cover checks
   (q against 22, v against 14 with all-ones widths).
 - **Lines 171-172** — cache the two frame ids.

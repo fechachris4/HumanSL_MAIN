@@ -8,8 +8,8 @@ namespace
 {
     // Bounded joint ranges in radians, from the production URDF (the
     // kinematic authority recorded in model/model_provenance.yaml):
-    // Actuator2/4/6 limit elements, GEN3_dual_mounted.urdf lines 136, 194,
-    // 252 (identical for the left chain). The strings "-2.24 2.24" etc.
+    // right_joint_2/4/6 limit elements, GEN3_dual_mounted.urdf lines 130, 188,
+    // 246 (identical for the left chain). The strings "-2.24 2.24" etc.
     // in the generated MJCF parse to exactly these doubles.
     constexpr double kBoundedRange[7] = {0.0, 2.24, 0.0, 2.57, 0.0, 2.09, 0.0};
     constexpr bool kIsBounded[7] = {false, true, false, true,

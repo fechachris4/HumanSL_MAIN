@@ -15,8 +15,8 @@
 //   (the arm hinges alone), nu=14, nmocap=1; fourteen uniquely
 //   right_/left_-prefixed hinge joints and actuators; joints 2/4/6 bounded
 //   with the URDF ranges, 1/3/5/7 continuous; right/left base bodies
-//   children of Mount; TCP sites right_tcp (ConfiguredTool_Link pose) and
-//   left_tcp (leftEndEffector_Link pose, bare flange — asymmetric by
+//   children of Mount; TCP sites right_tcp (right_tool_link pose) and
+//   left_tcp (left_end_effector_link pose, bare flange — asymmetric by
 //   design, no pinch_site anywhere).
 //
 // Mutation cases: a renamed joint, a wrong bounded range, a duplicate name,

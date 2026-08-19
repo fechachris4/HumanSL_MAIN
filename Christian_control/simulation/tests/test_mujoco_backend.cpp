@@ -301,8 +301,8 @@ int main()
                                         right_base[2]) -
                         mount.position_m)
                            .norm() -
-                       0.0567075) < 1e-12,
-              "right base body hangs 0.0567075 m off the seeded Mount pose");
+                       0.0375) < 1e-12,
+              "right base body hangs 0.0375 m off the seeded Mount pose");
     }
 
     // ---- One Exchange advances exactly one control tick; controls are

@@ -36,10 +36,10 @@ struct Pose {
 
 // Forward kinematics: where is `frame_name` when the joints are at q_pin?
 // q_pin is the Pinocchio configuration vector (from measure_configuration).
-// Frame names come from the URDF, e.g. "EndEffector_Link", "gripper_link",
-// "Bracelet_Link".
+// Frame names come from the URDF, e.g. "right_end_effector_link", "gripper_link",
+// "right_bracelet_link".
 Pose forward_kinematics(RobotModel& robot_model, const Eigen::VectorXd& q_pin,
-                        const std::string& frame_name = "EndEffector_Link");
+                        const std::string& frame_name = "right_end_effector_link");
 
 // Preallocated workspace for the per-cycle kinematics: the full 6×nv frame
 // Jacobian lives here so the cyclic loop never allocates. Construct once,

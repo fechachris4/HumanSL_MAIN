@@ -30,9 +30,9 @@ struct PoseAndJacobian {
 };
 
 // Tool pose + 6x7 Jacobian in ITS OWN base_link axes (base_link for the
-// right arm, leftbase_link for the left), for the given end-effector frame
+// right arm, left_base_link for the left), for the given end-effector frame
 // (a URDF link name naming a frame on THAT arm's chain, e.g.
-// "ConfiguredTool_Link" or "leftEndEffector_Link"), at the given
+// "right_tool_link" or "left_end_effector_link"), at the given
 // seven-joint configuration for that same arm. left_arm defaults to false
 // (right), so every call site written before the left arm existed is
 // unchanged.
@@ -55,7 +55,7 @@ PoseAndJacobian ToolPoseAndJacobianInBaseLink(const Eigen::Matrix<double, 7, 1>&
 // root, so the result does not depend on the configuration.
 //
 // `arm` selects which base: false = right (base_link), true = left
-// (leftbase_link). A bool rather than an enum so this header stays free of
+// (left_base_link). A bool rather than an enum so this header stays free of
 // control's Config.h, for the gtsam/Pinocchio isolation reason above.
 Eigen::Isometry3d MountFromBase(bool left_arm);
 

@@ -52,7 +52,7 @@ inline void PrintArmFrameRows(const char* arm_label, const char* tool_frame,
 // The full table for one configuration of both arms.
 //
 // The two arms' tool frames are NOT the same point on the arm: the right ends
-// at ConfiguredTool_Link (the mounted tool) and the left at its bare flange,
+// at right_tool_link (the mounted tool) and the left at its bare flange,
 // because the tool is physically on the right arm only. Each row names its own
 // frame for that reason — do not read the two position rows as a symmetry
 // check.

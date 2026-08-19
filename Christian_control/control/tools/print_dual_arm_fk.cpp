@@ -92,8 +92,8 @@ int main(int argc, char** argv)
         std::printf("model: %s\n", GEN3_DUAL_URDF_PATH);
         for (const auto& [label, arm] :
              std::array<std::pair<const char*, Arm>, 2>{
-                 {{"right base_link in mount", Arm::kRight},
-                  {"left  base_link in mount", Arm::kLeft}}}) {
+                 {{"right_base_link in mount", Arm::kRight},
+                  {"left_base_link  in mount", Arm::kLeft}}}) {
             const pinocchio::SE3& mount = model.MountFromBase(arm);
             std::printf("%s: p [% .6f % .6f % .6f]  roll_x % .6f rad\n", label,
                         mount.translation().x(), mount.translation().y(),

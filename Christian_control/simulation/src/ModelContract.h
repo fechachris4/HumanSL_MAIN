@@ -54,8 +54,8 @@ struct DualModelContract {
     // those two rows moves the Mount; the body is welded to world, so it
     // has no qpos/qvel of its own and no velocity the physics can see.
     int mount_mocap_id;
-    ArmModelIds right; // TCP = ConfiguredTool_Link pose (configured tool)
-    ArmModelIds left;  // TCP = leftEndEffector_Link pose (bare flange)
+    ArmModelIds right; // TCP = right_tool_link pose (configured tool)
+    ArmModelIds left;  // TCP = left_end_effector_link pose (bare flange)
 };
 
 // Throws std::runtime_error("model contract violation: ...") on the first

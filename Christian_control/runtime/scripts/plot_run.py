@@ -47,10 +47,10 @@ NUM_JOINTS = 7
 
 # Joint identity. The runtime model is config/GEN3_dual_mounted.urdf (the
 # path is compiled in via GEN3_DUAL_URDF_PATH and echoed in every run
-# preamble). Its right-arm chain is Actuator1..Actuator7, in the same order
+# preamble). Its right-arm chain is right_joint_1..right_joint_7, in the same order
 # as the Kortex actuator array the loop indexes, so log column j<N> is
 # URDF joint Actuator<N> is Kortex actuator index N-1.
-JOINT_NAMES = [f"Actuator{i}" for i in range(1, NUM_JOINTS + 1)]
+JOINT_NAMES = [f"right_joint_{i}" for i in range(1, NUM_JOINTS + 1)]
 
 # Joints under review — drawn first, tinted, and given their own figure.
 FOCUS_JOINTS = (3, 4)
@@ -59,8 +59,8 @@ FOCUS_JOINTS = (3, 4)
 # position limit". TWO sources, checked against each other on 2026-08-03:
 #
 #   URDF    config/GEN3_dual_mounted.urdf, the model the runtime loads.
-#           Actuator1/3/5/7 are type="continuous" with no <limit> range;
-#           Actuator2/4/6 are revolute at +/-128.34 / 147.25 / 119.75 deg.
+#           right_joint_1/3/5/7 are type="continuous" with no <limit> range;
+#           right_joint_2/4/6 are revolute at +/-128.34 / 147.25 / 119.75 deg.
 #   CONFIG  src/app/Config.h kTrajectoryPosLimitDeg, the range the trajectory
 #           validator actually enforces: 0 / 128.9 / 0 / 147.8 / 0 / 120.3 / 0.
 #

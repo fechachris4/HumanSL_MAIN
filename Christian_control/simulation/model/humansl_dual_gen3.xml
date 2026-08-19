@@ -1,7 +1,7 @@
 <!--
   GENERATED FILE — DO NOT EDIT BY HAND.
   Generator: Christian_control/simulation/tools/generate_dual_mjcf.py
-  Kinematic authority (all placements, ranges, TCP sites): Christian_control/basic_control/config/GEN3_dual_mounted.urdf
+  Kinematic authority (all placements, ranges, TCP sites): Christian_control/model/GEN3_dual_mounted.urdf
   Mechanics source (inertials, meshes, actuator classes, keyframe): msc_project gen3.xml (generic plant, not a Kinova servo model)
   Source hashes are pinned in model/model_provenance.yaml, which also pins this file's SHA-256: regenerate and update the record instead of editing.
 -->
@@ -46,7 +46,7 @@
     <camera name="overview" pos="1.8 -1.8 0.9" xyaxes="0.7 0.7 0 -0.3 0.3 0.9" />
     <body name="mount" mocap="true">
       <geom name="torso_proxy_visual" type="box" size="0.12 0.18 0.28" pos="0 0 -0.3" rgba="0.7 0.5 0.4 0.6" contype="0" conaffinity="0" group="2" />
-      <body name="right_base_link" pos="0 -0.0567075 0" quat="0.8229284378208791 0.5681450397791815 0 0">
+      <body name="right_base_link" pos="0 -0.0375 0" quat="0.8229284378208791 0.5681450397791815 0 0">
         <inertial pos="-0.000648 -0.000166 0.084487" quat="0.999294 0.00139618 -0.0118387 0.035636" mass="1.697" diaginertia="0.00462407 0.00449437 0.00207755" />
         <geom class="visual" mesh="base_link" />
         <geom class="collision" mesh="base_link" />
@@ -94,7 +94,7 @@
           </body>
         </body>
       </body>
-      <body name="left_base_link" pos="0 0.0567075 0" quat="0.8229284378208791 -0.5681450397791815 0 0">
+      <body name="left_base_link" pos="0 0.0375 0" quat="0.8229284378208791 -0.5681450397791815 0 0">
         <inertial pos="-0.000648 -0.000166 0.084487" quat="0.999294 0.00139618 -0.0118387 0.035636" mass="1.697" diaginertia="0.00462407 0.00449437 0.00207755" />
         <geom class="visual" mesh="base_link" />
         <geom class="collision" mesh="base_link" />

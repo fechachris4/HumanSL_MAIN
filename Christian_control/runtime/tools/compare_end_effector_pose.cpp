@@ -6,7 +6,7 @@
 //                   displays, computed on-device from its own configured
 //                   Tool Frame (Kortex ControlConfig ToolConfiguration).
 //   2. Pinocchio  : this repo's URDF forward kinematics to
-//                   "EndEffector_Link", via DualArmKinematics.
+//                   "right_end_effector_link", via DualArmKinematics.
 //
 // These are two independent implementations — firmware computes its pose
 // on-device from its own Tool Frame config, unrelated to this codebase's

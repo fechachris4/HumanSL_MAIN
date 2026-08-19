@@ -87,7 +87,7 @@ private:
 
 public:
     InitializeTrajectory(DHParameters dh_params,
-                         std::string end_effector_frame = "ConfiguredTool_Link",
+                         std::string end_effector_frame = "right_tool_link",
                          bool left_arm = false);
 
     // Never throws on IK failure. IK here only produces the STARTING SKETCH

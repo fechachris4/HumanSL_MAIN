@@ -12,9 +12,9 @@ Authority split (model/model_provenance.yaml, Plan 02 Task 1):
   placements are derived from it at full double precision — the two
   mount->base fixed joints (the same numbers DualArmKinematics::
   MountFromBase reads through Pinocchio), every chain body origin
-  (Actuator1..7 / leftActuator1..7 joint origins), bounded joint ranges,
-  and both TCP site poses (right = EndEffector o ConfiguredTool, the
-  configured tool; left = leftEndEffector, the bare flange — asymmetric
+  (right_joint_1..7 / left_joint_1..7 joint origins), bounded joint ranges,
+  and both TCP site poses (right = right_end_effector_fixed o right_tool_fixed, the
+  configured tool; left = left_end_effector_fixed, the bare flange — asymmetric
   by design, there is no left tool transform). gen3.xml's body quats are
   NOT used: they encode exact pi/2 rotations where the URDF writes
   rounded angles (1.5708), a ~3.7e-6 rad difference that would fail the
@@ -79,18 +79,18 @@ TORSO_CENTRE_IN_MOUNT_M = (0.0, 0.0, -0.30)  # box hangs below the mount plate
 
 ARMS = {
     "right": {
-        "mount_joint": "right_base_mount",
-        "chain_joints": [f"Actuator{i}" for i in range(1, 8)],
-        # Right TCP: configured tool frame (ConfiguredTool_Link), reached
-        # from Bracelet_Link through two fixed joints.
-        "tcp_joints": ["EndEffector", "ConfiguredTool"],
+        "mount_joint": "right_mount_to_base",
+        "chain_joints": [f"right_joint_{i}" for i in range(1, 8)],
+        # Right TCP: configured tool frame (right_tool_link), reached
+        # from right_bracelet_link through two fixed joints.
+        "tcp_joints": ["right_end_effector_fixed", "right_tool_fixed"],
     },
     "left": {
-        "mount_joint": "left_base_mount",
-        "chain_joints": [f"leftActuator{i}" for i in range(1, 8)],
-        # Left TCP: bare flange (leftEndEffector_Link). No tool transform
+        "mount_joint": "left_mount_to_base",
+        "chain_joints": [f"left_joint_{i}" for i in range(1, 8)],
+        # Left TCP: bare flange (left_end_effector_link). No tool transform
         # exists for the left arm; inventing one is forbidden.
-        "tcp_joints": ["leftEndEffector"],
+        "tcp_joints": ["left_end_effector_fixed"],
     },
 }
 
@@ -416,7 +416,7 @@ def build_arm(mount_elem, side, urdf_joints, gen3):
         parent = body
 
     # TCP site in the bracelet body: composition of the URDF fixed joints
-    # from Bracelet_Link to the production TCP frame.
+    # from right_bracelet_link to the production TCP frame.
     tcp_pose = ([0.0, 0.0, 0.0], rpy_to_matrix(0.0, 0.0, 0.0))
     for fixed_name in cfg["tcp_joints"]:
         tcp_pose = compose(tcp_pose, urdf_origin_pose(urdf_joints[fixed_name]))

@@ -66,9 +66,9 @@ int main()
         Check(robot_model.model_.njoints == 15,
               "dual model has 14 movable joints plus Pinocchio universe");
         Check(robot_model.model_.existFrame("mount"), "dual model retains mount frame");
-        Check(robot_model.model_.existFrame("base_link"),
+        Check(robot_model.model_.existFrame("right_base_link"),
               "dual model retains mounted right base");
-        Check(robot_model.model_.existFrame("leftbase_link"),
+        Check(robot_model.model_.existFrame("left_base_link"),
               "dual model retains mounted left base");
 
         DualArmKinematics adapter(
@@ -77,12 +77,12 @@ int main()
             config::kRightEndEffectorFrame);
 
         const std::array<const char*, 7> right_names{
-            "Actuator1", "Actuator2", "Actuator3", "Actuator4",
-            "Actuator5", "Actuator6", "Actuator7"
+            "right_joint_1", "right_joint_2", "right_joint_3", "right_joint_4",
+            "right_joint_5", "right_joint_6", "right_joint_7"
         };
         const std::array<const char*, 7> left_names{
-            "leftActuator1", "leftActuator2", "leftActuator3", "leftActuator4",
-            "leftActuator5", "leftActuator6", "leftActuator7"
+            "left_joint_1", "left_joint_2", "left_joint_3", "left_joint_4",
+            "left_joint_5", "left_joint_6", "left_joint_7"
         };
         constexpr std::array<double, 7> official_velocity_rad_s{
             1.3963, 1.3963, 1.3963, 1.3963, 1.2218, 1.2218, 1.2218
@@ -181,12 +181,12 @@ int main()
             adapter.FullConfigurationForControlled(
                 Eigen::Matrix<double, 7, 1>::Zero());
         const Pose right_base =
-            forward_kinematics(robot_model, q_mount, "base_link");
+            forward_kinematics(robot_model, q_mount, "right_base_link");
         const Pose left_base =
-            forward_kinematics(robot_model, q_mount, "leftbase_link");
+            forward_kinematics(robot_model, q_mount, "left_base_link");
         const Eigen::Matrix3d right_rotation = RotX(1.2085);
         const Eigen::Matrix3d left_rotation = RotX(-1.2085);
-        constexpr double kHalfSeparation = 0.113415 / 2.0;
+        constexpr double kHalfSeparation = 0.075 / 2.0;
         Check((right_base.rotation - right_rotation).norm() < 1e-12,
               "right fixed mount rotation is +1.2085 rad about x");
         Check((left_base.rotation - left_rotation).norm() < 1e-12,
@@ -207,7 +207,7 @@ int main()
               "MountFromBase(right) matches FK on base_link");
         Check((adapter.MountFromBase(Arm::kLeft).translation() -
                left_base.position).norm() < 1e-12,
-              "MountFromBase(left) matches FK on leftbase_link");
+              "MountFromBase(left) matches FK on left_base_link");
         const Eigen::Vector3d p_base(0.4, -0.1, 0.3);
         Check((adapter.PointMountToBase(
                    Arm::kRight, adapter.PointBaseToMount(Arm::kRight, p_base)) -
@@ -327,7 +327,7 @@ int main()
         const Pose left_mount_tool = forward_kinematics(
             robot_model, left_q_eval, config::kLeftEndEffectorFrame);
         const Pose left_base_pose =
-            forward_kinematics(robot_model, left_q_eval, "leftbase_link");
+            forward_kinematics(robot_model, left_q_eval, "left_base_link");
         const Eigen::Matrix3d left_base_R_mount =
             left_base_pose.rotation.transpose();
         const Eigen::Vector3d left_expected_position =
@@ -335,9 +335,9 @@ int main()
         const Eigen::Matrix3d left_expected_rotation =
             left_base_R_mount * left_mount_tool.rotation;
         Check((left_selected.position - left_expected_position).norm() < 1e-12,
-              "left-controlled tool position is expressed in leftbase_link");
+              "left-controlled tool position is expressed in left_base_link");
         Check((left_selected.rotation - left_expected_rotation).norm() < 1e-12,
-              "left-controlled tool orientation is expressed in leftbase_link");
+              "left-controlled tool orientation is expressed in left_base_link");
         Check(left_selected.position.allFinite() && left_selected.rotation.allFinite() &&
                   left_selected.jacobian.allFinite(),
               "left-controlled pose and Jacobian are finite");

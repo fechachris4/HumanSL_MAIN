@@ -45,8 +45,8 @@ EXPECTED_GENERATOR_REL = (
 )
 EXPECTED_ASSET_DIR_REL = "Christian_control/simulation/model/assets"
 
-EXPECTED_RIGHT_TCP = "ConfiguredTool_Link"
-EXPECTED_LEFT_TCP = "leftEndEffector_Link"
+EXPECTED_RIGHT_TCP = "right_tool_link"
+EXPECTED_LEFT_TCP = "left_end_effector_link"
 REQUIRED_FRAMES = {"world", "mount", "right_base", "left_base"}
 
 _failures = []
@@ -292,8 +292,8 @@ def main():
         # error.
         joints = {joint.get("name"): joint for joint in urdf_root.iter("joint")}
         mounts = doc.get("mount_transforms", {})
-        for side, joint_name in (("right", "right_base_mount"),
-                                 ("left", "left_base_mount")):
+        for side, joint_name in (("right", "right_mount_to_base"),
+                                 ("left", "left_mount_to_base")):
             joint = joints.get(joint_name)
             check(joint is not None, f"URDF joint '{joint_name}' not found")
             entry = mounts.get(side, {})

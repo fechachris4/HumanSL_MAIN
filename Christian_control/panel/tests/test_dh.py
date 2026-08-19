@@ -11,14 +11,14 @@ SAMPLE = """\
 
 dh_parameters:
   - joint_id: 1
-    joint_name: "Actuator1"
+    joint_name: "right_joint_1"
     joint_type: "continuous"
     a: 0.0
     alpha: 1.5707963267948966
     d: -0.2848103248984093
     theta_offset: 0
   - joint_id: 2
-    joint_name: "Actuator2"
+    joint_name: "right_joint_2"
     joint_type: "revolute"
     a: 0.0
     alpha: 1.5707963267948966
@@ -41,7 +41,7 @@ class ParseDhYaml(unittest.TestCase):
 
     def test_names_and_types_keep_their_quotes_off(self):
         first = dh.parse_dh_yaml(SAMPLE)[0]
-        self.assertEqual(first["joint_name"], "Actuator1")
+        self.assertEqual(first["joint_name"], "right_joint_1")
         self.assertEqual(first["joint_type"], "continuous")
 
     def test_comments_are_ignored(self):

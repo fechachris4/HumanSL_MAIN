@@ -34,7 +34,7 @@
 //      ~2*||column|| >> 1e-6);
 //   3. left/right mount placement swap   -> ACCEPTED by ModelContract
 //      (structural gates are placement-blind, Task 2 probe) but base-pose
-//      parity fails with ~2*0.0567075 = 0.1134 m and ~2*1.2085 = 2.417 rad.
+//      parity fails with ~2*0.0375 = 0.075 m and ~2*1.2085 = 2.417 rad.
 //
 // Evidence class: unit test (kinematic parity; nothing is stepped, no
 // robot-facing code exists in this project).
@@ -524,13 +524,13 @@ int main()
     // --- mutation 3: left/right mount placement swap -----------------------
     // The Task 2 structural gates are placement-blind, so the contract
     // ACCEPTS this model; only this parity gate can catch it. Pre-registered
-    // magnitudes: 2*0.0567075 = 0.1134 m, 2*1.2085 = 2.417 rad.
+    // magnitudes: 2*0.0375 = 0.075 m, 2*1.2085 = 2.417 rad.
     {
         const std::string right_placement =
-            "pos=\"0 -0.0567075 0\" "
+            "pos=\"0 -0.0375 0\" "
             "quat=\"0.8229284378208791 0.5681450397791815 0 0\"";
         const std::string left_placement =
-            "pos=\"0 0.0567075 0\" "
+            "pos=\"0 0.0375 0\" "
             "quat=\"0.8229284378208791 -0.5681450397791815 0 0\"";
         std::string mutated = base_xml;
         int done = Replace(mutated, right_placement, "@@SWAP@@", 1);
@@ -564,8 +564,8 @@ int main()
                 mount_T_right.rotation());
             std::printf("mutation mount-swap right base errors: %.6f m, "
                         "%.6f rad\n", position_error, orientation_error);
-            Check(position_error > 0.11 && position_error < 0.12,
-                  "mount swap base position error ~0.1134 m (observed " +
+            Check(position_error > 0.07 && position_error < 0.08,
+                  "mount swap base position error ~0.075 m (observed " +
                       std::to_string(position_error) + ")");
             Check(orientation_error > 2.40 && orientation_error < 2.44,
                   "mount swap base orientation error ~2.417 rad (observed " +
