@@ -6012,3 +6012,167 @@ commit this
 ## 2026-08-19 14:23:40 BST
 
 why are we keeping tests dont they add latency
+
+## 2026-08-19 14:30:13 BST
+
+Investigate why the current control panel cannot move the robot arms because the controller is not up to date.
+
+Use the attached screenshot as reference:
+`/Users/christian/Library/Caches/com.raycast-x.macos/clipboard/file-d088c2f98385816c7b78eb1a959cf575.png`
+
+## Observed behaviour
+
+The panel shows:
+
+* Arm: `right`
+* Mode: `HARDWARE`
+* Status: `not current 32.3 s`
+* Controller status: `controller quiet`
+* Built-binary warning:
+  `controller is older than Christian_control/control/tests/fixtures/execution_preextract_v1.csv`
+* The panel says the controller must be rebuilt before starting, or the session will refuse the freshness gate.
+* The available actions are `BUILD CONTROLLER` and `BUILD BRIDGE`.
+* I wanted to use the panel to command the arm, but I could not move it.
+
+## Goal
+
+Find the exact reason the panel cannot start or execute arm motion, and determine whether the problem is:
+
+* The controller binary being stale.
+* The bridge being stale or incompatible.
+* A failed or incomplete build.
+* The freshness gate rejecting the session.
+* The controller not running or remaining quiet.
+* A mismatch between the panel, controller, bridge, configuration, or trajectory files.
+* An incorrect arm, hardware, session, or runtime state.
+* Another failure in the command-to-controller lifecycle.
+
+## Investigation requirements
+
+Inspect the repository and trace the complete runtime path:
+
+1. How the panel determines that the controller is stale.
+2. Which file timestamps, hashes, build metadata, or version values are compared.
+3. What exactly `BUILD CONTROLLER` does.
+4. What exactly `BUILD BRIDGE` does.
+5. How the panel launches or connects to the controller and bridge.
+6. What conditions are required before a hardware session can start.
+7. Where the freshness gate accepts or rejects the session.
+8. Why the status says `controller quiet`.
+9. How a movement command is sent from the panel to the planner, bridge, and controller.
+10. Whether the controller can receive an empty, stale, invalid, default, or partially initialised plan.
+11. What happens when planning fails, the controller is unavailable, or the bridge is disconnected.
+12. Where the first command sent to the hardware is generated.
+13. How failures are reported in the panel and in runtime logs.
+
+## Safety constraints
+
+Do not bypass, weaken, or remove the freshness gate or any hardware safety mechanism.
+
+Do not enable arm motion merely to hide the warning. Do not send commands to the physical arm during investigation unless I explicitly approve a controlled hardware test.
+
+Do not make code changes until the runtime behaviour and root cause are understood. First provide an evidence-based diagnosis with exact file names, functions, conditions, and relevant log messages.
+
+## Reproduction
+
+If safe and possible, reproduce the issue in simulation, dry-run mode, or with hardware output disabled. Record:
+
+* The exact command used.
+* The panel state before and after the command.
+* Build status and timestamps.
+* Controller and bridge process status.
+* Relevant logs.
+* Whether a plan was generated.
+* Whether the plan was accepted.
+* Whether the controller was activated.
+* Whether any command was published despite planning or connection failure.
+
+## Required output
+
+Provide a structured report containing:
+
+1. **Root cause**
+2. **Evidence**
+3. **Exact failure path**
+4. **Why the panel could not move the arm**
+5. **Whether the controller or bridge must be rebuilt**
+6. **The safest steps to restore operation**
+7. **Any secondary bugs or unsafe fallback paths**
+8. **Confidence level for each finding**
+9. **Recommended code changes**, but do not implement them yet
+10. **Verification steps and acceptance criteria**
+
+Clearly separate:
+
+* Confirmed facts from repository evidence.
+* Behaviour observed during reproduction.
+* Strong inferences.
+* Unknowns that require further testing.
+
+The final system should only allow hardware motion when the correct controller and bridge are current, connected, correctly configured, supplied with a valid plan, and explicitly authorised to execute.
+
+## 2026-08-19 14:40:39 BST
+
+The diagnosis is clear, but I want the fix simplified rather than adding exclusions for CSVs, fixtures, READMEs, etc. The actual freshness contract is simply that a compiled binary is stale when one of the C++ source/header files that builds it (`*.cpp` or `*.h`) is newer than the binary. First make the smallest safe fix so the panel uses exactly this definition and delete any unnecessary logic for scanning arbitrary files or filtering editor/test artefacts. Add regression tests proving that touching a `.cpp` or `.h` makes the controller stale while touching a `.csv` fixture does not.
+
+Then inspect whether we can remove the deeper duplication between `panel/build.py` and `run_session.sh`. They currently independently implement the same safety rule, which is what allowed them to diverge. Prefer one small shared freshness implementation that both the panel and `run_session.sh` call, but only if doing so genuinely reduces code and complexity. Do not introduce abstractions, configuration machinery, extra classes, or a wider refactor just for architectural purity. Show me the proposed simplified file/function structure and lines that can be deleted before making changes.
+
+## 2026-08-19 14:47:19 BST
+
+Now leave the freshness system alone. I want to simplify the runtime dependency graph. My requirement is that I must be able to run either a single Kinova arm or both arms using a fixed/known mount pose without Vicon, without the planner bridge, and without any other service that is not mathematically required for that mode. Vicon should only be required when the selected behaviour needs a live world-to-mount transform, and the planner should only be required when planned trajectories are requested. Trace the current startup path from the panel/session script into the controller and identify every mandatory dependency, where each is enforced, and whether it is actually required for a basic fixed-mount run. Do not modify code yet. Then propose the smallest architecture that supports at least: (1) single arm + fixed mount, (2) both arms + fixed mount, (3) single arm + Vicon mount, and (4) both arms + Vicon mount, without creating a large mode/framework abstraction.
+
+## 2026-08-19 14:47:36 BST
+
+Now leave the freshness system alone. I want to simplify the runtime dependency graph. My requirement is that I must be able to run either a single Kinova arm or both arms using a fixed/known mount pose without Vicon, without the planner bridge, and without any other service that is not mathematically required for that mode. Vicon should only be required when the selected behaviour needs a live world-to-mount transform, and the planner should only be required when planned trajectories are requested. Trace the current startup path from the panel/session script into the controller and identify every mandatory dependency, where each is enforced, and whether it is actually required for a basic fixed-mount run. Do not modify code yet. Then propose the smallest architecture that supports at least: (1) single arm + fixed mount, (2) both arms + fixed mount, (3) single arm + Vicon mount, and (4) both arms + Vicon mount, without creating a large mode/framework abstraction.
+
+## 2026-08-19 15:05:34 BST
+
+I want you to implement the runtime dependency cleanup, but the priority is the simplest possible architecture, not adding a new framework or a collection of named modes.
+The core design should use independent session choices:
+
+* arm: `left | right | both`
+* mount source: `fixed | vicon`
+* planning: `off | on`
+* recording: `off | on`
+
+Do not create enums such as `BENCH_MODE`, `WORLD_HOLD_MODE`, `PLANNER_MODE`, etc. The behaviour should emerge from these independent choices.
+The dependency rule must be: a component may block startup only if the selected session actually requires its output.
+For example:
+
+* Kinova connection, robot feedback, the kinematic model/FK, controller, and controller safety constraints are required whenever an arm is being controlled.
+* Joint limits used by the controller for command safety remain required. However, distinguish controller safety limits from planner-only joint-limit/DH/config files. Planner-specific files must not block a session when planning is off.
+* Vicon is required only when `mount_source=vicon`.
+* `mount_source=fixed` must work with no Vicon connection. Support a fixed `world_T_mount`, with identity as the simple `world ≡ mount` option for bench testing.
+* GPMP2 and its planning configuration are required only when `planning=on`.
+* `planner_bridge` is a preview/tool binary and must never block hardware execution unless you can prove the running controller actually uses it.
+* CSV/log-file recording is not a mathematical or safety dependency of arm control. Keep recording enabled by default because it is valuable experimentally, but do not couple the control loop to successful logging unless an existing safety mechanism genuinely depends on it. Clearly distinguish robot feedback from writing telemetry to disk.
+
+Update the panel so these choices are explicit and useful rather than hidden in command-line behaviour. I want:
+
+1. Left / Right / Both arm selection.
+2. Fixed / Vicon mount-source selection.
+3. When Fixed is selected, expose the fixed mount transform and provide a simple `world = mount` identity option. Do not show these fields when Vicon is selected.
+4. Planning On / Off.
+5. Recording On / Off, default On.
+6. A small `Required for this session` status area derived from the selected configuration, showing which dependencies are currently required, available, missing, or deliberately unused.
+7. Irrelevant controls and warnings should disappear or become inactive. For example, a stale planner binary/config must not produce a blocking warning when planning is off, and Vicon status must not block a fixed-mount run.
+8. Keep goal preview completely read-only and independent of hardware execution.
+
+Do not make safety-critical values such as physical joint limits casually editable from the normal run panel. They may be displayed with their source/configuration, but changing safety limits should remain an explicit configuration operation rather than an easy runtime field.
+Before editing, classify every existing dependency into exactly one of:
+`core control`, `controller safety`, `mount source`, `planning`, `recording/observability`, or `tooling/preview`.
+Then show me the resulting dependency graph and the minimum files/functions that must change. Look specifically for dependencies that can simply be deleted rather than replaced with another abstraction. Reuse the existing `BasePoseSample/BasePoseSlot` contract for fixed and Vicon mount sources if appropriate. Do not introduce a provider hierarchy, service registry, dependency-injection framework, new configuration subsystem, or duplicated control path unless the existing architecture makes it strictly necessary.
+After that, implement the smallest version and test at least these combinations without issuing hardware commands:
+
+* right + fixed + planning off
+* both + fixed + planning off
+* right + fixed + planning on
+* both + fixed + planning on
+* right + vicon + planning off
+* both + vicon + planning on
+
+For each combination, verify that only the dependencies mathematically or safely required by that configuration can block startup. Also verify that changing an unused subsystem, such as `planner_bridge` during a fixed/no-planner run, cannot make that session stale or unstartable.
+
+## 2026-08-19 17:08:43 BST
+
+can commit everything to master
