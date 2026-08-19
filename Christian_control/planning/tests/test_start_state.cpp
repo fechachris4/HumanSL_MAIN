@@ -56,10 +56,11 @@ int main() {
     assert(std::abs((*q_preamble)[6] - 71.0 * M_PI / 180.0) < 1e-12);
     std::remove(preamble_path);
 
-    // Continuous joint near the wrap seam (Kortex reports [0, 360)) must
-    // come back as a signed principal-value angle, not the raw firmware
-    // reading: 359.93 deg means "0.07 deg short of zero", not "a plan
-    // seeded a full turn away from zero".
+    // ReadLatestMeasuredQ is a pure reader: it returns Kortex's own raw
+    // convention. Canonicalisation to GPMP2's signed principal values
+    // happens once, in BridgeMain, whatever transport delivered the start
+    // state (test_bridge_main.cpp pins that equivalence end to end); the
+    // pieces WrapToPrincipalRad glues are pinned here.
     const char* wrap_path = "test_start_state_wrap_tmp.csv";
     {
         std::ofstream csv(wrap_path);
@@ -69,11 +70,16 @@ int main() {
     std::string wrap_error;
     const auto q_wrap = ReadLatestMeasuredQ(wrap_path, wrap_error);
     assert(q_wrap.has_value() && wrap_error.empty());
-    assert(std::abs((*q_wrap)[0] - (-0.07 * M_PI / 180.0)) < 1e-9);
-    // A limited joint's already-signed measurement is unaffected by wrap.
-    assert(std::abs((*q_wrap)[1] - 69.14 * M_PI / 180.0) < 1e-9);
-    // 221.76 deg wraps to 221.76 - 360 = -138.24 deg.
-    assert(std::abs((*q_wrap)[2] - (-138.24 * M_PI / 180.0)) < 1e-9);
+    assert(std::abs((*q_wrap)[0] - 359.93 * M_PI / 180.0) < 1e-9 &&
+           "the reader reports the raw measurement, unwrapped");
+    // WrapToPrincipalRad: 359.93 deg means "0.07 deg short of zero", a
+    // signed measurement is unchanged, and 221.76 wraps to -138.24.
+    assert(std::abs(WrapToPrincipalRad((*q_wrap)[0]) -
+                    (-0.07 * M_PI / 180.0)) < 1e-9);
+    assert(std::abs(WrapToPrincipalRad(69.14 * M_PI / 180.0) -
+                    69.14 * M_PI / 180.0) < 1e-9);
+    assert(std::abs(WrapToPrincipalRad(221.76 * M_PI / 180.0) -
+                    (-138.24 * M_PI / 180.0)) < 1e-9);
     std::remove(wrap_path);
 
     // FindLatestRunCsv: newest dated subdir wins by mtime.

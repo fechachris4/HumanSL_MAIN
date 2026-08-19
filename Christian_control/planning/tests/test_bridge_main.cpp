@@ -1,6 +1,7 @@
 // Test assertions must never no-op under a Release (NDEBUG) configure.
 #undef NDEBUG
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <filesystem>
@@ -77,6 +78,35 @@ int main(int argc, char** argv) {
         "--start-deg", "0", "0", "0", "0", "0", "0", "0",
         "--dh", argv[1], "--joint-limits", argv[2]};
     const std::vector<std::string> args = WithWorldContext(base_args);
+
+    // Regression (2026-08-19): equivalent joint representations must give
+    // the same planner start state. Kortex reports [0, 360) while GPMP2's
+    // configuration space is flat signed radians; --start-deg is the
+    // transport the controller's in-process worker uses, and unwrapped it
+    // seeded the optimiser outside its own limit bands (margin -59.68 deg,
+    // plan rejected). 360 == 0 and 270 == -90 are the same physical joints,
+    // so the two solves below must emit byte-identical trajectories
+    // (seeding is deterministic; test_ik_determinism.cpp pins that).
+    {
+        auto with_start = [&](const char* j1_deg, const char* j4_deg) {
+            std::vector<std::string> args_copy = base_args;
+            const std::size_t start = static_cast<std::size_t>(
+                std::find(args_copy.begin(), args_copy.end(), "--start-deg")
+                - args_copy.begin());
+            args_copy[start + 1] = j1_deg;   // joint 1
+            args_copy[start + 4] = j4_deg;   // joint 4
+            return WithWorldContext(args_copy);
+        };
+        std::ostringstream wrapped_targets, wrapped_diagnostics;
+        std::ostringstream signed_targets, signed_diagnostics;
+        assert(RunBridge(with_start("360", "270"), wrapped_targets,
+                         wrapped_diagnostics) == 0);
+        assert(RunBridge(with_start("0", "-90"), signed_targets,
+                         signed_diagnostics) == 0);
+        assert(wrapped_targets.str() == signed_targets.str() &&
+               "360/270 deg and 0/-90 deg are the same physical start state "
+               "and must plan the same trajectory");
+    }
 
     // The default and sole output is a dense world-Cartesian block. The
     // shared parser checks the exact planner/controller wire contract.

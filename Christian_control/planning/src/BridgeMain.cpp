@@ -711,6 +711,14 @@ PlannerSolveResult SolveWorldTrajectory(const std::vector<std::string>& args,
         }
         q_start_rad = *q;
     }
+    // The planner start state: q0_plan = CanonicalizeForPlanner(q_measured).
+    // The ONE canonicalisation site — every transport above delivers raw
+    // Kortex-convention radians, and GPMP2's flat signed-radian space gets
+    // the principal values. Unwrapped, a measured 253 deg lands outside a
+    // flat +/-150 deg band (observed 2026-08-19: margin -59.68 deg, splice
+    // 45.24 deg, plan rejected).
+    for (int joint = 0; joint < 7; ++joint)
+        q_start_rad(joint) = WrapToPrincipalRad(q_start_rad(joint));
 
     const std::string dh_path = parsed.dh_path.value_or(DefaultDhPath(left_arm));
     PlannerModel model;

@@ -10,14 +10,21 @@ struct StartStateResult {
 
 // Reads the header to locate meas_j1..meas_j7 by NAME (column positions
 // are not stable across log_format revisions), then returns the last
-// complete data row converted to radians and wrapped to (-pi, pi]. The
-// wrap matters most for continuous joints: Kortex reports them in
-// [0, 360) deg, and a measurement near the seam (e.g. 359.93) would
-// otherwise seed the planner a full turn away from the signed angle it
-// physically means. nullopt value + error on any missing column, short
-// row, or non-finite value.
+// complete data row converted to radians, RAW — still in Kortex's own
+// convention. Canonicalisation for the planner happens once, in
+// BridgeMain, whatever transport the start state arrived by. nullopt
+// value + error on any missing column, short row, or non-finite value.
 std::optional<Eigen::Matrix<double, 7, 1>> ReadLatestMeasuredQ(
     const std::string& csv_path, std::string& error);
+
+// The planner's joint canonicalisation: wrap one angle to its principal
+// value in (-pi, pi]. GPMP2 treats configuration space as flat signed
+// radians with no revolution tracking, so every start state entering the
+// planner passes through this exactly once, in BridgeMain, after the
+// transport (CSV or --start-deg) has produced raw radians. Kortex's own
+// [0, 360) convention is untouched: this converts at the planner boundary,
+// it does not redefine the measurement.
+double WrapToPrincipalRad(double angle_rad);
 
 // Newest <filename_prefix>*.csv by modification time under
 // <runs_root>/<subdir>/ (the controller's dated-directory layout).
