@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import signal
 import subprocess
@@ -63,14 +64,25 @@ SESSION_DIR_TIMEOUT_S = 20.0
 SESSION_DIR_MARKER = "session artifacts:"
 
 
-def default_launch_command(arm: str) -> list[str]:
+# The mount sources the controller accepts (MainArgs.h).
+VALID_MOUNTS = ("fixed", "vicon")
+
+
+def default_launch_command(arm: str, mount: str, planning: bool,
+                           recording: bool,
+                           fixed_pose: Optional[list[float]] = None) -> list[str]:
     """The command a session is started with.
 
     Note what is absent: `--allow-stale`. The script offers it and the panel
     must never be able to pass it, so the flag is not built here and start()
     refuses on a stale binary instead.
     """
-    return [str(paths.RUN_SESSION_SH), "--arm", arm]
+    command = [str(paths.RUN_SESSION_SH), "--arm", arm, "--mount", mount,
+               "--plan", "on" if planning else "off",
+               "--record", "on" if recording else "off"]
+    if fixed_pose is not None:
+        command += ["--fixed-pose", " ".join(f"{v:.9g}" for v in fixed_pose)]
+    return command
 
 
 def default_freshness() -> dict:
@@ -89,7 +101,7 @@ def default_freshness() -> dict:
 # not an injected object: there is exactly one production implementation of
 # each, and a test that replaced them through a constructor would be testing
 # the constructor.
-launch_command: Callable[[str], list[str]] = default_launch_command
+launch_command = default_launch_command
 send_signal_to_group: Callable[[int, int], None] = os.killpg
 freshness_check: Callable[[], dict] = default_freshness
 
@@ -131,6 +143,40 @@ def is_loopback(client_address: Any) -> bool:
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         address = address.ipv4_mapped
     return address.is_loopback
+
+
+def required_stale_reasons(report: Any, planning: bool) -> list[str]:
+    """The freshness reasons that block THE SELECTED session.
+
+    The rule: a component may block startup only if the session actually
+    requires its output. The controller binary always does. The generated DH
+    tables feed GPMP2 only, so they block only when planning is on. The
+    planner_bridge binary is a preview tool the running controller never
+    executes, so it never blocks (it stays visible on the CONFIG page).
+
+    A report that is not readable, or one that says stale without saying
+    why, refuses everything — this gate must fail closed on a reshaped
+    report, exactly like stale_reasons below.
+    """
+    if not isinstance(report, dict):
+        return [f"freshness report was not readable: {report!r}"]
+
+    def entry_reasons(entry: Any, name: str) -> list[str]:
+        if not isinstance(entry, dict):
+            return [f"freshness report has no readable {name} entry"]
+        if entry.get("stale") is not True:
+            return []
+        return [str(r) for r in (entry.get("reasons") or [])] or [f"{name} is stale"]
+
+    reasons = entry_reasons(report.get("controller"), "controller")
+    if planning:
+        dh = report.get("dh")
+        if isinstance(dh, dict):
+            for arm_name, entry in dh.items():
+                reasons.extend(entry_reasons(entry, f"dh[{arm_name}]"))
+        else:
+            reasons.append("freshness report has no readable dh entry")
+    return reasons
 
 
 def stale_reasons(report: Any) -> list[str]:
@@ -313,7 +359,9 @@ def _tail(log_path: Path, lines: int = 12) -> str:
         return ""
 
 
-def _launch(arm: str, log_path: Path) -> subprocess.Popen:
+def _launch(arm: str, log_path: Path, mount: str = "vicon",
+            planning: bool = True, recording: bool = True,
+            fixed_pose: Optional[list] = None) -> subprocess.Popen:
     """Start run_session.sh detached, with GO already waiting on its stdin.
 
     The stdin pipe is built by hand rather than with `stdin=subprocess.PIPE`
@@ -332,7 +380,7 @@ def _launch(arm: str, log_path: Path) -> subprocess.Popen:
         os.write(write_fd, b"GO\n")
         with open(log_path, "wb") as log:
             process = subprocess.Popen(
-                launch_command(arm),
+                launch_command(arm, mount, planning, recording, fixed_pose),
                 cwd=str(paths.REPO),
                 stdin=read_fd,
                 stdout=log,
@@ -350,7 +398,9 @@ def _launch(arm: str, log_path: Path) -> subprocess.Popen:
 
 
 def start(arm: str, confirm: str, client_address: Any,
-          is_local: Optional[bool] = None) -> dict:
+          is_local: Optional[bool] = None, mount: str = "vicon",
+          planning: bool = True, recording: bool = True,
+          fixed_pose: Optional[list] = None) -> dict:
     """Begin a supervised session, or say why not.
 
     `confirm` must be the literal "GO". The gate is not weakened by moving it
@@ -367,6 +417,26 @@ def start(arm: str, confirm: str, client_address: Any,
 
     if arm not in VALID_ARMS:
         return {"ok": False, "error": f"arm must be one of {', '.join(VALID_ARMS)} (got {arm!r})"}
+
+    if mount not in VALID_MOUNTS:
+        return {"ok": False,
+                "error": f"mount must be one of {', '.join(VALID_MOUNTS)} (got {mount!r})"}
+    planning = bool(planning)
+    recording = bool(recording)
+    if fixed_pose is not None:
+        if mount != "fixed":
+            return {"ok": False,
+                    "error": "a fixed mount pose is only meaningful with mount=fixed"}
+        try:
+            fixed_pose = [float(v) for v in fixed_pose]
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "fixed_pose must be 7 numbers (x y z qx qy qz qw)"}
+        if len(fixed_pose) != 7 or not all(map(math.isfinite, fixed_pose)):
+            return {"ok": False, "error": "fixed_pose must be 7 finite numbers (x y z qx qy qz qw)"}
+        # The identity default needs no flag at all; sending it explicitly is
+        # the same session, so normalise to the no-flag form.
+        if fixed_pose == [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0]:
+            fixed_pose = None
 
     if is_local is False or not is_loopback(client_address):
         return {
@@ -388,7 +458,7 @@ def start(arm: str, confirm: str, client_address: Any,
         }
 
     try:
-        reasons = stale_reasons(freshness_check())
+        reasons = required_stale_reasons(freshness_check(), planning)
     except Exception as error:  # a freshness check that cannot answer is not an answer
         return {"ok": False, "error": f"could not check binary freshness: {error}"}
     if reasons:
@@ -401,7 +471,7 @@ def start(arm: str, confirm: str, client_address: Any,
     log_path = _staging_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)  # a fresh checkout has no runs/
     started = datetime.now().astimezone().isoformat(timespec="seconds")
-    process = _launch(arm, log_path)
+    process = _launch(arm, log_path, mount, planning, recording, fixed_pose)
     _process = process
 
     # The script's own gates run after launch, so a refusal (missing binary,
@@ -446,6 +516,10 @@ def start(arm: str, confirm: str, client_address: Any,
         "pid": process.pid,
         "pgid": process.pid,
         "arm": arm,
+        "mount": mount,
+        "planning": planning,
+        "recording": recording,
+        "fixed_pose": fixed_pose,
         "started": started,
         "session_dir": session_dir,
         "log_path": str(log_path),
@@ -457,6 +531,9 @@ def start(arm: str, confirm: str, client_address: Any,
         "pid": process.pid,
         "pgid": process.pid,
         "arm": arm,
+        "mount": mount,
+        "planning": planning,
+        "recording": recording,
         "started": started,
         "session_dir": session_dir,
         "log_path": str(log_path),
@@ -532,6 +609,9 @@ def status() -> dict:
         "pid": state.get("pid"),
         "pgid": pgid,
         "arm": state.get("arm"),
+        "mount": state.get("mount"),
+        "planning": state.get("planning"),
+        "recording": state.get("recording"),
         "started": state.get("started"),
         "session_dir": state.get("session_dir"),
         "log_path": state.get("log_path"),

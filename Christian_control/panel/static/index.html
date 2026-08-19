@@ -396,6 +396,49 @@
           </label>
           <span class="hint" id="drive-note"></span>
         </div>
+        <!-- The session's other three independent choices. Each maps to one
+             run_session.sh flag; nothing here is a mode, and the required-for-
+             this-session list below is derived from these plus freshness. -->
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">mount source</span>
+            <select id="mount-select">
+              <option value="vicon">Vicon (live world pose)</option>
+              <option value="fixed">fixed (constant world_T_mount)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">planning</span>
+            <select id="plan-select">
+              <option value="on">on (GPMP2 worker)</option>
+              <option value="off">off (hold only)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span class="field-label">recording</span>
+            <select id="record-select">
+              <option value="on">on (run CSV)</option>
+              <option value="off">off (no CSV — no plots, no run evidence)</option>
+            </select>
+          </label>
+        </div>
+        <div class="field-row" id="fixed-pose-row" hidden>
+          <label class="field inline">
+            <input type="checkbox" id="fixed-identity" checked>
+            <span class="field-label">world = mount (identity)</span>
+          </label>
+          <label class="field inline" id="fixed-pose-fields" hidden>
+            <span class="field-label">world_T_mount</span>
+            <input type="text" id="fixed-pose-input" class="num" size="34"
+                   autocomplete="off" spellcheck="false"
+                   placeholder="x y z qx qy qz qw">
+          </label>
+          <span class="hint">metres, then quaternion x y z w</span>
+        </div>
+        <div class="required-block">
+          <span class="field-label">required for this session</span>
+          <ul class="required-list" id="required-list"></ul>
+        </div>
         <div class="button-row">
           <label class="field inline">
             <span class="field-label">confirm</span>

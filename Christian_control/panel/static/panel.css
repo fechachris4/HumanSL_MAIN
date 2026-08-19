@@ -692,3 +692,25 @@ select, input[type="text"] {
   padding: 3px 0;
   word-break: break-all;
 }
+
+/* --- required-for-this-session list (session pane) --------------------- */
+.required-block { margin-top: 0.8rem; }
+.required-list { list-style: none; margin: 0.3rem 0 0; padding: 0; }
+.required-item {
+  display: grid;
+  grid-template-columns: 16rem 6.5rem 1fr;
+  gap: 0.6rem;
+  align-items: baseline;
+  padding: 0.15rem 0;
+  border-bottom: 1px solid var(--rule);
+  font-size: 0.85rem;
+}
+.required-name { font-weight: 600; }
+.required-state { font-size: 0.7rem; letter-spacing: 0.06em; }
+.required-item.is-ready .required-state { color: var(--ask); }
+.required-item.is-required .required-state { color: var(--ink); }
+.required-item.is-blocking .required-state { color: var(--stop); font-weight: 700; }
+.required-item.is-unused .required-state,
+.required-item.is-unused .required-detail { color: var(--ink-dim); }
+.required-item.is-unknown .required-state { color: var(--warn); }
+.required-detail { color: var(--ink-dim); }

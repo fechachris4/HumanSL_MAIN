@@ -18,15 +18,42 @@ PLANNER_TG="$REPO/Christian_control/planning/optimisation"
 GOAL_YAML="$REPO/Christian_control/planning/config/goal.yaml"
 PLANNER_YAML="$REPO/Christian_control/planning/config/planner.yaml"
 ARM=""
+# The session's other three independent choices (MainArgs.h). Defaults
+# preserve the pre-flag behaviour: live Vicon, planner on, CSV on.
+MOUNT="vicon"; PLAN="on"; RECORD="on"; FIXED_POSE=""
 ALLOW_STALE=0; DRY_RUN=0
+usage() {
+    echo "usage: run_session.sh [--arm right|left|both] [--mount fixed|vicon]"
+    echo "                      [--fixed-pose 'x y z qx qy qz qw'] [--plan on|off]"
+    echo "                      [--record on|off] [--allow-stale] [--dry-run]"
+    exit 1
+}
 while [[ $# -gt 0 ]]; do case "$1" in
     --arm)
         [[ $# -ge 2 ]] || { echo "--arm needs a value (right, left, or both)"; exit 1; }
         ARM="$2"; shift 2 ;;
+    --mount)
+        [[ $# -ge 2 ]] || { echo "--mount needs a value (fixed or vicon)"; exit 1; }
+        MOUNT="$2"; shift 2 ;;
+    --fixed-pose)
+        [[ $# -ge 2 ]] || { echo "--fixed-pose needs 'x y z qx qy qz qw'"; exit 1; }
+        FIXED_POSE="$2"; shift 2 ;;
+    --plan)
+        [[ $# -ge 2 ]] || { echo "--plan needs on or off"; exit 1; }
+        PLAN="$2"; shift 2 ;;
+    --record)
+        [[ $# -ge 2 ]] || { echo "--record needs on or off"; exit 1; }
+        RECORD="$2"; shift 2 ;;
     --allow-stale) ALLOW_STALE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
-    *) echo "usage: run_session.sh [--arm right|left|both] [--allow-stale] [--dry-run]"; exit 1 ;;
+    *) usage ;;
 esac; done
+[[ "$MOUNT" == "fixed" || "$MOUNT" == "vicon" ]] || { echo "error: --mount must be 'fixed' or 'vicon' (got '$MOUNT')"; exit 1; }
+[[ "$PLAN" == "on" || "$PLAN" == "off" ]] || { echo "error: --plan must be 'on' or 'off' (got '$PLAN')"; exit 1; }
+[[ "$RECORD" == "on" || "$RECORD" == "off" ]] || { echo "error: --record must be 'on' or 'off' (got '$RECORD')"; exit 1; }
+if [[ -n "$FIXED_POSE" && "$MOUNT" != "fixed" ]]; then
+    echo "error: --fixed-pose is only meaningful with --mount fixed"; exit 1
+fi
 
 if [[ -z "$ARM" ]]; then
     ARM=$(awk -F': *' '/^session_arms:/{print $2; exit}' "$GOAL_YAML" 2>/dev/null || true)
@@ -73,23 +100,30 @@ dh_yaml_for() { # $1 arm
         echo "$CONTROLLER_BUILD/planning/config/dh_params_tool.yaml"
     fi
 }
-for a in "${ARMS[@]}"; do
-    dh_yaml="$(dh_yaml_for "$a")"
-    [[ -f "$dh_yaml" ]] || { echo "missing generated $dh_yaml — build controller first"; exit 1; }
-    if [[ "$URDF" -nt "$dh_yaml" ]]; then
-        echo "STALE: $dh_yaml is older than the URDF — rebuild controller"
-        [[ $ALLOW_STALE = 1 ]] || { echo "rebuild, or pass --allow-stale"; exit 1; }
-    fi
-done
+# Planner-only inputs: the generated DH tables feed GPMP2, never the
+# controller law, so with --plan off they may be missing or stale without
+# blocking the session.
+if [[ "$PLAN" == "on" ]]; then
+    for a in "${ARMS[@]}"; do
+        dh_yaml="$(dh_yaml_for "$a")"
+        [[ -f "$dh_yaml" ]] || { echo "missing generated $dh_yaml — build controller first"; exit 1; }
+        if [[ "$URDF" -nt "$dh_yaml" ]]; then
+            echo "STALE: $dh_yaml is older than the URDF — rebuild controller"
+            [[ $ALLOW_STALE = 1 ]] || { echo "rebuild, or pass --allow-stale"; exit 1; }
+        fi
+    done
+fi
 
 echo "== Supervised session checklist (project CLAUDE.md) =="
 echo "  - arm(s): ${ARMS[*]}"
+echo "  - mount source: $MOUNT${FIXED_POSE:+ (world_T_mount: $FIXED_POSE)}"
+echo "  - planning: $PLAN, recording: $RECORD"
 echo "  - Christian present, workspace clear, e-stop in reach"
 echo "  - Kinova web dashboard CLOSED (it blocks SetServoingMode)"
 echo "  - This run is explicitly authorized"
 read -r -p "Type GO to start the controller: " confirm
 [[ "$confirm" == "GO" ]] || { echo "aborted"; exit 1; }
-[[ $DRY_RUN = 1 ]] && { echo "dry-run: would start $CONTROLLER --arm $ARM now"; exit 0; }
+[[ $DRY_RUN = 1 ]] && { echo "dry-run: would start $CONTROLLER --arm $ARM --mount $MOUNT --plan $PLAN --record $RECORD now"; exit 0; }
 
 mkdir -p "$REPO/runs"   # first run on a fresh checkout has no runs/ dir yet
 
@@ -172,10 +206,25 @@ trap cleanup_session EXIT
 # trap above is how Ctrl-C stops a MOVING ARM, so that failure is silent and
 # dangerous. A plain `> file` forks nothing extra: $! is the controller, and
 # the trap works. tests/test_run_session.sh pins this.
-"$CONTROLLER" --arm "$ARM" > "$SESSION_DIR/controller.log" 2>&1 & CONTROLLER_PID=$!
+# shellcheck disable=SC2086 — FIXED_POSE is 7 numbers becoming 7 arguments
+"$CONTROLLER" --arm "$ARM" --mount "$MOUNT" --plan "$PLAN" --record "$RECORD" \
+    ${FIXED_POSE:+--fixed-pose $FIXED_POSE} \
+    > "$SESSION_DIR/controller.log" 2>&1 & CONTROLLER_PID=$!
 tail -n +1 -f "$SESSION_DIR/controller.log" 2>/dev/null & CONTROLLER_TAIL_PID=$!
 
 
+# With --record off the controller writes no CSV, so there is nothing to
+# wait for and nothing to link into the session directory; the session's
+# record is controller.log alone. The session still confirms the controller
+# PROCESS survived startup before declaring it running.
+if [[ "$RECORD" == "off" ]]; then
+    echo "recording off: no run CSVs; watching the controller process instead"
+    for _ in $(seq 1 10); do
+        kill -0 "$CONTROLLER_PID" 2>/dev/null || { echo "controller exited during startup"; exit 1; }
+        sleep 1
+    done
+    [[ "$PLAN" == "on" ]] && echo "note: planning is on but recording is off — plan activation cannot be verified from a log"
+else
 for a in "${ARMS[@]}"; do
     echo "waiting for the $a controller thread's run log..."
     found=""
@@ -204,7 +253,12 @@ for a in "${ARMS[@]}"; do
     [[ $ready = 1 ]] || { echo "no telemetry rows appeared in $found after 30 s"; exit 1; }
 done
 
-# Wait for each selected controller thread to activate its first typed plan.
+# Wait for each selected controller thread to activate its first typed plan
+# — only when this session runs the planner. A --plan off session holds its
+# captured pose; there is no plan whose absence could mean failure, and a
+# guard that killed the controller for not doing what it was told not to do
+# would be a stop with no hazard behind it.
+if [[ "$PLAN" == "on" ]]; then
 for a in "${ARMS[@]}"; do
     echo "waiting for the $a controller thread to activate its first plan..."
     activated=0
@@ -218,7 +272,7 @@ for a in "${ARMS[@]}"; do
             }
             column && $column == "1" { found = 1; exit }
             END { exit found ? 0 : 1 }
-        ' "$found"; then
+        ' "${LATEST[$a]}"; then
             activated=1
             break
         fi
@@ -234,7 +288,13 @@ for a in "${ARMS[@]}"; do
     }
     echo "  $a: first typed world-Cartesian plan activated; worker remains in controller."
 done
+fi
+fi
 
-echo "In-process planner worker(s) remain active. Press Enter to stop the controller."
+if [[ "$PLAN" == "on" ]]; then
+    echo "In-process planner worker(s) remain active. Press Enter to stop the controller."
+else
+    echo "Controller holding (planning off). Press Enter to stop the controller."
+fi
 read -r
 echo "stopping controller..."

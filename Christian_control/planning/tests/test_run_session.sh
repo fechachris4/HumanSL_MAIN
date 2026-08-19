@@ -58,9 +58,18 @@ import time
 from datetime import date, datetime
 
 selected = "right"
+mount = ""
+record = "on"
 for index, value in enumerate(sys.argv):
     if value == "--arm" and index + 1 < len(sys.argv):
         selected = sys.argv[index + 1]
+    if value == "--mount" and index + 1 < len(sys.argv):
+        mount = sys.argv[index + 1]
+    if value == "--record" and index + 1 < len(sys.argv):
+        record = sys.argv[index + 1]
+if mount not in ("fixed", "vicon"):
+    print("error: --mount is required (fixed or vicon)", flush=True)
+    raise SystemExit(2)
 arms = ["right", "left"] if selected == "both" else [selected]
 root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 fail = os.environ.get("STUB_PLAN_FAIL") == "1"
@@ -73,12 +82,14 @@ def on_sigint(signum, frame):
 signal.signal(signal.SIGINT, on_sigint)
 day = os.path.join(root, "runs", date.today().isoformat())
 os.makedirs(day, exist_ok=True)
-for arm in arms:
+for arm in arms if record == "on" else []:
     csv_path = os.path.join(day, f"loop_log_{arm}_{datetime.now():%H%M%S%f}.csv")
     with open(csv_path, "w") as output:
         output.write("# log_format = 13\n")
         output.write("time_s,meas_j1,cart_traj_activated\n")
         output.write(f"0.0,1,{'0' if fail else '1'}\n")
+with open(os.path.join(root, "controller_argv.txt"), "w") as output:
+    output.write(" ".join(sys.argv[1:]) + "\n")
 print(f"stub controller: ready for {selected}", flush=True)
 if fail:
     raise SystemExit(3)
@@ -89,10 +100,12 @@ CTRL
     echo "$root"
 }
 
-run_session() { # $1 root, $2 arm, optional STUB_PLAN_FAIL=1
-    STUB_PLAN_FAIL="${3:-0}" timeout 15 \
-        bash -c "printf 'GO\\n\\n' | '$1/Christian_control/planning/scripts/run_session.sh' --arm '$2'" \
-        > "$1/session_stdout.txt" 2>&1
+run_session() { # $1 root, $2 arm, $3 STUB_PLAN_FAIL, remaining args pass through
+    local root="$1" arm="$2" fail="${3:-0}"
+    shift 3 || shift $#
+    STUB_PLAN_FAIL="$fail" timeout 15 \
+        bash -c "printf 'GO\\n\\n' | '$root/Christian_control/planning/scripts/run_session.sh' --arm '$arm' $*" \
+        > "$root/session_stdout.txt" 2>&1
 }
 
 echo "== single controller process succeeds for both arms =="
@@ -138,7 +151,45 @@ BAD_SESSION="$(find "$ROOT_BAD/runs" -maxdepth 3 -name session.json | head -1)"
     && check "failed session leaves no publication marker" ok \
     || check "failed session leaves no publication marker" no
 
-rm -rf "$ROOT_OK" "$ROOT_BAD"
+echo "== plan off: no DH gate, no activation wait, stub never activates =="
+ROOT_NOPLAN="$(make_fake_repo 1)"   # fail=1: the stub NEVER activates a plan
+rm -f "$ROOT_NOPLAN"/Christian_control/runtime/build/planning/config/*.yaml
+run_session "$ROOT_NOPLAN" right 0 --mount fixed --plan off
+grep -q "session artifacts:" "$ROOT_NOPLAN/session_stdout.txt" \
+    && check "plan-off session starts with DH tables deleted" ok \
+    || check "plan-off session starts with DH tables deleted" no
+! grep -q "activate its first plan" "$ROOT_NOPLAN/session_stdout.txt" \
+    && check "plan-off session never waits for plan activation" ok \
+    || check "plan-off session never waits for plan activation" no
+grep -q "Controller holding (planning off)" "$ROOT_NOPLAN/session_stdout.txt" \
+    && check "plan-off session reaches the running prompt" ok \
+    || check "plan-off session reaches the running prompt" no
+grep -q -- "--mount fixed --plan off --record on" "$ROOT_NOPLAN/controller_argv.txt" 2>/dev/null \
+    && check "controller received the session's choices" ok \
+    || check "controller received the session's choices" no
+
+echo "== record off: no CSV waits, session still supervises the process =="
+ROOT_NOREC="$(make_fake_repo 0)"
+run_session "$ROOT_NOREC" right 0 --mount fixed --plan off --record off
+grep -q "recording off: no run CSVs" "$ROOT_NOREC/session_stdout.txt" \
+    && check "record-off session skips the log waits" ok \
+    || check "record-off session skips the log waits" no
+! find "$ROOT_NOREC/runs" -maxdepth 2 -name 'loop_log_*.csv' | grep -q . \
+    && check "record-off session produced no run CSV" ok \
+    || check "record-off session produced no run CSV" no
+[[ -f "$ROOT_NOREC/controller_sigint.txt" ]] \
+    && check "record-off session still stops the controller cleanly" ok \
+    || check "record-off session still stops the controller cleanly" no
+
+echo "== vicon + plan on stays gated: stale DH still refuses =="
+ROOT_STALE="$(make_fake_repo 0)"
+touch "$ROOT_STALE/Christian_control/model/GEN3_dual_mounted.urdf"
+run_session "$ROOT_STALE" right 0 --mount vicon --plan on
+grep -q "STALE.*older than the URDF" "$ROOT_STALE/session_stdout.txt" \
+    && check "plan-on session still refuses on stale DH tables" ok \
+    || check "plan-on session still refuses on stale DH tables" no
+
+rm -rf "$ROOT_OK" "$ROOT_BAD" "$ROOT_NOPLAN" "$ROOT_NOREC" "$ROOT_STALE"
 rm -f /tmp/humansl_bridge_targets_right /tmp/humansl_bridge_targets_left \
       /tmp/humansl_planning_requests_right /tmp/humansl_planning_requests_left
 echo

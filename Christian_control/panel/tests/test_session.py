@@ -23,11 +23,23 @@ from pathlib import Path
 
 from .. import paths, session
 
-FRESH = {"stale": False, "reasons": [], "controller": {"stale": False}}
+# Shaped like build.freshness(): per-component entries carrying their own
+# reasons, so the choice-aware gate can block on only what a session needs.
+FRESH = {
+    "stale": False, "reasons": [],
+    "controller": {"stale": False, "reasons": []},
+    "bridge": {"stale": False, "reasons": []},
+    "dh": {"right": {"stale": False, "reasons": []},
+           "left": {"stale": False, "reasons": []}},
+}
 STALE = {
     "stale": True,
     "reasons": ["controller is older than src/Runner.cpp"],
-    "controller": {"stale": True},
+    "controller": {"stale": True,
+                   "reasons": ["controller is older than src/Runner.cpp"]},
+    "bridge": {"stale": False, "reasons": []},
+    "dh": {"right": {"stale": False, "reasons": []},
+           "left": {"stale": False, "reasons": []}},
 }
 
 LOOPBACK = ("127.0.0.1", 51234)
@@ -98,7 +110,7 @@ class RefusalTests(SessionTestCase):
         super().setUp()
         self.launched = []
 
-        def record_only(arm: str) -> list[str]:
+        def record_only(arm: str, *choices) -> list[str]:
             self.launched.append(arm)
             return ["true"]
 
@@ -164,15 +176,33 @@ class RefusalTests(SessionTestCase):
 class LaunchCommandTests(unittest.TestCase):
     """The command itself, which is where --allow-stale could sneak in."""
 
-    def test_runs_run_session_with_the_arm(self) -> None:
+    def test_runs_run_session_with_the_session_choices(self) -> None:
         self.assertEqual(
-            session.default_launch_command("left"),
-            [str(paths.RUN_SESSION_SH), "--arm", "left"],
+            session.default_launch_command("left", "vicon", True, True),
+            [str(paths.RUN_SESSION_SH), "--arm", "left", "--mount", "vicon",
+             "--plan", "on", "--record", "on"],
         )
+        self.assertEqual(
+            session.default_launch_command("right", "fixed", False, False),
+            [str(paths.RUN_SESSION_SH), "--arm", "right", "--mount", "fixed",
+             "--plan", "off", "--record", "off"],
+        )
+
+    def test_a_fixed_pose_becomes_seven_numbers_in_one_argument(self) -> None:
+        command = session.default_launch_command(
+            "right", "fixed", False, True,
+            [0.1, -0.2, 0.3, 0.0, 0.0, 0.0, 1.0])
+        self.assertIn("--fixed-pose", command)
+        pose = command[command.index("--fixed-pose") + 1]
+        self.assertEqual(pose.split(), ["0.1", "-0.2", "0.3", "0", "0", "0", "1"])
 
     def test_never_passes_allow_stale(self) -> None:
         for arm in session.VALID_ARMS:
-            self.assertNotIn("--allow-stale", session.default_launch_command(arm))
+            for mount in session.VALID_MOUNTS:
+                for planning in (True, False):
+                    self.assertNotIn(
+                        "--allow-stale",
+                        session.default_launch_command(arm, mount, planning, True))
 
     def test_a_session_with_no_controller_is_not_commanding(self) -> None:
         """run_session.sh outlives its controller, and the panel must not lie.
@@ -206,7 +236,7 @@ class LaunchCommandTests(unittest.TestCase):
         ProcessLock would refuse the second anyway.
         """
         self.assertEqual(
-            session.default_launch_command("both"),
+            session.default_launch_command("both", "vicon", True, True)[:3],
             [str(paths.RUN_SESSION_SH), "--arm", "both"],
         )
 
@@ -215,6 +245,149 @@ class LaunchCommandTests(unittest.TestCase):
         result = session.start("all", "GO", LOOPBACK)
         self.assertFalse(result["ok"])
         self.assertIn("both", result["error"])
+
+
+class RequiredDependencyGateTests(SessionTestCase):
+    """A component may block startup only if the selected session actually
+    requires its output. Each case here is one of the session shapes the
+    2026-08-19 dependency cleanup must support, against a freshness report
+    where exactly one component is stale."""
+
+    # A stand-in session: announces its directory like run_session.sh:103
+    # does, then waits to be stopped. `exec` so the printed pid IS the group
+    # leader stop() signals.
+    FAKE = ["bash", "-c",
+            "echo 'session artifacts: /tmp/fake_session'; exec sleep 30"]
+
+    def setUp(self) -> None:
+        super().setUp()
+        session.launch_command = lambda arm, *choices: list(self.FAKE)
+
+    @staticmethod
+    def report(controller_stale=False, bridge_stale=False, dh_stale=False):
+        def entry(stale, sentence):
+            return {"stale": stale, "reasons": [sentence] if stale else []}
+        return {
+            "stale": controller_stale or bridge_stale or dh_stale,
+            "reasons": [],
+            "controller": entry(controller_stale, "controller is older than x.cpp"),
+            "bridge": entry(bridge_stale, "planner_bridge is older than y.cpp"),
+            "dh": {"right": entry(dh_stale, "dh_params_tool.yaml is older than the URDF"),
+                   "left": entry(dh_stale, "dh_params_flange.yaml is older than the URDF")},
+        }
+
+    # The six session shapes under test. (arm, mount, planning)
+    COMBOS = [
+        ("right", "fixed", False),
+        ("both", "fixed", False),
+        ("right", "fixed", True),
+        ("both", "fixed", True),
+        ("right", "vicon", False),
+        ("both", "vicon", True),
+    ]
+
+    def start(self, combo, report):
+        session.freshness_check = lambda: report
+        arm, mount, planning = combo
+        result = session.start(arm, "GO", LOOPBACK, mount=mount,
+                               planning=planning, recording=True)
+        # Leave no session behind for the next case: stop, then wait for the
+        # child to actually die, or the next start() sees it still running.
+        process = session._process
+        session.stop()
+        if process is not None:
+            process.wait(timeout=10)
+        session.status()  # reaps and clears the state file
+        return result
+
+    def test_a_stale_controller_blocks_every_session_shape(self) -> None:
+        for combo in self.COMBOS:
+            result = self.start(combo, self.report(controller_stale=True))
+            self.assertFalse(result["ok"], combo)
+            self.assertIn("controller is older than x.cpp",
+                          result.get("reasons", []), combo)
+
+    def test_a_stale_planner_bridge_blocks_no_session_shape(self) -> None:
+        """planner_bridge is a preview tool; the running controller never
+        executes it, so its staleness must never stop hardware execution."""
+        for combo in self.COMBOS:
+            result = self.start(combo, self.report(bridge_stale=True))
+            self.assertTrue(result["ok"], (combo, result))
+
+    def test_stale_dh_tables_block_exactly_the_planning_sessions(self) -> None:
+        for combo in self.COMBOS:
+            planning = combo[2]
+            result = self.start(combo, self.report(dh_stale=True))
+            if planning:
+                self.assertFalse(result["ok"], combo)
+                self.assertTrue(any("older than the URDF" in r
+                                    for r in result.get("reasons", [])), combo)
+            else:
+                self.assertTrue(result["ok"], (combo, result))
+
+    def test_everything_fresh_starts_every_session_shape(self) -> None:
+        for combo in self.COMBOS:
+            result = self.start(combo, self.report())
+            self.assertTrue(result["ok"], (combo, result))
+
+    def test_the_choices_reach_the_launch_command(self) -> None:
+        seen = []
+
+        def record(arm, mount, planning, recording, fixed_pose=None):
+            seen.append((arm, mount, planning, recording, fixed_pose))
+            return list(self.FAKE)
+
+        session.launch_command = record
+        session.freshness_check = lambda: self.report()
+        result = session.start("right", "GO", LOOPBACK, mount="fixed",
+                               planning=False, recording=False,
+                               fixed_pose=[0.1, 0, 0, 0, 0, 0, 1])
+        process = session._process
+        session.stop()
+        if process is not None:
+            process.wait(timeout=10)
+        session.status()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen, [("right", "fixed", False, False,
+                                 [0.1, 0, 0, 0, 0, 0, 1])])
+
+    def test_the_identity_fixed_pose_is_the_no_flag_default(self) -> None:
+        seen = []
+
+        def record(arm, mount, planning, recording, fixed_pose=None):
+            seen.append(fixed_pose)
+            return list(self.FAKE)
+
+        session.launch_command = record
+        session.freshness_check = lambda: self.report()
+        result = session.start("right", "GO", LOOPBACK, mount="fixed",
+                               planning=False,
+                               fixed_pose=[0, 0, 0, 0, 0, 0, 1])
+        process = session._process
+        session.stop()
+        if process is not None:
+            process.wait(timeout=10)
+        session.status()
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(seen, [None])
+
+    def test_bad_session_choices_are_refused_before_launch(self) -> None:
+        session.freshness_check = lambda: self.report()
+        cases = [
+            dict(mount="gps"),
+            dict(mount="vicon", fixed_pose=[0, 0, 0, 0, 0, 0, 1]),
+            dict(mount="fixed", fixed_pose=[0, 0, 0]),
+            dict(mount="fixed", fixed_pose=[0, 0, 0, 0, 0, 0, float("nan")]),
+            dict(mount="fixed", fixed_pose=["x", 0, 0, 0, 0, 0, 1]),
+        ]
+        for kwargs in cases:
+            result = session.start("right", "GO", LOOPBACK, **kwargs)
+            self.assertFalse(result["ok"], kwargs)
+
+    def test_a_malformed_report_fails_closed_for_every_shape(self) -> None:
+        for combo in self.COMBOS:
+            result = self.start(combo, {"stale": True})
+            self.assertFalse(result["ok"], combo)
 
 
 class LoopbackTests(unittest.TestCase):
@@ -295,7 +468,8 @@ class FakeSessionTests(SessionTestCase):
             "sleep 120\n"
         )
         self.fake.chmod(0o755)
-        session.launch_command = lambda arm: ["bash", str(self.fake), arm]
+        session.launch_command = (
+            lambda arm, *choices: ["bash", str(self.fake), arm])
 
     def recorded(self) -> str:
         try:
@@ -390,7 +564,8 @@ class FakeSessionTests(SessionTestCase):
             "exit 1\n"
         )
         refusing.chmod(0o755)
-        session.launch_command = lambda arm: ["bash", str(refusing), arm]
+        session.launch_command = (
+            lambda arm, *choices: ["bash", str(refusing), arm])
 
         result = session.start("right", "GO", LOOPBACK)
         self.assertFalse(result["ok"])

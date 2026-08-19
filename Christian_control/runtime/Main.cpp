@@ -17,6 +17,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <ostream>
 #include <sstream>
 #include <stdexcept>
@@ -33,6 +34,7 @@
 #include "Config.h"
 #include "ExecutionConfig.h"
 #include "ExecutionCore.h"
+#include "FixedMountSource.h"
 #include "FramePrint.h"
 #include "Hardware.h"
 #include "InProcessPlanner.h"
@@ -59,7 +61,9 @@ namespace k_api = Kinova::Api;
 namespace {
 [[noreturn]] void UsageAndExit(const std::string& error) {
     if (!error.empty()) std::cerr << "error: " << error << "\n";
-    std::cerr << "usage: controller --arm <right|left|both> [--log <file>]\n"
+    std::cerr << "usage: controller --arm <right|left|both> --mount <fixed|vicon>\n"
+              << "                  [--fixed-pose x y z qx qy qz qw] [--plan on|off]\n"
+              << "                  [--record on|off] [--log <file>]\n"
               << "  --arm <right|left|both>  required — which physical arm(s)\n"
               << "                           this run controls (config::kRightArmConfig\n"
               << "                           / kLeftArmConfig, Config.h). No default: every\n"
@@ -67,6 +71,12 @@ namespace {
               << "  --log <file>             CSV filename (default: timestamped run file,\n"
               << "                           per-arm prefixed). Not valid with --arm both —\n"
               << "                           one filename can't name two arms' logs.\n"
+              << "  --mount <fixed|vicon>    required — world_T_mount source: a constant pose\n"
+              << "                           published in-process (fixed) or live Vicon (vicon).\n"
+              << "  --fixed-pose x y z qx qy qz qw   the constant world_T_mount (--mount fixed\n"
+              << "                           only). Omitted = identity: world coincides with mount.\n"
+              << "  --plan <on|off>          default on — run the in-process planner worker.\n"
+              << "  --record <on|off>        default on — write the run CSV.\n"
               << "All other controller settings are compiled in src/Config.h.\n";
     std::exit(2);
 }
@@ -131,17 +141,28 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
          FormatDouble(config::kWorldProlongedStaleS));
 }
 
-void WriteCsvPreamble(const std::string& log_file, const config::ArmConfig& arm_config,
+void WriteCsvPreamble(const ParsedMainArgs& args,
+                      const config::ArmConfig& arm_config,
                       std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
     csv << "# log_format = 13 (compiled)\n";
-    // Why a log's vicon_* columns are all-NaN: source compiled out
-    // ("absent"), or compiled in but never connected (age stays NaN).
+    // Where this run's world pose came from. mount_source names the
+    // producer that filled the slot; vicon_source still records what this
+    // BINARY was built with, so an all-NaN vicon column can be told apart:
+    // source absent, never connected, or simply not selected.
+    csv << "# mount_source = " << args.mount << "\n";
+    if (args.mount == "fixed") {
+        csv << "# fixed_world_t_mount =";
+        for (double value : args.fixed_world_t_mount)
+            csv << " " << value;
+        csv << " (x y z m, quat xyzw; world_T_mount)\n";
+    }
     csv << "# vicon_source = " << kViconSourceBuildMode << " ("
         << kViconSourceHost << ")\n";
     csv << "# arm = " << arm_config.name << " (" << arm_config.ip << ")\n";
+    csv << "# planning = " << (args.plan ? "on" : "off") << "\n";
     csv << "# planner_handoff = in_process_typed_world_cartesian\n";
-    WriteConfigLines(log_file, csv, "# ");
+    WriteConfigLines(args.log_file, csv, "# ");
 }
 } // namespace
 
@@ -319,8 +340,9 @@ namespace
     //
     // Returns 0 only on a clean operator stop with no faults observed.
     int RunOneArm(const config::ArmConfig& arm_config, Arm controlled_arm,
-                  RobotModel& robot_model, const std::string& log_file_arg)
+                  RobotModel& robot_model, const ParsedMainArgs& args)
     {
+        const std::string& log_file_arg = args.log_file;
         const std::string tag = std::string("[") + arm_config.name + "] ";
         try {
             // Explicit right-arm-or-left-arm adapter over the shared
@@ -398,7 +420,7 @@ namespace
             // An explicit --log filename is used verbatim (refused with
             // --arm both, since one filename can't name two arms' logs).
             std::string log_file = log_file_arg;
-            if (log_file.empty()) {
+            if (args.record && log_file.empty()) {
                 const std::string run_dir = dated_run_dir(RUNS_ROOT_DIR);
                 std::error_code dir_error;
                 std::filesystem::create_directories(run_dir, dir_error);
@@ -409,12 +431,24 @@ namespace
                 }
                 log_file = run_dir + "/" + timestamped_csv_name(arm_config.log_prefix);
             }
-            std::ofstream csv(log_file);
-            if (!csv) {
-                std::cerr << tag << "Error: cannot open " << log_file << " — not starting\n";
-                return 1;
+            // --record off: `csv` stays unopened. Every "csv <<" below is a
+            // no-op on an unopened stream, and the LoopLogWriter is simply
+            // not constructed — the loop's feedback path is untouched, only
+            // the telemetry-to-disk path is absent. With recording on, an
+            // unopenable file still refuses the start: a hardware run must
+            // never end with zero evidence because the file could not be
+            // created.
+            std::ofstream csv;
+            if (args.record) {
+                csv.open(log_file);
+                if (!csv) {
+                    std::cerr << tag << "Error: cannot open " << log_file << " — not starting\n";
+                    return 1;
+                }
+                WriteCsvPreamble(args, arm_config, csv);
+            } else {
+                std::cout << tag << "recording OFF: no run CSV will be written\n";
             }
-            WriteCsvPreamble(log_file_arg, arm_config, csv);
 
             // World-pose input. Slot + acquisition thread
             // are per-arm because the slot is strictly single-reader and
@@ -424,18 +458,46 @@ namespace
             // Vicon never delays or stops the takeover; the stub build
             // returns nullptr and the columns record honest absence.
             BasePoseSlot base_pose_slot;
-            std::unique_ptr<ViconSource> vicon_source =
-                StartViconSource(base_pose_slot);
-            std::cout << tag << "vicon world-pose source: "
-                      << kViconSourceBuildMode << " (" << kViconSourceHost
-                      << ", controller measurement + telemetry)\n";
+            std::unique_ptr<ViconSource> vicon_source;
+            std::unique_ptr<FixedMountSource> fixed_mount_source;
+            if (args.mount == "vicon") {
+                vicon_source = StartViconSource(base_pose_slot);
+                std::cout << tag << "vicon world-pose source: "
+                          << kViconSourceBuildMode << " (" << kViconSourceHost
+                          << ", controller measurement + telemetry)\n";
+            } else {
+                Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+                world_T_mount.translation() =
+                    Eigen::Vector3d(args.fixed_world_t_mount[0],
+                                    args.fixed_world_t_mount[1],
+                                    args.fixed_world_t_mount[2]);
+                world_T_mount.linear() =
+                    Eigen::Quaterniond(args.fixed_world_t_mount[6],
+                                       args.fixed_world_t_mount[3],
+                                       args.fixed_world_t_mount[4],
+                                       args.fixed_world_t_mount[5])
+                        .toRotationMatrix();
+                fixed_mount_source = std::make_unique<FixedMountSource>(
+                    base_pose_slot, world_T_mount);
+                std::cout << tag << "fixed world-pose source: world_T_mount = "
+                          << args.fixed_world_t_mount[0] << " "
+                          << args.fixed_world_t_mount[1] << " "
+                          << args.fixed_world_t_mount[2] << " m, quat xyzw "
+                          << args.fixed_world_t_mount[3] << " "
+                          << args.fixed_world_t_mount[4] << " "
+                          << args.fixed_world_t_mount[5] << " "
+                          << args.fixed_world_t_mount[6]
+                          << " (constant, published in-process)\n";
+            }
 
             // From here the CSV writes itself: the writer thread drains the log
             // to disk every kLogDrainInterval for as long as it is alive. It is
             // declared after `csv` and before the loop, so it is torn down
             // first on every exit path — including an exception — and its
             // destructor performs the final drain.
-            LoopLogWriter log_writer(log, csv, config::kLogDrainInterval);
+            std::optional<LoopLogWriter> log_writer;
+            if (args.record)
+                log_writer.emplace(log, csv, config::kLogDrainInterval);
 
             // The execution core: ONE immutable production configuration
             // snapshot (the only place config:: constants enter the
@@ -498,6 +560,11 @@ namespace
             std::cout << tag << "HOLD AT START: zero-error Cartesian hold until "
                          "the first fresh world sample, then fixed WORLD pose; "
                          "Ctrl+C to stop\n";
+            // --plan off: no worker thread, and the loop gets a null
+            // request slot, so the replan edge (which the reference source
+            // still raises) is computed but published to no one. The arm
+            // captures its world hold at the first fresh sample and stays
+            // there. The planner_config paths are not even read.
             const PlannerRuntimeConfig planner_config{
                 PLANNER_GOAL_FILE,
                 PLANNER_CONFIG_FILE,
@@ -505,10 +572,15 @@ namespace
                 PLANNER_RIGHT_DH_FILE,
                 PLANNER_LEFT_DH_FILE,
                 RUNS_ROOT_DIR};
-            std::thread planner_thread(
-                RunInProcessPlanner, std::ref(planning_requests),
-                std::ref(trajectory_targets), std::cref(planner_config),
-                std::cref(g_stop), &SolveWorldTrajectoryForRequest);
+            std::thread planner_thread;
+            if (args.plan)
+                planner_thread = std::thread(
+                    RunInProcessPlanner, std::ref(planning_requests),
+                    std::ref(trajectory_targets), std::cref(planner_config),
+                    std::cref(g_stop), &SolveWorldTrajectoryForRequest);
+            else
+                std::cout << tag << "planning OFF: no planner worker; the arm "
+                             "holds its captured world pose\n";
             WorkerThreadStopJoiner planner_thread_joiner(planner_thread, g_stop);
 
             // MOVES THE ARM: servoing mode is entered and restored inside the
@@ -519,7 +591,7 @@ namespace
                 config::kFollowingErrorLimitDeg, robot_ready,
                 controlled_arm == Arm::kLeft ? PlanningArm::kLeft
                                               : PlanningArm::kRight,
-                &planning_requests, &base_pose_slot);
+                args.plan ? &planning_requests : nullptr, &base_pose_slot);
 
             planner_thread_joiner.Join();
 
@@ -534,25 +606,31 @@ namespace
             if (result.reason != LoopStop::kUserStop || result.faults_observed)
                 g_stop.store(true, std::memory_order_relaxed);
 
-            // Final drain — everything before this was already on disk.
-            log_writer.Stop();
-            // Exit trailer: the last line of the file names how the run ended and
-            // when, so a CSV is self-describing without the console output. A '#'
-            // line, like the preamble, so every existing parser skips it.
-            csv << "# exit_reason = " << StopReasonName(result.reason)
-                << "\n# exit_time_s = " << result.stop_t_s
-                << "\n# exit_cycle = " << result.cycles
-                << "\n# faults_observed = " << (result.faults_observed ? 1 : 0)
-                << "\n";
-            csv.flush();
-            std::cout << tag << log_writer.rows_written() << " samples written";
-            if (log.dropped() > 0)
-                std::cout << " — WARNING: " << log.dropped()
-                          << " samples never reached the file (the CSV writer "
-                             "could not keep up with the loop; the gap is "
-                             "visible in time_s)";
-            // Full path on its own line, ready to paste into an analysis request.
-            std::cout << "\n" << tag << "log: " << log_file << "\n";
+            if (log_writer) {
+                // Final drain — everything before this was already on disk.
+                log_writer->Stop();
+                // Exit trailer: the last line of the file names how the run ended and
+                // when, so a CSV is self-describing without the console output. A '#'
+                // line, like the preamble, so every existing parser skips it.
+                csv << "# exit_reason = " << StopReasonName(result.reason)
+                    << "\n# exit_time_s = " << result.stop_t_s
+                    << "\n# exit_cycle = " << result.cycles
+                    << "\n# faults_observed = " << (result.faults_observed ? 1 : 0)
+                    << "\n";
+                csv.flush();
+                std::cout << tag << log_writer->rows_written() << " samples written";
+                if (log.dropped() > 0)
+                    std::cout << " — WARNING: " << log.dropped()
+                              << " samples never reached the file (the CSV writer "
+                                 "could not keep up with the loop; the gap is "
+                                 "visible in time_s)";
+                // Full path on its own line, ready to paste into an analysis request.
+                std::cout << "\n" << tag << "log: " << log_file << "\n";
+            } else {
+                std::cout << tag << "recording was OFF: no CSV written ("
+                          << result.cycles << " cycles, exit "
+                          << StopReasonName(result.reason) << ")\n";
+            }
 
             // Only a clean operator stop with no observed faults is success —
             // faults the loop was told to ignore still taint the exit code.
@@ -586,6 +664,19 @@ int main(int argc, char** argv)
         args = ParseMainArgs(std::vector<std::string>(argv + 1, argv + argc));
     } catch (const std::exception& error) {
         UsageAndExit(error.what());
+    }
+
+    // A stub build has no Vicon source at all: with --mount vicon the world
+    // pose this session REQUIRES can never arrive, so refuse here, before
+    // any lock or hardware contact. (--mount fixed on the same binary is
+    // fine — that is what the stub build is for.)
+    if (args.mount == "vicon" &&
+        std::string(kViconSourceBuildMode) == "absent") {
+        std::cerr << "error: this controller was built without the Vicon "
+                     "source (stub build) — --mount vicon cannot deliver a "
+                     "world pose. Rebuild with the SDK present, or run "
+                     "--mount fixed.\n";
+        return 1;
     }
 
     std::vector<const config::ArmConfig*> arm_configs;
@@ -635,7 +726,7 @@ int main(int argc, char** argv)
         for (std::size_t i = 0; i < arm_count; ++i) {
             threads.emplace_back([&, i]() {
                 exit_codes[i] = RunOneArm(*arm_configs[i], controlled_arms[i],
-                                          *robot_model_list[i], args.log_file);
+                                          *robot_model_list[i], args);
             });
         }
         for (std::thread& t : threads)

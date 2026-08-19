@@ -309,6 +309,10 @@ class _Handler(BaseHTTPRequestHandler):
                     arm=str(req.get("arm", "")),
                     confirm=str(req.get("confirm", "")),
                     client_address=self.client_address,
+                    mount=str(req.get("mount", "vicon")),
+                    planning=bool(req.get("planning", True)),
+                    recording=bool(req.get("recording", True)),
+                    fixed_pose=req.get("fixed_pose"),
                 )
                 self._json(result, 200 if result.get("ok") else 400)
             elif route == "/api/session/stop":

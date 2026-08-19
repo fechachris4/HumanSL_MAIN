@@ -118,6 +118,7 @@ message(STATUS "Vicon world-pose source: ${VICON_SOURCE_MODE}")
 add_executable(controller
         Main.cpp
         MainArgs.cpp
+        FixedMountSource.cpp
         ProcessLock.cpp
         Runner.cpp
         InProcessPlanner.cpp
@@ -292,6 +293,17 @@ add_test(NAME in_process_planner COMMAND test_in_process_planner)
 add_executable(test_main_args tests/test_main_args.cpp MainArgs.cpp)
 target_include_directories(test_main_args PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME main_args COMMAND test_main_args)
+
+# --- fixed_mount_source: hardware-free test that the fixed world-pose
+#     producer fills the same BasePoseSample/BasePoseSlot contract the Vicon
+#     source fills. Needs Eigen and the SDK-free tracking headers only. ---
+add_executable(test_fixed_mount_source
+        tests/test_fixed_mount_source.cpp FixedMountSource.cpp)
+target_include_directories(test_fixed_mount_source PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${TRACKING_SRC})
+add_bundled_eigen_to(test_fixed_mount_source)
+target_link_libraries(test_fixed_mount_source pthread)
+add_test(NAME fixed_mount_source COMMAND test_fixed_mount_source)
 
 # Python-only regression coverage for offline log-format compatibility. The
 # interpreter is optional so portable C++ test configurations remain usable.

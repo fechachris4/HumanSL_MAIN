@@ -45,7 +45,7 @@
   so a missing value arrives as null and stays null.
 */
 
-import { createScene } from './scene.js';
+import { createScene, parseGoalPreview } from './scene.js';
 import {
   createSlot,
   createErrorRow,
@@ -1935,7 +1935,7 @@ function renderGoalCards() {
     boxOn.addEventListener('change', () => { boxPane.hidden = !boxOn.checked; });
     card.appendChild(boxPane);
 
-    // save
+    // save and preview
     const saveRow = document.createElement('div');
     saveRow.className = 'goal-row';
     const save = document.createElement('button');
@@ -1944,11 +1944,60 @@ function renderGoalCards() {
     save.textContent = `SAVE ${arm.toUpperCase()} GOAL`;
     save.addEventListener('click', () => saveGoalCard(card, arm));
     saveRow.appendChild(save);
+    const preview = document.createElement('button');
+    preview.type = 'button';
+    preview.className = 'action';
+    preview.textContent = 'PREVIEW GOAL';
+    preview.addEventListener('click', () => previewGoalCard(card, arm));
+    saveRow.appendChild(preview);
+    const clearPreview = document.createElement('button');
+    clearPreview.type = 'button';
+    clearPreview.className = 'action';
+    clearPreview.textContent = 'CLEAR PREVIEW';
+    clearPreview.addEventListener('click', () => {
+      call(state.scene, 'setGoalPreview', arm, null);
+      setNotice('goal-status', `${arm} preview cleared.`, null);
+    });
+    saveRow.appendChild(clearPreview);
     card.appendChild(saveRow);
 
     syncInherit();
     host.appendChild(card);
   }
+}
+
+// Draw what the card's CURRENT, possibly unsaved fields ask for, in the
+// scene on the RUN tab. Read-only by construction: this function and the
+// scene setter it calls make no request of any kind — nothing is saved,
+// no solve starts, no session or hardware is touched. Validation lives in
+// scene.js (parseGoalPreview) so the same rules are testable without a DOM,
+// and an invalid card produces a message instead of misleading geometry.
+function previewGoalCard(card, arm) {
+  const mode = card.querySelector(`input[name="goal-mode-${arm}"]:checked`).value;
+  const fields = { mode, frame: goalField(card, 'frame').value };
+  if (mode === 'point') {
+    fields.goal = vecValue(card, 'goal');
+    fields.rpy_deg = goalField(card, 'inherit').checked ? null : vecValue(card, 'rpy');
+  } else {
+    fields.centre = vecValue(card, 'centre');
+    fields.radius_m = goalField(card, 'radius_m').value.trim();
+    fields.normal = vecValue(card, 'normal');
+    // The triad is only drawn for a held orientation: radial means the
+    // orientation changes around the rim, so one triad at the start would
+    // claim something the path does not do.
+    fields.rpy_deg = goalField(card, 'path-orientation').value === 'fixed'
+      ? vecValue(card, 'path-rpy') : null;
+  }
+  const parsed = parseGoalPreview(fields);
+  if (!parsed.ok) {
+    call(state.scene, 'setGoalPreview', arm, null);
+    setNotice('goal-status', `${arm} preview: ${parsed.error}`, 'is-warn');
+    return;
+  }
+  call(state.scene, 'setGoalPreview', arm, parsed.preview);
+  showView('run');
+  setNotice('goal-status',
+    `${arm} preview drawn in the scene from the typed values — nothing was saved, solved, or sent.`, null);
 }
 
 // Reads one arm's card and writes it through /api/goal/fields. In circle
@@ -2247,6 +2296,19 @@ function wireSessionPane() {
   $('drive-select').addEventListener('change', () => {
     state.driveChosen = true;   // stop following goal.yaml once it is set by hand
     renderDriveNote();
+    renderRequired();
+  });
+  // The session's other three choices. Fixed-pose fields exist only while
+  // the fixed mount is selected, and the identity checkbox stands in for
+  // typing seven zeros-and-a-one.
+  $('mount-select').addEventListener('change', () => {
+    $('fixed-pose-row').hidden = $('mount-select').value !== 'fixed';
+    renderRequired();
+  });
+  $('plan-select').addEventListener('change', renderRequired);
+  $('record-select').addEventListener('change', renderRequired);
+  $('fixed-identity').addEventListener('change', () => {
+    $('fixed-pose-fields').hidden = $('fixed-identity').checked;
   });
   $('copy-diagnostics-session').addEventListener('click',
     () => copyDiagnostics('copy-diagnostics-session'));
@@ -2360,6 +2422,7 @@ async function refreshStatus() {
 
   renderSession();
   renderFreshness();
+  renderRequired();
   renderConnection();
   // renderRun, not renderBanner: the banner, the empty state and the driving
   // mark all read this same status, and rendering only some of them is how
@@ -2392,12 +2455,93 @@ function renderFreshness() {
     return;
   }
 
-  const stale = Boolean(freshness.stale);
-  stateNode.textContent = stale ? 'STALE' : 'UP TO DATE';
-  stateNode.classList.toggle('is-stale', stale);
-  detail.textContent = stale
-    ? `${(freshness.reasons || []).join('; ')} — build before starting, or the session refuses at the freshness gate`
-    : 'every binary was built after the newest source change, and the DH tables match the URDF';
+  // Whether a stale component BLOCKS depends on the selected session:
+  // the controller always, the DH tables only when planning is on, the
+  // planner_bridge preview never (the running controller does not execute
+  // it). The server's gate makes the same distinction; this is its mirror.
+  const required = requiredFreshnessReasons(freshness);
+  const informational = (freshness.reasons || [])
+    .filter((reason) => !required.includes(reason));
+  stateNode.textContent = required.length ? 'STALE'
+    : informational.length ? 'STALE (UNUSED PARTS)' : 'UP TO DATE';
+  stateNode.classList.toggle('is-stale', required.length > 0);
+  detail.textContent = required.length
+    ? `${required.join('; ')} — build before starting, or the session refuses at the freshness gate`
+    : informational.length
+      ? `${informational.join('; ')} — not used by the selected session, so it does not block`
+      : 'every binary was built after the newest source change, and the DH tables match the URDF';
+}
+
+// The freshness sentences that block the CURRENTLY SELECTED session — the
+// same rule session.py's required_stale_reasons applies on the server.
+function requiredFreshnessReasons(freshness) {
+  if (!freshness) return [];
+  const reasons = [...(freshness.controller?.reasons || [])];
+  if ($('plan-select').value !== 'off') {
+    for (const entry of Object.values(freshness.dh || {}))
+      reasons.push(...(entry?.reasons || []));
+  }
+  return reasons;
+}
+
+// One row per dependency the selected session rests on: required and there,
+// required and missing/stale, or deliberately unused. Derived, never stored —
+// change a select and the list follows.
+function renderRequired() {
+  const list = $('required-list');
+  if (!list) return;
+  const freshness = state.status?.freshness;
+  const choices = sessionChoices();
+  const arms = driveArms();
+  const rows = [];
+  const row = (label, state_, detail_) => rows.push({ label, state: state_, detail: detail_ });
+
+  row(`Kinova connection (${arms})`, 'required',
+      'checked at takeover: faults cleared, readiness gate, hard speed limits, joint-limit bands');
+  row('controller binary', freshness
+      ? ((freshness.controller?.reasons || []).length ? 'blocking' : 'ready')
+      : 'unknown',
+      (freshness?.controller?.reasons || []).join('; ')
+        || 'fresh against control/, runtime/ and planner sources');
+  if (choices.mount === 'vicon') {
+    row('Vicon world pose', 'required',
+        'the session needs a live world_T_mount; the controller holds until the first fresh sample');
+  } else {
+    row('Vicon', 'unused', 'fixed mount: a constant world_T_mount is published in-process');
+  }
+  if (choices.planning) {
+    const dhReasons = Object.values(freshness?.dh || {})
+      .flatMap((entry) => entry?.reasons || []);
+    row('planner (GPMP2, in-process) + DH tables', freshness
+        ? (dhReasons.length ? 'blocking' : 'ready') : 'unknown',
+        dhReasons.join('; ') || 'goal.yaml, planner.yaml and the generated DH tables');
+  } else {
+    row('planner', 'unused', 'planning off: no worker thread, planner files not read');
+  }
+  row('recording', choices.recording ? 'required' : 'unused',
+      choices.recording
+        ? 'run CSV written at 500 Hz; an unopenable file refuses the start'
+        : 'no CSV: no plots, no run evidence — the control loop is unaffected');
+  const bridgeStale = (state.status?.freshness?.bridge?.reasons || []).length > 0;
+  row('planner_bridge (preview tool)', 'unused',
+      bridgeStale ? 'stale, and that is fine: the running controller never executes it'
+                  : 'never executed by the running controller');
+
+  list.replaceChildren(...rows.map(({ label, state: s, detail: d }) => {
+    const item = document.createElement('li');
+    item.className = `required-item is-${s}`;
+    const name = document.createElement('span');
+    name.className = 'required-name';
+    name.textContent = label;
+    const badge = document.createElement('span');
+    badge.className = 'required-state';
+    badge.textContent = s.toUpperCase();
+    const note = document.createElement('span');
+    note.className = 'required-detail';
+    note.textContent = d;
+    item.append(name, badge, note);
+    return item;
+  }));
 }
 
 function renderSession() {
@@ -2496,6 +2640,28 @@ function renderDriveNote() {
   setNotice('drive-note', note, null);
 }
 
+// The three non-arm session choices, read straight from the controls.
+function sessionChoices() {
+  return {
+    mount: $('mount-select').value || 'vicon',
+    planning: $('plan-select').value !== 'off',
+    recording: $('record-select').value !== 'off',
+  };
+}
+
+// null = identity (world = mount, the default the controller assumes with no
+// flag); an array of 7 finite numbers otherwise; a string = the typo, shown
+// to the operator instead of being sent anywhere.
+function fixedPoseChoice() {
+  if ($('mount-select').value !== 'fixed' || $('fixed-identity').checked)
+    return null;
+  const parts = $('fixed-pose-input').value.trim().split(/[\s,]+/).filter(Boolean);
+  const numbers = parts.map(Number);
+  if (numbers.length !== 7 || numbers.some((n) => !Number.isFinite(n)))
+    return 'world_T_mount needs 7 numbers: x y z (m) then quaternion x y z w';
+  return numbers;
+}
+
 async function startSession() {
   const confirm = $('go-input').value.trim().toUpperCase();
   if (confirm !== 'GO') {
@@ -2503,9 +2669,20 @@ async function startSession() {
     return;
   }
   const arms = driveArms();
+  const choices = sessionChoices();
+  const fixedPose = fixedPoseChoice();
+  if (typeof fixedPose === 'string') {
+    setNotice('start-status', fixedPose, 'is-warn');
+    return;
+  }
   setNotice('start-status', 'starting…', null);
   try {
-    const result = await postJSON('/api/session/start', { arm: arms, confirm: 'GO' });
+    const result = await postJSON('/api/session/start', {
+      arm: arms, confirm: 'GO',
+      mount: choices.mount, planning: choices.planning,
+      recording: choices.recording,
+      ...(fixedPose ? { fixed_pose: fixedPose } : {}),
+    });
     if (result.error) {
       // A refusal carries its reasons — a stale binary lists which file is
       // newer than which. Showing them is the difference between "it refused"
