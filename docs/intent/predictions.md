@@ -560,3 +560,77 @@ carrying: Christian draws a sharper line than I did between artefacts
 the repository generates (regenerable at will) and artefacts he has
 accepted (his to revisit). Treat "accepted packet" as a stronger claim
 on his attention than "frozen fixture" in future options.
+
+### 2026-08-20 — how much of the test suite to delete
+
+**Not predicted before asking.** Third process miss of this kind: the
+AskUserQuestion went out before anything was logged here, so no honest
+prediction exists and this entry cannot count as a hit. The weaker
+recordable signal is that the recommendation was visible in the question
+— I recommended "all but 5 safety tests", keeping the ones the
+production code cites as the derivation of its constants
+(`test_grid_coverage`, `test_waypoints`) or as guards on the 500 Hz path
+(`test_execution_core`).
+
+**Actual:** "All 58, no exceptions." Executed as 81 tracked files /
+20,773 lines, the true count once `simulation/`, `tracking/` and the
+shell and Python tests were included.
+
+**Result:** miss against the stated recommendation. The lesson worth
+carrying: the safety-evidence argument that felt decisive to me — that
+`WorldSdf.h`'s grid constants have no provenance except the test that
+measured them — did not move him. Either the argument was weaker than it
+felt, or the cost of carrying 20k lines outweighed it for him. Worth
+asking which, rather than assuming, before making the same argument again.
+
+## 2026-08-20 — RobotModel scoping (3 questions)
+
+Predictions were carried by which option I marked "(Recommended)" and placed first.
+
+1. Who owns position limits, given the URDF is silent on joints 1/3/5/7?
+   Predicted: one limits file with the URDF as a cross-check.
+   Actual: leave as is for now. **Miss** — I read the joint-6 divergence as
+   something he wanted closed in this slice; he wants the slice kept narrow.
+2. Do planner margins live in RobotModel?
+   Predicted: hardware only, margins stay planner config. Actual: same. **Hit.**
+3. How far does the slice reach?
+   Predicted: read-only design first. Actual: same. **Hit.**
+
+## 2026-08-20 — margin shape (2 questions)
+
+1. Identical margin at both layers, or ordered margins?
+   Predicted: ordered (planner 2 deg, controller 1 deg) — I had just argued
+   for it, so this was a weak prediction. Actual: ordered. **Hit.**
+2. Does the velocity derate fold into the same margin mechanism?
+   Predicted: leave velocity as the 0.95 derate, since a proportional derate
+   and an absolute degree margin are different quantities. Actual: one
+   mechanism for both. **Miss** — he weights one uniform concept above the
+   quantity mismatch, consistently with the whole thread's push for fewer
+   interacting numbers.
+
+## 2026-08-20 — limits cleanup implementation (3 questions)
+
+1. How does control/Config.h stop duplicating the yaml?
+   Predict: build-generated header, matching the existing dh_params pattern —
+   he has accepted that pattern before and it avoids giving the 500 Hz
+   controller a runtime YAML dependency.
+2. Derivation rule for the firmware error thresholds (today 140/150/123, all
+   deliberately OUTSIDE the physical range, and inconsistently so)?
+   Predict: physical + fixed outward margin. Less sure — j2's 140 vs a 128.9
+   physical limit is an 11 deg gap that may encode something unrecorded, and
+   he has said before not to change hardware thresholds blind.
+3. Controller velocity fraction 0.99 raises the clip from 76/66.5 to
+   79.2/69.3 deg/s. Confirm?
+   Predict: he confirms — it follows directly from the ordering he specified.
+   But I expect him to want it flagged rather than silent.
+
+Actuals:
+1. Build-generated header. **Hit.**
+2. Neither of my three options. He asked instead whether EnsureJointLimits'
+   writes are needed at all, or whether they are this project overriding the
+   robot's native safety configuration. **Miss** — I framed it as "which
+   derivation rule" and never questioned whether the writes should exist.
+   The answer from the repo is that this arm's persisted state IS a
+   degenerate 0/0 band that faults outward motion, so the writes are load-
+   bearing; see the report.
+3. Confirm 0.99, flagged. **Hit.**
