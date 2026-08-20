@@ -634,3 +634,52 @@ Actuals:
    degenerate 0/0 band that faults outward motion, so the writes are load-
    bearing; see the report.
 3. Confirm 0.99, flagged. **Hit.**
+
+## 2026-08-20 — "removetest"
+
+A two-word prompt. Predict he means: commit the ~95 staged test-file
+deletions from the mount-frame migration, completing the state the CMake
+test-target removals in c28dd978 already assume. Alternative readings: remove
+a specific test, or discard the scratchpad verification program (which is not
+in the repo). Asking rather than guessing, because committing 21k deleted
+lines is the kind of thing that should not happen on a misread.
+Actual: commit the staged deletions. **Hit.**
+
+## 2026-08-20 — left circle will not plan
+
+Diagnosis established offline: the goal's fixed orientation [90,0,90] deg is
+infeasible on the far arc (probe reproduces the planner's "sample 23 of 29"
+exactly); orientation [0,0,0] traces all 30 samples cleanly.
+
+Prediction for the fix question: he picks changing orientation_rpy_deg to a
+feasible orientation rather than reverting the centre, because the centre edit
+was deliberate and the evidence points at orientation, not position. Second
+guess: he asks for both, wanting the committed centre back as well.
+Actual: he declined the options and asked to clarify first. **Miss** — I jumped to a fix menu when he had asked for a diagnosis and evidently wants to interrogate it.
+
+## 2026-08-20 — validator ACCEPT/WARNING/REJECT thresholds
+
+Four threshold questions asked (fidelity band, clearance warning, post-scaling
+velocity residual, keeping splice/joint-limit gates hard). NOT PREDICTED: the
+prediction hook fired only after the answers had already arrived in the same
+tool result, so no honest pre-answer prediction exists for this exchange.
+Recording the answers only: he took the recommended option on all four
+(2x-tolerance band, warn <10 mm clearance / reject penetration, warn <=5%
+velocity overage, keep splice and joint-limit rejects hard).
+
+## 2026-08-20 — collapse the old boolean verdicts?
+
+He pushed back that the verdict work added code instead of reducing it.
+Prediction: he chooses the full collapse (remove task_fidelity_valid,
+hardware_execution_allowed, dynamic_limits_valid + DynamicLimitsValid, and
+the boolean checklist in Summary), because his complaint is precisely about
+layering rather than replacing, and the metrics themselves stay.
+Actual: full collapse. **Hit.**
+
+## 2026-08-20 — how to slice the verdict commit
+
+"commit this" but the touched files carry large uncommitted mount-migration
+edits. Prediction: he picks two separate commits (migration remainder first,
+then the verdict change), because he has consistently split commits by topic
+today (c28dd978 / a45fb7f3) and the migration was already verified.
+Actual: two commits. **Hit.**
