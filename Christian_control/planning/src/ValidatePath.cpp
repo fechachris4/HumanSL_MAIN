@@ -265,23 +265,30 @@ PathValidationReport ValidatePlannedPath(
     report.minimum_joint_limit_margin_rad =
         std::isfinite(min_limit_margin) ? min_limit_margin : 0.0;
     report.joint_limits_valid = report.minimum_joint_limit_margin_rad > 0.0;
-    // Each joint against ITS OWN limit (DynamicLimitsValid,
-    // PathValidationReport.h). The previous max-vs-max comparison was
-    // equivalent only while every joint shared one limit; with the
-    // 76/66.5 deg/s split it would have passed a joint 5-7 running up to
-    // the joint 1-4 limit.
-    report.dynamic_limits_valid = DynamicLimitsValid(
-        max_velocity_per_joint, max_acceleration_per_joint,
-        inputs.joint_velocity_limits_rad_s,
-        inputs.joint_acceleration_limits_rad_s2);
+    // Worst joint against ITS OWN limit, as a ratio — limits differ per
+    // joint (76 deg/s for joints 1-4, 66.5 deg/s for 5-7, joint_limits.yaml
+    // 2026-08-13), so a max-vs-max comparison would let a joint 5-7 run up
+    // to the joint 1-4 limit unnoticed. An unset (non-positive) velocity
+    // limit is unanswerable and reads as infinitely over; a missing
+    // acceleration table reads as 0 (no check configured).
+    if ((inputs.joint_velocity_limits_rad_s.array() <= 0.0).any()) {
+        report.max_velocity_limit_ratio =
+            std::numeric_limits<double>::infinity();
+    } else {
+        report.max_velocity_limit_ratio =
+            (max_velocity_per_joint.array() /
+             inputs.joint_velocity_limits_rad_s.array()).maxCoeff();
+    }
+    if ((inputs.joint_acceleration_limits_rad_s2.array() > 0.0).all()) {
+        report.max_acceleration_limit_ratio =
+            (max_acceleration_per_joint.array() /
+             inputs.joint_acceleration_limits_rad_s2.array()).maxCoeff();
+    }
 
-    report.task_fidelity_valid =
-        report.command.max_position_m <= inputs.maximum_planning_error_m &&
-        report.command.max_orientation_rad <= inputs.maximum_orientation_error_rad;
-
-    report.hardware_execution_allowed =
-        report.optimiser_converged && report.task_fidelity_valid &&
-        report.modelled_collision_valid && report.joint_limits_valid &&
-        report.dynamic_limits_valid && report.start_state_valid;
+    VerdictThresholds thresholds;
+    thresholds.maximum_planning_error_m = inputs.maximum_planning_error_m;
+    thresholds.maximum_orientation_error_rad =
+        inputs.maximum_orientation_error_rad;
+    DecidePlanVerdict(report, thresholds);
     return report;
 }

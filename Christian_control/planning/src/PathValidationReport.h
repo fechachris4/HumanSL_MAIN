@@ -49,6 +49,12 @@ struct CircleGeometryError {
     double max_radial_error_m = 0.0;  // ‖(I−nnᵀ)(p−c)‖ − r — wrong radius
 };
 
+// The three-valued gate. REJECT means the trajectory is unsafe or clearly
+// fails the requested task; WARNING means it is usable but imperfect (the
+// imperfection is listed in `warnings`); ACCEPT means every modelled check
+// passed cleanly. Only REJECT stops emission.
+enum class PlanVerdict { kAccept, kWarning, kReject };
+
 struct PathValidationReport {
     // --- planning fidelity -----------------------------------------------
     FidelityError planner;         // desired vs GP-dense
@@ -69,9 +75,13 @@ struct PathValidationReport {
     std::string sdf_contents;  // echoed into the report verbatim
 
     // --- dynamics --------------------------------------------------------
-    bool dynamic_limits_valid = false;
     double max_joint_velocity_rad_s = 0.0;
     double max_joint_acceleration_rad_s2 = 0.0;
+    // Worst joint's observed maximum over ITS OWN limit. 1.0 is exactly at
+    // the limit; infinity means a limit was unset (non-positive). The
+    // acceleration ratio is 0 when no acceleration table is configured.
+    double max_velocity_limit_ratio = 0.0;
+    double max_acceleration_limit_ratio = 0.0;
     double minimum_joint_limit_margin_rad = 0.0;
     bool joint_limits_valid = false;
 
@@ -83,13 +93,29 @@ struct PathValidationReport {
 
     // --- overall ---------------------------------------------------------
     bool optimiser_converged = false;
-    bool task_fidelity_valid = false;
-    // Every required check passed. NOT a claim that the motion is safe —
-    // only that everything MODELLED was verified.
-    bool hardware_execution_allowed = false;
+
+    // The gate (DecidePlanVerdict). WARNING plans are emitted with the
+    // listed imperfections; only REJECT stops emission. NOT a claim that
+    // the motion is safe — only that everything MODELLED was verified.
+    PlanVerdict verdict = PlanVerdict::kReject;
+    std::vector<std::string> warnings;
 
     std::string Summary() const;
 };
+
+// The requested tolerances the verdict bands are built from. Within
+// tolerance is ACCEPT; up to twice tolerance is WARNING; beyond that the
+// plan clearly fails the requested task and is REJECTED.
+struct VerdictThresholds {
+    double maximum_planning_error_m = 0.005;
+    double maximum_orientation_error_rad = 0.1;
+};
+
+// Fills report.verdict and report.warnings from the measurements already in
+// the report, and returns the verdict. Pure — exercised directly by
+// tests/test_plan_verdict.cpp.
+PlanVerdict DecidePlanVerdict(PathValidationReport& report,
+                              const VerdictThresholds& thresholds);
 
 // What the trajectory is measured against and with.
 struct ValidationInputs {
@@ -116,26 +142,3 @@ struct ValidationInputs {
     double circle_radius_m = 0.0;
 };
 
-// The dynamic-limits verdict, per joint: every joint's observed maximum
-// against ITS OWN limit. Limits differ per joint (76 deg/s for joints 1-4,
-// 66.5 deg/s for 5-7 — Config.h / joint_limits.yaml, 2026-08-13), so a
-// max-vs-max comparison would let a joint 5-7 run up to the joint 1-4
-// limit unnoticed. Non-positive velocity limits invalidate the verdict;
-// non-positive acceleration limits skip the acceleration check (no table
-// configured), matching the historical behaviour.
-inline bool DynamicLimitsValid(
-    const Eigen::Matrix<double, 7, 1>& max_velocity_per_joint_rad_s,
-    const Eigen::Matrix<double, 7, 1>& max_acceleration_per_joint_rad_s2,
-    const Eigen::Matrix<double, 7, 1>& velocity_limits_rad_s,
-    const Eigen::Matrix<double, 7, 1>& acceleration_limits_rad_s2)
-{
-    if ((velocity_limits_rad_s.array() <= 0.0).any())
-        return false;
-    if ((max_velocity_per_joint_rad_s.array() >
-         velocity_limits_rad_s.array()).any())
-        return false;
-    if ((acceleration_limits_rad_s2.array() <= 0.0).any())
-        return true;
-    return (max_acceleration_per_joint_rad_s2.array() <=
-            acceleration_limits_rad_s2.array()).all();
-}

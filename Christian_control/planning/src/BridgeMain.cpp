@@ -810,18 +810,25 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                                         : " — DID NOT SETTLE within the pass limit\n");
         diagnostics << plan.report.Summary();
 
-        if (!plan.report.hardware_execution_allowed) {
-            // Not emitted. Every check the report lists is a MODELLED one,
-            // so a failure here is the strongest statement available that
-            // this trajectory should not reach the arm.
-            diagnostics << "error: plan rejected — one or more validity checks "
-                           "failed (see the report above). Nothing was emitted.\n";
+        if (plan.report.verdict == PlanVerdict::kReject) {
+            // Not emitted. REJECT means unsafe or clearly failing the
+            // requested task: non-finite states, modelled collision, a real
+            // joint-limit violation, a splice jump, velocity still over
+            // after time scaling, or task error beyond twice the requested
+            // tolerance. Small imperfections warn instead (see the report).
+            diagnostics << "error: plan rejected — an unsafe or clearly "
+                           "invalid condition (see the verdict in the report "
+                           "above). Nothing was emitted.\n";
             result.exit_code = 4;
             return result;
         }
+        if (plan.report.verdict == PlanVerdict::kWarning)
+            diagnostics << "plan accepted WITH WARNINGS — usable but "
+                           "imperfect; the warnings above say how.\n";
         try {
             WorldCartesianTrajectory projected = ProjectWorldTrajectory(
-                model, plan.result.trajectory_pos, plan.result.trajectory_vel,
+                model, world_T_mount,
+                plan.result.trajectory_pos, plan.result.trajectory_vel,
                 plan.total_time_sec, *parsed.trajectory_id,
                 *parsed.vicon_sequence);
             result.trajectory =

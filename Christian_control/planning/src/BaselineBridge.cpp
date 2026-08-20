@@ -142,7 +142,7 @@ PlannerSolveResult SolveBaselineBridgeForRequest(
     // stderr (the baseline's full report and diagnostics) goes to a file so
     // the block on stdout stays uninterleaved, then is replayed verbatim
     // into this solve's diagnostics — the panel's plan verdict reads the
-    // same hardware_execution_allowed / e_command lines it always has.
+    // same verdict / e_command lines it always has.
     char stderr_path[] = "/tmp/baseline_bridge_stderr_XXXXXX";
     const int stderr_fd = mkstemp(stderr_path);
     if (stderr_fd < 0) {

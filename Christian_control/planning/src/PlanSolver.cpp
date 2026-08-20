@@ -353,7 +353,13 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             outcome.report = report;
             outcome.total_time_sec = duration_s;
 
-            if (report.dynamic_limits_valid) break;
+            // Fully inside both dynamic limits: nothing left to repair.
+            // (An unset velocity limit reads as an infinite ratio and an
+            // unconfigured acceleration table as 0, so this keeps the old
+            // pass/skip semantics.)
+            if (report.max_velocity_limit_ratio <= 1.0 &&
+                report.max_acceleration_limit_ratio <= 1.0)
+                break;
 
             // ONLY dynamic failures are retried. Slowing down cannot fix a
             // trajectory that traces the wrong shape or clips an obstacle,
