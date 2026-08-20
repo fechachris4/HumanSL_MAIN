@@ -233,12 +233,18 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         tolerance.accept_orientation_rad =
             config.path_following.maximum_orientation_error_rad;
 
+        PathIkJointLimits ik_limits;
+        for (int joint = 0; joint < 7; ++joint) {
+            ik_limits.lower_rad(joint) = pos_limits.lower(joint);
+            ik_limits.upper_rad(joint) = pos_limits.upper(joint);
+        }
         const PathIkResult walk =
-            SolvePathIk(task_path, arm, q_start_rad, tolerance, /*closed=*/true);
+            SolvePathIk(task_path, arm, q_start_rad, ik_limits, tolerance,
+                        /*closed=*/true);
         outcome.maximum_joint_step_rad = walk.maximum_joint_step_rad;
         outcome.closure_drift_rad = walk.closure_drift_rad;
-        outcome.unresolved_samples = walk.unresolved_samples;
-        outcome.interpolated_samples = walk.interpolated_samples;
+        outcome.ik_unresolved_samples = walk.unresolved_samples;
+        outcome.ik_interpolated_samples = walk.interpolated_samples;
         if (!walk.success) {
             outcome.error =
                 "path IK initialization failed: unresolved run of " +

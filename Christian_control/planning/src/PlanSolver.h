@@ -67,11 +67,13 @@ struct PathPlanOutcome {
     double total_time_sec = 0.0;
     int time_scaling_passes = 0;  // how many alpha iterations were needed
     bool time_scaling_settled = true;
-    // Continuation-IK diagnostics for the traced path.
+    // Continuation-IK diagnostics for the traced path. Short unresolved gaps
+    // use interpolated initial guesses; every path pose prior keeps its full
+    // configured strength and the final validator judges the result.
     double maximum_joint_step_rad = 0.0;
     double closure_drift_rad = 0.0;
-    std::size_t unresolved_samples = 0;
-    std::size_t interpolated_samples = 0;
+    std::size_t ik_unresolved_samples = 0;
+    std::size_t ik_interpolated_samples = 0;
 };
 
 // Plans a trajectory that traces `task_path`, then emits, reconstructs and

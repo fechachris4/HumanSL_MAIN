@@ -24,8 +24,8 @@
 // last successful solution stays the seed, so one bad patch does not
 // scatter everything after it.
 //
-//   ./probe_path_reachability --arm left --dh <yaml> \
-//        --centre X Y Z --radius R --normal NX NY NZ \
+//   ./probe_path_reachability --arm left --dh <yaml> --joint-limits <yaml>
+//        --centre X Y Z --radius R --normal NX NY NZ
 //        [--frame mount|right_base|left_base] [--samples N]
 //        [--orientation fixed|radial] [--rpy R P Y]
 //        [--start-deg J1..J7]
@@ -55,6 +55,7 @@ constexpr double kRadToDeg = 180.0 / M_PI;
     if (!error.empty()) std::fprintf(stderr, "error: %s\n\n", error.c_str());
     std::fprintf(stderr,
         "usage: probe_path_reachability --arm right|left --dh <params.yaml>\n"
+        "         --joint-limits <joint_limits.yaml>\n"
         "         --centre X Y Z --radius R [--normal NX NY NZ]\n"
         "         [--frame mount|right_base|left_base] [--samples N]\n"
         "         [--orientation fixed|radial] [--rpy ROLL PITCH YAW (deg)]\n"
@@ -67,10 +68,9 @@ constexpr double kRadToDeg = 180.0 / M_PI;
         "--tolerance-mm/--tolerance-deg (default 2 mm / 2 deg) are how close\n"
         "the tool must actually get for a sample to count as ON the path.\n"
         "They are NOT the solver's own acceptance test, which passes at\n"
-        "40 mm / 8.6 deg because it was tuned to SEED a point-to-point\n"
-        "optimiser that then corrects the endpoint. Nothing corrects the\n"
-        "middle of a path, so certifying a path against that threshold would\n"
-        "call a 38 mm-wide smear a circle.\n");
+        "40 mm / 8.6 deg because it was tuned to seed optimization. This\n"
+        "probe still reports direct IK evidence; the planner may interpolate\n"
+        "a short local gap and let GPMP2 enforce the full path afterwards.\n");
     std::exit(2);
 }
 
@@ -80,6 +80,27 @@ double ParseDouble(const std::string& text) {
     if (used != text.size() || !std::isfinite(value))
         Usage("not a finite number: '" + text + "'");
     return value;
+}
+
+double JointLimitMargin(const Eigen::Matrix<double, 7, 1>& q,
+                        const PathIkJointLimits& limits) {
+    double margin = std::numeric_limits<double>::infinity();
+    for (int joint = 0; joint < 7; ++joint) {
+        if (limits.lower_rad(joint) < -1e10 || limits.upper_rad(joint) > 1e10)
+            continue;
+        margin = std::min(margin,
+                          std::min(q(joint) - limits.lower_rad(joint),
+                                   limits.upper_rad(joint) - q(joint)));
+    }
+    return margin;
+}
+
+double Manipulability(const Eigen::Matrix<double, 7, 1>& q,
+                      const PathIkArm& arm) {
+    const auto pose_jacobian =
+        pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
+            q, arm.end_effector_frame, arm.left_arm);
+    return pose_jacobian.jacobian.jacobiSvd().singularValues().tail<1>()(0);
 }
 
 config::ReferenceFrame FrameFromName(const std::string& name) {
@@ -92,7 +113,7 @@ config::ReferenceFrame FrameFromName(const std::string& name) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string arm, dh_path;
+    std::string arm, dh_path, joint_limits_path;
     CircleSpec spec;
     spec.samples = 36;
     spec.duration_s = 1.0;  // unused by the probe; any positive value is fine
@@ -109,6 +130,7 @@ int main(int argc, char** argv) {
         };
         if (flag == "--arm") arm = next();
         else if (flag == "--dh") dh_path = next();
+        else if (flag == "--joint-limits") joint_limits_path = next();
         else if (flag == "--frame") spec.frame = FrameFromName(next());
         else if (flag == "--radius") { spec.radius_m = ParseDouble(next()); have_radius = true; }
         else if (flag == "--samples") spec.samples = static_cast<int>(ParseDouble(next()));
@@ -134,6 +156,7 @@ int main(int argc, char** argv) {
     }
     if (arm != "right" && arm != "left") Usage("--arm must be 'right' or 'left'");
     if (dh_path.empty()) Usage("--dh is required");
+    if (joint_limits_path.empty()) Usage("--joint-limits is required");
     if (!have_centre || !have_radius) Usage("--centre and --radius are required");
 
     const bool left_arm = arm == "left";
@@ -185,8 +208,18 @@ int main(int argc, char** argv) {
     probe_arm.end_effector_frame = model.end_effector_frame;
     probe_arm.left_arm = model.left_arm;
 
+    const auto [position_limits, velocity_limits] =
+        createJointLimits(joint_limits_path);
+    (void)velocity_limits;
+    PathIkJointLimits path_limits;
+    for (int joint = 0; joint < 7; ++joint) {
+        path_limits.lower_rad(joint) = position_limits.lower(joint);
+        path_limits.upper_rad(joint) = position_limits.upper(joint);
+    }
+
     const PathIkResult walk =
-        SolvePathIk(path, probe_arm, seed, tolerance, /*closed=*/true);
+        SolvePathIk(path, probe_arm, seed, path_limits, tolerance,
+                    /*closed=*/true);
 
     for (std::size_t i = 0; i < path.samples.size(); ++i) {
         const Eigen::Isometry3d& pose = path.samples[i].pose;
@@ -194,10 +227,10 @@ int main(int argc, char** argv) {
 
         std::string limit_note;
         for (int j = 0; j < 7; ++j) {
-            const double lo = analytical_ik::KinovaGen3Params::JOINT_LIMITS_LOWER[j];
-            const double hi = analytical_ik::KinovaGen3Params::JOINT_LIMITS_UPPER[j];
+            const double lo = path_limits.lower_rad(j);
+            const double hi = path_limits.upper_rad(j);
             if (lo < -1e10 || hi > 1e10) continue;  // continuous joint
-            const double q = std::remainder(sample.configuration(j), 2.0 * M_PI);
+            const double q = sample.configuration(j);
             if (q < lo || q > hi) {
                 char buffer[64];
                 std::snprintf(buffer, sizeof buffer, "j%d by %.1f deg ", j + 1,
@@ -264,8 +297,10 @@ int main(int argc, char** argv) {
     for (const PathIkSample& s : walk.samples) {
         if (!s.solved) continue;
         worst_margin_deg =
-            std::min(worst_margin_deg, s.minimum_joint_limit_margin_rad * kRadToDeg);
-        worst_sigma = std::min(worst_sigma, s.minimum_manipulability);
+            std::min(worst_margin_deg,
+                     JointLimitMargin(s.configuration, path_limits) * kRadToDeg);
+        worst_sigma =
+            std::min(worst_sigma, Manipulability(s.configuration, probe_arm));
     }
     if (worst_margin_deg < 1e8)
         std::printf("tightest joint-limit margin: %.1f deg; smallest sigma_min: %.4f\n",

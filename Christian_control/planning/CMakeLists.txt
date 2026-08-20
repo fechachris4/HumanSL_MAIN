@@ -190,7 +190,11 @@ add_executable(test_path_ik tests/test_path_ik.cpp)
 target_include_directories(test_path_ik PRIVATE src)
 target_link_libraries(test_path_ik PRIVATE bridge_core)
 set_target_properties(test_path_ik PROPERTIES BUILD_RPATH "${TP_LIB}")
-add_test(NAME path_ik COMMAND test_path_ik)
+add_dependencies(test_path_ik dh_params_flange)
+add_test(NAME path_ik COMMAND test_path_ik
+         ${DH_PARAMS_FLANGE_YAML}
+         ${JOINT_LIMITS_YAML}
+         ${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml)
 
 endif ()
 

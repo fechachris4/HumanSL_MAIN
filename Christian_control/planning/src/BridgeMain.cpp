@@ -798,10 +798,14 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                     << plan.maximum_joint_step_rad * 180.0 / M_PI
                     << " deg, closure drift "
                     << plan.closure_drift_rad * 180.0 / M_PI << " deg\n";
-        if (plan.unresolved_samples > 0)
-            diagnostics << "continuation IK: unresolved samples "
-                        << plan.unresolved_samples << ", interpolated seeds "
-                        << plan.interpolated_samples << "\n";
+        if (plan.ik_unresolved_samples > 0)
+            diagnostics << "continuation IK gaps: "
+                        << plan.ik_unresolved_samples
+                        << " unresolved sample(s) seeded ("
+                        << plan.ik_interpolated_samples
+                        << " interpolated) — GPMP2 keeps the configured pose "
+                           "priors and the final "
+                           "validation judges the result\n";
         if (plan.time_scaling_passes > 1)
             diagnostics << "time scaling: " << plan.time_scaling_passes
                         << " pass(es), final duration " << plan.total_time_sec

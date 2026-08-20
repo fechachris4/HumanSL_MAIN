@@ -3,43 +3,55 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <limits>
+#include <stdexcept>
 
 namespace {
 
 constexpr std::array<double, kPathIkAlternativeSeedCount> kNullspaceStepsRad =
     {0.05, -0.05, 0.10, -0.10};
 
-// Radians from the nearest bounded joint's limit. Continuous joints
-// (1/3/5/7 on a Gen3) carry ±1e20 sentinels and are skipped: they have no
-// stop to be near. Negative when a joint is already outside its range.
-double JointLimitMargin(const Eigen::Matrix<double, 7, 1>& q) {
-    double worst = std::numeric_limits<double>::infinity();
-    bool any_bounded = false;
-    for (int j = 0; j < 7; ++j) {
-        const double lo = analytical_ik::KinovaGen3Params::JOINT_LIMITS_LOWER[j];
-        const double hi = analytical_ik::KinovaGen3Params::JOINT_LIMITS_UPPER[j];
-        if (lo < -1e10 || hi > 1e10) continue;
-        any_bounded = true;
-        // Principal value: the solver may return an angle wound past ±pi,
-        // and the limit is on the physical joint position.
-        const double angle = std::remainder(q(j), 2.0 * M_PI);
-        worst = std::min(worst, std::min(angle - lo, hi - angle));
-    }
-    return any_bounded ? worst : 0.0;
+bool IsContinuous(const PathIkJointLimits& limits, int joint) {
+    return limits.lower_rad(joint) < -1e10 || limits.upper_rad(joint) > 1e10;
 }
 
-// Smallest singular value of the 6x7 task Jacobian — how far this
-// configuration is from a singularity.
-double Manipulability(const Eigen::Matrix<double, 7, 1>& q, const PathIkArm& arm) {
-    const auto pose_jacobian =
-        pinocchio_kinematics_adapter::ToolPoseAndJacobianInBaseLink(
-            q, arm.end_effector_frame, arm.left_arm);
-    return pose_jacobian.jacobian.jacobiSvd().singularValues().tail<1>()(0);
+bool WithinLimits(const Eigen::Matrix<double, 7, 1>& q,
+                  const PathIkJointLimits& limits) {
+    if (!q.allFinite()) return false;
+    for (int joint = 0; joint < 7; ++joint)
+        if (!IsContinuous(limits, joint) &&
+            (q(joint) < limits.lower_rad(joint) ||
+             q(joint) > limits.upper_rad(joint)))
+            return false;
+    return true;
 }
 
-// The right-singular vector associated with the smallest singular value is
-// the one-dimensional redundant direction of this 7-DoF/6-DoF task.
+Eigen::Matrix<double, 7, 1> CanonicalSeed(
+    const Eigen::Matrix<double, 7, 1>& seed,
+    const PathIkJointLimits& limits) {
+    if (!limits.lower_rad.allFinite() || !limits.upper_rad.allFinite() ||
+        (limits.lower_rad.array() >= limits.upper_rad.array()).any())
+        throw std::invalid_argument("PathIk received invalid planner joint limits");
+    Eigen::Matrix<double, 7, 1> canonical = seed;
+    for (int joint = 0; joint < 7; ++joint)
+        if (IsContinuous(limits, joint))
+            canonical(joint) = std::remainder(canonical(joint), 2.0 * M_PI);
+    if (!WithinLimits(canonical, limits))
+        throw std::invalid_argument(
+            "PathIk start seed is outside the planner joint limits");
+    return canonical;
+}
+
+Eigen::Matrix<double, 7, 1> JointDifference(
+    const Eigen::Matrix<double, 7, 1>& before,
+    const Eigen::Matrix<double, 7, 1>& after,
+    const PathIkJointLimits& limits) {
+    Eigen::Matrix<double, 7, 1> difference = after - before;
+    for (int joint = 0; joint < 7; ++joint)
+        if (IsContinuous(limits, joint))
+            difference(joint) = std::remainder(difference(joint), 2.0 * M_PI);
+    return difference;
+}
+
 Eigen::Matrix<double, 7, 1> NullspaceDirection(
     const PathIkArm& arm, const Eigen::Matrix<double, 7, 1>& q) {
     const auto pose_jacobian =
@@ -51,201 +63,159 @@ Eigen::Matrix<double, 7, 1> NullspaceDirection(
     if (!direction.allFinite() || direction.norm() < 1e-12)
         return Eigen::Matrix<double, 7, 1>::Zero();
     direction.normalize();
-    // SVD signs are arbitrary. Fix one sign so the alternative sequence is
-    // reproducible; both signs are still explicitly tried below.
-    for (int joint = 0; joint < 7; ++joint) {
-        if (std::abs(direction(joint)) > 1e-12) {
-            if (direction(joint) < 0.0) direction = -direction;
-            break;
-        }
-    }
-    return direction;
+    Eigen::Index largest = 0;
+    direction.cwiseAbs().maxCoeff(&largest);
+    return direction(largest) < 0.0 ? -direction : direction;
 }
 
-Eigen::Matrix<double, 7, 1> BoundedNullspacePerturbation(
+Eigen::Matrix<double, 7, 1> PerturbWithinLimits(
     const Eigen::Matrix<double, 7, 1>& q,
     const Eigen::Matrix<double, 7, 1>& direction,
-    double step_rad) {
-    Eigen::Matrix<double, 7, 1> bounded_base = q;
+    double step_rad, const PathIkJointLimits& limits) {
+    double scale = 1.0;
     for (int joint = 0; joint < 7; ++joint) {
-        const double lower = analytical_ik::KinovaGen3Params::JOINT_LIMITS_LOWER[joint];
-        const double upper = analytical_ik::KinovaGen3Params::JOINT_LIMITS_UPPER[joint];
-        if (lower < -1e10 || upper > 1e10) continue;
-        bounded_base(joint) = std::max(lower, std::min(upper, bounded_base(joint)));
-    }
-    double scale = 0.95;  // leave a small interior margin at bounded joints
-    for (int joint = 0; joint < 7; ++joint) {
-        const double lower = analytical_ik::KinovaGen3Params::JOINT_LIMITS_LOWER[joint];
-        const double upper = analytical_ik::KinovaGen3Params::JOINT_LIMITS_UPPER[joint];
-        if (lower < -1e10 || upper > 1e10) continue;
+        if (IsContinuous(limits, joint)) continue;
         const double delta = step_rad * direction(joint);
         if (delta > 0.0)
-            scale = std::min(scale, (upper - bounded_base(joint)) / delta);
+            scale = std::min(scale, (limits.upper_rad(joint) - q(joint)) / delta);
         else if (delta < 0.0)
-            scale = std::min(scale, (lower - bounded_base(joint)) / delta);
+            scale = std::min(scale, (limits.lower_rad(joint) - q(joint)) / delta);
     }
-    scale = std::max(0.0, scale);
-    return bounded_base + scale * step_rad * direction;
+    return q + std::max(0.0, scale) * step_rad * direction;
 }
 
-double InterpolateJoint(double before, double after, double fraction, int joint) {
-    const double lower = analytical_ik::KinovaGen3Params::JOINT_LIMITS_LOWER[joint];
-    const double upper = analytical_ik::KinovaGen3Params::JOINT_LIMITS_UPPER[joint];
-    if (lower < -1e10 || upper > 1e10) {
-        // Continuous Gen3 joints take the shortest angular arc rather than
-        // the arithmetic path across a 2*pi seam.
-        return before + fraction * std::remainder(after - before, 2.0 * M_PI);
-    }
-    return before + fraction * (after - before);
-}
-
-Eigen::Matrix<double, 7, 1> InterpolateConfiguration(
+Eigen::Matrix<double, 7, 1> Interpolate(
     const Eigen::Matrix<double, 7, 1>& before,
-    const Eigen::Matrix<double, 7, 1>& after,
-    double fraction) {
-    Eigen::Matrix<double, 7, 1> configuration;
-    for (int joint = 0; joint < 7; ++joint)
-        configuration(joint) = InterpolateJoint(before(joint), after(joint),
-                                                fraction, joint);
-    return configuration;
+    const Eigen::Matrix<double, 7, 1>& after, double fraction,
+    const PathIkJointLimits& limits) {
+    return before + fraction * JointDifference(before, after, limits);
 }
 
-void ResolveUnresolvedSamples(PathIkResult& result, const PathIkArm& arm) {
-    result.success = true;
-    result.unresolved_samples = 0;
-    result.interpolated_samples = 0;
-    result.maximum_unresolved_run = 0;
+void FillGap(PathIkResult& result, std::size_t first, std::size_t length,
+             std::size_t before, std::size_t after,
+             const PathIkJointLimits& limits) {
+    const std::size_t count = result.samples.size();
+    for (std::size_t offset = 0; offset < length; ++offset) {
+        const std::size_t index = (first + offset) % count;
+        const double fraction = static_cast<double>(offset + 1) /
+                                static_cast<double>(length + 1);
+        result.samples[index].configuration = Interpolate(
+            result.samples[before].configuration,
+            result.samples[after].configuration, fraction, limits);
+        ++result.interpolated_samples;
+    }
+}
 
-    std::size_t index = 0;
-    while (index < result.samples.size()) {
-        if (result.samples[index].solved) {
-            ++index;
+void ResolveGaps(PathIkResult& result, const PathIkJointLimits& limits,
+                 bool closed) {
+    result.success = true;
+    const std::size_t count = result.samples.size();
+    std::size_t anchor = 0;
+    std::size_t logical = 0;
+    if (closed) {
+        const auto first_solved = std::find_if(
+            result.samples.begin(), result.samples.end(),
+            [](const PathIkSample& sample) { return sample.solved; });
+        if (first_solved == result.samples.end()) {
+            result.unresolved_samples = count;
+            result.maximum_unresolved_run = count;
+            result.success = false;
+            return;
+        }
+        anchor = static_cast<std::size_t>(
+            std::distance(result.samples.begin(), first_solved));
+        logical = 1;  // anchor itself is solved
+    }
+    const auto index_at = [closed, anchor, count](std::size_t position) {
+        return closed ? (anchor + position) % count : position;
+    };
+    while (logical < count) {
+        if (result.samples[index_at(logical)].solved) {
+            ++logical;
             continue;
         }
-        const std::size_t first = index;
-        while (index < result.samples.size() && !result.samples[index].solved)
-            ++index;
-        const std::size_t last_exclusive = index;
-        const std::size_t length = last_exclusive - first;
+        const std::size_t first = logical;
+        while (logical < count && !result.samples[index_at(logical)].solved)
+            ++logical;
+        const std::size_t length = logical - first;
         result.unresolved_samples += length;
         result.maximum_unresolved_run =
             std::max(result.maximum_unresolved_run, length);
-        if (first == 0 || last_exclusive == result.samples.size() ||
-            length > kMaxInterpolatedPathIkGapSamples) {
+        const bool two_sided = closed || (first > 0 && logical < count);
+        if (!two_sided || length > kMaxInterpolatedPathIkGapSamples) {
             result.success = false;
             continue;
         }
-
-        const auto& before = result.samples[first - 1].configuration;
-        const auto& after = result.samples[last_exclusive].configuration;
-        for (std::size_t sample_index = first; sample_index < last_exclusive;
-             ++sample_index) {
-            const double fraction =
-                static_cast<double>(sample_index - first + 1) /
-                static_cast<double>(last_exclusive - first + 1);
-            PathIkSample& sample = result.samples[sample_index];
-            sample.configuration =
-                InterpolateConfiguration(before, after, fraction);
-            sample.minimum_joint_limit_margin_rad =
-                JointLimitMargin(sample.configuration);
-            sample.minimum_manipulability = Manipulability(sample.configuration, arm);
-            sample.seed_interpolated = true;
-            ++result.interpolated_samples;
-        }
+        FillGap(result, index_at(first), length, index_at(first - 1),
+                index_at(logical), limits);
     }
-    if (result.unresolved_samples == 0)
-        result.success = true;
 }
 
 }  // namespace
 
 PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
                          const Eigen::Matrix<double, 7, 1>& seed,
+                         const PathIkJointLimits& limits,
                          const analytical_ik::IKTolerance& tolerance,
                          bool closed) {
     PathIkResult result;
     result.samples.reserve(path.samples.size());
     if (path.samples.empty()) return result;
 
-    Eigen::Matrix<double, 7, 1> current_seed = seed;
-    bool have_previous = false;
-    Eigen::Matrix<double, 7, 1> previous_solved = seed;
-
-    for (std::size_t i = 0; i < path.samples.size(); ++i) {
-        const Eigen::Matrix4d target = path.samples[i].pose.matrix();
-
-        // One deterministic continuation attempt. Passing one attempt means
-        // AnalyticalIKSolver uses exactly the provided seed and does not draw
-        // its own random alternatives.
+    Eigen::Matrix<double, 7, 1> current_seed = CanonicalSeed(seed, limits);
+    for (const PathSample& path_sample : path.samples) {
+        const Eigen::Matrix4d target = path_sample.pose.matrix();
         analytical_ik::IKSolution best =
             analytical_ik::AnalyticalIKSolver::solveBestIK(
                 target, arm.base_transform, current_seed, 1,
                 arm.end_effector_frame, arm.left_arm, tolerance);
+        bool solved = best.is_valid && WithinLimits(best.joint_angles, limits);
 
-        PathIkSample sample;
-        if (!best.is_valid) {
+        if (!solved) {
             const Eigen::Matrix<double, 7, 1> direction =
                 NullspaceDirection(arm, current_seed);
-            for (int alternative = 0;
-                 alternative < kPathIkAlternativeSeedCount; ++alternative) {
+            for (double step_rad : kNullspaceStepsRad) {
                 const Eigen::Matrix<double, 7, 1> alternative_seed =
-                    BoundedNullspacePerturbation(
-                        current_seed, direction,
-                        kNullspaceStepsRad[static_cast<std::size_t>(alternative)]);
-                ++sample.alternative_seed_attempts;
+                    PerturbWithinLimits(current_seed, direction, step_rad, limits);
                 const auto candidate =
                     analytical_ik::AnalyticalIKSolver::solveBestIK(
                         target, arm.base_transform, alternative_seed, 1,
                         arm.end_effector_frame, arm.left_arm, tolerance);
-                if (candidate.is_valid) {
-                    best = candidate;
-                    break;
-                }
-                if (candidate.attempted &&
-                    candidate.position_error_m + candidate.orientation_error_rad <
-                        best.position_error_m + best.orientation_error_rad)
-                    best = candidate;
+                if (!candidate.is_valid ||
+                    !WithinLimits(candidate.joint_angles, limits))
+                    continue;
+                best = candidate;
+                solved = true;
+                break;
             }
         }
 
-        sample.solved = best.is_valid;
+        PathIkSample sample;
+        sample.solved = solved;
         if (best.attempted) {
             sample.configuration = best.joint_angles;
             sample.position_residual_m = best.position_error_m;
             sample.orientation_residual_rad = best.orientation_error_rad;
-            sample.minimum_joint_limit_margin_rad = JointLimitMargin(best.joint_angles);
-            sample.minimum_manipulability = Manipulability(best.joint_angles, arm);
         }
         result.samples.push_back(sample);
-
-        if (best.is_valid) {
-            if (have_previous) {
-                const double step =
-                    (best.joint_angles - previous_solved).cwiseAbs().maxCoeff();
-                result.maximum_joint_step_rad =
-                    std::max(result.maximum_joint_step_rad, step);
-            }
-            // Continuation: the next sample walks from here. A failed sample
-            // leaves the seed alone and is resolved after the forward pass.
-            current_seed = best.joint_angles;
-            previous_solved = best.joint_angles;
-            have_previous = true;
-        } else if (!result.failed_sample) {
-            result.failed_sample = i;
-        }
+        if (solved) current_seed = best.joint_angles;
     }
 
-    ResolveUnresolvedSamples(result, arm);
-
-    // Closure drift: the tool pose returns to the start exactly, but the
-    // redundant elbow need not. A large drift means a second lap would not
-    // repeat the first.
-    if (closed && result.samples.size() >= 2 && result.samples.front().solved &&
-        result.samples.back().solved) {
-        result.closure_drift_rad = (result.samples.back().configuration -
-                                    result.samples.front().configuration)
-                                       .cwiseAbs()
-                                       .maxCoeff();
+    ResolveGaps(result, limits, closed);
+    if (result.success) {
+        for (std::size_t index = 1; index < result.samples.size(); ++index)
+            result.maximum_joint_step_rad = std::max(
+                result.maximum_joint_step_rad,
+                JointDifference(result.samples[index - 1].configuration,
+                                result.samples[index].configuration, limits)
+                    .cwiseAbs()
+                    .maxCoeff());
+        if (closed && result.samples.size() >= 2)
+            result.closure_drift_rad =
+                JointDifference(result.samples.front().configuration,
+                                result.samples.back().configuration, limits)
+                    .cwiseAbs()
+                    .maxCoeff();
     }
     return result;
 }
