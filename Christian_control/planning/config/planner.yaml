@@ -95,7 +95,7 @@ solver:
 # measured after the solve rather than assumed from the sigma.
 path_following:
   # Weights on each traced waypoint's pose prior.
-  position_prior_sigma_m: 0.005
+  position_prior_sigma_m: 0.0012
   rotation_prior_sigma_rad: 0.01
   # THE GATE. A plan whose reconstructed trace deviates further than this
   # is reported as failing task fidelity and is not cleared for hardware.
