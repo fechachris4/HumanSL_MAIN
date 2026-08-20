@@ -116,6 +116,7 @@ target_sources(bridge_core PRIVATE
     src/StartState.cpp
     src/BridgeMain.cpp
     src/PlannerRuntime.cpp
+    src/BaselineBridge.cpp
 )
 target_link_libraries(bridge_core PUBLIC humansl_contracts)
 
@@ -199,6 +200,13 @@ target_include_directories(test_planner_model PRIVATE src)
 target_link_libraries(test_planner_model PRIVATE bridge_core)
 set_target_properties(test_planner_model PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME planner_model COMMAND test_planner_model
+         ${DH_PARAMS_TOOL_YAML} ${DH_PARAMS_FLANGE_YAML})
+
+add_executable(test_baseline_bridge tests/test_baseline_bridge.cpp)
+target_include_directories(test_baseline_bridge PRIVATE src)
+target_link_libraries(test_baseline_bridge PRIVATE bridge_core)
+set_target_properties(test_baseline_bridge PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME baseline_bridge COMMAND test_baseline_bridge
          ${DH_PARAMS_TOOL_YAML} ${DH_PARAMS_FLANGE_YAML})
 
 add_executable(test_gpmp2_urdf_validation tests/test_gpmp2_urdf_validation.cpp)
@@ -385,14 +393,14 @@ add_test(NAME planner_runtime COMMAND test_planner_runtime
 # after a full build — ctest itself never builds.)
 foreach(dh_consumer planner_bridge probe_path_reachability test_planner_model test_gpmp2_urdf_validation test_sphere_scaling test_grid_coverage
         test_plan_solver test_path_validation test_bridge_main test_planner_runtime
-        test_world_trajectory_projection)
+        test_world_trajectory_projection test_baseline_bridge)
     add_dependencies(${dh_consumer} dh_params_tool)
 endforeach()
 
 # planner_bridge and its CLI-argument test also need the left/flange YAML —
 # BridgeMain.cpp picks between the two files by --arm, so both must exist
 # before either binary runs.
-foreach(dh_flange_consumer planner_bridge test_bridge_main test_grid_coverage test_planner_model test_world_trajectory_projection)
+foreach(dh_flange_consumer planner_bridge test_bridge_main test_grid_coverage test_planner_model test_world_trajectory_projection test_baseline_bridge)
     add_dependencies(${dh_flange_consumer} dh_params_flange)
 endforeach()
 
@@ -401,7 +409,7 @@ endforeach()
 # binaries alone doesn't resolve transitive deps under ctest's fork/exec —
 # a pre-existing gap in the third_party build, worked around once here for
 # every bridge_core-linked test rather than per add_test call.
-foreach(bridge_test_name pose_noise_ordering ik_determinism inter_arm_distance circle_plan planner_model world_sdf plan_solver path_validation start_state bridge_main gpmp2_urdf_validation sphere_scaling grid_coverage planner_config path_assembly world_trajectory_projection)
+foreach(bridge_test_name pose_noise_ordering ik_determinism inter_arm_distance circle_plan planner_model world_sdf plan_solver path_validation start_state bridge_main gpmp2_urdf_validation sphere_scaling grid_coverage planner_config path_assembly world_trajectory_projection baseline_bridge)
     set_tests_properties(${bridge_test_name} PROPERTIES
         ENVIRONMENT "LD_LIBRARY_PATH=${TP_LIB}")
 endforeach()

@@ -38,6 +38,7 @@
 #include "FramePrint.h"
 #include "Hardware.h"
 #include "InProcessPlanner.h"
+#include "BaselineBridge.h"
 #include "Kinematics.h"
 #include "MainArgs.h"
 #include "ProcessLock.h"
@@ -571,13 +572,33 @@ namespace
                 PLANNER_JOINT_LIMITS_FILE,
                 PLANNER_RIGHT_DH_FILE,
                 PLANNER_LEFT_DH_FILE,
-                RUNS_ROOT_DIR};
+                RUNS_ROOT_DIR,
+                args.baseline_bridge};
+            // Which planner implementation the worker calls — the ONE
+            // switch point, so the log line below and the running code
+            // cannot disagree. `baseline` = the frozen known-good 5abc1b2c
+            // planner as a subprocess, adapted at the wire (BaselineBridge.h).
+            const bool baseline_planner = args.planner == "baseline";
+            const PlannerSolveFunction solve_fn = baseline_planner
+                ? &SolveBaselineBridgeForRequest
+                : &SolveWorldTrajectoryForRequest;
+            if (args.plan) {
+                if (baseline_planner)
+                    std::cout << tag << "planner implementation: BASELINE "
+                                 "bridge (5abc1b2c) at "
+                              << args.baseline_bridge
+                              << " — joint wire adapted to the world-"
+                                 "Cartesian contract via current FK\n";
+                else
+                    std::cout << tag << "planner implementation: current "
+                                 "in-process world planner\n";
+            }
             std::thread planner_thread;
             if (args.plan)
                 planner_thread = std::thread(
                     RunInProcessPlanner, std::ref(planning_requests),
                     std::ref(trajectory_targets), std::cref(planner_config),
-                    std::cref(g_stop), &SolveWorldTrajectoryForRequest);
+                    std::cref(g_stop), solve_fn);
             else
                 std::cout << tag << "planning OFF: no planner worker; the arm "
                              "holds its captured world pose\n";

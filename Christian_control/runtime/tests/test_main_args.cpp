@@ -140,6 +140,31 @@ int main()
     // Unknown flags are refused, not silently ignored.
     Check(Throws({"--arm", "right", "--mount", "fixed", "--bogus"}), "an unrecognized flag refuses");
 
+    // --planner: default current, baseline requires the frozen binary's
+    // path, and a path without the mode (or a bogus mode) is refused —
+    // an argument nothing would read must not parse.
+    {
+        const ParsedMainArgs parsed =
+            ParseMainArgs({"--arm", "left", "--mount", "fixed"});
+        Check(parsed.planner == "current" && parsed.baseline_bridge.empty(),
+              "planner defaults to current with no baseline binary");
+    }
+    {
+        const ParsedMainArgs parsed = ParseMainArgs(
+            {"--arm", "left", "--mount", "fixed", "--planner", "baseline",
+             "--baseline-bridge", "/opt/baseline/planner_bridge"});
+        Check(parsed.planner == "baseline" &&
+                  parsed.baseline_bridge == "/opt/baseline/planner_bridge",
+              "--planner baseline with --baseline-bridge is recorded");
+    }
+    Check(Throws({"--arm", "left", "--mount", "fixed", "--planner", "baseline"}),
+          "--planner baseline without --baseline-bridge refuses");
+    Check(Throws({"--arm", "left", "--mount", "fixed",
+                  "--baseline-bridge", "/opt/x"}),
+          "--baseline-bridge without --planner baseline refuses");
+    Check(Throws({"--arm", "left", "--mount", "fixed", "--planner", "gpmp2"}),
+          "an unknown --planner value refuses");
+
     if (failures == 0) {
         std::cout << "all MainArgs tests passed\n";
         return 0;

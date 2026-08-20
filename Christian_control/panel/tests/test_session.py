@@ -188,6 +188,29 @@ class LaunchCommandTests(unittest.TestCase):
              "--plan", "off", "--record", "off"],
         )
 
+    def test_baseline_planner_adds_the_flag_and_current_does_not(self) -> None:
+        # "current" is the no-flag form: an ordinary session's command is
+        # byte-identical to what it was before the baseline option existed.
+        self.assertEqual(
+            session.default_launch_command("left", "fixed", True, True),
+            session.default_launch_command("left", "fixed", True, True,
+                                           planner="current"),
+        )
+        command = session.default_launch_command("left", "fixed", True, True,
+                                                 planner="baseline")
+        self.assertEqual(command[-2:], ["--planner", "baseline"])
+
+    def test_start_refuses_an_unknown_planner_and_baseline_without_planning(self) -> None:
+        result = session.start("left", "GO", ("127.0.0.1", 1), is_local=True,
+                               mount="fixed", planner="nonsense")
+        self.assertFalse(result["ok"])
+        self.assertIn("planner must be one of", result["error"])
+        result = session.start("left", "GO", ("127.0.0.1", 1), is_local=True,
+                               mount="fixed", planning=False,
+                               planner="baseline")
+        self.assertFalse(result["ok"])
+        self.assertIn("planning off", result["error"])
+
     def test_a_fixed_pose_becomes_seven_numbers_in_one_argument(self) -> None:
         command = session.default_launch_command(
             "right", "fixed", False, True,
@@ -333,8 +356,9 @@ class RequiredDependencyGateTests(SessionTestCase):
     def test_the_choices_reach_the_launch_command(self) -> None:
         seen = []
 
-        def record(arm, mount, planning, recording, fixed_pose=None):
-            seen.append((arm, mount, planning, recording, fixed_pose))
+        def record(arm, mount, planning, recording, fixed_pose=None,
+                   planner="current"):
+            seen.append((arm, mount, planning, recording, fixed_pose, planner))
             return list(self.FAKE)
 
         session.launch_command = record
@@ -349,12 +373,13 @@ class RequiredDependencyGateTests(SessionTestCase):
         session.status()
         self.assertTrue(result["ok"], result)
         self.assertEqual(seen, [("right", "fixed", False, False,
-                                 [0.1, 0, 0, 0, 0, 0, 1])])
+                                 [0.1, 0, 0, 0, 0, 0, 1], "current")])
 
     def test_the_identity_fixed_pose_is_the_no_flag_default(self) -> None:
         seen = []
 
-        def record(arm, mount, planning, recording, fixed_pose=None):
+        def record(arm, mount, planning, recording, fixed_pose=None,
+                   planner="current"):
             seen.append(fixed_pose)
             return list(self.FAKE)
 

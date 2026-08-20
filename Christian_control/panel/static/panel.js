@@ -2594,7 +2594,17 @@ function renderRequired() {
   } else {
     row('Vicon', 'unused', 'fixed mount: a constant world_T_mount is published in-process');
   }
-  if (choices.planning) {
+  if (choices.planning && choices.planner === 'baseline') {
+    const dhReasons = Object.values(freshness?.dh || {})
+      .flatMap((entry) => entry?.reasons || []);
+    row('planner (BASELINE 5abc1b2c, subprocess)', freshness
+        ? (dhReasons.length ? 'blocking' : 'ready') : 'unknown',
+        dhReasons.join('; ')
+        || 'frozen binary at ~/Desktop/HumanSL_baseline plans with its own '
+        + 'tuning/limits/DH; goal.yaml is the one edited here; the CURRENT '
+        + 'DH tables still project its joint plan to Cartesian, so their '
+        + 'freshness still gates; missing binary refuses the start');
+  } else if (choices.planning) {
     const dhReasons = Object.values(freshness?.dh || {})
       .flatMap((entry) => entry?.reasons || []);
     row('planner (GPMP2, in-process) + DH tables', freshness
@@ -2727,9 +2737,13 @@ function renderDriveNote() {
 
 // The three non-arm session choices, read straight from the controls.
 function sessionChoices() {
+  // 'baseline' is still planning=on; which IMPLEMENTATION runs is a
+  // separate choice the controller logs on startup ("planner
+  // implementation: ..."), so the session evidence names it too.
   return {
     mount: $('mount-select').value || 'vicon',
     planning: $('plan-select').value !== 'off',
+    planner: $('plan-select').value === 'baseline' ? 'baseline' : 'current',
     recording: $('record-select').value !== 'off',
   };
 }
@@ -2765,6 +2779,7 @@ async function startSession() {
     const result = await postJSON('/api/session/start', {
       arm: arms, confirm: 'GO',
       mount: choices.mount, planning: choices.planning,
+      planner: choices.planner,
       recording: choices.recording,
       ...(fixedPose ? { fixed_pose: fixedPose } : {}),
     });

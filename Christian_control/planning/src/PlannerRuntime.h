@@ -18,6 +18,12 @@ struct PlannerRuntimeConfig {
     std::string right_dh_file;
     std::string left_dh_file;
     std::string runs_root;
+    // Path to the frozen known-good planner binary (branch
+    // baseline/planner-0807). Consumed ONLY by SolveBaselineBridgeForRequest
+    // (BaselineBridge.h) — which solve implementation actually runs is the
+    // function pointer Main.cpp hands to RunInProcessPlanner, chosen by
+    // --planner. Empty when the current planner is selected.
+    std::string baseline_bridge_binary;
 };
 
 struct PlannerSolveResult {
