@@ -14,7 +14,7 @@
 #include "PathValidationReport.h"
 #include "PlannerModel.h"
 #include "TimedJointTrajectory.h"
-#include "WorldSdf.h"
+#include "MountSdf.h"
 
 // `trajectory` is the exact final dense GPMP2 result on its uniform grid.
 // `sample_at` evaluates the same result at arbitrary instants.

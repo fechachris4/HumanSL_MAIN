@@ -23,8 +23,8 @@
 // instead checked against right states over [t-skew, t+skew].
 //
 // Both arms' collision spheres are already expressed in the shared Vicon
-// world frame: PlannerModel builds each arm at DhRootInWorld(left_arm), so
-// sphereCentersMat returns world-frame centres for either arm and no
+// mount frame: PlannerModel builds each arm at DhRootInMount(left_arm), so
+// sphereCentersMat returns mount-frame centres for either arm and no
 // additional transform is involved.
 //
 
@@ -46,7 +46,7 @@ struct SpherePairIdentity {
     std::size_t right_sphere = 0;
     double left_radius_m = 0.0;
     double right_radius_m = 0.0;
-    Eigen::Vector3d left_centre_m = Eigen::Vector3d::Zero();   // in `world`
+    Eigen::Vector3d left_centre_m = Eigen::Vector3d::Zero();   // in `mount`
     Eigen::Vector3d right_centre_m = Eigen::Vector3d::Zero();
 };
 

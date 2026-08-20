@@ -234,14 +234,16 @@ PlannerSolveResult SolveBaselineBridgeForRequest(
     const double total_time_s = samples.back().t_s;
 
     // Projection through the CURRENT model — the same FK the controller
-    // itself uses — with the request's world_T_mount, so a mount-fixed
-    // session (identity) executes in mount semantics end to end.
+    // itself uses. The model is mount-frame; the request's world_T_mount
+    // enters only here at the output projection, so a mount-fixed session
+    // (identity) executes in mount semantics end to end.
     PlannerModel model = LoadPlannerModel(
         left ? config.left_dh_file : config.right_dh_file,
-        /*has_tool=*/!left, request.world_T_mount);
+        /*has_tool=*/!left);
     result.trajectory =
         std::make_unique<WorldCartesianTrajectory>(ProjectWorldTrajectory(
-            model, position_rad, velocity_rad_s, total_time_s,
+            model, request.world_T_mount, position_rad, velocity_rad_s,
+            total_time_s,
             request.request_id, request.vicon_sequence));
     result.exit_code = 0;
 

@@ -8,6 +8,7 @@
 
 WorldCartesianTrajectory ProjectWorldTrajectory(
     const PlannerModel& model,
+    const Eigen::Isometry3d& world_T_mount,
     const std::vector<gtsam::Vector>& position_rad,
     const std::vector<gtsam::Vector>& velocity_rad_s,
     double total_time_s,
@@ -34,8 +35,10 @@ WorldCartesianTrajectory ProjectWorldTrajectory(
                                         " contains non-finite values");
     }
 
+    if (!world_T_mount.matrix().allFinite())
+        throw std::invalid_argument("world_T_mount must be finite");
     const Eigen::Isometry3d world_T_base =
-        model.world_T_mount *
+        world_T_mount *
         pinocchio_kinematics_adapter::MountFromBase(model.left_arm);
 
     WorldCartesianTrajectory trajectory;

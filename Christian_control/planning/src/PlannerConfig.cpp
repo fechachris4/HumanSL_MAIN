@@ -221,8 +221,9 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     if (!seeding["randomised"] || !seeding["randomised"].IsScalar())
         throw std::runtime_error("seeding.randomised must be true or false");
     config.seeding.randomised = seeding["randomised"].as<bool>();
-    // Resolve the effective seed HERE, once, so everything downstream reads
-    // one value and the report cannot disagree with what was used.
+    // Resolve the effective seed HERE, once, so the run report records one
+    // unambiguous provenance value. Path IK's bounded search is deterministic
+    // and does not use this as a random-restart control.
     if (config.seeding.randomised) {
         std::random_device device;
         config.effective_ik_seed =

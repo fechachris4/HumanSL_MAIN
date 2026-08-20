@@ -58,14 +58,9 @@ struct PathFollowingConfig {
     double max_chord_error_m = 0.001;
 };
 
-// How the IK's random restarts are drawn. Determinism is the DEFAULT: the
-// same request must produce the same plan, or no controller experiment
-// built on it is repeatable.
-//
-// `randomised: true` is for deliberate robustness testing — it draws a seed
-// once at startup and REPORTS it, so the run is still reproducible after the
-// fact by planning again with that value. There is no mode in which an
-// unrecorded seed is used.
+// IK run provenance retained by planner.yaml and the run report. Path IK uses
+// deterministic continuation plus bounded null-space alternatives; these
+// fields do not control its search or point-goal IK.
 struct SeedingConfig {
     std::uint64_t ik_seed = 20260807;
     bool randomised = false;

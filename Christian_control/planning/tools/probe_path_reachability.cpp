@@ -138,23 +138,21 @@ int main(int argc, char** argv) {
 
     const bool left_arm = arm == "left";
     // has_tool mirrors LoadPlannerModel's contract: tool <-> right chain,
-    // bare flange <-> left chain.
-    // The standalone probe has no Vicon input; identity makes its WORLD
-    // coincide with Mount while exercising the same world-aware model path.
-    const Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+    // bare flange <-> left chain. The model is mount-frame — the probe
+    // needs no Vicon input at all.
     const PlannerModel model =
-        LoadPlannerModel(dh_path, /*has_tool=*/!left_arm, world_T_mount);
+        LoadPlannerModel(dh_path, /*has_tool=*/!left_arm);
     const Eigen::Matrix4d base_transform = model.base_pose.matrix();
 
     CartesianPath path;
     try {
-        path = PathToWorld(GenerateCircle(spec), world_T_mount);
+        path = PathToMount(GenerateCircle(spec), std::nullopt);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "error: %s\n", error.what());
         return 1;
     }
 
-    std::printf("arm %s, frame %s -> world, radius %.4f m, %d samples\n",
+    std::printf("arm %s, frame %s -> mount, radius %.4f m, %d samples\n",
                 arm.c_str(), config::kReferenceFrameNames[static_cast<int>(spec.frame)],
                 spec.radius_m, spec.samples);
     std::printf("on-path tolerance: %.2f mm / %.2f deg\n\n", tolerance_mm, tolerance_deg);

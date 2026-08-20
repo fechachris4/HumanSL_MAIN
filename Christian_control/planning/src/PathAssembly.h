@@ -66,8 +66,9 @@ struct AssembledPath {
 };
 
 // `task_path` must already be in the frame the optimiser works in, and
-// `task_configurations` must be its continuation-IK solutions (PathIk),
-// one per sample. `measured` is where the arm actually is.
+// `task_configurations` must be the continuation-IK solutions or bounded-gap
+// interpolated seeds produced by PathIk, one per sample. `measured` is where
+// the arm actually is.
 //
 // The approach duration is derived from JOINT displacement over joint
 // velocity limits, not from Cartesian distance: the approach has no

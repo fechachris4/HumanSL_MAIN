@@ -31,15 +31,16 @@ struct PlannerSolveResult {
     std::unique_ptr<WorldCartesianTrajectory> trajectory;
 };
 
-// Parses the planner command-line contract, solves and projects one plan, and
-// returns the validated typed trajectory. No output serialization occurs here.
-PlannerSolveResult SolveWorldTrajectory(
+// Parses the planner command-line contract, solves one plan (mount-internal,
+// see PathFrames.h) and projects it to the world-frame controller contract.
+// No output serialization occurs here.
+PlannerSolveResult SolvePlan(
     const std::vector<std::string>& args,
     std::ostream& diagnostics);
 
 // Builds the equivalent explicit planner arguments from one typed controller
 // snapshot and returns the planner-owned result without a process boundary.
-PlannerSolveResult SolveWorldTrajectoryForRequest(
+PlannerSolveResult SolvePlanForRequest(
     const PlanningRequest& request,
     const PlannerRuntimeConfig& config,
     std::ostream& diagnostics);

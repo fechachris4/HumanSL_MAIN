@@ -5,14 +5,14 @@
 #include "CartesianPath.h"
 #include "PathValidationReport.h"
 #include "TrajectoryInitiation.h"  // InitSource
-#include "WorldSdf.h"
+#include "MountSdf.h"
 
 struct PlanRequest {
     Eigen::Matrix<double, 7, 1> q_start_rad;  // Kortex order
-    Eigen::Vector3d goal_position_m;          // base_link
+    Eigen::Vector3d goal_position_m;          // metres, `mount`
     std::optional<AxisAlignedBox> obstacle;
-    // Orientation the tool should hold AT the goal, in the controlled arm's
-    // base frame. Unset means "inherit whatever orientation the arm happens
+    // Orientation the tool should hold AT the goal, in `mount` (declared
+    // frames are converted at the boundary, PathFrames.h). Unset means "inherit whatever orientation the arm happens
     // to have at q_start", which is the historical behaviour and is a trap:
     // it makes a goal's feasibility depend on where the arm was parked
     // beforehand, which is neither requested nor controllable. Measured
@@ -70,6 +70,8 @@ struct PathPlanOutcome {
     // Continuation-IK diagnostics for the traced path.
     double maximum_joint_step_rad = 0.0;
     double closure_drift_rad = 0.0;
+    std::size_t unresolved_samples = 0;
+    std::size_t interpolated_samples = 0;
 };
 
 // Plans a trajectory that traces `task_path`, then emits, reconstructs and

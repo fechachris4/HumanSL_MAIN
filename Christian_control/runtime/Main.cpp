@@ -581,7 +581,7 @@ namespace
             const bool baseline_planner = args.planner == "baseline";
             const PlannerSolveFunction solve_fn = baseline_planner
                 ? &SolveBaselineBridgeForRequest
-                : &SolveWorldTrajectoryForRequest;
+                : &SolvePlanForRequest;
             if (args.plan) {
                 if (baseline_planner)
                     std::cout << tag << "planner implementation: BASELINE "

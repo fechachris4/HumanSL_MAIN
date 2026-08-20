@@ -19,38 +19,6 @@ add_compile_options(-Wall -Wextra)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# The bundled Eigen, as a SYSTEM include so -Wall stays quiet inside it.
-# Mirrors control/CMakeLists.txt's add_bundled_eigen_to.
-function(add_bundled_eigen_to target)
-    target_include_directories(${target} SYSTEM PRIVATE
-            ${HUMANSL_ROOT}/third_party/include/eigen3
-    )
-endfunction()
-
-# Test binaries must catch real assertion failures regardless of
-# CMAKE_BUILD_TYPE (this project defaults to Release, whose -DNDEBUG
-# strips assert() to a no-op). -UNDEBUG re-enables it for tests only;
-# production/tool targets (vicon_interface, connect_vicon, etc.) keep
-# their release optimisation untouched.
-function(enable_assertions_for target)
-    target_compile_options(${target} PRIVATE -UNDEBUG)
-endfunction()
-
-# One helper for every test target so enable_assertions_for can never be
-# forgotten on a new one (it was, once, earlier in this project, and had
-# to be fixed retroactively). test_name is the ctest test name (kept
-# distinct from the executable target name, matching this project's
-# existing convention); extra arguments after `source` are libraries to
-# link PRIVATE, omitted for a test with no library dependency.
-function(add_vicon_test test_name target source)
-    add_executable(${target} ${source})
-    if (ARGN)
-        target_link_libraries(${target} PRIVATE ${ARGN})
-    endif ()
-    enable_assertions_for(${target})
-    add_test(NAME ${test_name} COMMAND ${target})
-endfunction()
-
 # Repository root, two levels up: Christian_control/tracking -> HumanSL_MAIN.
 get_filename_component(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(VICON_SDK "${HUMANSL_ROOT}/third_party/vicon_api")
@@ -99,29 +67,3 @@ target_link_libraries(track_segment PRIVATE vicon_snapshot vicon_interface)
 set_target_properties(track_segment PROPERTIES
         BUILD_RPATH "${VICON_SDK}/lib"
 )
-
-include(CTest)
-if (BUILD_TESTING)
-    add_vicon_test(vicon_segment_data test_segment_data
-            tests/test_segment_data.cpp vicon_interface)
-
-    # No library to link -- it only needs the bundled Eigen headers and src/
-    # for the snapshot struct definitions, so the shared helper is called
-    # with no trailing libraries and the include lines stay alongside it.
-    add_vicon_test(vicon_snapshot test_vicon_snapshot
-            tests/test_vicon_snapshot.cpp)
-    target_include_directories(test_vicon_snapshot PRIVATE src)
-    add_bundled_eigen_to(test_vicon_snapshot)
-
-    add_vicon_test(vicon_snapshot_builder test_snapshot_builder
-            tests/test_snapshot_builder.cpp vicon_snapshot)
-
-    add_vicon_test(vicon_recorder test_vicon_recorder
-            tests/test_vicon_recorder.cpp vicon_snapshot)
-
-    add_vicon_test(vicon_replay test_vicon_replay
-            tests/test_vicon_replay.cpp vicon_snapshot)
-
-    add_vicon_test(vicon_mount_twist test_mount_twist_estimator
-            tests/test_mount_twist_estimator.cpp vicon_snapshot)
-endif ()

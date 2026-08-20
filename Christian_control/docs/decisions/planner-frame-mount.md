@@ -2,6 +2,8 @@
 
 Date: 2026-08-06
 
+> **See also (2026-08-20):** `planner-mount-internal.md` — after a world-internal interlude (2026-08-15 Vicon design), planner internals are mount again, with world only at the two edges.
+
 Status: adopted. The frame formerly called `world` is `mount`, and
 `planner_bridge` expresses all internal geometry in it.
 

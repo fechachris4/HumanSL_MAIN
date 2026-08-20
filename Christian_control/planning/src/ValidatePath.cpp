@@ -14,7 +14,7 @@ namespace {
 // Pose of the tool at a configuration, in the frame the planner works in.
 Eigen::Isometry3d ToolPose(const PlannerModel& model,
                            const Eigen::Matrix<double, 7, 1>& q) {
-    const gtsam::Pose3 pose = ToolPoseInWorld(model, q);
+    const gtsam::Pose3 pose = ToolPoseInMount(model, q);
     Eigen::Isometry3d out = Eigen::Isometry3d::Identity();
     out.linear() = pose.rotation().matrix();
     out.translation() = pose.translation();

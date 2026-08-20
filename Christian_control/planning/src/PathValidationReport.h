@@ -1,6 +1,7 @@
 //
 // PathValidationReport — does GPMP2's final dense internal joint trajectory
-// trace the requested world path without collisions and within arm limits?
+// trace the requested mount-frame path without collisions and within arm
+// limits?
 //
 // No joint trajectory crosses the controller boundary. This report sweeps the
 // exact final dense result on its uniform grid; only after it passes is every

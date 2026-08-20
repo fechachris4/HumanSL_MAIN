@@ -232,7 +232,7 @@ trap cleanup_session EXIT
 # and `kill -INT "$!"` never reached it (the child ran to completion). The
 # trap above is how Ctrl-C stops a MOVING ARM, so that failure is silent and
 # dangerous. A plain `> file` forks nothing extra: $! is the controller, and
-# the trap works. tests/test_run_session.sh pins this.
+# the trap works.
 # shellcheck disable=SC2086 — FIXED_POSE is 7 numbers becoming 7 arguments
 "$CONTROLLER" --arm "$ARM" --mount "$MOUNT" --plan "$PLAN" --record "$RECORD" \
     --planner "$PLANNER" \

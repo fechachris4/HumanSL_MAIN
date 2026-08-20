@@ -116,18 +116,13 @@ path_following:
   # e = r(1 - cos(pi/N)). Halving this roughly doubles the sample count.
   max_chord_error_m: 0.001
 
-# How the IK's random restarts are drawn.
+# IK run provenance. Path IK uses one continuation solve plus four deterministic
+# null-space alternatives; it does not use large random-restart loops.
 #
-# The solver explores by re-solving from randomly drawn configurations. Left
-# unseeded that made the PLANNER non-reproducible: measured 2026-08-07,
-# identical circle requests traced to 2.406-2.409 mm every time but their
-# joint-space routes differed, closure drift swinging 0.04-14 deg. Repeatable
-# controller experiments need the joint route repeatable too.
+# These fields remain strict and reported so existing run records retain their
+# seed provenance. They do not change point-goal IK behaviour.
 seeding:
-  # The seed. Change it to explore a different (still reproducible) set of
-  # restarts. Every planning report prints the seed actually used.
+  # Retained for run provenance. Every planning report prints this value.
   ik_seed: 20260807
-  # true = draw a seed at startup for deliberate robustness testing. The
-  # drawn value is REPORTED, so such a run is still reproducible afterwards
-  # by setting ik_seed to it. There is no unrecorded-seed mode.
+  # Retained for compatibility with existing run metadata.
   randomised: false

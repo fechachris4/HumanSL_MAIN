@@ -18,7 +18,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
     try
     {
         const auto [pos_limits, vel_limits] = createJointLimits(joint_limits_yaml);
-        const gtsam::Pose3 start_pose = ToolPoseInWorld(model, request.q_start_rad);
+        const gtsam::Pose3 start_pose = ToolPoseInMount(model, request.q_start_rad);
         // An explicitly requested orientation wins; otherwise inherit the
         // start pose's, as this has always done (PlanRequest::goal_rotation
         // explains why inheriting is a trap and BridgeMain says so on every
@@ -51,8 +51,8 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         outcome.init_source = init.source;
         outcome.init_position_error_m = init.position_error_m;
         outcome.init_orientation_error_rad = init.orientation_error_rad;
-        const GridGeometry grid = WorldGridGeometry(model.world_T_mount);
-        const auto sdf = MakeWorldSdf(grid, request.obstacle);
+        const GridGeometry grid = MountGridGeometry();
+        const auto sdf = MakeMountSdf(grid, request.obstacle);
         outcome.result = optimizeJointTrajectory(
             *model.arm_model, sdf, init.values, goal_pose,
             gtsam::Vector(request.q_start_rad), pos_limits, vel_limits,
@@ -64,7 +64,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         }
         Eigen::Matrix<double, 7, 1> q_final(outcome.result.trajectory_pos.back());
         outcome.final_goal_error_m =
-            (ToolPositionInWorld(model, q_final) - request.goal_position_m).norm();
+            (ToolPositionInMount(model, q_final) - request.goal_position_m).norm();
         outcome.ok = true;
     }
     catch (const std::exception& exception)
@@ -192,7 +192,7 @@ TimedJointSampler MakeDenseSampler(
 std::string DescribeSdf(const std::optional<AxisAlignedBox>& obstacle,
                         const GridGeometry& geometry) {
     std::ostringstream text;
-    const GridBounds bounds = WorldGridBounds(geometry);
+    const GridBounds bounds = MountGridBounds(geometry);
     text << "arm-workspace grid x [" << bounds.min_m.x() << ", " << bounds.max_m.x()
          << "] y [" << bounds.min_m.y() << ", " << bounds.max_m.y() << "] z ["
          << bounds.min_m.z() << ", " << bounds.max_m.z() << "] m; "
@@ -233,23 +233,17 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         tolerance.accept_orientation_rad =
             config.path_following.maximum_orientation_error_rad;
 
-        // The run's recorded seed. Without this the walk would still draw
-        // from IKSeeding's compiled default and planner.yaml's seed would
-        // silently do nothing — the exact "I changed it and nothing
-        // happened" failure the strict config exists to prevent.
-        analytical_ik::IKSeeding ik_seeding;
-        ik_seeding.seed = config.effective_ik_seed;
-        const PathIkResult walk = SolvePathIk(task_path, arm, q_start_rad, tolerance,
-                                              /*closed=*/true, /*attempts=*/40,
-                                              ik_seeding);
+        const PathIkResult walk =
+            SolvePathIk(task_path, arm, q_start_rad, tolerance, /*closed=*/true);
         outcome.maximum_joint_step_rad = walk.maximum_joint_step_rad;
         outcome.closure_drift_rad = walk.closure_drift_rad;
+        outcome.unresolved_samples = walk.unresolved_samples;
+        outcome.interpolated_samples = walk.interpolated_samples;
         if (!walk.success) {
             outcome.error =
-                "the requested path is not reachable: IK failed at sample " +
-                std::to_string(walk.failed_sample.value_or(0)) + " of " +
-                std::to_string(task_path.samples.size()) +
-                " (run probe_path_reachability for the per-sample report)";
+                "path IK initialization failed: unresolved run of " +
+                std::to_string(walk.maximum_unresolved_run) +
+                " sample(s) has no valid two-sided interpolation seed";
             return outcome;
         }
 
@@ -291,8 +285,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             init_values.insert(gtsam::Symbol('v', i), velocity);
         }
 
-        const GridGeometry grid = WorldGridGeometry(model.world_T_mount);
-        const auto sdf = MakeWorldSdf(grid, obstacle);
+        const GridGeometry grid = MountGridGeometry();
+        const auto sdf = MakeMountSdf(grid, obstacle);
         const std::string sdf_contents = DescribeSdf(obstacle, grid);
 
         // ---- 3. solve -------------------------------------------------

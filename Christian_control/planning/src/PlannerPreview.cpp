@@ -6,7 +6,7 @@
 int RunBridge(const std::vector<std::string>& args, std::ostream& targets,
               std::ostream& diagnostics)
 {
-    PlannerSolveResult result = SolveWorldTrajectory(args, diagnostics);
+    PlannerSolveResult result = SolvePlan(args, diagnostics);
     if (result.trajectory)
         targets << FormatWorldCartesianTrajectoryBlock(*result.trajectory);
     return result.exit_code;

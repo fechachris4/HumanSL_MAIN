@@ -79,7 +79,7 @@ SEGMENTS = (
 HOLD_STATE_NAMES = {0: "inactive", 1: "engaged", 2: "frozen", 3: "latched-off"}
 HOLD_STATE_COLORS = {0: C_MUTED, 1: C_GOOD, 2: C_MOUNT, 3: C_BAD}
 
-# config/dual_arm_mounting.yaml, pinned against tests/test_dual_arm_mounting.cpp
+# config/dual_arm_mounting.yaml
 # (right base: y=-sep/2, Rx(+tilt); left base: y=+sep/2, Rx(-tilt)). Read the
 # YAML at runtime rather than trusting this copy silently drifting from it.
 _MOUNTING_YAML = (

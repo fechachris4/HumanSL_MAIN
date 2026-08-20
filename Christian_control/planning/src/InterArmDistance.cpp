@@ -8,9 +8,8 @@
 
 namespace {
 
-// Sphere centres for one configuration, in Vicon `world`. Both arms' models
-// use the same immutable world_T_mount snapshot and are built at
-// DhRootInWorld(left_arm), so these are directly comparable across
+// Sphere centres for one configuration, in `mount`. Both arms' models are
+// built at DhRootInMount(left_arm), so these are directly comparable across
 // arms with no further transform.
 std::vector<Eigen::Vector3d> SphereCentres(const PlannerModel& model,
                                            const Eigen::Matrix<double, 7, 1>& q) {

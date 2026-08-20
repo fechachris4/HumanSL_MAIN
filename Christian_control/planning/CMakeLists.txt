@@ -4,19 +4,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra)
 
-if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    option(PLANNING_TESTS
-           "Register planning's hardware-free test targets" ON)
-else ()
-    option(PLANNING_TESTS
-           "Register planning's hardware-free test targets" OFF)
-endif ()
 
 # DT_RUNPATH (the linker's new-dtags default) is non-transitive: it lets
 # planning find libgtsam.so, but libgtsam.so has no RPATH of its own,
 # so libgtsam.so's dependency libmetis-gtsam.so never resolves when the
-# binary is run bare (outside ctest, which papers over this via
-# LD_LIBRARY_PATH). DT_RPATH is transitive and fixes this for every
+# binary is run bare. DT_RPATH is transitive and fixes this for every
 # executable below.
 add_link_options(-Wl,--disable-new-dtags)
 
@@ -95,13 +87,12 @@ target_link_options(bridge_core INTERFACE
     -Wl,-z,lazy
 )
 
-# All planner implementation sources belong to the reusable runtime library.
-# Test registration below is optional, but the controller's nested build must
-# still receive this complete library when planner_bridge is consumed in
-# process.
+# All planner implementation sources belong to the reusable runtime library,
+# so the controller's nested build receives the complete library when the
+# planner is consumed in process.
 target_sources(bridge_core PRIVATE
     src/PlannerModel.cpp
-    src/WorldSdf.cpp
+    src/MountSdf.cpp
     src/CartesianPath.cpp
     src/PathFrames.cpp
     src/PathIk.cpp

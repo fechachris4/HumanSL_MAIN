@@ -14,7 +14,7 @@
 //   planner.yaml / joint_limits.yaml / DH resolved beside itself)
 //     -> parse the joint block (deg -> rad, times as emitted)
 //     -> ProjectWorldTrajectory through the CURRENT model's FK
-//     -> the same mailbox handoff SolveWorldTrajectoryForRequest uses.
+//     -> the same mailbox handoff SolvePlanForRequest uses.
 //
 // What is deliberately NOT reinterpreted, and what is:
 //   - arm identity, timing, and joint values pass through 1:1 (unit
@@ -43,7 +43,7 @@
 
 #include "PlannerRuntime.h"
 
-// Same signature as SolveWorldTrajectoryForRequest, so Main.cpp selects
+// Same signature as SolvePlanForRequest, so Main.cpp selects
 // between them with one function pointer (InProcessPlanner's solve seam).
 // Uses config.baseline_bridge_binary; exit_code mirrors the baseline
 // binary's own codes (0 emitted, 4 validation rejected, ...), with the

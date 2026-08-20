@@ -10,10 +10,10 @@
 // branch. Where a sample fails, the last good solution stays the seed, so
 // one bad patch does not scatter everything after it.
 //
-// The FIRST pose has no predecessor, so it is solved from several seeds and
-// chosen on more than IK residual — a configuration that reaches the pose
-// but starts against a joint stop or near a singularity will strand the
-// continuation a few samples later. See FirstSampleScore.
+// A failed sample gets a small, deterministic set of null-space perturbations
+// around the last valid continuation seed. There is deliberately no large
+// random-restart loop here: GPMP2 is the path solver, and this layer only
+// needs a plausible joint-space initialization.
 //
 // Eigen and Pinocchio only: no gtsam (see PinocchioKinematicsAdapter.h for
 // why the two cannot share a translation unit). The planner converts at the
@@ -49,12 +49,23 @@ struct PathIkSample {
     // and IK there is ill-conditioned. Units mix m/rad and rad/rad, so read
     // its trend along the path rather than its absolute size.
     double minimum_manipulability = 0.0;
+    // Number of deterministic null-space alternatives tried after the
+    // continuation seed failed. Bounded by kPathIkAlternativeSeedCount.
+    int alternative_seed_attempts = 0;
+    // True when this sample's joint configuration is an interpolation between
+    // valid neighbours rather than a successful IK result.
+    bool seed_interpolated = false;
 };
 
 struct PathIkResult {
-    bool success = false;  // every sample solved
+    // True when every unresolved run has a bounded, two-sided interpolation
+    // seed for GPMP2. Individual samples may still have solved == false.
+    bool success = false;
     std::vector<PathIkSample> samples;
     std::optional<std::size_t> failed_sample;  // first failure, if any
+    std::size_t unresolved_samples = 0;
+    std::size_t interpolated_samples = 0;
+    std::size_t maximum_unresolved_run = 0;
     // Largest per-joint step between consecutive solved samples, radians.
     // A large value is the signature of a branch flip that continuation
     // failed to prevent — the Cartesian step was small but the joints moved
@@ -76,6 +87,13 @@ struct PathIkArm {
     bool left_arm = false;
 };
 
+// A failed continuation solve gets exactly four small alternatives. Keeping
+// this visible makes the bounded search policy testable and reviewable.
+inline constexpr int kPathIkAlternativeSeedCount = 4;
+inline constexpr std::size_t kMaxInterpolatedPathIkGapSamples = 2;
+static_assert(kPathIkAlternativeSeedCount >= 3 &&
+              kPathIkAlternativeSeedCount <= 5);
+
 // Walks `path` (whose poses must already be in the frame `arm.base_transform`
 // is expressed against) solving IK at each sample.
 //
@@ -87,14 +105,7 @@ struct PathIkArm {
 //
 // `closed` marks a path whose last sample repeats its first, so closure
 // drift is meaningful.
-// `seeding` makes the walk reproducible. Each sample and each first-pose
-// restart derives its own STREAM from the caller's seed, so the restarts
-// still explore different branches while the whole walk replays identically
-// on the next run — determinism without giving up exploration.
 PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
                          const Eigen::Matrix<double, 7, 1>& seed,
                          const analytical_ik::IKTolerance& tolerance,
-                         bool closed = false,
-                         int attempts_per_sample = 40,
-                         const analytical_ik::IKSeeding& seeding =
-                             analytical_ik::IKSeeding{});
+                         bool closed = false);

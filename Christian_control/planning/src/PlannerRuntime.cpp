@@ -46,11 +46,11 @@ std::vector<std::string> ArgumentsForRequest(
 
 }  // namespace
 
-PlannerSolveResult SolveWorldTrajectoryForRequest(
+PlannerSolveResult SolvePlanForRequest(
     const PlanningRequest& request,
     const PlannerRuntimeConfig& config,
     std::ostream& diagnostics)
 {
-    return SolveWorldTrajectory(ArgumentsForRequest(request, config),
+    return SolvePlan(ArgumentsForRequest(request, config),
                                 diagnostics);
 }

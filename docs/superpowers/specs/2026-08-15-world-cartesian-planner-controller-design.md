@@ -1,3 +1,5 @@
+> **SUPERSEDED (planner internals) 2026-08-20:** the planner is now MOUNT-internal; world exists only at the ToMount input edge and the ProjectWorldTrajectory output edge. See `Christian_control/docs/decisions/planner-mount-internal.md`. The world-frame OUTPUT contract described here still stands.
+
 # World-frame Cartesian planning and control
 
 **Date:** 2026-08-15  
