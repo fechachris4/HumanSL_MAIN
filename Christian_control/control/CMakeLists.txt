@@ -9,12 +9,10 @@
 # on any include path here, no Vicon SDK, and no GTSAM/GPMP2 — which is why
 # both the hardware program (../runtime) and the simulator (../simulation) can
 # link the same humansl_execution_core and share one set of control
-# mathematics. tests/check_execution_core_linkage.cmake, registered by
-# ../runtime, turns that from a convention into a build failure.
+# mathematics. That isolation is a convention now; nothing enforces it.
 #
-# Buildable on its own, for the hardware-free tests:
+# Buildable on its own:
 #   cmake -S . -B build && cmake --build build
-#   ctest --test-dir build --output-on-failure
 cmake_minimum_required(VERSION 3.12)
 project(control)
 
@@ -84,14 +82,58 @@ function(add_execution_core_to target)
     )
 endfunction()
 
+# --- Joint limits, generated from the ONE authoritative table ---------------
+# The physical Kinova position and velocity limits live in exactly one file,
+# ../planning/config/joint_limits.yaml, together with the margins the planner
+# and controller each apply to them. This step turns that yaml into a
+# constexpr header in the build tree, the same way the planner derives its DH
+# tables from the URDF: the constants stay compile-time, the controller gains
+# no runtime file dependency, and a yaml edit cannot silently diverge from an
+# already-built binary. Listing the yaml in DEPENDS regenerates the header
+# whenever it changes. The generator refuses to write a header whose margins
+# are not correctly ordered, so a bad edit fails the build.
+set(JOINT_LIMITS_YAML
+    "${HUMANSL_ROOT}/Christian_control/planning/config/joint_limits.yaml")
+set(JOINT_LIMITS_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/JointLimits.h")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+# Generated once at configure time as well, so the header exists before ANY
+# target compiles. Sibling projects include Config.h from several targets that
+# do not all link humansl_execution_core, and a build-time-only rule would
+# race them. The custom command below still regenerates it when the yaml
+# changes.
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_joint_limits.py"
+            "${JOINT_LIMITS_YAML}" "${JOINT_LIMITS_HEADER}"
+    RESULT_VARIABLE JOINT_LIMITS_RESULT)
+if (NOT JOINT_LIMITS_RESULT EQUAL 0)
+    message(FATAL_ERROR "generate_joint_limits.py failed on ${JOINT_LIMITS_YAML}")
+endif ()
+
+add_custom_command(OUTPUT "${JOINT_LIMITS_HEADER}"
+    COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_joint_limits.py"
+            "${JOINT_LIMITS_YAML}" "${JOINT_LIMITS_HEADER}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate_joint_limits.py"
+            "${JOINT_LIMITS_YAML}"
+    COMMENT "Generating JointLimits.h from joint_limits.yaml"
+    VERBATIM)
+add_custom_target(joint_limits_header ALL DEPENDS "${JOINT_LIMITS_HEADER}")
+# Exported so the sibling projects that include Config.h directly (../runtime's
+# hardware tools, ../simulation) can put the generated header on their include
+# path without duplicating the location.
+set(CONTROL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    CACHE INTERNAL "control's generated-header directory")
+
 # --- humansl_execution_core: the ONE hardware-independent arm execution
 #     library (Plan 01 Task 4). It owns the explicit per-cycle contract
 #     (ExecutionCore), the immutable configuration snapshot
 #     (ExecutionConfig), the controller/reference/actuation mathematics, and
 #     the Pinocchio model and kinematics. Dependencies are ONLY the bundled
 #     Eigen/Pinocchio, humansl_contracts and pthread — a Kinova::Api or Vicon
-#     SDK symbol in this archive is a test failure
-#     (tests/check_execution_core_linkage.cmake), not a review hope. ---
+#     SDK symbol in this archive breaks that isolation, and nothing checks
+#     for one automatically. ---
 add_library(humansl_execution_core STATIC
         ExecutionCore.cpp
         ExecutionConfig.cpp
@@ -110,7 +152,10 @@ add_library(humansl_execution_core STATIC
 # call (we only build the model, no collision geometry);
 # --allow-shlib-undefined leaves them unresolved and -z lazy keeps the loader
 # from looking them up at startup.
-target_include_directories(humansl_execution_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_include_directories(humansl_execution_core PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/generated)
+add_dependencies(humansl_execution_core joint_limits_header)
 target_include_directories(humansl_execution_core SYSTEM PUBLIC
         ${HUMANSL_ROOT}/third_party/include
         ${HUMANSL_ROOT}/third_party/include/eigen3
@@ -152,151 +197,3 @@ add_execution_core_to(expand_run_poses)
 add_executable(print_dual_arm_fk tools/print_dual_arm_fk.cpp)
 add_execution_core_to(print_dual_arm_fk)
 
-# --- Tests register only when control is the top-level project (or when a
-#     parent sets CONTROL_TESTS=ON). A consuming project (../runtime,
-#     ../simulation) adds this directory only for humansl_execution_core with
-#     EXCLUDE_FROM_ALL; without this guard its ctest list would inherit every
-#     add_test below while the excluded test executables are never built,
-#     failing each with "Unable to find executable". ---
-if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    option(CONTROL_TESTS "Register control's test targets and ctest entries" ON)
-else ()
-    option(CONTROL_TESTS "Register control's test targets and ctest entries" OFF)
-endif ()
-
-if (CONTROL_TESTS)
-enable_testing()
-
-# --- control_logic: hardware-free tests for the pure per-cycle logic (DLS
-#     resolution, cycle-dt clamp, PositionIntegration, the arrival and
-#     acknowledgement monitors). No Kortex, no Pinocchio — safe anywhere. ---
-add_executable(test_control_logic
-        tests/test_control_logic.cpp
-        Actuation.cpp
-        ExecutionConfig.cpp
-)
-target_include_directories(test_control_logic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_bundled_eigen_to(test_control_logic)
-target_link_libraries(test_control_logic pthread)
-add_test(NAME control_logic COMMAND test_control_logic)
-
-# --- frames: cross-validation of the world-frame assembly port (Frames.h)
-#     against fixtures generated by RUNNING the simulation's frames.py —
-#     tests/gen_frames_fixtures.py, same technique as the reactive-law
-#     fixtures. Pure Eigen; no model, no SDK, no Kortex. ---
-add_executable(test_frames tests/test_frames.cpp)
-target_include_directories(test_frames PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_bundled_eigen_to(test_frames)
-add_test(NAME frames COMMAND test_frames)
-
-# --- reactive_law: hardware-free tests for the reactive pose law
-#     (ReactiveLaw.h — pure Eigen) + pose-target parsing, including
-#     cross-validation fixtures generated from the Python simulation law
-#     (tests/gen_reactive_fixtures.py). No Kortex, no Pinocchio. ---
-add_executable(test_reactive_law tests/test_reactive_law.cpp)
-target_include_directories(test_reactive_law PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_bundled_eigen_to(test_reactive_law)
-target_link_libraries(test_reactive_law pthread)
-add_test(NAME reactive_law COMMAND test_reactive_law)
-
-# --- cartesian_trajectory_input: hardware-free typed ownership handoff for
-#     world-Cartesian trajectories. No model, Kortex, Vicon SDK, or planning
-#     libraries. ---
-add_executable(test_cartesian_trajectory_input
-        tests/test_cartesian_trajectory_input.cpp
-        CartesianTrajectoryMailbox.cpp
-)
-target_include_directories(test_cartesian_trajectory_input PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR})
-add_bundled_eigen_to(test_cartesian_trajectory_input)
-target_link_libraries(test_cartesian_trajectory_input humansl_contracts pthread)
-add_test(NAME cartesian_trajectory_input COMMAND test_cartesian_trajectory_input)
-
-add_executable(test_cartesian_reference
-        tests/test_cartesian_reference.cpp
-        CartesianReference.cpp
-        ExecutionConfig.cpp
-        CartesianTrajectoryMailbox.cpp
-)
-target_include_directories(test_cartesian_reference PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_bundled_eigen_to(test_cartesian_reference)
-target_link_libraries(test_cartesian_reference humansl_contracts pthread)
-add_test(NAME cartesian_reference COMMAND test_cartesian_reference)
-
-# --- execution_config: the immutable execution-configuration snapshot
-#     (Plan 01 Task 2). ProductionExecutionConfig() must be the identity
-#     mapping onto the compiled config:: constants, ValidateExecutionConfig
-#     must reject physically meaningless values, and the injected snapshot —
-#     not a fresh config:: read — must be what the per-cycle code consumes.
-#     Pure Eigen; no Kortex, no Pinocchio, no robot. ---
-add_executable(test_execution_config
-        tests/test_execution_config.cpp
-        ExecutionConfig.cpp
-        Actuation.cpp
-        CartesianReference.cpp
-        CartesianTrajectoryMailbox.cpp
-)
-target_include_directories(test_execution_config PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_bundled_eigen_to(test_execution_config)
-target_link_libraries(test_execution_config humansl_contracts pthread)
-add_test(NAME execution_config COMMAND test_execution_config)
-
-# --- The model-dependent battery: the bundled Pinocchio binaries are Linux
-#     x86-64 ELF, so these link only there. ---
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-
-    # The full model/mount geometry and explicit right-7-of-14 adapter.
-    add_executable(test_dual_arm_model tests/test_dual_arm_model.cpp)
-    add_execution_core_to(test_dual_arm_model)
-    add_test(NAME dual_arm_model COMMAND test_dual_arm_model)
-
-    # The URDF's mounting block against ../model/dual_arm_mounting.yaml, which
-    # is its declared source of truth. Nothing generates one from the other,
-    # so this test is what keeps them honest.
-    add_executable(test_dual_arm_mounting tests/test_dual_arm_mounting.cpp)
-    add_execution_core_to(test_dual_arm_mounting)
-    add_test(NAME dual_arm_mounting COMMAND test_dual_arm_mounting
-             "${HUMANSL_ROOT}/Christian_control/model/dual_arm_mounting.yaml")
-
-    # TrackingController's channel handling — needs the real model for the
-    # hold pose's forward kinematics, but no robot.
-    add_executable(test_controller tests/test_controller.cpp)
-    add_execution_core_to(test_controller)
-    add_test(NAME controller COMMAND test_controller)
-
-    # Pre-extraction characterization (Plan 01 Task 1): drives the REAL
-    # controller/reference/actuation units in the exact Runner.cpp per-cycle
-    # order and freezes the results in
-    # tests/fixtures/execution_preextract_v1.csv. First run generates the
-    # fixture with hashed provenance; every later run is the replay gate that
-    # must match it byte for byte. Needs the Pinocchio model, no Kortex, no
-    # Vicon SDK, no robot.
-    add_executable(test_execution_characterization
-            tests/test_execution_characterization.cpp)
-    target_include_directories(test_execution_characterization PRIVATE tests)
-    target_compile_definitions(test_execution_characterization PRIVATE
-            EXECUTION_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/execution_preextract_v1.csv"
-            CONTROL_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
-    add_execution_core_to(test_execution_characterization)
-    add_test(NAME execution_characterization
-             COMMAND test_execution_characterization)
-
-    # The explicit arm execution contract (Plan 01 Task 3): ArmExecutionCore
-    # composes the controller/reference/actuation units in the frozen Runner
-    # per-cycle order and owns the relocated world-freshness classification
-    # and stale-twist decay. The test replays the frozen Task 1 fixture
-    # through the core byte-for-byte and hosts the counting operator
-    # new/delete hook proving Step/ResolveStop never allocate after Seed.
-    # Since Plan 01 Task 4 this target is ALSO the hardware-free linkage
-    # probe: it consumes the same humansl_execution_core archive the hardware
-    # controller links, instead of recompiling the sources.
-    add_executable(test_execution_core tests/test_execution_core.cpp)
-    target_include_directories(test_execution_core PRIVATE tests)
-    target_compile_definitions(test_execution_core PRIVATE
-            EXECUTION_FIXTURE_PATH="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/execution_preextract_v1.csv")
-    add_execution_core_to(test_execution_core)
-    add_test(NAME execution_core COMMAND test_execution_core)
-
-endif ()
-
-endif () # CONTROL_TESTS

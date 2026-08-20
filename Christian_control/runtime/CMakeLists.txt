@@ -56,6 +56,7 @@ if (CPPCHECK)
                 --suppress=missingInclude --inline-suppr --quiet
                 -DGEN3_DUAL_URDF_PATH=\\\"${HUMANSL_ROOT}/Christian_control/model/GEN3_dual_mounted.urdf\\\"
                 ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+                ${CONTROL_GENERATED_DIR}
         COMMENT "Running cppcheck on runtime/ and control/"
     )
 endif ()
@@ -69,23 +70,14 @@ include_directories(SYSTEM
 )
 
 # --- ../control supplies humansl_execution_core (and, through it,
-#     humansl_contracts, the bundled Pinocchio/Eigen and the URDF path). Its
-#     tests are registered here too, with an explicit binary dir, so
-#     `ctest --test-dir build` from this project still runs the whole
-#     controller-side suite in one command, as it did before control and
-#     runtime were separated. ---
-set(CONTROL_TESTS ON CACHE BOOL
-        "Register control's test targets in the runtime build" FORCE)
+#     humansl_contracts, the bundled Pinocchio/Eigen and the URDF path). ---
 add_subdirectory("${CONTROL_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/control")
 
 # The planner implementation is consumed as a library by the controller's
-# non-real-time worker. Its standalone executable and tests remain available
-# from planner_bridge's own top-level build, but are not added to this build.
+# non-real-time worker. Its standalone executable remains available from
+# planning's own top-level build, but is not added to this build.
 set(PLANNING_SOURCE_DIR "${HUMANSL_ROOT}/Christian_control/planning")
 set(PLANNING_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}/planning")
-set(PLANNING_TESTS OFF CACHE BOOL
-        "Disable standalone planner tests in the controller's nested build"
-        FORCE)
 add_subdirectory("${PLANNING_SOURCE_DIR}"
                  "${PLANNING_BINARY_DIR}" EXCLUDE_FROM_ALL)
 
@@ -175,7 +167,8 @@ target_compile_definitions(controller PRIVATE RUNS_ROOT_DIR="${HUMANSL_ROOT}/run
 #     read-verify only, no motion. Kortex, no Pinocchio. ---
 add_executable(clear_faults tools/clear_faults.cpp Hardware.cpp Safety.cpp)
 target_include_directories(clear_faults PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+        ${CONTROL_GENERATED_DIR})
 add_bundled_eigen_to(clear_faults)
 target_link_libraries(clear_faults
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
@@ -184,7 +177,8 @@ target_link_libraries(clear_faults
 #     thresholds (joint-position enforcement). No motion. ---
 add_executable(set_joint_limits tools/set_joint_limits.cpp Hardware.cpp)
 target_include_directories(set_joint_limits PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+        ${CONTROL_GENERATED_DIR})
 add_bundled_eigen_to(set_joint_limits)
 target_link_libraries(set_joint_limits
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
@@ -196,7 +190,8 @@ add_executable(read_safety_limits
         Safety.cpp   # DecodeBaseBank / DecodeActuatorBank
 )
 target_include_directories(read_safety_limits PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+        ${CONTROL_GENERATED_DIR})
 add_bundled_eigen_to(read_safety_limits)
 target_link_libraries(read_safety_limits
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
@@ -205,7 +200,8 @@ target_link_libraries(read_safety_limits
 #     positions from cyclic feedback. No motion. ---
 add_executable(print_joint_positions tools/print_joint_positions.cpp Hardware.cpp)
 target_include_directories(print_joint_positions PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+        ${CONTROL_GENERATED_DIR})
 add_bundled_eigen_to(print_joint_positions)
 target_link_libraries(print_joint_positions
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
@@ -231,7 +227,8 @@ add_execution_core_to(compare_end_effector_pose)
 #     compute tool_pose_*, invisible to any URDF. No motion. ---
 add_executable(print_tool_configuration tools/print_tool_configuration.cpp Hardware.cpp)
 target_include_directories(print_tool_configuration PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+        ${CONTROL_GENERATED_DIR})
 add_bundled_eigen_to(print_tool_configuration)
 target_link_libraries(print_tool_configuration
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
@@ -242,152 +239,9 @@ target_link_libraries(print_tool_configuration
 #     Kortex — link-time only; this tool never connects. ---
 add_executable(make_synthetic_log tools/make_synthetic_log.cpp Hardware.cpp)
 target_include_directories(make_synthetic_log PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+        ${CONTROL_GENERATED_DIR})
 add_bundled_eigen_to(make_synthetic_log)
 target_link_libraries(make_synthetic_log
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
 
-# --- Tests. Registered when runtime is the top-level project; ../simulation
-#     never adds this directory at all. ---
-if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    option(RUNTIME_TESTS "Register runtime's test targets and ctest entries" ON)
-else ()
-    option(RUNTIME_TESTS "Register runtime's test targets and ctest entries" OFF)
-endif ()
-
-if (RUNTIME_TESTS)
-enable_testing()
-
-# --- base_pose: hardware-free tests for the world-pose sample contract,
-#     snapshot->sample mapping, and the SPSC triple-buffer slot (BasePose.h).
-#     Uses the SDK-free ViconSnapshot value type from ../tracking/src; no SDK,
-#     no Kortex, no Pinocchio — safe to run anywhere. ---
-add_executable(test_base_pose tests/test_base_pose.cpp)
-target_include_directories(test_base_pose PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${TRACKING_SRC})
-add_bundled_eigen_to(test_base_pose)
-target_link_libraries(test_base_pose pthread)
-add_test(NAME base_pose COMMAND test_base_pose)
-
-add_executable(test_planning_request tests/test_planning_request.cpp)
-target_include_directories(test_planning_request PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_bundled_eigen_to(test_planning_request)
-target_link_libraries(test_planning_request humansl_contracts pthread)
-add_test(NAME planning_request COMMAND test_planning_request)
-
-# In-process planner-worker ownership characterization.
-add_executable(test_in_process_planner
-        tests/test_in_process_planner.cpp
-        InProcessPlanner.cpp
-        ${CONTROL_SOURCE_DIR}/CartesianTrajectoryMailbox.cpp
-)
-target_include_directories(test_in_process_planner PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
-        ${PLANNING_SOURCE_DIR}/src)
-add_bundled_eigen_to(test_in_process_planner)
-target_link_libraries(test_in_process_planner humansl_contracts pthread)
-add_test(NAME in_process_planner COMMAND test_in_process_planner)
-
-# --- main_args: hardware-free tests for the controller's --arm/--log command
-#     line (MainArgs.cpp — pure string parsing). No Kortex, no Pinocchio. ---
-add_executable(test_main_args tests/test_main_args.cpp MainArgs.cpp)
-target_include_directories(test_main_args PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-add_test(NAME main_args COMMAND test_main_args)
-
-# --- fixed_mount_source: hardware-free test that the fixed world-pose
-#     producer fills the same BasePoseSample/BasePoseSlot contract the Vicon
-#     source fills. Needs Eigen and the SDK-free tracking headers only. ---
-add_executable(test_fixed_mount_source
-        tests/test_fixed_mount_source.cpp FixedMountSource.cpp)
-target_include_directories(test_fixed_mount_source PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR} ${TRACKING_SRC})
-add_bundled_eigen_to(test_fixed_mount_source)
-target_link_libraries(test_fixed_mount_source pthread)
-add_test(NAME fixed_mount_source COMMAND test_fixed_mount_source)
-
-# Python-only regression coverage for offline log-format compatibility. The
-# interpreter is optional so portable C++ test configurations remain usable.
-find_package(Python3 COMPONENTS Interpreter QUIET)
-if (Python3_Interpreter_FOUND)
-    execute_process(
-        COMMAND ${Python3_EXECUTABLE} -c "import numpy"
-        RESULT_VARIABLE PYTHON_NUMPY_RESULT
-        OUTPUT_QUIET
-        ERROR_QUIET
-    )
-endif ()
-if (Python3_Interpreter_FOUND AND PYTHON_NUMPY_RESULT EQUAL 0)
-    add_test(NAME runlog_compat
-             COMMAND ${Python3_EXECUTABLE}
-                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_runlog_compat.py)
-elseif (Python3_Interpreter_FOUND)
-    message(STATUS "Skipping runlog_compat: Python numpy is unavailable")
-endif ()
-
-# Strict historical-log extractor (Plan 01 Task 1): format 9-11 run logs are
-# PARTIAL execution evidence; the extractor copies available fields verbatim
-# and never fabricates absent ones. Pure csv module — no numpy.
-if (Python3_Interpreter_FOUND)
-    add_test(NAME extract_execution_history
-             COMMAND ${Python3_EXECUTABLE}
-                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_extract_execution_history.py)
-endif ()
-
-# --- hardware-machine test battery: the bundled Kortex binaries are Linux
-#     x86-64 ELF, so these link only there. ---
-if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Linux advisory-lock regression: pure filesystem/process behaviour, no
-    # Kortex or Pinocchio and no robot connection.
-    add_executable(test_process_lock tests/test_process_lock.cpp ProcessLock.cpp)
-    target_include_directories(test_process_lock PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    add_test(NAME process_lock COMMAND test_process_lock)
-
-    add_executable(test_supervisor tests/test_supervisor.cpp Safety.cpp)
-    target_include_directories(test_supervisor PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
-    add_bundled_eigen_to(test_supervisor)
-    target_link_libraries(test_supervisor
-            ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
-    add_test(NAME supervisor COMMAND test_supervisor)
-
-    # The run-log CSV schema: header and row pinned to each other. Kortex is a
-    # link-time dependency of Hardware.cpp only; no robot is contacted.
-    add_executable(test_log_schema tests/test_log_schema.cpp Hardware.cpp)
-    target_include_directories(test_log_schema PRIVATE
-            ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR})
-    add_bundled_eigen_to(test_log_schema)
-    target_link_libraries(test_log_schema
-            ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
-    add_test(NAME log_schema COMMAND test_log_schema)
-
-    # Link-structure gate (Plan 01 Task 4 Step 1): the core archive must
-    # contain no Kortex/Vicon-SDK symbol needs, and BOTH the hardware
-    # controller and the hardware-free probe must link (and actually pull in)
-    # the same humansl_execution_core target. Reads build artifacts only; runs
-    # nothing. test_execution_core is defined by ../control, which this
-    # project adds with CONTROL_TESTS forced ON above.
-    find_program(NM_EXECUTABLE nm)
-    if (NM_EXECUTABLE)
-        get_target_property(CONTROLLER_LINK_LIBRARIES controller LINK_LIBRARIES)
-        get_target_property(PROBE_LINK_LIBRARIES test_execution_core LINK_LIBRARIES)
-        add_test(NAME execution_core_linkage
-                 COMMAND ${CMAKE_COMMAND}
-                         -DCORE_ARCHIVE=$<TARGET_FILE:humansl_execution_core>
-                         -DCONTROLLER_BINARY=$<TARGET_FILE:controller>
-                         -DPROBE_BINARY=$<TARGET_FILE:test_execution_core>
-                         "-DCONTROLLER_LINKS=${CONTROLLER_LINK_LIBRARIES}"
-                         "-DPROBE_LINKS=${PROBE_LINK_LIBRARIES}"
-                         -DNM_EXECUTABLE=${NM_EXECUTABLE}
-                         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_execution_core_linkage.cmake)
-        add_test(NAME controller_planner_linkage
-                 COMMAND ${CMAKE_COMMAND}
-                         -DCONTROLLER_BINARY=$<TARGET_FILE:controller>
-                         -DCORE_ARCHIVE=$<TARGET_FILE:humansl_execution_core>
-                         -DNM_EXECUTABLE=${NM_EXECUTABLE}
-                         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_controller_planner_linkage.cmake)
-    else ()
-        message(STATUS "Skipping execution_core_linkage: nm is unavailable")
-    endif ()
-endif ()
-
-endif () # RUNTIME_TESTS

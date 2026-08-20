@@ -29,6 +29,7 @@ zero would let the UI draw a degenerate 0-to-0 range that looks like a real
 limit — and a limit drawn once tends to be believed later.
 """
 
+import math
 import re
 import shutil
 from pathlib import Path
@@ -70,12 +71,12 @@ GUARD_OVERRIDES: tuple[str, ...] = (
 # that Config.h actually stores, never a re-exported alias (kQdotLimitDegS is
 # `= kModelVelocityLimitsDegS`, not a separate value) — a write to an alias's
 # name would silently change nothing the controller reads.
-VECTOR_KNOBS: dict[str, tuple[str, str]] = {
-    "kModelVelocityLimitsDegS": (
-        "double",
-        "Commanded-speed clip, deg/s — the program's single speed limit, all 7 joints",
-    ),
-}
+# Empty since 2026-08-20: kModelVelocityLimitsDegS used to be here, but it is
+# now a derived alias (kVelocityControllerFraction of the physical hard limits
+# in planning/config/joint_limits.yaml) rather than a literal array. Writing it
+# would land on an alias, which this whitelist's own rule forbids. Speed is
+# edited in that yaml instead, through the planner-config screen.
+VECTOR_KNOBS: dict[str, tuple[str, str]] = {}
 
 # Matches the value between `= {` and `};`, across lines, for one named
 # JointVector. Anchored the same way KNOB_RE is: it can only ever land on the
@@ -95,7 +96,6 @@ THRESHOLDS: dict[str, tuple[str, str, str]] = {
     "kArrivalOrientationToleranceRad": ("double", "rad", "arrival only — nothing stops the arm on orientation error"),
     "kFollowingErrorLimitDeg": ("double", "deg", "stop — commanded minus measured, any joint"),
     "kControlDtS": ("double", "s", "control period"),
-    "kJointSoftwareLimitMarginDeg": ("double", "deg", "how far inside the model range the software limit sits"),
 }
 
 _JOINT_COUNT = 7
@@ -289,30 +289,66 @@ def read_thresholds(path: Path | None = None) -> dict[str, dict[str, object]]:
     return out
 
 
+def _physical_limits_and_margins():
+    """(lower, upper, mask, controller_margin_deg, controller_velocity_deg_s).
+
+    Read straight from joint_limits.yaml, the same file the generated header
+    is built from, so the panel and the binary cannot disagree. On any failure
+    every joint comes back unbounded, which is the safe direction to be wrong
+    in: the panel draws nothing rather than drawing a guess.
+    """
+    try:
+        import yaml
+
+        with open(paths.JOINT_LIMITS_YAML) as handle:
+            doc = yaml.safe_load(handle)
+        margins = doc["margins"]
+        margin = float(margins["position_controller_margin_deg"])
+        fraction = float(margins["velocity_controller_fraction"])
+        lower, upper, mask, velocity = [], [], [], []
+        for i in range(1, _JOINT_COUNT + 1):
+            entry = doc["position_limits"][f"actuator_{i}"]
+            if entry.get("continuous", False):
+                lower.append(0.0)
+                upper.append(0.0)
+                mask.append(0)
+            else:
+                lower.append(float(entry["lower_limit"]))
+                upper.append(float(entry["upper_limit"]))
+                mask.append(1)
+            rad_s = float(doc["velocity_limits"][f"actuator_{i}"]["upper_limit"])
+            velocity.append(math.degrees(rad_s) * fraction)
+        return lower, upper, mask, margin, velocity
+    except Exception:
+        return None, None, None, None, None
+
+
 def read_joint_limits(path: Path | None = None) -> dict[str, object]:
     """Per-joint ranges, with the continuous joints reported as unbounded.
 
-    kJointBoundedMask is {0,1,0,1,0,1,0}: only joints 2, 4 and 6 have a range.
-    For those, software_limit_deg repeats Config.h's own rule — the model
-    upper magnitude less kJointSoftwareLimitMarginDeg, but never wider than
-    the firmware warning threshold. Every array is seven long and carries None
-    wherever a joint has no such value, so a caller that ignores bounded_mask
-    still cannot draw a limit that does not exist. If a constant cannot be
-    parsed at all the joint comes back unbounded, which is the safe direction
-    to be wrong in: the panel draws nothing rather than drawing a guess.
+    Since 2026-08-20 the physical limits and the margins are NOT in Config.h.
+    They live in planning/config/joint_limits.yaml, which is the single
+    authoritative table, and Config.h holds derived aliases that this module
+    cannot text-parse. So the physical range, the bounded mask, the controller
+    margin and the firmware warning (which IS the physical limit) all come
+    from that yaml; only the firmware error threshold, still hand-authored,
+    comes from Config.h.
+
+    software_limit_deg is the physical upper magnitude less the controller
+    margin, with no min() against the firmware warning: that cap is gone from
+    Config.h and repeating it here would show the panel a number the binary no
+    longer uses. Every array is seven long and carries None wherever a joint
+    has no such value, so a caller that ignores bounded_mask still cannot draw
+    a limit that does not exist.
     """
     text = _config_text(path)
-    lower = parse_joint_vector(text, "kJointLowerDeg")
-    upper = parse_joint_vector(text, "kJointUpperDeg")
-    mask = parse_joint_vector(text, "kJointBoundedMask")
-    warn = parse_joint_vector(text, "kJointLimitWarnDeg")
     error = parse_joint_vector(text, "kJointLimitErrorDeg")
-    velocity = parse_joint_vector(text, "kQdotLimitDegS")
-    margin_raw = parse_scalar(text, "kJointSoftwareLimitMarginDeg")
-    try:
-        margin = float(margin_raw) if margin_raw is not None else None
-    except ValueError:
-        margin = None
+
+    lower, upper, mask, margin, velocity = _physical_limits_and_margins()
+    # The firmware WARNING is the physical limit itself since 2026-08-20, so
+    # it is no longer a literal in Config.h to parse. Only the ERROR threshold
+    # is still hand-authored there.
+    warn = upper
 
     bounded = [bool(v) for v in mask] if mask else [False] * _JOINT_COUNT
     out: dict[str, object] = {
@@ -336,8 +372,8 @@ def read_joint_limits(path: Path | None = None) -> dict[str, object]:
         warn_deg = warn[joint] if warn else None
         error_deg = error[joint] if error else None
         software = None
-        if high is not None and warn_deg is not None and margin is not None:
-            software = min(high - margin, warn_deg)
+        if high is not None and margin is not None:
+            software = high - margin
         out["lower_deg"].append(low)
         out["upper_deg"].append(high)
         out["warn_deg"].append(warn_deg)

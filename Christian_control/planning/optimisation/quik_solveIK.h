@@ -15,12 +15,22 @@
 #include "gtsam/geometry/Pose3.h"
 #include "gtsam/base/Vector.h"
 #include <gpmp2/kinematics/ArmModel.h>
+#include <array>
+#include "analytical_ik.h"
 
 using Eigen::Matrix4d;
 
-// Joint limits for Kinova Gen3 
-const double JOINT_LIMITS_LOWER[7] = {-1e20, -2.2515, -1e20, -2.5807, -1e20, -2.0996, -1e20};
-const double JOINT_LIMITS_UPPER[7] = {1e20, 2.2515, 1e20, 2.5807, 1e20, 2.0996, 1e20};
+// Physical Kinova joint limits in radians, derived from the ONE authoritative
+// table (planning/config/joint_limits.yaml, via the generated JointLimits.h)
+// rather than hand-copied. These are the PHYSICAL limits, not the planner's
+// margined ones: this is a feasibility/seeding test on whether a
+// configuration exists at all, which is a question about the robot, not
+// about how conservatively we choose to plan. Continuous joints (1/3/5/7)
+// carry the +-1e20 sentinel, unchanged.
+const std::array<double, 7> JOINT_LIMITS_LOWER =
+    analytical_ik::JointLimitsRad(config::limits::kPhysicalLowerDeg, -1e20);
+const std::array<double, 7> JOINT_LIMITS_UPPER =
+    analytical_ik::JointLimitsRad(config::limits::kPhysicalUpperDeg, 1e20);
 
 // Function to check if configuration is within joint limits
 bool isWithinJointLimits(const Eigen::Vector<double,7>& config) {

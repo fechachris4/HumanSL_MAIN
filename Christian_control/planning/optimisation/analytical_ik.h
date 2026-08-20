@@ -12,6 +12,9 @@
 #include <chrono>
 
 #include "Config.h"
+#include <array>
+#include <cstddef>
+#include "Config.h"
 #include "PinocchioKinematicsAdapter.h"
 
 namespace analytical_ik {
@@ -21,10 +24,29 @@ namespace analytical_ik {
 // lived here too; that's gone now — forwardKinematics()/computeJacobian()
 // evaluate Pinocchio against the canonical URDF instead (see
 // PinocchioKinematicsAdapter.h).
+// Physical Kinova joint limits in radians, derived from the ONE authoritative
+// table (planning/config/joint_limits.yaml, via the generated JointLimits.h)
+// rather than hand-copied. These are the PHYSICAL limits, not the planner's
+// margined ones: this is a feasibility/seeding test on whether a
+// configuration exists at all, which is a question about the robot, not
+// about how conservatively we choose to plan. Continuous joints (1/3/5/7)
+// carry the +-1e20 sentinel, unchanged.
+constexpr std::array<double, 7> JointLimitsRad(
+    const std::array<double, 7>& deg, double unbounded)
+{
+    std::array<double, 7> out{};
+    for (std::size_t i = 0; i < out.size(); ++i)
+        out[i] = config::limits::kBoundedMask[i]
+                     ? deg[i] * 3.14159265358979323846 / 180.0
+                     : unbounded;
+    return out;
+}
+
 struct KinovaGen3Params {
-    // Joint limits (radians) - using original limits to avoid issues
-    static constexpr double JOINT_LIMITS_LOWER[7] = {-1e20, -2.2515, -1e20, -2.5807, -1e20, -2.0996, -1e20};
-    static constexpr double JOINT_LIMITS_UPPER[7] = {1e20, 2.2515, 1e20, 2.5807, 1e20, 2.0996, 1e20};
+    static constexpr std::array<double, 7> JOINT_LIMITS_LOWER =
+        JointLimitsRad(config::limits::kPhysicalLowerDeg, -1e20);
+    static constexpr std::array<double, 7> JOINT_LIMITS_UPPER =
+        JointLimitsRad(config::limits::kPhysicalUpperDeg, 1e20);
 };
 
 // How close the solver must get before it stops, and how close it must be
@@ -287,7 +309,7 @@ namespace detail {
 // base_transform * DhRootInBaseLink()^-1 * base_link_M_tool(joints) — the
 // same frame-composition identity utils.cpp's forwardKinematics uses, so
 // this reduces to exactly what the DH chain used to compute for any
-// base_transform, not just the live call site's DhRootInWorld().
+// base_transform, not just the live call site's DhRootInMount().
 inline Eigen::Isometry3d ToolPoseInBaseTransform(const Eigen::Vector<double, 7>& joints,
                                                  const Eigen::Matrix4d& base_transform,
                                                  const std::string& end_effector_frame,

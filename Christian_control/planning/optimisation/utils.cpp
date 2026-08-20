@@ -1,6 +1,7 @@
 #include "utils.h"
 #include <string_view>
 #include <tuple>
+#include <stdexcept>
 #include "Config.h"
 #include "PinocchioKinematicsAdapter.h"
 
@@ -236,48 +237,68 @@ void analyzeTrajectoryResults(
 
 
 std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_path) {
-    
+
     JointLimits pos_limits(7);
     JointLimits vel_limits(7);
 
     YAML::Node config = YAML::LoadFile(config_path);
-        
-        // Extract position limits. Stored in joint_limits.yaml as degrees
-        // (converted from radians 2026-08-18 so the panel edits degrees,
-        // not radians); every downstream consumer (JointLimitFactorVector,
-        // PathIk's margin, the grid-coverage envelope) expects radians, so
-        // convert here, once, at the one load site. Continuous joints
-        // (1/3/5/7) carry `continuous: true` and no lower_limit/
-        // upper_limit in the file — they get the same +-1e20 rad sentinel
-        // this function has always used for "no limit", unscaled, rather
-        // than a converted fake angle.
+
+    // What this returns is the PLANNER's operating limits, not the physical
+    // ones. The file holds the physical Kinova limits (Table 39 positions,
+    // the live hard speed limits) plus one `margins` block, and the planner
+    // takes the strictest share of it: physical less
+    // position_planner_margin_deg, and velocity_planner_fraction of the hard
+    // speed. The controller derives its own, looser, pair from the same four
+    // numbers through the generated JointLimits.h. Planner stricter than
+    // controller, controller stricter than hardware — the gap between the
+    // first two IS the tracking allowance, because the controller commands
+    // position from integrated velocity and always carries some error.
+    //
+    // Positions are stored in degrees (so the panel edits degrees) and every
+    // downstream consumer expects radians, so the conversion happens here,
+    // once, at the one load site.
+    const YAML::Node margins = config["margins"];
+    if (!margins)
+        throw std::runtime_error(
+            "createJointLimits: " + config_path + " has no `margins` block; "
+            "the planner cannot derive its operating limits from physical "
+            "limits alone");
+    const double position_margin_deg =
+        margins["position_planner_margin_deg"].as<double>();
+    const double velocity_fraction =
+        margins["velocity_planner_fraction"].as<double>();
 
     for (int i = 1; i <= 7; ++i) {
         std::string actuator_key = "actuator_" + std::to_string(i);
         YAML::Node entry = config["position_limits"][actuator_key];
         if (!entry) continue;
+        // Continuous joints (1/3/5/7) carry `continuous: true` and no
+        // numeric limit. There is no physical stop to take a margin from, so
+        // they keep the +-1e20 rad sentinel this function has always used,
+        // unmargined. Do not give them a fabricated angle.
         const bool continuous = entry["continuous"] && entry["continuous"].as<bool>();
         if (continuous) {
             pos_limits.lower(i-1) = -1e20;
             pos_limits.upper(i-1) = 1e20;
             continue;
         }
-        const double lower_deg = entry["lower_limit"].as<double>();
-        const double upper_deg = entry["upper_limit"].as<double>();
+        const double lower_deg = entry["lower_limit"].as<double>() + position_margin_deg;
+        const double upper_deg = entry["upper_limit"].as<double>() - position_margin_deg;
         pos_limits.lower(i-1) = lower_deg * M_PI / 180.0;
         pos_limits.upper(i-1) = upper_deg * M_PI / 180.0;
     }
-            
-    // Extract velocity limits    
+
+    // Velocity limits are symmetric hard limits in rad/s; the planner's
+    // share is a fraction of them rather than an absolute margin, because
+    // the physical figure is a measured rate rather than a mechanical stop.
     for (int i = 1; i <= 7; ++i) {
         std::string actuator_key = "actuator_" + std::to_string(i);
         if (config["velocity_limits"][actuator_key]) {
-            vel_limits.lower(i-1) = config["velocity_limits"][actuator_key]["lower_limit"].as<double>();
-            vel_limits.upper(i-1) = config["velocity_limits"][actuator_key]["upper_limit"].as<double>();
+            vel_limits.lower(i-1) = config["velocity_limits"][actuator_key]["lower_limit"].as<double>() * velocity_fraction;
+            vel_limits.upper(i-1) = config["velocity_limits"][actuator_key]["upper_limit"].as<double>() * velocity_fraction;
         }
     }
-            
-  
+
     return std::make_pair(pos_limits, vel_limits);
 }
 

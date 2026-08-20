@@ -43,40 +43,85 @@ position_limits:
   actuator_7:
     continuous: true
 
-# Joint velocity limits — 95% of the LIVE kinematic hard limits the base
-# reports at startup (80.0021 deg/s actuators 1-4, 70.004 deg/s actuators
-# 5-7), matching the controller's clip in control/Config.h, which
-# must move with this table (decision 2026-08-13, docs/motion-limits-map.md).
-# The previous 50 deg/s values came from Table 41, which governs admittance
-# and force modes, not the low-level stream this planner feeds.
+# ---------------------------------------------------------------------------
+# Margins — the ONLY place an operating limit is defined.
+#
+# Every layer derives its own limit from the physical tables above:
+#
+#   planner soft limit    = physical - position_planner_margin_deg
+#   controller soft limit = physical - position_controller_margin_deg
+#   firmware warning      = physical
+#   firmware error        = physical + firmware_error_band_deg
+#
+#   planner speed limit    = physical x velocity_planner_fraction
+#   controller speed limit = physical x velocity_controller_fraction
+#
+# The ordering is the safety argument and is asserted wherever these are
+# consumed: the planner is stricter than the controller, the controller is
+# stricter than the hardware. The planner is stricter on purpose — the
+# controller commands position from integrated velocity and always carries
+# some tracking error, so the gap between the two IS the tracking allowance.
+# If they were equal, a plan that legitimately reached its own limit would
+# sit exactly on the controller's stop line.
+#
+# These four numbers replace: a 2 deg margin and a min() chain in
+# control/Config.h, a pre-derated velocity table, and hardcoded limit arrays
+# in analytical_ik.h and quik_solveIK.h. They do NOT replace the firmware
+# warn/error thresholds — see the note below the block.
+#
+# The sizes are explicit placeholders, not measured. The honest way to set
+# position_controller_margin_deg is from observed peak tracking error on a
+# logged run.
+margins:
+  position_planner_margin_deg: 2.0
+  position_controller_margin_deg: 1.0
+  velocity_planner_fraction: 0.95
+  velocity_controller_fraction: 0.99
+
+# NOT here: the firmware JOINT_LIMIT warning/error thresholds. Those are
+# still separately authored in control/Config.h, deliberately, until the
+# question of whether this project should be writing the robot's safety
+# configuration at all is settled (2026-08-20). Do not add a derivation rule
+# for them here without answering that first.
+
+
+# Joint velocity limits — the PHYSICAL hard limits the base reports live at
+# startup (80.0021 deg/s actuators 1-4, 70.004 deg/s actuators 5-7). These
+# are the boundary, not an operating figure: the planner and controller each
+# derive their own operating limit from these by the fractions in `margins`
+# below. Do NOT pre-derate this table; that is what produced two different
+# 5%-derated numbers living in two files (decision 2026-08-13,
+# docs/motion-limits-map.md). Table 41's 50 deg/s figures govern admittance
+# and force modes, not the low-level stream this planner feeds, and are not
+# used anywhere.
 velocity_limits:
   actuator_1:
-    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
-    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
+    lower_limit: -1.3963  # -80.0021°/s (live hard limit)
+    upper_limit: 1.3963   # +80.0021°/s (live hard limit)
     unit: "rad/s"
   actuator_2:
-    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
-    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
+    lower_limit: -1.3963  # -80.0021°/s (live hard limit)
+    upper_limit: 1.3963   # +80.0021°/s (live hard limit)
     unit: "rad/s"
   actuator_3:
-    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
-    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
+    lower_limit: -1.3963  # -80.0021°/s (live hard limit)
+    upper_limit: 1.3963   # +80.0021°/s (live hard limit)
     unit: "rad/s"
   actuator_4:
-    lower_limit: -1.3265  # -76.0°/s (95% of live 80.0021)
-    upper_limit: 1.3265   # +76.0°/s (95% of live 80.0021)
+    lower_limit: -1.3963  # -80.0021°/s (live hard limit)
+    upper_limit: 1.3963   # +80.0021°/s (live hard limit)
     unit: "rad/s"
   actuator_5:
-    lower_limit: -1.1606  # -66.5°/s (95% of live 70.004)
-    upper_limit: 1.1606   # +66.5°/s (95% of live 70.004)
+    lower_limit: -1.2218  # -70.004°/s (live hard limit)
+    upper_limit: 1.2218   # +70.004°/s (live hard limit)
     unit: "rad/s"
   actuator_6:
-    lower_limit: -1.1606  # -66.5°/s (95% of live 70.004)
-    upper_limit: 1.1606   # +66.5°/s (95% of live 70.004)
+    lower_limit: -1.2218  # -70.004°/s (live hard limit)
+    upper_limit: 1.2218   # +70.004°/s (live hard limit)
     unit: "rad/s"
   actuator_7:
-    lower_limit: -1.1606  # -66.5°/s (95% of live 70.004)
-    upper_limit: 1.1606   # +66.5°/s (95% of live 70.004)
+    lower_limit: -1.2218  # -70.004°/s (live hard limit)
+    upper_limit: 1.2218   # +70.004°/s (live hard limit)
     unit: "rad/s"
 
 # Joint acceleration limits (Table 43)

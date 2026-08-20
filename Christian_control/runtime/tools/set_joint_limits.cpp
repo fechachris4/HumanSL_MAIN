@@ -10,14 +10,17 @@
 // Firmware JOINT_LIMIT is the actual joint-position enforcement; the
 // controller has no separate client-side joint-position clamp. Its velocity
 // clip, reach screen, and following-error stop are separate protections.
-// Warnings: joint 2's established +/-130.0, joint 4 +/-145.0 (inside its
-// documented +/-147.8), and joint 6 +/-118.0 (inside +/-120.3). Errors
-// +/-140.0 / +/-150.0 / +/-123.0 are outside the documented respective
-// +/-128.9 / +/-147.8 / +/-120.3 ranges:
+// Warnings ARE the physical Kinova limits, derived from the one
+// authoritative table (planning/config/joint_limits.yaml) since 2026-08-20;
+// they are no longer three hand-authored numbers. Errors stay hand-authored
+// and sit outside those limits, as the last robot-side protection:
 //
-//   joint 2  warning +/-130.0, error +/-140.0
-//   joint 4  warning +/-145.0, error +/-150.0
-//   joint 6  warning +/-118.0, error +/-123.0
+//   joint 2  warning +/-128.9, error +/-140.0
+//   joint 4  warning +/-147.8, error +/-150.0
+//   joint 6  warning +/-120.3, error +/-123.0
+//
+// The software layers stop first: the planner 2 deg inside the physical
+// limit, the controller 1 deg inside it, then this warning, then the error.
 //
 // The values match Config.h, which the controller re-applies and verifies on
 // every connection. DeviceConfig writes are not durable across a power cycle.

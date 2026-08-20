@@ -74,7 +74,32 @@ FOCUS_JOINTS = (3, 4)
 # labelled by source and must not be read as "distance to the arm's trip
 # point".
 URDF_LIMIT_DEG = [0.0, 128.34, 0.0, 147.25, 0.0, 119.75, 0.0]
-CONFIG_LIMIT_DEG = [0.0, 128.9, 0.0, 147.8, 0.0, 120.3, 0.0]
+def _physical_limit_deg():
+    """The physical limits, read from the ONE authoritative table.
+
+    Not hardcoded here any more (2026-08-20): the same magnitudes used to sit
+    in five files at once and had drifted. Falls back to the continuous-joint
+    sentinel everywhere if the file cannot be read, so a plot never invents a
+    band it cannot source.
+    """
+    import yaml
+
+    yaml_path = (Path(__file__).resolve().parents[2]
+                 / "planning" / "config" / "joint_limits.yaml")
+    try:
+        with open(yaml_path) as handle:
+            doc = yaml.safe_load(handle)
+        out = []
+        for i in range(1, 8):
+            entry = doc["position_limits"][f"actuator_{i}"]
+            out.append(0.0 if entry.get("continuous", False)
+                       else float(entry["upper_limit"]))
+        return out
+    except Exception:
+        return [0.0] * 7
+
+
+CONFIG_LIMIT_DEG = _physical_limit_deg()
 
 # Categorical hues in fixed order, one per role, never cycled. Validated
 # colourblind-safe against a light surface; line style is a second encoding

@@ -12,6 +12,11 @@
 #include <chrono>
 #include <cstddef>
 
+// Generated at build time from planning/config/joint_limits.yaml — the one
+// authoritative table of physical Kinova joint limits and of the margins the
+// planner and controller apply to them. See tools/generate_joint_limits.py.
+#include "JointLimits.h"
+
 // ---------------------------------------------------------------
 // The joint-space value type
 // ---------------------------------------------------------------
@@ -130,19 +135,17 @@ namespace config
     inline constexpr int kSessionInactivityTimeoutMs = 60000;
     inline constexpr int kConnectionInactivityTimeoutMs = 2000;
 
-    // Commanded-speed clip, deg/s — the program's single speed limit.
-    // 95% of the live hard limits the base reports at every startup
-    // (80.0021 deg/s joints 1-4, 70.004 deg/s joints 5-7): the Kinova
-    // limit is the boundary, operation sits 5% inside it (decision
-    // 2026-08-13, docs/motion-limits-map.md; history and safety notes in
-    // docs/decisions/qdot-limit-raise.md). VerifyKinematicHardLimits
-    // refuses startup if these ever exceed what the base reports. The
-    // planner's joint_limits.yaml velocity table carries the same values
-    // and must move with this one.
-    inline constexpr JointVector kModelVelocityLimitsDegS = {
-        76.0, 76.0, 76.0, 76.0,
-        66.5, 66.5, 66.5
-    };
+    // Commanded-speed clip, deg/s. Derived, not authored: the physical
+    // hard limits the base reports at startup live in
+    // planning/config/joint_limits.yaml, and this is
+    // kVelocityControllerFraction of them (JointLimits.h, generated from
+    // that yaml at build time). The planner derives its own, stricter,
+    // figure from the same table by the same mechanism, so the two cannot
+    // drift apart the way the twin hand-written 5% derates did.
+    // VerifyKinematicHardLimits still refuses startup if this ever exceeds
+    // what the base actually reports.
+    inline constexpr JointVector kModelVelocityLimitsDegS =
+        limits::kControllerVelocityDegS;
 
     // Timing, single source of truth: 500 Hz — one Send/Feedback exchange
     // every 2 ms. Loop grid, frequency and log sizing all derive from it.
@@ -205,20 +208,19 @@ namespace config
     inline constexpr bool kVelocityTermEnabled = true; // Kd term
     inline constexpr bool kNullSpaceEnabled = true;
 
-    // Published Gen3 7-DoF position concepts, degrees, in Kortex actuator
-    // order. Kinova's User Guide, Table 39:
-    // https://www.kinovarobotics.com/uploads/User-Guide-Gen3-R07.pdf
-    // Joints 1/3/5/7 are continuous (zero mask and zero limits); the
-    // bounded joints are 2/4/6. These model values remain the source for
-    // client-side position reasoning because bundled Kortex 2.7.0's
-    // KinematicLimits schema has no joint_position_limits field.
-    inline constexpr JointVector kJointLowerDeg = {
-        0, -128.9, 0, -147.8, 0, -120.3, 0
-    };
-    inline constexpr JointVector kJointUpperDeg = {
-        0, 128.9, 0, 147.8, 0, 120.3, 0
-    };
-    inline constexpr JointVector kJointBoundedMask = {0, 1, 0, 1, 0, 1, 0};
+    // Published Gen3 7-DoF position limits, degrees, in Kortex actuator
+    // order — Kinova's User Guide Table 39. Derived, not authored: they come
+    // from planning/config/joint_limits.yaml through the generated
+    // JointLimits.h, which is the single authoritative table for the whole
+    // repository. Joints 1/3/5/7 are continuous and carry the zero sentinel
+    // and a zero mask. These model values remain the source for client-side
+    // position reasoning because bundled Kortex 2.7.0's KinematicLimits
+    // schema has no joint_position_limits field. The URDF's <limit> tags are
+    // NOT a source: they are silent on all four continuous joints and, where
+    // they speak, rounded away from Table 39.
+    inline constexpr JointVector kJointLowerDeg = limits::kPhysicalLowerDeg;
+    inline constexpr JointVector kJointUpperDeg = limits::kPhysicalUpperDeg;
+    inline constexpr JointVector kJointBoundedMask = limits::kBoundedMask;
 
     // The clip applied to q̇ before integration. Equal to the model limits
     // above by construction, so the two cannot disagree.
@@ -231,33 +233,47 @@ namespace config
     // Firmware-enforced joint-position thresholds: magnitude in deg, sign
     // applied per HIGH/LOW; 0 = leave that joint alone. The controller owns
     // every bounded joint's 2/4/6 threshold; continuous 1/3/5/7 have none.
-    // Warnings are j2's established 130 deg and j4/j6 145/118 deg, inside
-    // their documented 147.8/120.3 deg ranges. Errors 140/150/123 deg are
-    // outside the documented 128.9/147.8/120.3 deg ranges. Do not widen
-    // either firmware threshold; they remain robot-side enforcement.
-    inline constexpr JointVector kJointLimitWarnDeg = {0, 130.0, 0, 145.0, 0, 118.0, 0};
+    // The WARNING threshold is the physical limit itself, derived from
+    // planning/config/joint_limits.yaml like every other limit in the
+    // repository (2026-08-20). It used to be three hand-authored numbers —
+    // 130/145/118 deg — that followed no rule: j2's sat 1.1 deg OUTSIDE its
+    // physical limit while j6's sat 2.3 deg inside, and that 118 was the
+    // origin of the planner/controller gap nobody could explain. With the
+    // warning ON the physical limit, the whole ladder is ordered by
+    // construction: planner 2 deg inside, controller 1 deg inside, firmware
+    // warning at the limit, firmware error outside it.
+    //
+    // EnsureJointLimits still writes these on every connection, and that is
+    // the point of keeping it: SDK writes do not survive a power cycle, and
+    // this arm's persisted state is a degenerate 0/0 band on the bounded
+    // joints, which makes the firmware fault ANY outward motion (2026-08-04
+    // incident). The mechanism repairs that; it is not an override of a
+    // healthy factory configuration.
+    inline constexpr JointVector kJointLimitWarnDeg = limits::kPhysicalUpperDeg;
+
+    // The ERROR threshold is still hand-authored, deliberately, and is NOT
+    // changed by this step. It sits outside the physical limit (+11.1/+2.2/
+    // +2.7 deg) as the last robot-side protection, after both software stops
+    // and the warning have already been passed. Do not widen it.
     inline constexpr JointVector kJointLimitErrorDeg = {0, 140.0, 0, 150.0, 0, 123.0, 0};
 
     // Software stops before a bounded joint moves outward across this
-    // conservative boundary. It is Table 39's upper magnitude less 2 deg,
-    // capped by (never wider than) the configured firmware warning. The
-    // zero entries preserve the continuous-joint sentinel.
-    inline constexpr double kJointSoftwareLimitMarginDeg = 2.0;
-    inline constexpr JointVector kJointSoftwareLimitDeg = {
-        0,
-        (kJointUpperDeg[1] - kJointSoftwareLimitMarginDeg < kJointLimitWarnDeg[1]
-             ? kJointUpperDeg[1] - kJointSoftwareLimitMarginDeg
-             : kJointLimitWarnDeg[1]),
-        0,
-        (kJointUpperDeg[3] - kJointSoftwareLimitMarginDeg < kJointLimitWarnDeg[3]
-             ? kJointUpperDeg[3] - kJointSoftwareLimitMarginDeg
-             : kJointLimitWarnDeg[3]),
-        0,
-        (kJointUpperDeg[5] - kJointSoftwareLimitMarginDeg < kJointLimitWarnDeg[5]
-             ? kJointUpperDeg[5] - kJointSoftwareLimitMarginDeg
-             : kJointLimitWarnDeg[5]),
-        0
-    };
+    // boundary: the physical limit less the controller margin, and nothing
+    // else. This used to be Table 39 less a locally-declared 2 deg, capped
+    // by min() against the separately-authored firmware warning, which is
+    // where joint 6's unexplained 118 deg came from. One margin now, defined
+    // beside the physical limits it applies to. The zero entries preserve
+    // the continuous-joint sentinel.
+    inline constexpr JointVector kJointSoftwareLimitDeg =
+        limits::kControllerUpperDeg;
+
+    // The ordering this rests on, all from one physical table:
+    //   planner 126.9 / 145.8 / 118.3  (physical - 2 deg)
+    //   controller 127.9 / 146.8 / 119.3  (physical - 1 deg)
+    //   firmware warning 128.9 / 147.8 / 120.3  (physical)
+    //   firmware error 140 / 150 / 123  (outside physical)
+    // Each layer stops before the next. No min(), no second margin, no
+    // number that is not derived from joint_limits.yaml or explained here.
 
     // Deadband null-space limit avoidance (ReactiveLaw.h). The objective is
     // exactly zero until a bounded joint's wrapped position comes within
