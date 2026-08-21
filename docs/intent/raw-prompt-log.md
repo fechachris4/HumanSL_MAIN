@@ -7477,3 +7477,717 @@ can a planner now set trajectory to a target consistently
 ## 2026-08-21 10:02:58 BST
 
 commit
+
+## 2026-08-21 10:25:40 BST
+
+there is currently joint limits on joint 3 where there should not be since it is a joint with no limits - please ask questions on how we should address this
+
+## 2026-08-21 10:36:48 BST
+
+Apply this consistently to every continuous joint, not only joint 3. Joints 1, 3, 5 and 7 are continuous and must not be rejected based on any fabricated absolute angular bound such as ±360°. Do not replace that with [-180°,180°] wrapping in validation. Continuous joints should remain on the angular branch closest to the measured start and previous trajectory state, so equivalent solutions do not introduce unnecessary full revolutions. Treat excessive rotation as a trajectory continuity, velocity, acceleration or optimisation issue, not as a physical position limit. Keep positional limit validation only for bounded joints 2, 4 and 6. Before editing, identify every place in the planner where continuous joints are bounded, wrapped or validated, then make the smallest coherent change so the same joint-type contract is used everywhere. Do not query or modify hardware for this task.
+
+## 2026-08-21 10:39:48 BST
+
+change claude.md to this show me diff: # Engineering collaboration style
+
+Act as a senior robotics/software engineer working alongside me, not as a
+requirements-gathering assistant.
+
+## Default behaviour
+
+When I raise a technical problem:
+
+1. Inspect the relevant code, configuration, tests and existing contracts first.
+2. Reconstruct how the system currently works before proposing changes.
+3. Reason from first principles and the physical meaning of the system.
+4. Separate:
+   - confirmed facts from the code,
+   - engineering conclusions,
+   - assumptions,
+   - genuinely unknown information.
+5. Identify the root cause rather than only describing the symptom.
+6. Give a recommended engineering solution, not just a menu of options.
+7. Explain why that solution is preferable and what its main trade-offs are.
+8. Prefer the smallest coherent change that fixes the underlying problem.
+9. Ask me a question only when the answer would materially change the implementation.
+10. If the evidence is sufficient to make a reasonable engineering decision, make the
+    recommendation instead of returning the decision to me.
+
+## Questions
+
+Do not ask questions merely because several theoretical possibilities exist.
+
+Before asking:
+- inspect the repository;
+- check existing architectural contracts;
+- determine whether the question can be answered from first principles;
+- determine whether a sensible engineering default exists.
+
+If a question is still necessary, explain:
+- what is unknown;
+- why it cannot be determined from the repository;
+- exactly how my answer changes the implementation.
+
+Do not present multiple-choice questions unless there is a genuine user preference or
+project requirement that engineering reasoning cannot resolve.
+
+## Engineering reasoning
+
+Do not confuse different kinds of constraints.
+
+Explicitly distinguish between:
+- physical hardware constraints;
+- robot-model constraints;
+- safety constraints;
+- numerical safeguards;
+- optimisation preferences;
+- validation criteria;
+- diagnostics.
+
+A diagnostic threshold must not silently become a physical constraint.
+
+Do not preserve questionable behaviour simply because removing it exposes another
+problem. Fix each concern at the layer where it belongs.
+
+Example:
+A continuous revolute joint has no absolute position bound. Unnecessary revolutions
+should be handled through angle continuity, trajectory cost, velocity/acceleration
+constraints or branch selection, not by inventing a ±360 degree position limit.
+
+## Robotics-specific expectations
+
+For kinematics, planning and control:
+- reason explicitly about frames, units and physical meaning;
+- distinguish joint configuration equivalence from trajectory equivalence;
+- distinguish planner behaviour from controller and firmware behaviour;
+- keep real-time requirements in mind;
+- do not move expensive or nondeterministic work into the real-time control loop;
+- do not request access to physical hardware when the software question can be answered
+  offline;
+- never use hardware behaviour as a substitute for understanding the software contract.
+
+## Recommendations
+
+When several solutions exist, rank them.
+
+Use this structure when useful:
+
+Current behaviour:
+<what the code actually does>
+
+Problem:
+<why this is technically wrong or brittle>
+
+Root cause:
+<the underlying design/code issue>
+
+Recommended change:
+<the solution you would implement>
+
+Why:
+<technical reasoning>
+
+Trade-offs:
+<important disadvantages or risks>
+
+Then implement only after the reasoning is coherent.
+
+Do not make me choose between weak alternatives when one option is clearly better
+engineering.
+
+## 2026-08-21 10:40:56 BST
+
+you used cat so i did not see a diff
+
+## 2026-08-21 10:45:37 BST
+
+Good. One correction before I consider this finished. You identified config::limits::kBoundedMask as the authoritative joint-type representation, but the production validator still infers joint type from the zero sentinel. Change the validator to use kBoundedMask[j] directly. Keep the numeric limit table purely numeric. Do not infer semantic joint type from a special numeric value.
+
+Then investigate only the adjacent std::remainder(q, 2π) on bounded joints in ValidatePath.cpp. Do not change it yet. Trace exactly what joint_limit_margin affects downstream. If it can affect plan acceptance or safety, explain the smallest correction. If it is diagnostic only, record the issue and leave it out of this repair. Bounded joint positions must never be wrapped before comparison with physical limits.
+
+## 2026-08-21 10:54:29 BST
+
+So my assessment is:
+
+* `kBoundedMask` usage: clean
+* raw bounded-angle validation: clean
+* focused regression tests: clean
+* compile-time consistency check: good
+* separate validation limit table: potentially still unnecessary duplication
+* Claude keeping the second limit inconsistency out of this patch: good scope discipline
+
+The final ideal validator should almost read like English:
+
+```
+for (std::size_t j = 0; j < kNumJoints; ++j) {
+```
+
+if (!config::limits::kBoundedMask[j])
+continue;
+const double lower = config::limits::kLowerRad[j];
+const double upper = config::limits::kUpperRad[j];
+const double margin =
+        std::min(q[j] - lower, upper - q[j]);
+min_margin = std::min(min_margin, margin);
+}
+That is the kind of code you want: joint type from one source, limits from one source, and validation contains only validation logic.
+
+## 2026-08-21 10:57:07 BST
+
+good commit this
+
+## 2026-08-21 11:10:15 BST
+
+Inspect the repository without changing anything and tell me whether the planner already has the architecture needed to add a static finite cylinder representing the torso in the mount frame. Trace the full collision path from scene or obstacle definition, through SDF creation, robot collision geometry and FK, into the GPMP2 collision factors, and then into any final validation. Identify the exact files, classes and functions involved, whether obstacles are configurable, what primitive types already exist, whether the SDF is rebuilt every solve or can be cached, and whether collision checking covers the whole arm or only the end effector. Then give me one conclusion: can a configurable mount-fixed torso cylinder be added cleanly using the current architecture, and if so what is the smallest insertion point? Do not implement anything or redesign the planner yet.
+
+## 2026-08-21 16:10:37 BST
+
+Before changing anything, inspect the current codebase and tell me exactly how the runtime works today.
+I eventually want to move from the current workflow, where I send one command/run one plan and then restart the program, to a persistent live runtime where I can send multiple plans or commands one after another without reconnecting or restarting.
+Do not implement anything yet. Do not redesign the architecture yet.
+First trace the existing system from `main()` downward and answer:
+
+1. What happens when the program starts?
+2. Where are the Kinova connections created, and how long do they live?
+3. Where does the controller loop start, and what causes it to stop?
+4. How is a planning request currently created?
+5. How is the resulting trajectory passed to the controller?
+6. Does the controller already support receiving another trajectory while the program is running?
+7. Is there already a queue, shared trajectory buffer, state machine, command interface, socket, stdin loop, callback, or similar mechanism that could support repeated commands?
+8. What exactly causes the process to finish after one test?
+9. Which parts are inherently one-shot and which parts are already persistent?
+10. What threads currently exist, who owns them, and what shared state exists between planner, controller, Vicon and telemetry?
+
+Then give me the current architecture as a simple flow diagram such as:
+`main → connect → plan → controller → execute → ??? → exit`
+and identify the smallest architectural boundary that would need to change to make the program stay alive and accept another command.
+Do not propose queues, servers, replanning systems, or new abstractions unless the existing code proves they are needed. I first want to understand what infrastructure is already there and reuse as much of it as possible.
+Cite the exact files, functions and relevant line numbers for every important part of the runtime.
+
+## 2026-08-21 16:10:49 BST
+
+Before changing anything, inspect the current codebase and tell me exactly how the runtime works today.
+I eventually want to move from the current workflow, where I send one command/run one plan and then restart the program, to a persistent live runtime where I can send multiple plans or commands one after another without reconnecting or restarting.
+Do not implement anything yet. Do not redesign the architecture yet.
+First trace the existing system from `main()` downward and answer:
+
+1. What happens when the program starts?
+2. Where are the Kinova connections created, and how long do they live?
+3. Where does the controller loop start, and what causes it to stop?
+4. How is a planning request currently created?
+5. How is the resulting trajectory passed to the controller?
+6. Does the controller already support receiving another trajectory while the program is running?
+7. Is there already a queue, shared trajectory buffer, state machine, command interface, socket, stdin loop, callback, or similar mechanism that could support repeated commands?
+8. What exactly causes the process to finish after one test?
+9. Which parts are inherently one-shot and which parts are already persistent?
+10. What threads currently exist, who owns them, and what shared state exists between planner, controller, Vicon and telemetry?
+
+Then give me the current architecture as a simple flow diagram such as:
+`main → connect → plan → controller → execute → ??? → exit`
+and identify the smallest architectural boundary that would need to change to make the program stay alive and accept another command.
+Do not propose queues, servers, replanning systems, or new abstractions unless the existing code proves they are needed. I first want to understand what infrastructure is already there and reuse as much of it as possible.
+Cite the exact files, functions and relevant line numbers for every important part of the runtime.
+
+## 2026-08-21 17:47:51 BST
+
+Inspect the current runtime and make the smallest architectural change needed to move from one-shot goal.yaml testing to persistent live goal execution. For this stage, do not use Vicon or world-frame planning; keep goals and planning in the mount frame only so the live command architecture can be tested independently. The Kinova connection, LOW_LEVEL takeover, 500 Hz controller, planner worker, trajectory mailbox, and logging must remain alive for the whole session and must not restart for each goal. Remove goal.yaml from the live runtime path and introduce a typed live GoalCommand that can be sent repeatedly from the panel and carried inside PlanningRequest. When a new goal arrives, do not stop the controller: stop advancing the current trajectory, transition the reference source to HOLD using the current measured robot state, request a new plan from that state, and when a valid trajectory arrives activate it and return to TRACKING. Reuse the existing planner worker, request slot, trajectory mailbox, and reference-state machinery rather than adding unnecessary threads, queues, ROS, ZeroMQ, or other infrastructure. Newest live goals should supersede older unplanned goals rather than forming a backlog.
+
+goals and targets are sent live
+Then `goal.yaml` should not be part of the live runtime path at all.
+Your live architecture should be:
+
+```
+live goal / target arrives
+```
+
+        ↓
+GoalCommand
+        ↓
+control/runtime boundary
+        ↓
+PlanningRequest
+        ↓
+planner worker
+        ↓
+trajectory mailbox
+        ↓
+controller
+        ↓
+execute
+So the missing trigger is not “re-read `goal.yaml`”. It is simply:
+When a new live goal arrives, publish a new `PlanningRequest`.
+The request should contain the goal itself:
+
+```
+struct PlanningRequest {
+```
+
+uint64_t id;
+Arm arm;
+JointState q_start;
+Transform world_T_mount;
+CartesianGoal goal;
+};
+Then each new live target produces:
+
+```
+target 1
+```
+
+→ plan 1
+→ execute
+target 2 arrives
+→ plan 2
+→ replace/splice trajectory
+target 3 arrives
+→ plan 3
+→ replace/splice trajectory
+Because your planner worker and trajectory mailbox are already repeat-capable, this is exactly what they are designed to support.
+The clean separation I would keep is:
+
+```
+LIVE COMMAND INPUT
+```
+
+      ↓
+goal/target
+PLANNER
+      ↓
+trajectory
+CONTROLLER
+      ↓
+500 Hz joint commands
+KINOVA
+And importantly, distinguish two kinds of live input:
+
+```
+new discrete goal
+```
+
+→ request a new plan
+continuously changing target
+→ do NOT necessarily plan at 500 Hz
+→ sample/replan at a lower planning rate
+→ controller keeps executing latest valid trajectory
+For example, if a target is moving continuously:
+
+```
+target updates at 100 Hz
+```
+
+planner maybe replans at 5–20 Hz
+controller remains 500 Hz
+You do not want:
+
+```
+every target sample
+```
+
+→ GPMP2 solve
+That would couple your expensive planner to your sensor/control rate.
+So your architecture is actually:
+
+```
+                   live targets
+```
+
+                        ↓
+               latest-target slot
+                        ↓
+              replan trigger/policy
+                        ↓
+                PlanningRequest
+                        ↓
+                 planner thread
+                        ↓
+              latest trajectory
+                        ↓
+                 500 Hz control
+That is the version I would build around. `goal.yaml` can remain only for offline tests or default test cases, not as the live command mechanism.
+I mean, we can remove the goal dot YAML so we can use something better because, so, basically, we can move from like offline testing to like continuously testing, so I can send continuous commands or like continuous goals, like, over and over again, so that makes my testing faster as well. I know so it makes it easy for me to use the panel too. 
+Yes. That is the change I would make.
+`goal.yaml` is useful for offline testing, but it is the wrong abstraction once you want the robot to behave like a persistent experimental system.
+Move to:
+
+```
+START ONCE
+```
+
+────────────────────────
+connect Kinova
+take over arm
+start planner
+start controller
+start Vicon
+start command input
+THEN REPEAT
+────────────────────────
+send goal
+→ plan
+→ execute
+→ hold
+send another goal
+→ plan
+→ execute
+→ hold
+send another goal
+→ ...
+The panel then becomes your experimental interface instead of a process launcher for every test.
+Replace `goal.yaml` with a typed live command
+Something like:
+
+```
+struct GoalCommand {
+```
+
+uint64_t id;
+Arm arm;
+GoalType type;       // Point, Path, Circle, etc.
+Frame frame;         // Mount, World, ...
+Pose target;
+};
+For a circle, path, or other task, the payload can contain the relevant parameters.
+Then:
+
+```
+Panel
+```
+
+  ↓
+GoalCommand
+  ↓
+runtime
+  ↓
+PlanningRequest
+  ↓
+planner worker
+  ↓
+CartesianTrajectory
+  ↓
+controller
+Your existing `PlanningRequest` should contain the goal:
+
+```
+struct PlanningRequest {
+```
+
+uint64_t id;
+Arm arm;
+JointState q_start;
+Transform world_T_mount;
+GoalCommand goal;
+};
+Now the planner doesn't go:
+
+```
+PlanningRequest
+```
+
+→ open goal.yaml
+→ hope file contains intended goal
+It simply does:
+
+```
+PlanningRequest
+```
+
+→ request.goal
+→ solve
+Much cleaner.
+For the panel
+You could have:
+
+```
+┌──────────────────────────────────────┐
+```
+
+│ Right arm                            │
+│                                      │
+│ Goal                                 │
+│ x  [ 0.42 ]                          │
+│ y  [-0.18 ]                          │
+│ z  [ 0.31 ]                          │
+│                                      │
+│ frame [ mount ▼ ]                    │
+│                                      │
+│        [ PLAN + EXECUTE ]            │
+└──────────────────────────────────────┘
+Pressing the button does not restart the controller.
+It does:
+
+```
+POST new goal
+```
+
+      ↓
+persistent controller process receives it
+      ↓
+publish PlanningRequest
+      ↓
+planner solves
+      ↓
+trajectory activates
+Then you change the target and press again.
+That gives you:
+
+```
+test
+```
+
+→ inspect
+→ modify target
+→ test again
+→ inspect
+→ modify target
+→ test again
+without:
+
+```
+stop program
+```
+
+edit YAML
+restart
+reconnect Kinova
+take over arm
+wait
+run
+stop
+repeat
+That will make experimentation dramatically easier.
+One extra piece is needed
+Your panel is a different process from the C++ controller, so you need a tiny communication boundary between them.
+I would use something simple like a local Unix socket:
+
+```
+Python panel
+```
+
+     │
+     │ local socket
+     ▼
+C++ command receiver
+     │
+     ▼
+LatestGoalSlot
+     │
+     ▼
+Runner
+     │
+     ▼
+PlanningRequestSlot
+You don't need ROS, ZeroMQ, MQTT, a database, or a complicated command server for this.
+And I would use latest-value semantics for goals.
+Meaning if you send:
+
+```
+goal 17
+```
+
+goal 18
+goal 19
+while the planner is still working on 17, you generally care about 19, not about executing an old backlog of 17 → 18 → 19.
+So:
+
+```
+newest goal wins
+```
+
+fits a live robotics testing system much better than an unbounded command queue.
+This also cleans up `request_replan_edge`
+Right now:
+
+```
+request_replan_edge
+```
+
+→ publish PlanningRequest
+becomes:
+
+```
+internal replan needed
+```
+
+            OR
+new live goal received
+            ↓
+      PlanningRequest
+That means you retain your existing automatic replanning mechanism while adding explicit operator commands.
+The resulting architecture is quite clean:
+
+```
+                    PANEL
+```
+
+                      │
+                  live goal
+                      │
+                      ▼
+                GoalCommandSlot
+                      │
+                      ▼
+Vicon ─────────────► Runner ◄──────── Kinova feedback
+                      │
+                PlanningRequest
+                      │
+                      ▼
+               Planner worker
+                      │
+                 trajectory
+                      │
+                      ▼
+                 Controller
+                      │
+                 500 Hz command
+                      │
+                      ▼
+                    Kinova
+And `goal.yaml` can remain only as an offline planner test fixture, rather than being part of production runtime behaviour.
+That is a meaningful simplification. It moves your system from "run an experiment" software to "keep the robot running and conduct experiments" software, which sounds much closer to what you actually need.
+Shouldn't the controller stop first, because the controller keeps, uh, knows the position enough to follow the plan as it changes, so the controller can stay consistent through time. 
+Yes. The important distinction is stop the current motion/reference, not stop the controller.
+Your 500 Hz controller should stay alive continuously. It owns the ongoing relationship with the physical arm and always has the latest measured state.
+For a new goal, I would structure it like this:
+
+```
+CONTROLLER stays running continuously
+```
+
+│
+│ following Plan A
+│
+├── new goal arrives
+│
+│   planner starts computing Plan B
+│
+│   controller continues safely
+│
+├── Plan B becomes available
+│
+│   check handover is continuous
+│
+└── controller switches reference:
+        Plan A → Plan B
+So you do not want:
+
+```
+goal arrives
+```
+
+→ stop controller
+→ planner
+→ restart controller
+→ reseed
+→ reconnect
+That throws away exactly the continuity your controller gives you.
+There are actually three different things
+
+```
+1. Controller
+```
+
+   500 Hz, persistent
+   NEVER stops for a normal new goal
+2. Active trajectory/reference
+   can be replaced
+3. Planner
+   asynchronous
+   produces replacement trajectories
+Your architecture already supports most of this.
+The question is what the controller should do while Plan B is being calculated.
+For your first implementation, I see two sensible behaviours.
+Option A, easiest and safest for testing:
+
+```
+Plan A
+```
+
+   ↓
+new goal
+   ↓
+stop advancing Plan A
+   ↓
+controller HOLDs current pose
+   ↓
+planner computes Plan B from this state
+   ↓
+Plan B arrives
+   ↓
+controller tracks Plan B
+Notice the controller never stops:
+
+```
+TRACK → HOLD → TRACK
+```
+
+You already have exactly those reference states.
+This is very clean for:
+move here → test → move somewhere else → test → move again
+And it solves another issue in your current architecture. Your new trajectory currently has to begin within 1 mm / 1 mrad of the measured pose. If the robot keeps moving while the planner spends time calculating, the robot may no longer be where the new trajectory starts.
+Holding during planning prevents that mismatch.
+Later, if you want genuinely fluid continuous replanning, you can do:
+
+```
+Plan A continues
+```
+
+        │
+new goal│
+        ├────────────→ planner computes Plan B
+        │
+        ▼
+still following A
+        │
+        │ Plan B ready
+        ▼
+smooth A → B splice
+That's better for moving targets, but it is harder because Plan B was generated from a snapshot of the robot some time ago.
+You then have to solve:
+
+```
+planner started here
+```
+
+       ↓
+       ●
+while planning...
+robot has moved here
+                    ↓
+                    ●
+but Plan B starts back here
+       ↓
+       ●
+Your existing 1 mm activation check would correctly reject that.
+So I wouldn't solve that problem yet.
+For where you are now, I'd use:
+
+```
+                     persistent
+```
+
+                 500 Hz CONTROLLER
+                        │
+          ┌─────────────┴─────────────┐
+          │                           │
+       TRACK                       HOLD
+          │                           │
+          │       new goal            │
+          └──────────► HOLD ◄─────────┘
+                         │
+                  planner computes
+                         │
+                    plan arrives
+                         │
+                       TRACK
+And communication failure remains completely separate:
+
+```
+normal new goal:
+```
+
+TRACK → HOLD → TRACK
+controller remains alive
+communication failure:
+TRACK/HOLD → COMMS_FAULT
+controller terminates safely
+So yes, your intuition is right. The controller should be the persistent part of the system. Goals and plans come and go around it. You should not tear down the controller just because you want the arm to do something new.
