@@ -23,26 +23,6 @@
 
 const DEG = Math.PI / 180;
 
-// Mount-frame placement of each arm's base_link.
-//
-// The source of truth for these two numbers is
-// model/dual_arm_mounting.yaml (separation 0.075 m, tilt
-// 1.2085 rad), and tests/test_dual_arm_mounting.cpp fails the build if the
-// URDF ever disagrees with it. They are copied here because /api/dh carries
-// only the per-joint DH table; pass options.mountFromBase to override once
-// the server serves them. Read that YAML before trusting them for anything
-// but drawing: it records that the two numbers are inherited from an early
-// commit, not surveyed off the physical rig.
-//
-// A URDF <origin> composes as Trans(xyz) then Rot(rpy), and both mounting
-// joints are a pure roll about mount X, mirrored between the arms.
-// print_dual_arm_fk prints the same pair on its first two lines, which is
-// how these were checked.
-const DEFAULT_MOUNT_FROM_BASE = {
-    right: { xyz: [0, -0.0375, 0], rpy: [1.2085, 0, 0] },
-    left: { xyz: [0, 0.0375, 0], rpy: [-1.2085, 0, 0] },
-};
-
 // The fixed rotation between the DH chain's root and base_link. It is a
 // convention, not data: PinocchioKinematicsAdapter::DhRootInBaseLink() is
 // Rx(pi) with no translation, and every hand-rolled DH chain in this
@@ -474,7 +454,6 @@ export function createScene(canvas, options) {
     const opts = options || {};
     const ctx = canvas.getContext('2d');
 
-    const mounts = opts.mountFromBase || DEFAULT_MOUNT_FROM_BASE;
     const frameLabel = opts.frameLabel || 'world frame · fixed mount (world = mount)';
     // index.html carries a legend under the canvas, so the scene draws its own
     // only when it is standing alone (scene.test.html): two legends saying the
@@ -483,6 +462,7 @@ export function createScene(canvas, options) {
 
     const state = {
         dh: { right: null, left: null },
+        mounts: { right: null, left: null },
         row: { right: null, left: null },
         goalPreview: { right: null, left: null },
         obstacles: [],
@@ -540,7 +520,8 @@ export function createScene(canvas, options) {
     }
 
     function baseMatrix(arm) {
-        return mountTransform(mounts[arm]);
+        const placement = state.mounts[arm];
+        return placement ? mountTransform(placement) : null;
     }
 
     // ---- redraw scheduling -------------------------------------
@@ -745,10 +726,11 @@ export function createScene(canvas, options) {
 
     function addArm(items, basis, arm, prefix, style) {
         const joints = state.dh[arm];
-        if (!joints) return null;
+        const base = baseMatrix(arm);
+        if (!joints || !base) return null;
         const angles = jointAngles(state.row[arm], prefix);
         if (!angles) return null;
-        const chain = forwardKinematics(joints, angles, baseMatrix(arm));
+        const chain = forwardKinematics(joints, angles, base);
         if (!chain) return null;
         addPolyline(items, basis, chain.points, style);
         for (let i = 0; i < chain.points.length; i++) {
@@ -937,6 +919,7 @@ export function createScene(canvas, options) {
                 const frameM = preview.frame === 'mount'
                     ? identity()
                     : baseMatrix(preview.frame === 'right_base' ? 'right' : 'left');
+                if (!frameM) continue;
                 const geometry = goalPreviewGeometry(preview, frameM);
                 if (selected) framed.push(geometry.target);
                 if (geometry.points) {
@@ -1151,8 +1134,11 @@ export function createScene(canvas, options) {
         // object — both are accepted so the caller need not unwrap it.
         setDh: function (arm, joints) {
             if (!known(arm)) return;
-            const list = Array.isArray(joints) ? joints : joints && joints.joints;
+            const payload = Array.isArray(joints) ? { joints } : joints;
+            const list = payload && payload.joints;
             state.dh[arm] = Array.isArray(list) && list.length ? list : null;
+            state.mounts[arm] = payload && payload.mount_from_base
+                ? payload.mount_from_base : null;
             schedule();
         },
         // row is one parsed telemetry row, keys by CSV column NAME.

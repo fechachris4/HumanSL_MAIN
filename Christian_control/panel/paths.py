@@ -34,6 +34,7 @@ JOINT_LIMITS_YAML = PLANNING / "config" / "joint_limits.yaml"
 RUN_SESSION_SH = PLANNING / "scripts" / "run_session.sh"
 
 URDF = CHRISTIAN_CONTROL / "model" / "GEN3_dual_mounted.urdf"
+MOUNTING_YAML = CHRISTIAN_CONTROL / "model" / "dual_arm_mounting.yaml"
 
 # The controller build's nested planner target generates the DH tables the
 # browser uses for forward kinematics. run_session.sh checks these against the

@@ -64,7 +64,10 @@ const DH_RIGHT = [
 ];
 
 const scene = createScene(document.getElementById('scene'));
-scene.setDh('right', DH_RIGHT);
+scene.setDh('right', {
+  joints: DH_RIGHT,
+  mount_from_base: { xyz: [0, 0, 0], rpy: [0, 0, 0] },
+});
 scene.setSelectedArm('right');
 
 const POSES = {

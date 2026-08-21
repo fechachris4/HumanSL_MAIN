@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from Christian_control.panel import dh, paths
+
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 
@@ -82,3 +84,17 @@ def test_scene_uses_world_pd_directly_and_has_no_cached_plan_overlay():
     assert "row.traj_activated" not in panel
     assert "TRAJ_BEGIN" not in plan
     assert "_LAST_PLAN" not in plan
+
+
+def test_mount_geometry_is_read_from_canonical_yaml_and_supplied_to_scene():
+    geometry = dh.parse_mounting_yaml(paths.MOUNTING_YAML.read_text())
+    assert geometry == {
+        "right": {"xyz": [0.0, -0.0375, 0.0], "rpy": [1.2085, 0.0, 0.0]},
+        "left": {"xyz": [0.0, 0.0375, 0.0], "rpy": [-1.2085, 0.0, 0.0]},
+    }
+
+    scene = (STATIC / "scene.js").read_text()
+    assert "DEFAULT_MOUNT_FROM_BASE" not in scene
+    assert "0.0375" not in scene
+    assert "1.2085" not in scene
+    assert "mount_from_base" in scene
