@@ -1,0 +1,216 @@
+#include "PlanDebugDump.h"
+
+#include <cmath>
+#include <fstream>
+#include <iomanip>
+#include <limits>
+#include <sstream>
+
+#include <sys/stat.h>
+#include <sys/types.h>
+
+namespace {
+
+constexpr double kRadToDeg = 180.0 / M_PI;
+
+// mkdir -p for one level, which is all a --debug-dir needs. An existing
+// directory is success, not an error: re-running a plan into the same
+// directory is the normal way to compare two solves.
+std::optional<std::string> EnsureDirectory(const std::string& directory)
+{
+    if (::mkdir(directory.c_str(), 0755) == 0)
+        return std::nullopt;
+    struct stat info {};
+    if (::stat(directory.c_str(), &info) == 0 && S_ISDIR(info.st_mode))
+        return std::nullopt;
+    return "cannot create debug directory '" + directory + "'";
+}
+
+std::optional<std::string> OpenCsv(const std::string& directory,
+                                   const std::string& name,
+                                   std::ofstream& file)
+{
+    if (const auto error = EnsureDirectory(directory))
+        return error;
+    const std::string path = directory + "/" + name;
+    file.open(path);
+    if (!file)
+        return "cannot write '" + path + "'";
+    file << std::setprecision(17);
+    return std::nullopt;
+}
+
+}  // namespace
+
+std::optional<std::string> WriteJointTrajectoryCsv(
+    const std::string& directory, const TrajectoryResult& trajectory)
+{
+    std::ofstream file;
+    if (const auto error = OpenCsv(directory, "joints.csv", file))
+        return error;
+
+    file << "t_s";
+    for (int joint = 1; joint <= 7; ++joint)
+        file << ",q" << joint << "_deg";
+    for (int joint = 1; joint <= 7; ++joint)
+        file << ",qd" << joint << "_deg_s";
+    file << "\n";
+
+    for (std::size_t sample = 0; sample < trajectory.trajectory_pos.size();
+         ++sample) {
+        const gtsam::Vector& position = trajectory.trajectory_pos[sample];
+        file << static_cast<double>(sample) * trajectory.dt;
+        for (int joint = 0; joint < 7; ++joint)
+            file << "," << position(joint) * kRadToDeg;
+        // A trajectory may carry fewer velocity samples than positions; a
+        // missing one is written as an empty field rather than a zero, so a
+        // gap in the data never reads as a genuine standstill.
+        if (sample < trajectory.trajectory_vel.size()) {
+            const gtsam::Vector& velocity = trajectory.trajectory_vel[sample];
+            for (int joint = 0; joint < 7; ++joint)
+                file << "," << velocity(joint) * kRadToDeg;
+        } else {
+            for (int joint = 0; joint < 7; ++joint)
+                file << ",";
+        }
+        file << "\n";
+    }
+    return file ? std::nullopt
+                : std::optional<std::string>("failed writing joints.csv");
+}
+
+std::optional<std::string> WriteJointLimitsCsv(const std::string& directory,
+                                               const PlanJointLimits& limits)
+{
+    std::ofstream file;
+    if (const auto error = OpenCsv(directory, "joint_limits.csv", file))
+        return error;
+
+    file << "joint,lower_deg,upper_deg\n";
+    for (int joint = 0; joint < 7; ++joint) {
+        file << (joint + 1) << "," << limits.lower_rad(joint) * kRadToDeg
+             << "," << limits.upper_rad(joint) * kRadToDeg << "\n";
+    }
+    return file ? std::nullopt
+                : std::optional<std::string>("failed writing joint_limits.csv");
+}
+
+namespace {
+
+const char* StatusText(const PathIkSample& sample)
+{
+    if (sample.solved) return "solved";
+    if (sample.interpolated) return "interpolated_seed";
+    switch (sample.failure) {
+    case PathIkFailure::kJointLimits: return "joint_limits";
+    case PathIkFailure::kNoConvergence: return "no_convergence";
+    case PathIkFailure::kNone: break;
+    }
+    return "failed";
+}
+
+}  // namespace
+
+double JointLimitMarginRad(const Eigen::Matrix<double, 7, 1>& q_rad,
+                           const PlanJointLimits& limits)
+{
+    double margin = std::numeric_limits<double>::infinity();
+    for (int joint = 0; joint < 7; ++joint) {
+        const double lower = limits.lower_rad(joint);
+        const double upper = limits.upper_rad(joint);
+        if (lower < -1e10 || upper > 1e10) continue;  // continuous joint
+        margin = std::min({margin, q_rad(joint) - lower, upper - q_rad(joint)});
+    }
+    return margin;
+}
+
+std::string DescribeFailedRanges(const PathIkResult& walk)
+{
+    // "Failed" means an anchor whose bounded solve found nothing — never a
+    // sample that was deliberately interpolated (failure == kNone there).
+    const auto failed = [&](std::size_t index) {
+        return !walk.samples[index].solved &&
+               walk.samples[index].failure != PathIkFailure::kNone;
+    };
+    std::ostringstream text;
+    bool first = true;
+    for (std::size_t index = 0; index < walk.samples.size();) {
+        if (!failed(index)) { ++index; continue; }
+        std::size_t last = index;
+        while (last + 1 < walk.samples.size() && failed(last + 1))
+            ++last;
+        if (!first) text << ", ";
+        first = false;
+        if (last == index) text << index;
+        else text << index << "-" << last;
+        index = last + 1;
+    }
+    return text.str();
+}
+
+std::optional<std::string> WritePathIkCsv(const std::string& directory,
+                                          const CartesianPath& path_mount,
+                                          const PathIkResult& walk,
+                                          const PlanJointLimits& limits)
+{
+    std::ofstream file;
+    if (const auto error = OpenCsv(directory, "path_ik.csv", file))
+        return error;
+
+    file << "sample,progress_pct,t_s,target_x_m,target_y_m,target_z_m,solved,"
+            "status,position_residual_m,orientation_residual_rad,"
+            "limit_margin_deg";
+    for (int joint = 1; joint <= 7; ++joint)
+        file << ",q" << joint << "_deg";
+    file << "\n";
+
+    const double count = walk.samples.size() > 1
+                             ? static_cast<double>(walk.samples.size() - 1)
+                             : 1.0;
+    for (std::size_t sample = 0; sample < walk.samples.size(); ++sample) {
+        const PathIkSample& solution = walk.samples[sample];
+        file << sample << ","
+             << 100.0 * static_cast<double>(sample) / count;
+        // The walk and the path are the same length by construction, but a
+        // truncated walk must not index past the path.
+        if (sample < path_mount.samples.size()) {
+            const PathSample& target = path_mount.samples[sample];
+            const Eigen::Vector3d position = target.pose.translation();
+            file << "," << target.t_s << "," << position.x() << ","
+                 << position.y() << "," << position.z();
+        } else {
+            file << ",,,,";
+        }
+        const double margin = JointLimitMarginRad(solution.configuration, limits);
+        file << "," << (solution.solved ? 1 : 0) << "," << StatusText(solution)
+             << "," << solution.position_residual_m << ","
+             << solution.orientation_residual_rad << ","
+             << margin * kRadToDeg;
+        for (int joint = 0; joint < 7; ++joint)
+            file << "," << solution.configuration(joint) * kRadToDeg;
+        file << "\n";
+    }
+    return file ? std::nullopt
+                : std::optional<std::string>("failed writing path_ik.csv");
+}
+
+std::optional<std::string> WritePlanMetaCsv(const std::string& directory,
+                                            const PlanDebugMeta& meta)
+{
+    std::ofstream file;
+    if (const auto error = OpenCsv(directory, "meta.csv", file))
+        return error;
+
+    // Quoted values: the status field carries a solver error message, which
+    // contains commas.
+    file << "key,value\n"
+         << "arm,\"" << meta.arm << "\"\n"
+         << "plan_kind,\"" << meta.plan_kind << "\"\n"
+         << "status,\"" << meta.status << "\"\n"
+         << "final_goal_error_m," << meta.final_goal_error_m << "\n"
+         << "total_time_s," << meta.total_time_s << "\n";
+    for (const auto& [key, value] : meta.extra)
+        file << key << ",\"" << value << "\"\n";
+    return file ? std::nullopt
+                : std::optional<std::string>("failed writing meta.csv");
+}

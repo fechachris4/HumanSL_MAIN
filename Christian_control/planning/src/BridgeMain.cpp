@@ -4,6 +4,8 @@
 #include <array>
 #include <charconv>
 #include <climits>
+#include <iomanip>
+#include <limits>
 #include <cmath>
 #include <iostream>
 #include <mutex>
@@ -23,6 +25,7 @@
 #include "MountSdf.h"
 #include "PathFrames.h"
 #include "PathValidation.h"
+#include "PlanDebugDump.h"
 #include "PinocchioKinematicsAdapter.h"
 #include "Config.h"   // control — config::kReferenceFrame
 
@@ -111,6 +114,18 @@ constexpr char kUsageText[] =
     "                         SDF grid volume (MountSdf.h MountGridBounds())\n"
     "                         or the run is rejected — outside that volume\n"
     "                         gpmp2 silently reports no obstacle.\n"
+    "  --verbose              Echo the full effective planner config and\n"
+    "                         other low-priority detail. Without it a run\n"
+    "                         prints the config path, digest and IK seed\n"
+    "                         only — enough to reproduce, not to drown in.\n"
+    "  --debug-dir PATH       Optional diagnostic dump directory. Writes\n"
+    "                         joints.csv, joint_limits.csv, meta.csv and,\n"
+    "                         for a traced path, path_ik.csv — the\n"
+    "                         per-sample continuation walk, written even\n"
+    "                         when the walk FAILED, which is the case worth\n"
+    "                         looking at. Nothing goes to stdout and the\n"
+    "                         controller never reads these files; plot them\n"
+    "                         with scripts/plot_plan.py.\n"
     "  --output MODE          Optional compatibility spelling; the only\n"
     "                         accepted mode is `world-cartesian`, also the\n"
     "                         default and sole output.\n"
@@ -126,6 +141,164 @@ constexpr char kUsageText[] =
     "Exit codes: 0 targets emitted (also returned by --help), 1 bad\n"
     "arguments, 2 start-state unavailable, 3 solve failed, 4 validation\n"
     "rejected the plan.\n";
+
+// One number formatted for the summary, trimmed to what an eye can compare.
+std::string Fixed(double value, int decimals = 1) {
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(decimals) << value;
+    return text.str();
+}
+
+// The high-priority result block every planning attempt ends its
+// diagnostics with. Everything here is a value the planner already
+// produced; the block only arranges it so the answer to "what happened and
+// where" does not have to be assembled from a scroll of detail.
+struct SummaryWriter {
+    std::ostream& diagnostics;
+    std::vector<std::pair<std::string, std::string>>& extra;
+
+    void Line(const std::string& key, const std::string& value) {
+        diagnostics << "  " << key << ": " << value << "\n";
+        extra.emplace_back(key, value);
+    }
+};
+
+// The IK walk's summary lines: solved count, the failed ranges with their
+// percent of the way along the path, the worst residual, the smallest
+// joint-limit margin, and the solved neighbours around each failed range —
+// the samples a diagnosis starts from.
+void SummarizeWalk(SummaryWriter& out, const PathIkResult& walk,
+                   const PlanJointLimits& limits, double acceptance_m) {
+    const std::size_t count = walk.samples.size();
+    if (count == 0) return;
+    const double denominator = count > 1 ? static_cast<double>(count - 1) : 1.0;
+    const auto percent = [denominator](std::size_t index) {
+        return Fixed(100.0 * static_cast<double>(index) / denominator, 0) + "%";
+    };
+
+    // Anchors are the attempted samples: solved, or carrying a failure
+    // reason. Interpolated samples were never attempted and are the walk's
+    // normal state, not a shortfall.
+    const auto failed = [&](const PathIkSample& sample) {
+        return !sample.solved && sample.failure != PathIkFailure::kNone;
+    };
+    std::size_t solved = 0, failed_anchors = 0, interpolated = 0;
+    double worst_residual_m = 0.0;
+    std::size_t worst_residual_index = 0;
+    double min_margin_rad = std::numeric_limits<double>::infinity();
+    std::size_t min_margin_index = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+        const PathIkSample& sample = walk.samples[index];
+        if (sample.solved) ++solved;
+        if (failed(sample)) ++failed_anchors;
+        if (sample.interpolated) ++interpolated;
+        if (sample.position_residual_m > worst_residual_m &&
+            std::isfinite(sample.position_residual_m)) {
+            worst_residual_m = sample.position_residual_m;
+            worst_residual_index = index;
+        }
+        const double margin = JointLimitMarginRad(sample.configuration, limits);
+        if (margin < min_margin_rad) {
+            min_margin_rad = margin;
+            min_margin_index = index;
+        }
+    }
+
+    out.Line("IK anchors", std::to_string(solved) + " solved, " +
+                               std::to_string(failed_anchors) +
+                               " failed (dropped); " +
+                               std::to_string(interpolated) + " of " +
+                               std::to_string(count) +
+                               " samples interpolated");
+    const std::string ranges = DescribeFailedRanges(walk);
+    if (!ranges.empty()) {
+        // First-to-last failed anchor as percent of the way along the path.
+        std::size_t first = count, last = 0;
+        for (std::size_t index = 0; index < count; ++index)
+            if (failed(walk.samples[index])) {
+                first = std::min(first, index);
+                last = std::max(last, index);
+            }
+        out.Line("failed anchors", ranges + " (" + percent(first) + "-" +
+                                       percent(last) + " along the path)");
+        // Solved neighbours around each failed range.
+        std::ostringstream neighbours;
+        bool first_range = true;
+        for (std::size_t index = 0; index < count;) {
+            if (!failed(walk.samples[index])) { ++index; continue; }
+            std::size_t end = index;
+            while (end + 1 < count && failed(walk.samples[end + 1])) ++end;
+            if (!first_range) neighbours << "; ";
+            first_range = false;
+            const auto describe = [&](std::size_t at) {
+                neighbours << "sample " << at << " (residual "
+                           << Fixed(walk.samples[at].position_residual_m * 1e3)
+                           << " mm, margin "
+                           << Fixed(JointLimitMarginRad(
+                                        walk.samples[at].configuration, limits) *
+                                    180.0 / M_PI)
+                           << " deg)";
+            };
+            // The adjacent sample may be interpolated (never attempted), so
+            // scan outward to the nearest SOLVED anchor on each side.
+            std::size_t before = index;
+            while (before > 0 && !walk.samples[before - 1].solved) --before;
+            if (before > 0) describe(before - 1);
+            else neighbours << "none before";
+            neighbours << " / ";
+            std::size_t after = end;
+            while (after + 1 < count && !walk.samples[after + 1].solved) ++after;
+            if (after + 1 < count) describe(after + 1);
+            else neighbours << "none after";
+            index = end + 1;
+        }
+        out.Line("solved neighbours", neighbours.str());
+        // Which failure the walk actually recorded, per kind.
+        std::size_t limits_failures = 0, convergence_failures = 0;
+        for (const PathIkSample& sample : walk.samples) {
+            if (sample.failure == PathIkFailure::kJointLimits) ++limits_failures;
+            if (sample.failure == PathIkFailure::kNoConvergence)
+                ++convergence_failures;
+        }
+        std::ostringstream reasons;
+        reasons << convergence_failures << " no-convergence, " << limits_failures
+                << " converged-only-outside-joint-limits";
+        out.Line("failure reasons", reasons.str());
+    }
+    out.Line("worst position residual",
+             Fixed(worst_residual_m * 1e3) + " mm at sample " +
+                 std::to_string(worst_residual_index) + " (acceptance " +
+                 Fixed(acceptance_m * 1e3) + " mm)");
+    if (std::isfinite(min_margin_rad))
+        out.Line("min joint-limit margin (walk)",
+                 Fixed(min_margin_rad * 180.0 / M_PI) + " deg at sample " +
+                     std::to_string(min_margin_index));
+}
+
+// Writes the diagnostic dump, if one was asked for. Deliberately never
+// fatal and never able to change an exit code: a plan's success is a
+// statement about the plan, not about whether a debug file could be
+// written. A failure to write is reported and the run carries on.
+void DumpPlanDebug(const std::optional<std::string>& directory,
+                   const PlanDebugMeta& meta, const TrajectoryResult& trajectory,
+                   const PlanJointLimits& limits,
+                   const CartesianPath* path_mount, const PathIkResult* walk,
+                   std::ostream& diagnostics)
+{
+    if (!directory)
+        return;
+    const auto report = [&diagnostics](const std::optional<std::string>& error) {
+        if (error)
+            diagnostics << "warning: debug dump: " << *error << "\n";
+    };
+    report(WritePlanMetaCsv(*directory, meta));
+    report(WriteJointLimitsCsv(*directory, limits));
+    if (!trajectory.trajectory_pos.empty())
+        report(WriteJointTrajectoryCsv(*directory, trajectory));
+    if (path_mount != nullptr && walk != nullptr && !walk->samples.empty())
+        report(WritePathIkCsv(*directory, *path_mount, *walk, limits));
+    diagnostics << "debug dump written to " << *directory << "\n";
+}
 
 // Describes a GridBounds volume once, for both the --box rejection
 // diagnostic and anywhere else the checked volume needs stating.
@@ -248,6 +421,12 @@ struct ParsedArgs {
     std::string joint_limits_path = DefaultJointLimitsPath();
     std::string planner_config_path = DefaultPlannerConfigPath();
     std::string runs_root = DefaultRunsRootPath();
+    // unset == no diagnostic dump. Off by default: a plan run in a session
+    // should not silently start writing files beside itself.
+    std::optional<std::string> debug_dir;
+    // Full config echo and similar low-priority detail. Off by default so
+    // the summary is what a normal run's diagnostics end with.
+    bool verbose = false;
     std::optional<DeclaredBox> box;
     std::optional<Eigen::Isometry3d> world_T_mount;
     std::optional<std::uint64_t> vicon_sequence;
@@ -473,6 +652,10 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             parsed.planner_config_path = next();
         } else if (flag == "--runs-root") {
             parsed.runs_root = next();
+        } else if (flag == "--debug-dir") {
+            parsed.debug_dir = next();
+        } else if (flag == "--verbose") {
+            parsed.verbose = true;
         } else if (flag == "--box") {
             DeclaredBox box;
             box.center = Eigen::Vector3d(ParseDouble(next()), ParseDouble(next()),
@@ -735,7 +918,19 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         result.exit_code = 1;
         return result;
     }
-    diagnostics << EffectiveConfigText(planner_config);
+    if (parsed.verbose) {
+        diagnostics << EffectiveConfigText(planner_config);
+    } else {
+        // The reproduction essentials stay on every run (the digest and the
+        // seed are what docs/decisions/runtime-config.md wants a session log
+        // to carry); the full value listing moves behind --verbose.
+        diagnostics << "planner config: " << planner_config.source_path
+                    << " digest(fnv1a64)=" << std::hex << std::showbase
+                    << planner_config.source_fnv1a64 << std::dec
+                    << std::noshowbase << " ik_seed="
+                    << planner_config.effective_ik_seed
+                    << " (--verbose for all values)\n";
+    }
 
     // ---------------------------------------------------------------
     // Cartesian path following
@@ -788,31 +983,96 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                                   parsed.joint_limits_path, planner_config,
                                   validation);
         }
+        // ---- the high-priority summary, printed on every attempt ------
+        PlanDebugMeta meta;
+        meta.arm = *parsed.left_arm ? "left" : "right";
+        meta.plan_kind = "path";
+        meta.status = plan.ok ? "ok" : plan.error;
+        meta.total_time_s = plan.total_time_sec;
+
+        if (plan.ok) {
+            diagnostics << "continuation IK: largest joint step "
+                        << plan.maximum_joint_step_rad * 180.0 / M_PI
+                        << " deg, closure drift "
+                        << plan.closure_drift_rad * 180.0 / M_PI << " deg\n";
+            if (plan.ik_unresolved_samples > 0)
+                diagnostics << "continuation IK gaps: "
+                            << plan.ik_unresolved_samples
+                            << " unresolved sample(s) seeded ("
+                            << plan.ik_interpolated_samples
+                            << " interpolated) — GPMP2 keeps the configured "
+                               "pose priors and the final "
+                               "validation judges the result\n";
+            if (plan.time_scaling_passes > 1)
+                diagnostics << "time scaling: " << plan.time_scaling_passes
+                            << " pass(es), final duration "
+                            << plan.total_time_sec << " s"
+                            << (plan.time_scaling_settled
+                                    ? "\n"
+                                    : " — DID NOT SETTLE within the pass limit\n");
+            if (parsed.verbose)
+                diagnostics << plan.report.Summary();
+        }
+        diagnostics << "---- PLAN SUMMARY (" << meta.arm
+                    << " arm, traced path) ----\n";
+        SummaryWriter summary{diagnostics, meta.extra};
+        if (!plan.ok) {
+            const bool ik_stage = plan.error.rfind("path IK", 0) == 0;
+            summary.Line("result", "FAILED at " +
+                                       std::string(ik_stage
+                                                       ? "IK initialization "
+                                                         "(before GPMP2 ran)"
+                                                       : "GPMP2 solve/validation"));
+            summary.Line("error", plan.error);
+        } else {
+            const char* verdict =
+                plan.report.verdict == PlanVerdict::kAccept ? "ACCEPT"
+                : plan.report.verdict == PlanVerdict::kWarning ? "WARNING"
+                                                               : "REJECT";
+            summary.Line("result", std::string(verdict) + ", duration " +
+                                       Fixed(plan.total_time_sec, 2) + " s");
+            for (const std::string& warning : plan.report.warnings)
+                summary.Line("warning", warning);
+            const FidelityError& fidelity = plan.report.command;
+            summary.Line("task fidelity (gated)",
+                         "max " + Fixed(fidelity.max_position_m * 1e3, 2) +
+                             " mm / p95 " +
+                             Fixed(fidelity.p95_position_m * 1e3, 2) +
+                             " mm position, max " +
+                             Fixed(fidelity.max_orientation_rad * 180.0 / M_PI) +
+                             " deg orientation");
+            summary.Line("worst point",
+                         "t=" + Fixed(fidelity.worst_time_s, 2) + " s, " +
+                             Fixed(fidelity.worst_path_parameter * 100.0, 0) +
+                             "% along the path");
+            summary.Line("min modelled clearance",
+                         Fixed(plan.report.minimum_clearance_m * 1e3) +
+                             " mm at t=" +
+                             Fixed(plan.report.minimum_clearance_time_s, 2) +
+                             " s (SDF models workspace + declared box only)");
+            summary.Line("min joint-limit margin (trajectory)",
+                         Fixed(plan.report.minimum_joint_limit_margin_rad *
+                               180.0 / M_PI) +
+                             " deg");
+        }
+        SummarizeWalk(summary, plan.ik_walk, plan.joint_limits,
+                      planner_config.path_following.maximum_planning_error_m);
+        // Machine-oriented: when the constrained task phase begins in
+        // trajectory time, so plot_plan.py can shade it and place each path
+        // sample on the joint-trajectory time axis. Not printed as a
+        // summary line — it is a coordinate, not a finding.
+        if (plan.ok)
+            meta.extra.emplace_back("task_start_time_s",
+                                    Fixed(plan.task_start_time_s, 6));
+        DumpPlanDebug(parsed.debug_dir, meta, plan.result, plan.joint_limits,
+                      &task_path, &plan.ik_walk, diagnostics);
+        diagnostics << "----\n";
+
         if (!plan.ok) {
             diagnostics << "error: solve failed: " << plan.error << "\n";
             result.exit_code = 3;
             return result;
         }
-
-        diagnostics << "continuation IK: largest joint step "
-                    << plan.maximum_joint_step_rad * 180.0 / M_PI
-                    << " deg, closure drift "
-                    << plan.closure_drift_rad * 180.0 / M_PI << " deg\n";
-        if (plan.ik_unresolved_samples > 0)
-            diagnostics << "continuation IK gaps: "
-                        << plan.ik_unresolved_samples
-                        << " unresolved sample(s) seeded ("
-                        << plan.ik_interpolated_samples
-                        << " interpolated) — GPMP2 keeps the configured pose "
-                           "priors and the final "
-                           "validation judges the result\n";
-        if (plan.time_scaling_passes > 1)
-            diagnostics << "time scaling: " << plan.time_scaling_passes
-                        << " pass(es), final duration " << plan.total_time_sec
-                        << " s" << (plan.time_scaling_settled
-                                        ? "\n"
-                                        : " — DID NOT SETTLE within the pass limit\n");
-        diagnostics << plan.report.Summary();
 
         if (plan.report.verdict == PlanVerdict::kReject) {
             // Not emitted. REJECT means unsafe or clearly failing the
@@ -891,43 +1151,95 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                                   planner_config);
     }
 
+    {
+        PlanDebugMeta meta;
+        meta.arm = *parsed.left_arm ? "left" : "right";
+        meta.plan_kind = "point";
+        meta.status = outcome.ok ? "ok" : outcome.error;
+        meta.final_goal_error_m = outcome.final_goal_error_m;
+        meta.total_time_s = outcome.total_time_sec;
+
+        if (outcome.ok) {
+        // How the optimiser's starting sketch was built. Reported HERE, before
+        // validation and emission, because a degraded initialisation is most
+        // worth knowing about on the runs that go on to fail — printing it only
+        // on success would hide it exactly when it explains something. A
+        // solved pose says so in one word; the degraded cases give how far the
+        // IK landed from the requested pose, split into position and
+        // orientation, because that split identifies WHICH half was
+        // unreachable. This is a description, not a verdict: the plan is not
+        // refused for a poor initialisation, and the achieved goal error
+        // reported after emission is what the optimiser actually managed.
+        diagnostics << "plan initialisation: ";
+        switch (outcome.init_source) {
+        case InitSource::kSolvedIk:
+            diagnostics << "solved IK pose\n";
+            break;
+        case InitSource::kNearMiss:
+            diagnostics << "NEAR MISS — no IK pose passed; seeded from the closest "
+                           "one reached, "
+                        << (outcome.init_position_error_m * 1000.0) << " mm and "
+                        << (outcome.init_orientation_error_rad * 180.0 / M_PI)
+                        << " deg from the requested pose. The requested position "
+                           "may be reachable only with a different tool "
+                           "orientation; check the achieved goal error below.\n";
+            break;
+        case InitSource::kHeldStart:
+            diagnostics << "HELD START — IK produced no usable pose at all; every "
+                           "waypoint seeded at the start configuration and the "
+                           "optimiser pulled from there alone. Treat the achieved "
+                           "goal error below as the only statement of where this "
+                           "plan actually goes.\n";
+            break;
+        }
+        }
+
+        diagnostics << "---- PLAN SUMMARY (" << meta.arm
+                    << " arm, point goal) ----\n";
+        SummaryWriter summary{diagnostics, meta.extra};
+        if (!outcome.ok) {
+            summary.Line("result", "FAILED at GPMP2 solve");
+            summary.Line("error", outcome.error);
+        } else {
+            summary.Line("result",
+                         "ok, duration " + Fixed(outcome.total_time_sec, 2) +
+                             " s");
+            summary.Line("final goal error",
+                         Fixed(outcome.final_goal_error_m * 1e3, 3) + " mm");
+            // Smallest distance any dense state comes to a bounded joint
+            // limit — arithmetic over the trajectory the solver produced.
+            double min_margin_rad = std::numeric_limits<double>::infinity();
+            double min_margin_time_s = 0.0;
+            for (std::size_t state = 0;
+                 state < outcome.result.trajectory_pos.size(); ++state) {
+                Eigen::Matrix<double, 7, 1> q;
+                for (int joint = 0; joint < 7; ++joint)
+                    q(joint) = outcome.result.trajectory_pos[state](joint);
+                const double margin =
+                    JointLimitMarginRad(q, outcome.joint_limits);
+                if (margin < min_margin_rad) {
+                    min_margin_rad = margin;
+                    min_margin_time_s =
+                        static_cast<double>(state) * outcome.result.dt;
+                }
+            }
+            if (std::isfinite(min_margin_rad))
+                summary.Line("min joint-limit margin (trajectory)",
+                             Fixed(min_margin_rad * 180.0 / M_PI) +
+                                 " deg at t=" + Fixed(min_margin_time_s, 2) +
+                                 " s");
+            summary.Line("collision clearance",
+                         "not computed for point-goal plans (path validation "
+                         "runs on traced paths only)");
+        }
+        DumpPlanDebug(parsed.debug_dir, meta, outcome.result,
+                      outcome.joint_limits, nullptr, nullptr, diagnostics);
+        diagnostics << "----\n";
+    }
     if (!outcome.ok) {
         diagnostics << "error: solve failed: " << outcome.error << "\n";
         result.exit_code = 3;
         return result;
-    }
-
-    // How the optimiser's starting sketch was built. Reported HERE, before
-    // validation and emission, because a degraded initialisation is most
-    // worth knowing about on the runs that go on to fail — printing it only
-    // on success would hide it exactly when it explains something. A
-    // solved pose says so in one word; the degraded cases give how far the
-    // IK landed from the requested pose, split into position and
-    // orientation, because that split identifies WHICH half was
-    // unreachable. This is a description, not a verdict: the plan is not
-    // refused for a poor initialisation, and the achieved goal error
-    // reported after emission is what the optimiser actually managed.
-    diagnostics << "plan initialisation: ";
-    switch (outcome.init_source) {
-    case InitSource::kSolvedIk:
-        diagnostics << "solved IK pose\n";
-        break;
-    case InitSource::kNearMiss:
-        diagnostics << "NEAR MISS — no IK pose passed; seeded from the closest "
-                       "one reached, "
-                    << (outcome.init_position_error_m * 1000.0) << " mm and "
-                    << (outcome.init_orientation_error_rad * 180.0 / M_PI)
-                    << " deg from the requested pose. The requested position "
-                       "may be reachable only with a different tool "
-                       "orientation; check the achieved goal error below.\n";
-        break;
-    case InitSource::kHeldStart:
-        diagnostics << "HELD START — IK produced no usable pose at all; every "
-                       "waypoint seeded at the start configuration and the "
-                       "optimiser pulled from there alone. Treat the achieved "
-                       "goal error below as the only statement of where this "
-                       "plan actually goes.\n";
-        break;
     }
 
     const std::optional<std::string> validation_error =

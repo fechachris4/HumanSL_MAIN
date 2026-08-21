@@ -2,6 +2,9 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
+#include <limits>
+#include <random>
 #include <cmath>
 #include <stdexcept>
 
@@ -91,131 +94,180 @@ Eigen::Matrix<double, 7, 1> Interpolate(
     return before + fraction * JointDifference(before, after, limits);
 }
 
-void FillGap(PathIkResult& result, std::size_t first, std::size_t length,
-             std::size_t before, std::size_t after,
-             const PathIkJointLimits& limits) {
-    const std::size_t count = result.samples.size();
-    for (std::size_t offset = 0; offset < length; ++offset) {
-        const std::size_t index = (first + offset) % count;
-        const double fraction = static_cast<double>(offset + 1) /
-                                static_cast<double>(length + 1);
-        result.samples[index].configuration = Interpolate(
-            result.samples[before].configuration,
-            result.samples[after].configuration, fraction, limits);
-        ++result.interpolated_samples;
-    }
-}
-
-void ResolveGaps(PathIkResult& result, const PathIkJointLimits& limits,
-                 bool closed) {
-    result.success = true;
-    const std::size_t count = result.samples.size();
-    std::size_t anchor = 0;
-    std::size_t logical = 0;
-    if (closed) {
-        const auto first_solved = std::find_if(
-            result.samples.begin(), result.samples.end(),
-            [](const PathIkSample& sample) { return sample.solved; });
-        if (first_solved == result.samples.end()) {
-            result.unresolved_samples = count;
-            result.maximum_unresolved_run = count;
-            result.success = false;
-            return;
-        }
-        anchor = static_cast<std::size_t>(
-            std::distance(result.samples.begin(), first_solved));
-        logical = 1;  // anchor itself is solved
-    }
-    const auto index_at = [closed, anchor, count](std::size_t position) {
-        return closed ? (anchor + position) % count : position;
-    };
-    while (logical < count) {
-        if (result.samples[index_at(logical)].solved) {
-            ++logical;
-            continue;
-        }
-        const std::size_t first = logical;
-        while (logical < count && !result.samples[index_at(logical)].solved)
-            ++logical;
-        const std::size_t length = logical - first;
-        result.unresolved_samples += length;
-        result.maximum_unresolved_run =
-            std::max(result.maximum_unresolved_run, length);
-        const bool two_sided = closed || (first > 0 && logical < count);
-        if (!two_sided || length > kMaxInterpolatedPathIkGapSamples) {
-            result.success = false;
-            continue;
-        }
-        FillGap(result, index_at(first), length, index_at(first - 1),
-                index_at(logical), limits);
-    }
-}
-
 }  // namespace
 
 PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
                          const Eigen::Matrix<double, 7, 1>& seed,
                          const PathIkJointLimits& limits,
                          const analytical_ik::IKTolerance& tolerance,
-                         bool closed) {
+                         bool closed, std::uint64_t random_seed) {
     PathIkResult result;
-    result.samples.reserve(path.samples.size());
-    if (path.samples.empty()) return result;
+    const std::size_t count = path.samples.size();
+    result.samples.resize(count);
+    if (count == 0) return result;
 
-    Eigen::Matrix<double, 7, 1> current_seed = CanonicalSeed(seed, limits);
-    for (const PathSample& path_sample : path.samples) {
-        const Eigen::Matrix4d target = path_sample.pose.matrix();
-        analytical_ik::IKSolution best =
-            analytical_ik::AnalyticalIKSolver::solveBestIK(
-                target, arm.base_transform, current_seed, 1,
-                arm.end_effector_frame, arm.left_arm, tolerance);
-        bool solved = best.is_valid && WithinLimits(best.joint_angles, limits);
+    const Eigen::Matrix<double, 7, 1> canonical_start =
+        CanonicalSeed(seed, limits);
 
-        if (!solved) {
-            const Eigen::Matrix<double, 7, 1> direction =
-                NullspaceDirection(arm, current_seed);
-            for (double step_rad : kNullspaceStepsRad) {
-                const Eigen::Matrix<double, 7, 1> alternative_seed =
-                    PerturbWithinLimits(current_seed, direction, step_rad, limits);
-                const auto candidate =
-                    analytical_ik::AnalyticalIKSolver::solveBestIK(
-                        target, arm.base_transform, alternative_seed, 1,
-                        arm.end_effector_frame, arm.left_arm, tolerance);
-                if (!candidate.is_valid ||
-                    !WithinLimits(candidate.joint_angles, limits))
-                    continue;
-                best = candidate;
-                solved = true;
-                break;
+    // Anchor selection: the entry, then every stride-th sample, plus an
+    // open path's final sample (a closed path's last sample repeats its
+    // first, so anchoring it would solve the entry twice).
+    std::vector<std::size_t> anchors;
+    for (std::size_t index = 0; index < count; index += kPathIkAnchorStride)
+        anchors.push_back(index);
+    if (!closed && anchors.back() != count - 1) anchors.push_back(count - 1);
+
+    // Deterministic multi-start driver: reproducing a failed plan must
+    // replay the identical attempt sequence, so the generator is seeded
+    // from the run's configuration, never from time.
+    std::mt19937_64 generator(random_seed);
+    std::uniform_real_distribution<double> perturbation(-0.35, 0.35);
+
+    // The bounded solve for one anchor: continuation seed, structured
+    // null-space perturbations, then random multi-start, first hit wins.
+    const auto solve_anchor = [&](const Eigen::Matrix4d& target,
+                                  const Eigen::Matrix<double, 7, 1>& walk_seed,
+                                  PathIkSample& sample) {
+        const auto deadline = std::chrono::steady_clock::now() +
+                              std::chrono::duration<double>(kAnchorIkTimeBudgetS);
+        bool converged_outside_limits = false;
+        int attempts = 0;
+        double best_failed_residual_m = std::numeric_limits<double>::infinity();
+        const auto attempt = [&](const Eigen::Matrix<double, 7, 1>& try_seed) {
+            ++attempts;
+            Eigen::Matrix<double, 7, 1> mutable_seed = try_seed;
+            const auto candidate =
+                analytical_ik::AnalyticalIKSolver::solveBestIK(
+                    target, arm.base_transform, mutable_seed, 1,
+                    arm.end_effector_frame, arm.left_arm, tolerance);
+            // On failure the sample keeps the CLOSEST attempt seen, so the
+            // diagnostics say how near the bounded search ever got.
+            if (candidate.attempted && !sample.solved &&
+                candidate.position_error_m < best_failed_residual_m) {
+                best_failed_residual_m = candidate.position_error_m;
+                sample.configuration = candidate.joint_angles;
+                sample.position_residual_m = candidate.position_error_m;
+                sample.orientation_residual_rad = candidate.orientation_error_rad;
             }
-        }
+            if (candidate.is_valid &&
+                !WithinLimits(candidate.joint_angles, limits)) {
+                converged_outside_limits = true;
+                return false;
+            }
+            if (!candidate.is_valid) return false;
+            sample.configuration = candidate.joint_angles;
+            sample.position_residual_m = candidate.position_error_m;
+            sample.orientation_residual_rad = candidate.orientation_error_rad;
+            sample.solved = true;
+            return true;
+        };
+        const auto budget_left = [&] {
+            return attempts < kMaxAnchorIkAttempts &&
+                   std::chrono::steady_clock::now() < deadline;
+        };
 
-        PathIkSample sample;
-        sample.solved = solved;
-        if (best.attempted) {
-            sample.configuration = best.joint_angles;
-            sample.position_residual_m = best.position_error_m;
-            sample.orientation_residual_rad = best.orientation_error_rad;
+        if (attempt(walk_seed)) return;
+        const Eigen::Matrix<double, 7, 1> direction =
+            NullspaceDirection(arm, walk_seed);
+        for (double step_rad : kNullspaceStepsRad) {
+            if (!budget_left()) break;
+            if (attempt(PerturbWithinLimits(walk_seed, direction, step_rad,
+                                            limits)))
+                return;
         }
-        result.samples.push_back(sample);
-        if (solved) current_seed = best.joint_angles;
+        while (budget_left()) {
+            Eigen::Matrix<double, 7, 1> random_seed_q = walk_seed;
+            for (int joint = 0; joint < 7; ++joint)
+                random_seed_q(joint) += perturbation(generator);
+            for (int joint = 0; joint < 7; ++joint) {
+                if (IsContinuous(limits, joint)) continue;
+                random_seed_q(joint) =
+                    std::clamp(random_seed_q(joint), limits.lower_rad(joint),
+                               limits.upper_rad(joint));
+            }
+            if (attempt(random_seed_q)) return;
+        }
+        sample.failure = converged_outside_limits
+                             ? PathIkFailure::kJointLimits
+                             : PathIkFailure::kNoConvergence;
+    };
+
+    // ---- 1. solve the anchors, continuation-seeded ----------------------
+    std::vector<std::size_t> solved_anchors;
+    Eigen::Matrix<double, 7, 1> continuation = canonical_start;
+    for (const std::size_t index : anchors) {
+        PathIkSample& sample = result.samples[index];
+        solve_anchor(path.samples[index].pose.matrix(), continuation, sample);
+        if (sample.solved) {
+            solved_anchors.push_back(index);
+            continuation = sample.configuration;
+        } else {
+            ++result.unresolved_samples;
+        }
+    }
+    // Longest run of consecutive failed anchors, for the diagnostics.
+    std::size_t run = 0;
+    for (const std::size_t index : anchors) {
+        run = result.samples[index].solved ? 0 : run + 1;
+        result.maximum_unresolved_run =
+            std::max(result.maximum_unresolved_run, run);
     }
 
-    ResolveGaps(result, limits, closed);
-    if (result.success) {
-        for (std::size_t index = 1; index < result.samples.size(); ++index)
-            result.maximum_joint_step_rad = std::max(
-                result.maximum_joint_step_rad,
-                JointDifference(result.samples[index - 1].configuration,
-                                result.samples[index].configuration, limits)
-                    .cwiseAbs()
-                    .maxCoeff());
-        if (closed && result.samples.size() >= 2)
-            result.closure_drift_rad =
-                JointDifference(result.samples.front().configuration,
-                                result.samples.back().configuration, limits)
-                    .cwiseAbs()
-                    .maxCoeff();
+    // Only the entry anchor is required: interpolation can bridge any
+    // interior gap, but nothing can interpolate toward an unknown entry.
+    if (solved_anchors.empty() || solved_anchors.front() != 0) {
+        result.success = false;
+        return result;
     }
+    result.success = true;
+
+    // ---- 2. interpolate everything between solved anchors ---------------
+    const auto fill_between = [&](std::size_t from, std::size_t to,
+                                  std::size_t span) {
+        // span = number of samples stepped from `from` to `to` (wrapping).
+        for (std::size_t offset = 1; offset < span; ++offset) {
+            const std::size_t index = (from + offset) % count;
+            if (result.samples[index].solved) continue;
+            const double fraction =
+                static_cast<double>(offset) / static_cast<double>(span);
+            result.samples[index].configuration =
+                Interpolate(result.samples[from].configuration,
+                            result.samples[to].configuration, fraction, limits);
+            result.samples[index].interpolated = true;
+            ++result.interpolated_samples;
+        }
+    };
+    for (std::size_t pair = 0; pair + 1 < solved_anchors.size(); ++pair)
+        fill_between(solved_anchors[pair], solved_anchors[pair + 1],
+                     solved_anchors[pair + 1] - solved_anchors[pair]);
+    const std::size_t last = solved_anchors.back();
+    if (closed) {
+        // Wrap the seam back to the entry so a closed path stays closed.
+        fill_between(last, 0, count - last);
+    } else {
+        // Hold the last solved configuration over an unsolved open tail.
+        for (std::size_t index = last + 1; index < count; ++index) {
+            if (result.samples[index].solved) continue;
+            result.samples[index].configuration =
+                result.samples[last].configuration;
+            result.samples[index].interpolated = true;
+            ++result.interpolated_samples;
+        }
+    }
+
+    // ---- 3. the walk's own quality numbers ------------------------------
+    for (std::size_t index = 1; index < result.samples.size(); ++index)
+        result.maximum_joint_step_rad = std::max(
+            result.maximum_joint_step_rad,
+            JointDifference(result.samples[index - 1].configuration,
+                            result.samples[index].configuration, limits)
+                .cwiseAbs()
+                .maxCoeff());
+    if (closed && result.samples.size() >= 2)
+        result.closure_drift_rad =
+            JointDifference(result.samples.front().configuration,
+                            result.samples.back().configuration, limits)
+                .cwiseAbs()
+                .maxCoeff();
     return result;
 }

@@ -3,9 +3,20 @@
 #include "PlannerConfig.h"
 #include "PlannerModel.h"
 #include "CartesianPath.h"
+#include "PathIk.h"
 #include "PathValidationReport.h"
 #include "TrajectoryInitiation.h"  // InitSource
 #include "MountSdf.h"
+
+// The operating limits the plan was actually solved against: the table
+// values with the planner's margin already applied, not the raw numbers in
+// joint_limits.yaml. Carried out with the outcome so a diagnostic dump can
+// draw the joint trajectory against the band the solver really used, rather
+// than re-deriving it from the file and getting the margin wrong.
+struct PlanJointLimits {
+    Eigen::Matrix<double, 7, 1> lower_rad = Eigen::Matrix<double, 7, 1>::Zero();
+    Eigen::Matrix<double, 7, 1> upper_rad = Eigen::Matrix<double, 7, 1>::Zero();
+};
 
 struct PlanRequest {
     Eigen::Matrix<double, 7, 1> q_start_rad;  // Kortex order
@@ -39,6 +50,7 @@ struct PlanOutcome {
     InitSource init_source = InitSource::kSolvedIk;
     double init_position_error_m = 0.0;
     double init_orientation_error_rad = 0.0;
+    PlanJointLimits joint_limits;
 };
 
 // joint_limits_yaml: planner_bridge/config/joint_limits.yaml.
@@ -74,6 +86,15 @@ struct PathPlanOutcome {
     double closure_drift_rad = 0.0;
     std::size_t ik_unresolved_samples = 0;
     std::size_t ik_interpolated_samples = 0;
+    // When the constrained task phase begins in trajectory time (the
+    // approach before it is free), so a per-time figure can shade which
+    // stretch of the trajectory the traced path actually governs.
+    double task_start_time_s = 0.0;
+    PlanJointLimits joint_limits;
+    // The continuation walk in full, per sample. Kept because a FAILED walk
+    // is exactly the case worth looking at, and the counters above cannot
+    // say WHICH samples failed or where they sit on the path.
+    PathIkResult ik_walk;
 };
 
 // Plans a trajectory that traces `task_path`, then emits, reconstructs and

@@ -18,6 +18,10 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
     try
     {
         const auto [pos_limits, vel_limits] = createJointLimits(joint_limits_yaml);
+        for (int joint = 0; joint < 7; ++joint) {
+            outcome.joint_limits.lower_rad(joint) = pos_limits.lower(joint);
+            outcome.joint_limits.upper_rad(joint) = pos_limits.upper(joint);
+        }
         const gtsam::Pose3 start_pose = ToolPoseInMount(model, request.q_start_rad);
         // An explicitly requested orientation wins; otherwise inherit the
         // start pose's, as this has always done (PlanRequest::goal_rotation
@@ -213,6 +217,10 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
     PathPlanOutcome outcome;
     try {
         const auto [pos_limits, vel_limits] = createJointLimits(joint_limits_yaml);
+        for (int joint = 0; joint < 7; ++joint) {
+            outcome.joint_limits.lower_rad(joint) = pos_limits.lower(joint);
+            outcome.joint_limits.upper_rad(joint) = pos_limits.upper(joint);
+        }
 
         // ---- 1. continuation IK along the requested path ---------------
         // Converge far tighter than the pass/fail requirement so the SEED
@@ -240,16 +248,20 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         }
         const PathIkResult walk =
             SolvePathIk(task_path, arm, q_start_rad, ik_limits, tolerance,
-                        /*closed=*/true);
+                        /*closed=*/true, config.effective_ik_seed);
+        outcome.ik_walk = walk;
         outcome.maximum_joint_step_rad = walk.maximum_joint_step_rad;
         outcome.closure_drift_rad = walk.closure_drift_rad;
         outcome.ik_unresolved_samples = walk.unresolved_samples;
         outcome.ik_interpolated_samples = walk.interpolated_samples;
         if (!walk.success) {
+            // The one initialization failure left: the path's entry pose.
+            // Failed intermediate anchors are dropped and interpolated over;
+            // nothing can interpolate toward an unknown entry.
             outcome.error =
-                "path IK initialization failed: unresolved run of " +
-                std::to_string(walk.maximum_unresolved_run) +
-                " sample(s) has no valid two-sided interpolation seed";
+                "path IK initialization failed: the path entry pose could "
+                "not be solved from the measured start configuration within "
+                "the bounded search";
             return outcome;
         }
 
@@ -339,6 +351,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         for (int pass = 0; pass < kMaxScalingPasses; ++pass) {
             outcome.time_scaling_passes = pass + 1;
             inputs.task_start_time_s = duration_s * task_start_fraction;
+            outcome.task_start_time_s = inputs.task_start_time_s;
 
             const TimedJointTrajectory reconstructed =
                 DenseValidationTrajectory(solved, duration_s);

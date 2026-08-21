@@ -1,19 +1,24 @@
 //
-// PathIk — inverse kinematics walked along a Cartesian path, seeded by
-// continuation.
+// PathIk — joint-space initialization for a Cartesian path, built from a
+// small set of IK anchor poses.
 //
-// Solving each pose independently is wrong for a path. A 7-DoF arm has a
-// continuous family of configurations reaching most poses, so independent
-// solves are free to jump between branches: the elbow flips, and the joint
-// trajectory contains a discontinuity the Cartesian path never asked for.
-// Seeding each solve from the PREVIOUS solution keeps the walk on one
-// branch. Where a sample fails, the last good solution stays the seed, so
-// one bad patch does not scatter everything after it.
+// GPMP2 receives the FULL Cartesian path as pose factors and does the
+// detailed path fitting itself; this layer only has to hand it a plausible,
+// continuous joint-space starting sketch. Requiring IK to succeed at every
+// path sample made initialization the most brittle stage of the planner —
+// one hard patch of samples killed plans the optimiser could have repaired.
+// So IK is solved only at strategically spaced ANCHOR samples, walked in
+// order and seeded by continuation (each anchor's solve starts from the
+// previous solution, keeping the walk on one branch of the redundant arm's
+// solution family). Every sample between anchors is interpolated.
 //
-// A failed sample gets a small, deterministic set of null-space perturbations
-// around the last valid continuation seed. There is deliberately no large
-// random-restart loop here: GPMP2 is the path solver, and this layer only
-// needs a plausible joint-space initialization.
+// Anchor solves are robust but time-bounded: the continuation seed first,
+// then a small structured set of null-space perturbations, then a bounded
+// random multi-start — stopping at the first solution inside tolerance and
+// limits, or at the attempt/wall-clock cap. A failed OPTIONAL anchor is
+// dropped and its span interpolated between its solved neighbours; only the
+// path ENTRY anchor can make initialization fail, because nothing can
+// interpolate toward an unknown entry configuration.
 //
 // Eigen and Pinocchio only: no gtsam (see PinocchioKinematicsAdapter.h for
 // why the two cannot share a translation unit). The planner converts at the
@@ -23,6 +28,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -31,20 +37,39 @@
 #include "CartesianPath.h"
 #include "analytical_ik.h"
 
-// One path sample. Unsolved samples may still carry an interpolated
-// configuration used only as GPMP2's initial guess.
+// Why one sample failed. Recorded for diagnosis only — the walk already
+// branches on exactly this distinction (a converged pose rejected by the
+// limit check is a different problem from IK never converging), and losing
+// it forces the operator to re-derive it from residuals by eye.
+enum class PathIkFailure {
+    kNone,           // solved
+    kNoConvergence,  // no attempted seed produced a valid IK solution
+    kJointLimits,    // IK converged but every solution violated the limits
+};
+
+// One path sample. Only anchor samples are solved by IK; every other
+// sample carries an interpolated configuration used only as GPMP2's
+// initial guess.
 struct PathIkSample {
     Eigen::Matrix<double, 7, 1> configuration =
         Eigen::Matrix<double, 7, 1>::Zero();
     bool solved = false;
     double position_residual_m = 0.0;
     double orientation_residual_rad = 0.0;
+    // kNone for solved anchors AND for samples that were never attempted
+    // (deliberately interpolated); a failure reason is present only on an
+    // anchor whose bounded solve found nothing.
+    PathIkFailure failure = PathIkFailure::kNone;
+    // True when `configuration` is interpolated between solved anchors, not
+    // an IK solution — the normal state of every non-anchor sample.
+    bool interpolated = false;
 };
 
 struct PathIkResult {
-    // True when every unresolved run is short and has valid neighbours on
-    // both sides. Individual samples may still have solved == false; their
-    // configurations are interpolation seeds for GPMP2.
+    // False only when the path ENTRY anchor could not be solved — the one
+    // failure interpolation cannot paper over. Failed intermediate anchors
+    // are dropped and their spans interpolated; GPMP2 then gets its chance
+    // to repair the rough stretch against the full set of pose factors.
     bool success = false;
     std::vector<PathIkSample> samples;
     std::size_t unresolved_samples = 0;
@@ -79,26 +104,39 @@ struct PathIkJointLimits {
     Eigen::Matrix<double, 7, 1> upper_rad;
 };
 
-// A failed continuation solve gets exactly four small alternatives. Keeping
-// this visible makes the bounded search policy testable and reviewable.
+// The bounded anchor-solve policy, visible so it stays reviewable.
+// Every kPathIkAnchorStride-th sample is an anchor (the entry always is;
+// an open path's final sample too). Each anchor gets the continuation
+// seed, then kPathIkAlternativeSeedCount structured null-space
+// perturbations, then random multi-start — stopping at the FIRST solution
+// inside tolerance and limits, or when either the attempt or wall-clock
+// budget runs out. Both caps exist so a hard anchor cannot make a normal
+// plan slow: the time cap bounds expensive solves, the attempt cap bounds
+// cheap ones.
+inline constexpr std::size_t kPathIkAnchorStride = 4;
 inline constexpr int kPathIkAlternativeSeedCount = 4;
-inline constexpr std::size_t kMaxInterpolatedPathIkGapSamples = 2;
+inline constexpr int kMaxAnchorIkAttempts = 50;
+inline constexpr double kAnchorIkTimeBudgetS = 0.010;
 static_assert(kPathIkAlternativeSeedCount >= 3 &&
               kPathIkAlternativeSeedCount <= 5);
 
 // Walks `path` (whose poses must already be in the frame `arm.base_transform`
-// is expressed against) solving IK at each sample.
+// is expressed against) solving IK at the anchor samples and interpolating
+// the rest.
 //
 // `seed` is the measured configuration. Continuous joints are canonicalised
 // once at this boundary; a bounded joint outside `limits` is rejected rather
-// than silently clamped. `tolerance` is how accurately each sample must be reached —
+// than silently clamped. `tolerance` is how accurately each anchor must be reached —
 // pass something tight, since the solver's own default stops at 20 mm, which
 // is meaningless for a traced path (measured 2026-08-07).
 //
 // `closed` marks a path whose last sample repeats its first, so closure
-// drift is meaningful.
+// drift is meaningful and interpolation may wrap around the seam.
+// `random_seed` drives the multi-start fallback deterministically — pass
+// the run's effective IK seed so a failure reproduces exactly.
 PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
                          const Eigen::Matrix<double, 7, 1>& seed,
                          const PathIkJointLimits& limits,
                          const analytical_ik::IKTolerance& tolerance,
-                         bool closed = false);
+                         bool closed = false,
+                         std::uint64_t random_seed = 20260807u);

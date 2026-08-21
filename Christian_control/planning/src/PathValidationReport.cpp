@@ -21,7 +21,6 @@ const char* VerdictName(PlanVerdict verdict) {
 // in rather than configured: the yaml keys stay the single statement of
 // what the task requires, and these only say how far past "required" is
 // still usable (2026-08-20 decision, Christian).
-constexpr double kRejectToleranceMultiplier = 2.0;  // beyond 2x tol = fail
 constexpr double kClearanceWarningM = 0.010;        // positive but tight
 constexpr double kVelocityRejectRatio = 1.05;       // >5% over a limit
 
@@ -37,20 +36,24 @@ PlanVerdict DecidePlanVerdict(PathValidationReport& report,
         report.warnings.push_back(message);
     };
 
-    // ---- hard rejections: unsafe or clearly failing the task ------------
+    // ---- hard rejections: physically invalid trajectories ONLY ----------
+    // Each line here has a concrete physical failure behind it; everything
+    // that is merely IMPERFECT (tracking error, clearance margin, optimiser
+    // convergence quality) is quality information, reported as a warning
+    // and left to the layer with context. (Policy change 2026-08-21: task
+    // error beyond twice tolerance and non-convergence used to reject.)
     bool reject = false;
+    // Non-finite states cannot be commanded at all.
     if (!report.all_finite) reject = true;
-    if (!report.optimiser_converged) reject = true;
-    if (!report.modelled_collision_valid) reject = true;   // penetration or
-                                                           // unanswerable SDF
+    // Modelled penetration, or an SDF that could not answer the query.
+    if (!report.modelled_collision_valid) reject = true;
+    // A state beyond a position limit faults the actuator's firmware bank.
     if (!report.joint_limits_valid) reject = true;
-    if (!report.start_state_valid) reject = true;          // splice guard
-    if (report.command.max_position_m >
-        kRejectToleranceMultiplier * thresholds.maximum_planning_error_m)
-        reject = true;
-    if (report.command.max_orientation_rad >
-        kRejectToleranceMultiplier * thresholds.maximum_orientation_error_rad)
-        reject = true;
+    // A trajectory not starting at the measured arm makes the controller
+    // command a physical step (the splice guard's reason for existing).
+    if (!report.start_state_valid) reject = true;
+    // Velocity far over the firmware MAXIMUM_VELOCITY bank faults the arm
+    // mid-motion (docs/decisions/qdot-limit-raise.md); small overage warns.
     if (report.max_velocity_limit_ratio > kVelocityRejectRatio) reject = true;
     if (reject) {
         report.verdict = PlanVerdict::kReject;
@@ -58,6 +61,9 @@ PlanVerdict DecidePlanVerdict(PathValidationReport& report,
     }
 
     // ---- warnings: usable, imperfect, said out loud ---------------------
+    if (!report.optimiser_converged)
+        warn("optimiser did not report convergence; the fidelity numbers "
+             "below say what the trajectory actually achieves");
     if (report.command.max_position_m > thresholds.maximum_planning_error_m) {
         text.str("");
         text << "position error " << report.command.max_position_m * 1000.0

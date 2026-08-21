@@ -57,31 +57,27 @@ int main() {
         Check(r.warnings.empty(), "clean plan carries no warnings");
     }
 
-    // Fidelity: within tolerance accepts, within 2x warns, beyond 2x rejects.
+    // Fidelity: quality information, never a hard gate (2026-08-21 policy:
+    // tracking error does not make a trajectory physically invalid, so any
+    // overage warns and the layer with context decides).
     {
         PathValidationReport r = CleanReport();
-        r.command.max_position_m = 0.007;  // 5 < 7 <= 10 mm
+        r.command.max_position_m = 0.007;
         Check(DecidePlanVerdict(r, t) == PlanVerdict::kWarning,
               "7 mm position error warns");
         Check(!r.warnings.empty(), "fidelity warning is recorded");
     }
     {
         PathValidationReport r = CleanReport();
-        r.command.max_position_m = 0.012;  // > 10 mm
-        Check(DecidePlanVerdict(r, t) == PlanVerdict::kReject,
-              "12 mm position error rejects");
-    }
-    {
-        PathValidationReport r = CleanReport();
-        r.command.max_orientation_rad = 0.15;  // 0.1 < 0.15 <= 0.2
+        r.command.max_position_m = 0.012;
         Check(DecidePlanVerdict(r, t) == PlanVerdict::kWarning,
-              "0.15 rad orientation error warns");
+              "12 mm position error warns, never rejects");
     }
     {
         PathValidationReport r = CleanReport();
-        r.command.max_orientation_rad = 0.25;  // > 0.2
-        Check(DecidePlanVerdict(r, t) == PlanVerdict::kReject,
-              "0.25 rad orientation error rejects");
+        r.command.max_orientation_rad = 0.25;
+        Check(DecidePlanVerdict(r, t) == PlanVerdict::kWarning,
+              "0.25 rad orientation error warns, never rejects");
     }
 
     // Collision: penetration rejects, low positive clearance warns.
@@ -121,7 +117,7 @@ int main() {
               "acceleration overage alone warns");
     }
 
-    // Hard gates unchanged: non-finite, joint limit, splice, convergence.
+    // Hard gates: physically invalid trajectories only.
     {
         PathValidationReport r = CleanReport();
         r.all_finite = false;
@@ -139,11 +135,13 @@ int main() {
         Check(DecidePlanVerdict(r, t) == PlanVerdict::kReject,
               "splice-guard failure rejects");
     }
+    // Convergence quality is information, not physical validity: the
+    // fidelity numbers say what the trajectory actually achieves.
     {
         PathValidationReport r = CleanReport();
         r.optimiser_converged = false;
-        Check(DecidePlanVerdict(r, t) == PlanVerdict::kReject,
-              "non-converged optimiser rejects");
+        Check(DecidePlanVerdict(r, t) == PlanVerdict::kWarning,
+              "non-converged optimiser warns, never rejects");
     }
 
     if (failures == 0) std::printf("test_plan_verdict: all checks passed\n");

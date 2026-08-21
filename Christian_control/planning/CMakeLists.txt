@@ -104,6 +104,7 @@ target_sources(bridge_core PRIVATE
     src/PlannerConfig.cpp
     src/PlanSolver.cpp
     src/PathValidation.cpp
+    src/PlanDebugDump.cpp
     src/StartState.cpp
     src/BridgeMain.cpp
     src/PlannerRuntime.cpp
