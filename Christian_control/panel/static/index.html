@@ -86,8 +86,10 @@
       <section class="card scene-card">
         <div class="card-head">
           <h2>Scene</h2>
-          <span class="card-note">mount frame · runtime TCP markers</span>
+          <span class="card-note">mount frame · runtime arm and TCP poses</span>
+          <button type="button" class="action" id="scene-fit">FIT VIEW</button>
         </div>
+        <p class="scene-navigation">drag to orbit · wheel to zoom · FIT VIEW to recenter</p>
         <div class="scene-holder">
           <canvas id="scene" class="scene"></canvas>
         </div>
@@ -302,7 +304,7 @@
     <section class="card">
       <div class="card-head">
         <h2>Goal</h2>
-        <span class="card-note">planner_bridge/config/goal.yaml · comments are part of the file and are kept</span>
+        <span class="card-note">live mount-frame commands · goal.yaml remains an offline fixture</span>
       </div>
       <div id="goal-cards" class="goal-cards"></div>
       <details id="goal-raw-details">

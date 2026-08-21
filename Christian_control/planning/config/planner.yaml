@@ -38,7 +38,7 @@ motion:
   # in goal.yaml. The controller's own clip (76/66.5 deg/s, Config.h)
   # rejects a block that exceeds it at ingest, so raising this far enough
   # fails there, late.
-  nominal_speed_mps: 0.1
+  nominal_speed_mps: 0.25
   # Floor on that duration, seconds, so short moves are not abrupt. A
   # smoothness floor only — at its former 4.0 it silently paced every
   # reachable move (docs/motion-limits-map.md).
@@ -56,13 +56,7 @@ obstacles:
   collision_sigma: 0.0005
   # The one persistent mount-frame obstacle scene. Keep empty until a
   # measured, Christian-confirmed geometry is supplied.
-  scene:
-    torso:
-      enabled: true
-      shape: cylinder
-      center_mount_m: [0.0, 0.0, -0.2]
-      radius_m: 0.24
-      height_m: 1.4
+  scene: {}
 
 # How far the plan may stray from constant velocity.
 smoothness:

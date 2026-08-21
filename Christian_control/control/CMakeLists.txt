@@ -203,4 +203,8 @@ if (BUILD_TESTING)
             tests/test_runtime_tcp_telemetry.cpp)
     add_execution_core_to(test_runtime_tcp_telemetry)
     add_test(NAME runtime_tcp_telemetry COMMAND test_runtime_tcp_telemetry)
+
+    add_executable(test_goal_preempt tests/test_goal_preempt.cpp)
+    add_execution_core_to(test_goal_preempt)
+    add_test(NAME goal_preempt COMMAND test_goal_preempt)
 endif ()

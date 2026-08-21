@@ -137,7 +137,7 @@ is restored (teardown D1), and the decoded stop report prints (D2).
 
 ## 7. Log fields to review afterwards
 
-The run CSV is format 14; read it with `scripts/runlog.py` by column name.
+The run CSV is format 15; read it with `scripts/runlog.py` by column name.
 The minimum post-run review set:
 
 - timing: `dt_s` distribution, `jitter_us_j*`, `cycle` continuity;

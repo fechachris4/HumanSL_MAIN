@@ -1,5 +1,6 @@
 import importlib
 import json
+import math
 import os
 import threading
 import time
@@ -847,3 +848,39 @@ def test_scene_save_and_session_start_handlers_do_not_overlap(monkeypatch):
     assert overlapped is False
     assert scene_responses[0][0] == 200
     assert start_responses == [(200, {"ok": True})]
+
+
+def test_live_goal_formats_mount_point_and_sends_to_running_arm(monkeypatch):
+    monkeypatch.setattr(session, "status", lambda: {
+        "commanding": True, "arm": "left", "mount": "fixed",
+        "planning": True, "planner": "current",
+    })
+    sent = []
+    monkeypatch.setattr(session, "send_goal_datagram",
+                        lambda path, line: sent.append((path, line)))
+
+    result = session.send_goal("left", {
+        "mode": "point", "frame": "mount",
+        "goal": ["0.4", "0.2", "0.3"],
+        "orientation_rpy_deg": ["90", "0", "-90"],
+    })
+
+    assert result["ok"] is True
+    assert sent[0][0] == paths.GOAL_SOCKETS["left"]
+    tokens = sent[0][1].split()
+    assert tokens[0] == "POINT" and tokens[4] == "FIXED"
+    assert [float(v) for v in tokens[1:4]] == pytest.approx([0.4, 0.2, 0.3])
+    assert [float(v) for v in tokens[5:]] == pytest.approx(
+        [math.pi / 2, 0.0, -math.pi / 2])
+
+
+def test_live_goal_endpoint_delegates_without_restarting_session(monkeypatch):
+    monkeypatch.setattr(session, "send_goal",
+                        lambda arm, fields: {"ok": True, "arm": arm})
+    handler, responses = handler_for(
+        "/api/session/goal", {"arm": "left", "fields": {"mode": "point"}}
+    )
+
+    handler.do_POST()
+
+    assert responses == [(200, {"ok": True, "arm": "left"})]

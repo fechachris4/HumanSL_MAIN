@@ -38,7 +38,8 @@ std::mutex g_planner_solve_mutex;
 
 constexpr char kUsageText[] =
     "usage: planner_bridge --arm <right|left>\n"
-    "                       [--goal X Y Z | --goal-file PATH]\n"
+    "                       [--goal X Y Z | --circle CX CY CZ R NX NY NZ D\n"
+    "                        | --goal-file PATH]\n"
     "                       [--state-csv PATH | --start-deg J1..J7]\n"
     "                       [--runs-root PATH] [--dh PATH]\n"
     "                       [--joint-limits PATH]\n"
@@ -582,6 +583,31 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             const double y = ParseDouble(next());
             const double z = ParseDouble(next());
             parsed.goal = Eigen::Vector3d(x, y, z);
+        } else if (flag == "--goal-rpy-rad") {
+            parsed.goal_rpy_rad = Eigen::Vector3d(
+                ParseDouble(next()), ParseDouble(next()), ParseDouble(next()));
+        } else if (flag == "--circle") {
+            CircleSpec circle;
+            circle.centre_m = Eigen::Vector3d(
+                ParseDouble(next()), ParseDouble(next()), ParseDouble(next()));
+            circle.radius_m = ParseDouble(next());
+            circle.normal = Eigen::Vector3d(
+                ParseDouble(next()), ParseDouble(next()), ParseDouble(next()));
+            circle.duration_s = ParseDouble(next());
+            circle.frame = config::ReferenceFrame::kMount;
+            parsed.circle = circle;
+        } else if (flag == "--circle-orientation") {
+            if (!parsed.circle)
+                throw std::invalid_argument(
+                    "--circle-orientation requires --circle first");
+            const std::string value = next();
+            if (value == "fixed")
+                parsed.circle->orientation = OrientationPolicy::kFixed;
+            else if (value == "radial")
+                parsed.circle->orientation = OrientationPolicy::kRadialInward;
+            else
+                throw std::invalid_argument(
+                    "--circle-orientation must be fixed or radial");
         } else if (flag == "--goal-file") {
             parsed.goal_file = next();
         } else if (flag == "--state-csv") {
@@ -636,12 +662,25 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
     if (!parsed.left_arm)
         throw std::invalid_argument(
             "--arm is required and must be 'right' or 'left'");
-    if (parsed.goal && parsed.goal_file)
+    if ((parsed.goal || parsed.circle) && parsed.goal_file)
         throw std::invalid_argument(
-            "at most one of --goal or --goal-file may be given");
-    if (!parsed.goal)
+            "at most one direct goal or --goal-file may be given");
+    if (!parsed.goal && !parsed.circle)
         LoadGoalFile(parsed.goal_file ? *parsed.goal_file : DefaultGoalPath(),
                      parsed, *parsed.left_arm);
+    if (parsed.circle) {
+        if (!(parsed.circle->radius_m > 0.0) ||
+            !(parsed.circle->duration_s > 0.0) ||
+            parsed.circle->normal.norm() < 1e-9)
+            throw std::invalid_argument(
+                "--circle requires positive radius/duration and nonzero normal");
+        if (parsed.circle->orientation == OrientationPolicy::kFixed) {
+            if (!parsed.goal_rpy_rad)
+                throw std::invalid_argument(
+                    "fixed --circle requires --goal-rpy-rad");
+            parsed.circle->fixed_rpy_rad = *parsed.goal_rpy_rad;
+        }
+    }
     if (parsed.state_csv && parsed.start_deg)
         throw std::invalid_argument(
             "at most one of --state-csv or --start-deg may be given");

@@ -55,6 +55,10 @@ SESSION_STATE = Path("/tmp/humansl_panel_session.json")
 PANEL_SCRATCH = Path("/tmp/humansl_panel")
 
 ARMS = ("right", "left")
+GOAL_SOCKETS = {
+    "right": Path("/tmp/humansl-goal-right.sock"),
+    "left": Path("/tmp/humansl-goal-left.sock"),
+}
 
 
 def panel_backup(target: Path) -> Path:

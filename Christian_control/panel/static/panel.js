@@ -786,9 +786,10 @@ function buildRunView() {
   // defined once, in panel.css, and cannot drift between the drawing and the
   // page around it.
   state.scene = createScene($('scene'), {
-    frameLabel: 'mount frame · runtime TCP telemetry',
+    frameLabel: 'mount frame · runtime arm pose telemetry',
   });
   call(state.scene, 'setSelectedArm', state.arm);
+  $('scene-fit').addEventListener('click', () => call(state.scene, 'fitView'));
 
   state.banner = mount($('banner-host'), createBanner());
   state.staleness = mount($('staleness-host'),
@@ -2026,6 +2027,12 @@ function renderGoalCards() {
     preview.textContent = 'PREVIEW GOAL';
     preview.addEventListener('click', () => previewGoalCard(card, arm));
     saveRow.appendChild(preview);
+    const execute = document.createElement('button');
+    execute.type = 'button';
+    execute.className = 'action action-strong';
+    execute.textContent = 'PLAN + EXECUTE';
+    execute.addEventListener('click', () => executeGoalCard(card, arm));
+    saveRow.appendChild(execute);
     const clearPreview = document.createElement('button');
     clearPreview.type = 'button';
     clearPreview.className = 'action';
@@ -2082,7 +2089,7 @@ function previewGoalCard(card, arm) {
 // leaving the top-level key set would write a second, unused orientation
 // beside the path. The inherit checkbox and its rpy row apply to point mode
 // only.
-async function saveGoalCard(card, arm) {
+function goalCommandFields(card, arm) {
   const mode = card.querySelector(`input[name="goal-mode-${arm}"]:checked`).value;
   const fields = { mode, frame: goalField(card, 'frame').value };
   if (mode === 'point') {
@@ -2101,6 +2108,24 @@ async function saveGoalCard(card, arm) {
     };
     fields.orientation_rpy_deg = null;
   }
+  return fields;
+}
+
+async function executeGoalCard(card, arm) {
+  const result = await postJSON('/api/session/goal', {
+    arm,
+    fields: goalCommandFields(card, arm),
+  });
+  if (result.error) {
+    setNotice('goal-status', `${arm}: ${result.error}`, 'is-stop');
+    return;
+  }
+  setNotice('goal-status', `${arm}: goal sent; controller is holding while the planner works.`, null);
+  showView('run');
+}
+
+async function saveGoalCard(card, arm) {
+  const fields = goalCommandFields(card, arm);
   const result = await postJSON('/api/goal/fields', { arm, fields });
   if (result.error) {
     setNotice('goal-status', `${arm}: ${result.error}`, 'is-stop');
@@ -2477,7 +2502,7 @@ function renderRequired() {
       .flatMap((entry) => entry?.reasons || []);
     row('planner (GPMP2, in-process) + DH tables', freshness
         ? (dhReasons.length ? 'blocking' : 'ready') : 'unknown',
-        dhReasons.join('; ') || 'goal.yaml, planner.yaml and the generated DH tables');
+        dhReasons.join('; ') || 'live mount goals, planner.yaml and the generated DH tables');
   } else {
     row('planner', 'unused', 'planning off: no worker thread, planner files not read');
   }
@@ -2579,7 +2604,7 @@ function renderSession() {
     startBlock.hidden = false;
     $('start-button').disabled = running;
     $('start-prose').textContent = running
-      ? 'A session is already running. Stop it before starting another.'
+      ? 'The controller session is active. Send further commands from TARGETS; stop only when the experiment is finished.'
       : 'Starting commands the arm. Type GO to confirm you are at the workstation, the workspace is clear, and the physical e-stop is in reach.';
   }
 }
@@ -2598,7 +2623,7 @@ function renderDriveNote() {
     // A real property of run_session.sh, not a warning for its own sake: one
     // controller process drives both arms with a single stop flag.
     ? 'one controller process, two threads, one stop: a fault on either arm '
-      + 'stops both. Each arm reads its own block of goal.yaml.'
+      + 'stops both. Each arm receives its own live target stream.'
     : `only the ${choice} arm moves; the other is not commanded.`;
   setNotice('drive-note', note, null);
 }

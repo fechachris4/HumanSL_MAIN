@@ -189,7 +189,7 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
     const MeasuredCartesianState measured = controller_.Measure(state_);
     const PoseReference cycle_reference =
         reference_.Get(state_, measured, control_dt_s, world_stale_elapsed_s_,
-                       status);
+                       in.goal_preempt, status);
     Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
         controller_.DesiredVelocity(state_, measured, cycle_reference,
                                     control_dt_s, status);

@@ -154,9 +154,9 @@ Christian_control/planning/scripts/run_session.sh --arm right
 ```
 
 It checks binary freshness, requires the operator to type `GO`, starts one
-controller process, and waits for each selected arm's first typed Cartesian
-plan activation. Requests, planner diagnostics, controller log, configuration
-snapshots, and run CSVs are retained under
+controller process, then leaves the controller, planner worker and logging
+alive while the panel sends any number of mount-frame goals. Planner
+diagnostics, controller log, configuration snapshots, and run CSVs are retained under
 `runs/YYYY-MM-DD/session_HHMMSS/`. Ctrl+C or Enter stops the controller and
 its in-process planner workers through the common teardown path.
 
@@ -167,14 +167,15 @@ specific session, a clear workspace, and an immediately reachable e-stop.
 
 Running `build/controller --arm right|left|both` directly is also robot-facing.
 It starts in a zero-error Cartesian hold, captures a fixed world hold on the
-first fresh Vicon sample, and waits for its in-process planner worker to
-produce a typed trajectory.
+first fresh sample, and waits for a live goal. Each accepted goal is planned
+from the current measured joints; completion returns to HOLD without ending
+the session.
 
 ## Telemetry
 
-Format 14 records the full explanation chain: Vicon pose/twist and age,
+Format 15 records the full explanation chain: Vicon pose/twist and age,
 reference identity/provenance/time, reference and measured world pose/twist,
-canonical measured and transmitted-command TCP positions in model mount,
+canonical measured arm chain and measured/transmitted-command TCP poses in model mount,
 trajectory activation/rejection/completion/cancellation/replan edges, raw task
 and null-space velocities, requested/clamped/integrated joint commands, measured
 joints, command acknowledgements, faults, and timing. CSV writing is buffered on

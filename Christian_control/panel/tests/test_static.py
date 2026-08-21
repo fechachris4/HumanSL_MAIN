@@ -98,7 +98,20 @@ def test_scene_uses_runtime_tcp_markers_and_has_no_browser_fk():
         assert forbidden not in scene
     assert "measured_tcp_x_mount_m" in scene
     assert "commanded_tcp_x_mount_m" in scene
+    assert "measured_tcp_qx_mount" in scene
+    assert "commanded_tcp_qx_mount" in scene
+    assert "measured_chain_p" in scene and "x_mount_m" in scene
+    assert "measuredArmChain" in scene
     assert "/api/dh" not in panel
+
+
+def test_scene_exposes_fit_view_and_navigation_hint():
+    html = (STATIC / "index.html").read_text()
+    panel = (STATIC / "panel.js").read_text()
+
+    assert 'id="scene-fit"' in html
+    assert "drag to orbit" in html
+    assert "fitView" in panel
 
 
 def test_format_14_keeps_exchange_timestamps():
@@ -126,8 +139,20 @@ def test_cyclic_refresh_has_one_bounded_timeout_retry_and_wrapper_exits():
     hardware = (STATIC.parents[1] / "runtime" / "Hardware.cpp").read_text()
     wrapper = (STATIC.parents[1] / "planning" / "scripts" / "run_session.sh").read_text()
 
-    assert "kCyclicRefreshTimeoutMs = 2" in hardware
     assert "METHOD_TIMEOUT" in hardware
     assert hardware.count("Refresh(command_, 0, options)") == 2
     assert "read -r -t 1" in wrapper
     assert "kill -0 \"$CONTROLLER_PID\"" in wrapper
+
+
+def test_running_session_accepts_goals_without_one_shot_startup_wait():
+    panel = (STATIC / "panel.js").read_text()
+    wrapper = (STATIC.parents[1] / "planning" / "scripts" / "run_session.sh").read_text()
+    planner_runtime = (STATIC.parents[1] / "planning" / "src" /
+                       "PlannerRuntime.cpp").read_text()
+
+    assert "PLAN + EXECUTE" in panel
+    assert "postJSON('/api/session/goal'" in panel
+    assert "activate its first plan" not in wrapper
+    assert 'cp "$GOAL_YAML"' not in wrapper
+    assert '"--goal-file", config.goal_file' not in planner_runtime

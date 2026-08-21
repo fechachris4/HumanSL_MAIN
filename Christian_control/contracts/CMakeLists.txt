@@ -19,6 +19,7 @@ cmake_minimum_required(VERSION 3.12)
 get_filename_component(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
 add_library(humansl_contracts STATIC
+        GoalCommand.cpp
         PlanningRequest.cpp
         WorldCartesianTrajectory.cpp
         WorldCartesianTrajectoryWire.cpp

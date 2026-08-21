@@ -2,12 +2,9 @@
 # One-terminal supervised session for the single-process planner/controller.
 # Sequences what the operator previously did by hand; bypasses nothing.
 #
-# Which arm(s): --arm right|left|both on the command line, or (if --arm is
-# omitted) the `session_arms:` key in config/goal.yaml — the one file this
-# workflow already asks you to edit before every run, so the session's arm
-# selection lives next to the targets it's about to send. --arm both starts
-# ONE controller process (two arm threads, in-process planner workers, one
-# stop flag — a fault on either arm stops both).
+# --arm right|left|both is required. One GO authorizes one persistent session;
+# targets arrive later through the panel's live command path. --arm both starts
+# one controller process with two arm threads and one shared stop flag.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
@@ -15,7 +12,6 @@ CONTROLLER="$REPO/Christian_control/runtime/build/controller"
 CONTROLLER_BUILD="$REPO/Christian_control/runtime/build"
 PLANNER_SRC="$REPO/Christian_control/planning/src"
 PLANNER_TG="$REPO/Christian_control/planning/optimisation"
-GOAL_YAML="$REPO/Christian_control/planning/config/goal.yaml"
 PLANNER_YAML="$REPO/Christian_control/planning/config/planner.yaml"
 ARM=""
 # The session's other three independent choices (MainArgs.h). Defaults
@@ -76,17 +72,9 @@ if [[ -n "$FIXED_POSE" && "$MOUNT" != "fixed" ]]; then
     echo "error: --fixed-pose is only meaningful with --mount fixed"; exit 1
 fi
 
-if [[ -z "$ARM" ]]; then
-    ARM=$(awk -F': *' '/^session_arms:/{print $2; exit}' "$GOAL_YAML" 2>/dev/null || true)
-    [[ -n "$ARM" ]] || {
-        echo "error: no --arm given and no 'session_arms:' key in $GOAL_YAML"
-        echo "either pass --arm right|left|both, or add session_arms: <value> to the file"
-        exit 1
-    }
-    echo "arm not given on the command line — using session_arms: $ARM from $GOAL_YAML"
-fi
+[[ -n "$ARM" ]] || { echo "error: --arm is required"; exit 1; }
 if [[ "$ARM" != "right" && "$ARM" != "left" && "$ARM" != "both" ]]; then
-    echo "error: --arm (or session_arms:) must be 'right', 'left', or 'both' (got '$ARM')"
+    echo "error: --arm must be 'right', 'left', or 'both' (got '$ARM')"
     exit 1
 fi
 # Which arms this run actually drives, as a bash array — one element for
@@ -159,7 +147,6 @@ mkdir -p "$REPO/runs"   # first run on a fresh checkout has no runs/ dir yet
 SESSION_DIR="$REPO/runs/$(date +%F)/session_$(date +%H%M%S)"
 mkdir -p "$SESSION_DIR"
 echo "session artifacts: $SESSION_DIR"
-cp "$GOAL_YAML" "$SESSION_DIR/goal.yaml"
 [[ -f "$PLANNER_YAML" ]] && cp "$PLANNER_YAML" "$SESSION_DIR/planner.yaml"
 
 sha_of() { [[ -f "$1" ]] && sha256sum "$1" 2>/dev/null | cut -d' ' -f1 || echo "unavailable"; }
@@ -252,7 +239,7 @@ if [[ "$RECORD" == "off" ]]; then
         kill -0 "$CONTROLLER_PID" 2>/dev/null || { echo "controller exited during startup"; exit 1; }
         sleep 1
     done
-    [[ "$PLAN" == "on" ]] && echo "note: planning is on but recording is off — plan activation cannot be verified from a log"
+    [[ "$PLAN" == "on" ]] && echo "planning is on; send live goals while the controller holds"
 else
 for a in "${ARMS[@]}"; do
     echo "waiting for the $a controller thread's run log..."
@@ -282,46 +269,10 @@ for a in "${ARMS[@]}"; do
     [[ $ready = 1 ]] || { echo "no telemetry rows appeared in $found after 30 s"; exit 1; }
 done
 
-# Wait for each selected controller thread to activate its first typed plan
-# — only when this session runs the planner. A --plan off session holds its
-# captured pose; there is no plan whose absence could mean failure, and a
-# guard that killed the controller for not doing what it was told not to do
-# would be a stop with no hazard behind it.
-if [[ "$PLAN" == "on" ]]; then
-for a in "${ARMS[@]}"; do
-    echo "waiting for the $a controller thread to activate its first plan..."
-    activated=0
-    for _ in $(seq 1 180); do
-        if awk -F, '
-            /^#/ { next }
-            !header {
-                for (i = 1; i <= NF; ++i) if ($i == "cart_traj_activated") column = i
-                header = 1
-                next
-            }
-            column && $column == "1" { found = 1; exit }
-            END { exit found ? 0 : 1 }
-        ' "${LATEST[$a]}"; then
-            activated=1
-            break
-        fi
-        kill -0 "$CONTROLLER_PID" 2>/dev/null || {
-            echo "controller exited before $a activated its initial plan"
-            exit 1
-        }
-        sleep 1
-    done
-    [[ $activated = 1 ]] || {
-        echo "no complete $a plan was activated after 180 s"
-        exit 1
-    }
-    echo "  $a: first typed world-Cartesian plan activated; worker remains in controller."
-done
-fi
 fi
 
 if [[ "$PLAN" == "on" ]]; then
-    echo "In-process planner worker(s) remain active. Press Enter to stop the controller."
+    echo "Controller holding. Send live goals from the panel; press Enter to stop."
 else
     echo "Controller holding (planning off). Press Enter to stop the controller."
 fi

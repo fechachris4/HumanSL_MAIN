@@ -315,6 +315,12 @@ main {
 }
 
 .scene-card { display: flex; flex-direction: column; min-height: 0; }
+#scene-fit { margin-left: auto; }
+.scene-navigation {
+  margin: -2px 0 6px;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
 
 .scene-holder {
   position: relative;

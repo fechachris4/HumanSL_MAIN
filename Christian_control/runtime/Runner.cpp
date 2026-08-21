@@ -110,6 +110,17 @@ namespace
                 ? measured.ee_pose_mount.position_m[i] : kNaN;
             s.commanded_tcp_mount_m[i] = kNaN;
         }
+        const Eigen::Quaterniond measured_mount_q(
+            measured.ee_pose_mount.rotation);
+        for (int i = 0; i < 4; ++i) {
+            s.measured_tcp_quat_mount_xyzw[i] = cartesian_available
+                ? measured_mount_q.coeffs()[i] : kNaN;
+            s.commanded_tcp_quat_mount_xyzw[i] = kNaN;
+        }
+        for (int point = 0; point < 9; ++point)
+            for (int axis = 0; axis < 3; ++axis)
+                s.measured_arm_chain_mount_m[point][axis] = cartesian_available
+                    ? measured.arm_chain_mount_m[point][axis] : kNaN;
         s.world_fresh = state.world_fresh;
         s.world_mount_twist_valid = state.world_mount_twist_valid;
         s.command_frame_id = command_frame_id;
@@ -142,7 +153,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                           double following_error_limit_deg, bool robot_ready,
                           PlanningArm planning_arm,
                           PlanningRequestSlot* planning_requests,
-                          BasePoseSlot* base_pose)
+                          BasePoseSlot* base_pose,
+                          GoalCommandSlot* live_goals)
 {
     // T1: the readiness gate is a hard precondition (unreachable from main,
     // which returns before calling us when the gate fails).
@@ -193,6 +205,8 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     bool faults_observed = false; // live fault seen at any point (taints exit)
     LoopLogSample sample; // reused every cycle
     std::uint64_t next_planning_request_id = 1;
+    GoalCommand latest_goal;
+    bool have_goal = false;
 
     // The loop's only contact with Vicon: one coherent wait-free slot read
     // per cycle, used by both world measurement and the matching log row.
@@ -445,6 +459,20 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                     base_pose_sample.mount_angular_world_rad_s[2]);
             }
 
+            input.goal_preempt = GoalPreemptCommand{};
+            std::uint64_t reserved_request_id = 0;
+            if (live_goals) {
+                GoalCommand incoming;
+                if (live_goals->TakeLatest(incoming)) {
+                    latest_goal = incoming;
+                    have_goal = true;
+                    reserved_request_id = next_planning_request_id++;
+                    input.goal_preempt.preempt = true;
+                    input.goal_preempt.minimum_trajectory_id =
+                        reserved_request_id;
+                }
+            }
+
             // One core step: measurement -> world classification ->
             // reference -> law -> non-finite hold -> clamp -> integration,
             // in the frozen pre-extraction order (fixed-size computation,
@@ -458,10 +486,14 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             // Fixed-size, wait-free typed publication only. GPMP2 remains in
             // the in-process non-real-time planner worker. The replan EDGE is
             // core evidence; this publish is the adapter-to-worker handoff.
-            if (result.controller_status.request_replan_edge &&
-                planning_requests) {
+            if ((input.goal_preempt.preempt ||
+                 result.controller_status.request_replan_edge) &&
+                have_goal && planning_requests && result.state.world_fresh &&
+                result.state.world_sequence != 0) {
                 PlanningRequest request;
-                request.request_id = next_planning_request_id++;
+                request.request_id = input.goal_preempt.preempt
+                                         ? reserved_request_id
+                                         : next_planning_request_id++;
                 request.arm = planning_arm;
                 request.vicon_sequence = base_pose_sample.sequence;
                 request.vicon_frame_number =
@@ -474,6 +506,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 request.world_T_mount.linear() =
                     result.state.world_R_mountseg;
                 request.q_rad = result.state.q_rad;
+                request.goal = latest_goal;
                 planning_requests->Publish(request);
             }
 
@@ -599,6 +632,11 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
             for (int i = 0; i < 3; ++i)
                 sample.commanded_tcp_mount_m[i] =
                     commanded_tcp_mount.position_m[i];
+            const Eigen::Quaterniond commanded_tcp_q(
+                commanded_tcp_mount.rotation);
+            for (int i = 0; i < 4; ++i)
+                sample.commanded_tcp_quat_mount_xyzw[i] =
+                    commanded_tcp_q.coeffs()[i];
             log.push(sample);
 
             // Fixed-rate pacing on a grid (sleep_until, so errors don't add

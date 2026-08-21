@@ -219,7 +219,7 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 // (measured joint state, torques, faults). The Cartesian error is not
 // stored — it is exactly p_desired - p_current, computed offline.
 //
-// CSV column order (log_format = 14; WriteCsvRow is the authority):
+// CSV column order (log_format = 15; WriteCsvRow is the authority):
 //   time_s, dt_s, pd_x..z, p_x..z, cmd_j1..7, cmdvel_j1..7, meas_j1..7,
 //   measraw_j1..7, vel_j1..7, torque_j1..7, fault_j1..7, arm_state,
 //   base_fault, refresh_ok, sigma_min, rot_error_rad, t_send_s, t_recv_s,
@@ -236,8 +236,9 @@ k_api::BaseCyclic::Feedback read_feedback(k_api::BaseCyclic::BaseCyclicClient* b
 //   vicon_mount_wx_radps..wz_radps, vicon_mount_twist_valid,
 //   cart_traj_activated..cart_reference_time_s,
 //   cart_ref_world_{pose,twist}, cart_meas_world_{pose,twist},
-//   measured/commanded TCP position in model mount
-//   world_fresh, world_mount_twist_valid                 (231 columns)
+//   measured/commanded TCP position + orientation in model mount,
+//   measured arm-chain points in model mount,
+//   world_fresh, world_mount_twist_valid                 (266 columns)
 // Format 4 appended cyclic frame/actuator acknowledgement diagnostics after
 // format 3's columns. Format 5 (2026-08-03) drops the two columns that only
 // named the removed no-motion/stale-feedback stops
@@ -484,7 +485,7 @@ struct LoopLogSample {
     double cart_measured_quat_world_xyzw[4] = {0.0, 0.0, 0.0, 1.0};
     double cart_measured_linear_world_m_s[3] = {0.0, 0.0, 0.0};
     double cart_measured_angular_world_rad_s[3] = {0.0, 0.0, 0.0};
-    // Canonical Pinocchio TCP positions in model mount M (format 14).
+    // Canonical Pinocchio TCP pose and measured arm chain in model mount M.
     // measured: q consumed at cycle start; commanded: integrated frame whose
     // successful exchange completed this row. NaN means not computed.
     double measured_tcp_mount_m[3] = {
@@ -495,6 +496,17 @@ struct LoopLogSample {
         std::numeric_limits<double>::quiet_NaN(),
         std::numeric_limits<double>::quiet_NaN(),
         std::numeric_limits<double>::quiet_NaN()};
+    double measured_tcp_quat_mount_xyzw[4] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    double commanded_tcp_quat_mount_xyzw[4] = {
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    double measured_arm_chain_mount_m[9][3] = {};
     bool world_fresh = false;
     bool world_mount_twist_valid = false;
 };
@@ -534,7 +546,7 @@ private:
     std::size_t dropped_ = 0;          // producer only; read after the loop
 };
 
-// Column header and one data row — the authority for log_format = 14. Both
+// Column header and one data row — the authority for log_format = 15. Both
 // rely on the stream's default formatting (six significant digits), which
 // is what every existing run log and every parsing script assumes.
 void WriteCsvHeader(std::ostream& csv);

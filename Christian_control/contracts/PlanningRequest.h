@@ -8,6 +8,8 @@
 
 #include <Eigen/Geometry>
 
+#include "GoalCommand.h"
+
 enum class PlanningArm { kRight, kLeft };
 
 struct PlanningRequest {
@@ -20,6 +22,7 @@ struct PlanningRequest {
     Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
     Eigen::Matrix<double, 7, 1> q_rad =
         Eigen::Matrix<double, 7, 1>::Zero();
+    GoalCommand goal;
 };
 
 inline constexpr double kPlanningRequestMaximumAgeS = 0.05;

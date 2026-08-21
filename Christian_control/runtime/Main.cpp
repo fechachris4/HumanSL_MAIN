@@ -36,6 +36,7 @@
 #include "ExecutionCore.h"
 #include "FixedMountSource.h"
 #include "FramePrint.h"
+#include "GoalSocket.h"
 #include "Hardware.h"
 #include "InProcessPlanner.h"
 #include "BaselineBridge.h"
@@ -146,7 +147,7 @@ void WriteCsvPreamble(const ParsedMainArgs& args,
                       const config::ArmConfig& arm_config,
                       std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 14 (compiled)\n";
+    csv << "# log_format = 15 (compiled)\n";
     // Where this run's world pose came from. mount_source names the
     // producer that filled the slot; vicon_source still records what this
     // BINARY was built with, so an all-NaN vicon column can be told apart:
@@ -163,6 +164,8 @@ void WriteCsvPreamble(const ParsedMainArgs& args,
     csv << "# arm = " << arm_config.name << " (" << arm_config.ip << ")\n";
     csv << "# planning = " << (args.plan ? "on" : "off") << "\n";
     csv << "# planner_handoff = in_process_typed_world_cartesian\n";
+    if (args.plan && args.planner == "current")
+        csv << "# goal_input = live_mount_goal_socket\n";
     WriteConfigLines(args.log_file, csv, "# ");
 }
 } // namespace
@@ -559,8 +562,8 @@ namespace
             PlanningRequestSlot planning_requests;
 
             std::cout << tag << "HOLD AT START: zero-error Cartesian hold until "
-                         "the first fresh world sample, then fixed WORLD pose; "
-                         "Ctrl+C to stop\n";
+                         "the first fresh world sample, then HOLD until a live "
+                         "goal arrives; Ctrl+C to stop\n";
             // --plan off: no worker thread, and the loop gets a null
             // request slot, so the replan edge (which the reference source
             // still raises) is computed but published to no one. The arm
@@ -604,6 +607,17 @@ namespace
                              "holds its captured world pose\n";
             WorkerThreadStopJoiner planner_thread_joiner(planner_thread, g_stop);
 
+            GoalCommandSlot live_goal_slot;
+            std::unique_ptr<GoalSocket> goal_socket;
+            if (args.plan && !baseline_planner) {
+                const char* socket_path = controlled_arm == Arm::kLeft
+                    ? kLeftGoalSocketPath : kRightGoalSocketPath;
+                goal_socket = std::make_unique<GoalSocket>(
+                    live_goal_slot, socket_path, tag);
+                std::cout << tag << "live mount-goal input: " << socket_path
+                          << "; controller stays alive across commands\n";
+            }
+
             // MOVES THE ARM: servoing mode is entered and restored inside the
             // Runner on every exit path (T2/D1).
             const LoopResult result = RunControlLoop(
@@ -612,7 +626,8 @@ namespace
                 config::kFollowingErrorLimitDeg, robot_ready,
                 controlled_arm == Arm::kLeft ? PlanningArm::kLeft
                                               : PlanningArm::kRight,
-                args.plan ? &planning_requests : nullptr, &base_pose_slot);
+                args.plan ? &planning_requests : nullptr, &base_pose_slot,
+                goal_socket ? &live_goal_slot : nullptr);
 
             planner_thread_joiner.Join();
 

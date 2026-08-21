@@ -45,12 +45,19 @@ int main()
     sample.commanded_tcp_mount_m[0] = 2.1;
     sample.commanded_tcp_mount_m[1] = 2.2;
     sample.commanded_tcp_mount_m[2] = 2.3;
+    sample.measured_tcp_quat_mount_xyzw[0] = 0.1;
+    sample.measured_tcp_quat_mount_xyzw[3] = 0.9;
+    sample.commanded_tcp_quat_mount_xyzw[1] = 0.2;
+    sample.commanded_tcp_quat_mount_xyzw[3] = 0.8;
+    sample.measured_arm_chain_mount_m[4][0] = 4.1;
+    sample.measured_arm_chain_mount_m[4][1] = 4.2;
+    sample.measured_arm_chain_mount_m[4][2] = 4.3;
 
     std::ostringstream row_out;
     WriteCsvRow(row_out, sample);
     const std::vector<std::string> row = Split(OneLine(row_out.str()));
     Check(header.size() == row.size(), "header and row widths match");
-    Check(header.size() == 231, "format 14 has 231 columns");
+    Check(header.size() == 266, "format 15 has 266 columns");
 
     const auto value_of = [&](const std::string& name) {
         for (std::size_t i = 0; i < header.size(); ++i)
@@ -65,5 +72,15 @@ int main()
               value_of("commanded_tcp_y_mount_m") == "2.2" &&
               value_of("commanded_tcp_z_mount_m") == "2.3",
           "commanded mount TCP round-trips");
+    Check(value_of("measured_tcp_qx_mount") == "0.1" &&
+              value_of("measured_tcp_qw_mount") == "0.9",
+          "measured mount TCP orientation round-trips");
+    Check(value_of("commanded_tcp_qy_mount") == "0.2" &&
+              value_of("commanded_tcp_qw_mount") == "0.8",
+          "commanded mount TCP orientation round-trips");
+    Check(value_of("measured_chain_p4_x_mount_m") == "4.1" &&
+              value_of("measured_chain_p4_y_mount_m") == "4.2" &&
+              value_of("measured_chain_p4_z_mount_m") == "4.3",
+          "measured arm chain round-trips");
     return failures == 0 ? 0 : 1;
 }

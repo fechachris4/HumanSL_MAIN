@@ -281,6 +281,55 @@ function tcpMountPoint(row, kind) {
     return [x, y, z];
 }
 
+function tcpMountPose(row, kind) {
+    const point = tcpMountPoint(row, kind);
+    if (!point) return null;
+    const fields = kind === 'measured'
+        ? ['measured_tcp_qx_mount', 'measured_tcp_qy_mount',
+           'measured_tcp_qz_mount', 'measured_tcp_qw_mount']
+        : ['commanded_tcp_qx_mount', 'commanded_tcp_qy_mount',
+           'commanded_tcp_qz_mount', 'commanded_tcp_qw_mount'];
+    const q = fields.map(function (field) {
+        return finite(row[field]);
+    });
+    if (q.some(function (value) { return value === null; }))
+        return { point: point, frame: null };
+    const length = Math.hypot(q[0], q[1], q[2], q[3]);
+    if (length < 1e-9) return { point: point, frame: null };
+    const x = q[0] / length;
+    const y = q[1] / length;
+    const z = q[2] / length;
+    const w = q[3] / length;
+    return {
+        point: point,
+        frame: [
+            1 - 2 * (y * y + z * z), 2 * (x * y - z * w),
+            2 * (x * z + y * w), point[0],
+            2 * (x * y + z * w), 1 - 2 * (x * x + z * z),
+            2 * (y * z - x * w), point[1],
+            2 * (x * z - y * w), 2 * (y * z + x * w),
+            1 - 2 * (x * x + y * y), point[2],
+            0, 0, 0, 1,
+        ],
+    };
+}
+
+function measuredArmChain(row) {
+    if (!row) return null;
+    const points = [];
+    for (let point = 0; point < 9; point++) {
+        const base = 'measured_chain_p' + point + '_';
+        const value = [
+            finite(row[base + 'x_mount_m']),
+            finite(row[base + 'y_mount_m']),
+            finite(row[base + 'z_mount_m']),
+        ];
+        if (value.some(function (axis) { return axis === null; })) return null;
+        points.push(value);
+    }
+    return points;
+}
+
 // ---------------------------------------------------------------
 // Camera and projection
 // ---------------------------------------------------------------
@@ -722,15 +771,34 @@ export function createScene(canvas, options) {
             notes.push({ point: axes[i].v, text: axes[i].label, alpha: 0.5, size: 9 });
         }
 
-        // Runtime-owned canonical mount-frame TCP positions. The browser
-        // projects markers only; it performs no robot forward kinematics.
+        // Runtime-owned canonical mount-frame arm chain and TCP poses. The
+        // browser projects supplied geometry only; it performs no robot FK.
         const arms = ['right', 'left'];
         for (let i = 0; i < arms.length; i++) {
             const arm = arms[i];
             const selected = arm === state.selected;
             const row = state.row[arm];
-            const measured = tcpMountPoint(row, 'measured');
-            const commanded = tcpMountPoint(row, 'commanded');
+            const measuredPose = tcpMountPose(row, 'measured');
+            const commandedPose = tcpMountPose(row, 'commanded');
+            const measured = measuredPose && measuredPose.point;
+            const commanded = commandedPose && commandedPose.point;
+            const chain = measuredArmChain(row);
+
+            if (chain) {
+                addPolyline(items, basis, chain, {
+                    colour: palette.ink,
+                    width: selected ? 3 : 1.6,
+                    alpha: selected ? 0.9 : 0.3,
+                });
+                for (let joint = 0; joint < chain.length - 1; joint++) {
+                    addDot(items, basis, chain[joint], {
+                        colour: palette.ink,
+                        radius: selected ? 4 : 2.5,
+                        alpha: selected ? 0.95 : 0.35,
+                    });
+                }
+                if (selected) framed.push(...chain);
+            }
 
             if (measured) {
                 addDot(items, basis, measured, {
@@ -748,6 +816,25 @@ export function createScene(canvas, options) {
                     point: measured, text: arm + ' measured TCP',
                     colour: palette.ink, dx: 10, dy: 12,
                 });
+                if (measuredPose.frame) {
+                    addTriad(items, basis, measuredPose.frame, {
+                        colour: palette.ink,
+                        alpha: selected ? 0.9 : 0.35,
+                        length: 0.12,
+                        width: selected ? 2 : 1,
+                    });
+                    if (selected) {
+                        for (let axis = 0; axis < 3; axis++) {
+                            notes.push({
+                                point: add(measured, scale(
+                                    axisOf(measuredPose.frame, axis), 0.12)),
+                                text: ['x', 'y', 'z'][axis],
+                                colour: palette.ink,
+                                size: 8,
+                            });
+                        }
+                    }
+                }
             }
             if (commanded) {
                 addCross(items, basis, commanded, {
@@ -760,6 +847,14 @@ export function createScene(canvas, options) {
                     point: commanded, text: arm + ' commanded TCP',
                     colour: palette.ask, dx: 10, dy: -10,
                 });
+                if (commandedPose.frame) {
+                    addTriad(items, basis, commandedPose.frame, {
+                        colour: palette.ask,
+                        alpha: selected ? 0.9 : 0.35,
+                        length: 0.12,
+                        width: selected ? 2 : 1,
+                    });
+                }
             }
 
             const preview = state.goalPreview[arm];
@@ -955,6 +1050,10 @@ export function createScene(canvas, options) {
         },
         setSelectedArm: function (arm) {
             if (known(arm)) state.selected = arm;
+            schedule();
+        },
+        fitView: function () {
+            framingOwned = false;
             schedule();
         },
         resize: resize,

@@ -135,6 +135,10 @@ public:
         const Eigen::Matrix<double, 7, 1>& controlled_q_rad,
         KinematicsWorkspace& workspace);
 
+    // Read the placements produced by the most recent controlled-arm FK:
+    // base, seven joint origins, TCP, all in mount. Performs no FK itself.
+    std::array<Eigen::Vector3d, 9> ControlledJointChainInMount() const;
+
     // ---------------------------------------------------------------
     // World frame
     // ---------------------------------------------------------------
@@ -200,8 +204,10 @@ private:
     pinocchio::SE3 mount_from_left_base_;
     std::array<int, 7> right_q_indices_{};
     std::array<int, 7> right_v_indices_{};
+    std::array<pinocchio::JointIndex, 7> right_joint_ids_{};
     std::array<int, 7> left_q_indices_{};
     std::array<int, 7> left_v_indices_{};
+    std::array<pinocchio::JointIndex, 7> left_joint_ids_{};
     JointVector other_arm_nominal_rad_;
     Eigen::VectorXd q_full_;
 };

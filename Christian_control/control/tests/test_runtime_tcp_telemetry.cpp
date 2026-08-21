@@ -133,6 +133,13 @@ int main()
     CheckNear(first.measured.ee_pose_mount.position_m.x(), 0.0, 2e-6);
     CheckNear(first.measured.ee_pose_mount.position_m.y(), -1.268828, 2e-6);
     CheckNear(first.measured.ee_pose_mount.position_m.z(), 0.440120, 2e-6);
+    CheckNear(first.measured.arm_chain_mount_m.front().x(), 0.0, 2e-6);
+    CheckNear(first.measured.arm_chain_mount_m.front().y(), -0.0375, 2e-6);
+    CheckNear(first.measured.arm_chain_mount_m.front().z(), 0.0, 2e-6);
+    CheckNear((first.measured.arm_chain_mount_m.back() -
+               first.measured.ee_pose_mount.position_m).norm(), 0.0, 1e-12);
+    assert((first.measured.arm_chain_mount_m[4] -
+            first.measured.arm_chain_mount_m.front()).norm() > 0.2);
     Eigen::Quaterniond measured_q(first.measured.ee_pose_mount.rotation);
     if (measured_q.w() < 0.0) measured_q.coeffs() = -measured_q.coeffs();
     CheckNear(measured_q.x(), 0.568148, 3e-6);

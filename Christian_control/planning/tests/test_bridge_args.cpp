@@ -70,6 +70,34 @@ int main()
     CheckGoalFileBoxRejected("\"box\"");
     CheckGoalFileBoxRejected("'box'");
 
+    const std::vector<std::string> common{
+        "--arm", "left", "--start-deg", "0", "0", "0", "0", "0", "0", "0"};
+    {
+        std::vector<std::string> args = common;
+        args.insert(args.end(), {"--goal", "0.4", "0.2", "0.3",
+                                 "--goal-rpy-rad", "0.1", "0.2", "0.3"});
+        std::ostringstream out;
+        std::ostringstream error;
+        const int direct_point = RunBridge(args, out, error);
+        Check(direct_point == 1, "direct point reaches required provenance gate");
+        Check(error.str().find("--world-mount-pose-m-quat is required") !=
+                  std::string::npos,
+              "direct point orientation is parsed before provenance gate");
+    }
+    {
+        std::vector<std::string> args = common;
+        args.insert(args.end(), {"--circle", "0.4", "0.2", "0.3", "0.1",
+                                 "1", "0", "0", "5",
+                                 "--circle-orientation", "radial"});
+        std::ostringstream out;
+        std::ostringstream error;
+        const int direct_circle = RunBridge(args, out, error);
+        Check(direct_circle == 1, "direct circle reaches required provenance gate");
+        Check(error.str().find("--world-mount-pose-m-quat is required") !=
+                  std::string::npos,
+              "direct circle is parsed before provenance gate");
+    }
+
     if (failures == 0)
         std::puts("test_bridge_args: all assertions passed");
     return failures == 0 ? 0 : 1;

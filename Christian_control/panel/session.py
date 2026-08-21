@@ -38,6 +38,7 @@ import json
 import math
 import os
 import signal
+import socket
 import subprocess
 import time
 from datetime import datetime
@@ -110,6 +111,14 @@ def default_freshness() -> dict:
 launch_command = default_launch_command
 send_signal_to_group: Callable[[int, int], None] = os.killpg
 freshness_check: Callable[[], dict] = default_freshness
+
+
+def default_send_goal_datagram(path: Path, line: str) -> None:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
+        sender.sendto(line.encode("ascii"), str(path))
+
+
+send_goal_datagram: Callable[[Path, str], None] = default_send_goal_datagram
 
 # The Popen handle for a session THIS panel process launched, kept for two
 # reasons that both matter. Reaping it (see status()) stops a finished child
@@ -538,6 +547,7 @@ def start(arm: str, confirm: str, client_address: Any,
         "mount": mount,
         "planning": planning,
         "recording": recording,
+        "planner": planner,
         "fixed_pose": fixed_pose,
         "started": started,
         "session_dir": session_dir,
@@ -553,6 +563,7 @@ def start(arm: str, confirm: str, client_address: Any,
         "mount": mount,
         "planning": planning,
         "recording": recording,
+        "planner": planner,
         "started": started,
         "session_dir": session_dir,
         "log_path": str(log_path),
@@ -594,6 +605,74 @@ def stop() -> dict:
     }
 
 
+def _finite_vector(value: Any, name: str) -> list[float]:
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        raise ValueError(f"{name} must contain three numbers")
+    result = [float(v) for v in value]
+    if not all(math.isfinite(v) for v in result):
+        raise ValueError(f"{name} must contain finite numbers")
+    return result
+
+
+def _goal_command_line(fields: dict) -> str:
+    if fields.get("frame") != "mount":
+        raise ValueError("live goals currently require frame=mount")
+    mode = fields.get("mode")
+    if mode == "point":
+        values = _finite_vector(fields.get("goal"), "goal")
+        rpy = fields.get("orientation_rpy_deg")
+        if rpy is None:
+            return "POINT " + " ".join(f"{v:.17g}" for v in values) + " INHERIT"
+        radians = [math.radians(v) for v in _finite_vector(rpy, "orientation")]
+        return ("POINT " + " ".join(f"{v:.17g}" for v in values) +
+                " FIXED " + " ".join(f"{v:.17g}" for v in radians))
+    if mode != "circle":
+        raise ValueError("goal mode must be point or circle")
+    path = fields.get("path")
+    if not isinstance(path, dict) or path.get("type") != "circle":
+        raise ValueError("circle mode requires a circle path")
+    centre = _finite_vector(path.get("centre"), "circle centre")
+    normal = _finite_vector(path.get("normal"), "circle normal")
+    radius = float(path.get("radius_m"))
+    duration = float(path.get("duration_s"))
+    if not math.isfinite(radius) or radius <= 0.0:
+        raise ValueError("circle radius must be finite and positive")
+    if not math.isfinite(duration) or duration <= 0.0:
+        raise ValueError("circle duration must be finite and positive")
+    prefix = "CIRCLE " + " ".join(
+        f"{v:.17g}" for v in centre + [radius] + normal + [duration])
+    orientation = path.get("orientation")
+    if orientation == "radial":
+        return prefix + " RADIAL"
+    if orientation != "fixed":
+        raise ValueError("circle orientation must be fixed or radial")
+    radians = [math.radians(v) for v in
+               _finite_vector(path.get("orientation_rpy_deg"), "circle orientation")]
+    return prefix + " FIXED " + " ".join(f"{v:.17g}" for v in radians)
+
+
+def send_goal(arm: str, fields: dict) -> dict:
+    current = status()
+    if not current.get("commanding"):
+        return {"ok": False, "error": "no controller is commanding an arm"}
+    driven = current.get("arm")
+    if arm not in paths.ARMS or (driven != "both" and driven != arm):
+        return {"ok": False, "error": f"the running session is not driving {arm}"}
+    if current.get("mount") != "fixed":
+        return {"ok": False, "error": "live goals currently require a fixed-mount session"}
+    if not current.get("planning"):
+        return {"ok": False, "error": "the running session has planning disabled"}
+    if current.get("planner", "current") != "current":
+        return {"ok": False, "error": "live goals require the current in-process planner"}
+    try:
+        line = _goal_command_line(fields)
+        send_goal_datagram(paths.GOAL_SOCKETS[arm], line)
+    except (OSError, TypeError, ValueError) as error:
+        return {"ok": False, "error": f"could not send live goal: {error}"}
+    return {"ok": True, "arm": arm,
+            "message": f"live goal sent to the {arm} controller"}
+
+
 def status() -> dict:
     """What session, if any, is running.
 
@@ -631,6 +710,7 @@ def status() -> dict:
         "mount": state.get("mount"),
         "planning": state.get("planning"),
         "recording": state.get("recording"),
+        "planner": state.get("planner", "current"),
         "started": state.get("started"),
         "session_dir": state.get("session_dir"),
         "log_path": state.get("log_path"),

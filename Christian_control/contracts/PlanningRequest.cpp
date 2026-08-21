@@ -27,5 +27,8 @@ std::optional<std::string> ValidatePlanningRequest(
         return "world_T_mount rotation must be proper orthonormal";
     if (!request.q_rad.allFinite())
         return "q_rad must be finite";
+    if (const std::optional<std::string> error =
+            ValidateGoalCommand(request.goal))
+        return "goal: " + *error;
     return std::nullopt;
 }

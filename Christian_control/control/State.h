@@ -71,6 +71,13 @@ struct WorldSample {
         std::numeric_limits<double>::quiet_NaN()};
 };
 
+// One-cycle edge from the live command adapter to the reference source.
+// It stops advancing the old trajectory but never stops the controller.
+struct GoalPreemptCommand {
+    bool preempt = false;
+    std::uint64_t minimum_trajectory_id = 0;
+};
+
 // Per-cycle telemetry the source and controller surface. Data only — the
 // Runner decides what to print or log. NaN means "this cycle did not
 // compute it" (e.g. takeover rows before Cartesian measurement).
@@ -140,6 +147,9 @@ struct CartesianPose {
 // Vicon world W; the controller law never performs another frame conversion.
 struct MeasuredCartesianState {
     CartesianPose ee_pose_mount; // same canonical FK result, before W_T_M
+    // Base origin, seven measured joint origins, then TCP; all in model
+    // mount M from the same Pinocchio update as ee_pose_mount.
+    std::array<Eigen::Vector3d, 9> arm_chain_mount_m{};
     CartesianPose ee_pose_world;
     Eigen::Matrix<double, 6, 7> jacobian_world =
         Eigen::Matrix<double, 6, 7>::Zero();

@@ -84,6 +84,7 @@ struct ArmExecutionInput {
     // The RAW world sample (pose + validity + sequence + age + twist),
     // BEFORE freshness classification — the core owns classifying it.
     WorldSample world;
+    GoalPreemptCommand goal_preempt;
 };
 
 // Everything the pipeline computed this cycle. The adapter transmits

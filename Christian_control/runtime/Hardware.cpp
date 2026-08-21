@@ -445,7 +445,15 @@ void WriteCsvHeader(std::ostream& csv)
         << ",cart_meas_wx_world_radps,cart_meas_wy_world_radps,cart_meas_wz_world_radps"
         << ",measured_tcp_x_mount_m,measured_tcp_y_mount_m,measured_tcp_z_mount_m"
         << ",commanded_tcp_x_mount_m,commanded_tcp_y_mount_m,commanded_tcp_z_mount_m"
-        << ",world_fresh,world_mount_twist_valid";
+        << ",measured_tcp_qx_mount,measured_tcp_qy_mount"
+        << ",measured_tcp_qz_mount,measured_tcp_qw_mount"
+        << ",commanded_tcp_qx_mount,commanded_tcp_qy_mount"
+        << ",commanded_tcp_qz_mount,commanded_tcp_qw_mount";
+    for (int point = 0; point < 9; ++point)
+        csv << ",measured_chain_p" << point << "_x_mount_m"
+            << ",measured_chain_p" << point << "_y_mount_m"
+            << ",measured_chain_p" << point << "_z_mount_m";
+    csv << ",world_fresh,world_mount_twist_valid";
     csv << "\n";
 }
 
@@ -531,6 +539,10 @@ void WriteCsvRow(std::ostream& csv, const LoopLogSample& s)
     for (double v : s.cart_measured_angular_world_rad_s) csv << "," << v;
     for (double v : s.measured_tcp_mount_m) csv << "," << v;
     for (double v : s.commanded_tcp_mount_m) csv << "," << v;
+    for (double v : s.measured_tcp_quat_mount_xyzw) csv << "," << v;
+    for (double v : s.commanded_tcp_quat_mount_xyzw) csv << "," << v;
+    for (const auto& point : s.measured_arm_chain_mount_m)
+        for (double v : point) csv << "," << v;
     csv << "," << (s.world_fresh ? 1 : 0)
         << "," << (s.world_mount_twist_valid ? 1 : 0);
     csv << "\n";

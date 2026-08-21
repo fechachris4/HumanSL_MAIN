@@ -39,6 +39,7 @@ public:
                       const MeasuredCartesianState& measured,
                       double dt_s,
                       double world_stale_elapsed_s,
+                      const GoalPreemptCommand& goal_preempt,
                       ControllerStatus& status);
 
     CartesianReferenceState state() const noexcept { return state_; }
@@ -69,4 +70,5 @@ private:
     bool needs_replan_on_recovery_ = false;
     bool prolonged_stale_handled_ = false;
     std::uint64_t minimum_planner_vicon_sequence_ = 0;
+    std::uint64_t minimum_trajectory_id_ = 0;
 };

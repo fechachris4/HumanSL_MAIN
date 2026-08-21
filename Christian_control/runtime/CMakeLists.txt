@@ -111,6 +111,7 @@ add_executable(controller
         Main.cpp
         MainArgs.cpp
         FixedMountSource.cpp
+        GoalSocket.cpp
         ProcessLock.cpp
         Runner.cpp
         InProcessPlanner.cpp
@@ -255,4 +256,11 @@ if (BUILD_TESTING)
     target_link_libraries(test_log_schema
             ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
     add_test(NAME log_schema COMMAND test_log_schema)
+
+    add_executable(test_goal_socket tests/test_goal_socket.cpp GoalSocket.cpp)
+    target_include_directories(test_goal_socket PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR})
+    add_bundled_eigen_to(test_goal_socket)
+    target_link_libraries(test_goal_socket humansl_contracts pthread)
+    add_test(NAME goal_socket COMMAND test_goal_socket)
 endif ()

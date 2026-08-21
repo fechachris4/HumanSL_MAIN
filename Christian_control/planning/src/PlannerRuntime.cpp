@@ -20,7 +20,6 @@ std::vector<std::string> ArgumentsForRequest(
     const bool left = request.arm == PlanningArm::kLeft;
     std::vector<std::string> args = {
         "--arm", left ? "left" : "right",
-        "--goal-file", config.goal_file,
         "--planner-config", config.planner_config_file,
         "--joint-limits", config.joint_limits_file,
         "--dh", left ? config.left_dh_file : config.right_dh_file,
@@ -28,6 +27,33 @@ std::vector<std::string> ArgumentsForRequest(
         "--start-deg"};
     for (int joint = 0; joint < 7; ++joint)
         args.push_back(Number(request.q_rad(joint) * 180.0 / M_PI));
+
+    if (request.goal.kind == GoalKind::kPoint) {
+        args.push_back("--goal");
+        for (double value : request.goal.point_m)
+            args.push_back(Number(value));
+        if (request.goal.orientation == GoalOrientation::kFixedRpy) {
+            args.push_back("--goal-rpy-rad");
+            for (double value : request.goal.fixed_rpy_rad)
+                args.push_back(Number(value));
+        }
+    } else {
+        args.push_back("--circle");
+        for (double value : request.goal.circle_centre_m)
+            args.push_back(Number(value));
+        args.push_back(Number(request.goal.circle_radius_m));
+        for (double value : request.goal.circle_normal)
+            args.push_back(Number(value));
+        args.push_back(Number(request.goal.circle_duration_s));
+        args.push_back("--circle-orientation");
+        args.push_back(request.goal.orientation == GoalOrientation::kRadialInward
+                           ? "radial" : "fixed");
+        if (request.goal.orientation == GoalOrientation::kFixedRpy) {
+            args.push_back("--goal-rpy-rad");
+            for (double value : request.goal.fixed_rpy_rad)
+                args.push_back(Number(value));
+        }
+    }
 
     const Eigen::Quaterniond world_q_mount(request.world_T_mount.linear());
     args.push_back("--world-mount-pose-m-quat");

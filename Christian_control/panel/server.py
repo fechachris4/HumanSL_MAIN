@@ -335,6 +335,11 @@ class _Handler(BaseHTTPRequestHandler):
                 # hour.
                 result = session.stop()
                 self._json(result, 200 if result.get("ok") else 400)
+            elif route == "/api/session/goal":
+                req = self._body()
+                result = session.send_goal(
+                    str(req.get("arm", "")), req.get("fields") or {})
+                self._json(result, 200 if result.get("ok") else 409)
             elif route == "/api/planner-config/set":
                 req = self._body()
                 if req.get("file") == "joint_limits":

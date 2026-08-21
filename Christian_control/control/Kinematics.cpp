@@ -69,7 +69,8 @@ namespace
                        const std::array<const char*, 7>& names,
                        const std::array<int, 7>& expected_q_sizes,
                        std::array<int, 7>& q_indices,
-                       std::array<int, 7>& v_indices)
+                       std::array<int, 7>& v_indices,
+                       std::array<pinocchio::JointIndex, 7>& joint_ids)
     {
         for (int i = 0; i < 7; ++i) {
             const std::string name(names[static_cast<std::size_t>(i)]);
@@ -86,6 +87,7 @@ namespace
                     ", nv=" + std::to_string(model.nvs[joint_id]));
             q_indices[static_cast<std::size_t>(i)] = model.idx_qs[joint_id];
             v_indices[static_cast<std::size_t>(i)] = model.idx_vs[joint_id];
+            joint_ids[static_cast<std::size_t>(i)] = joint_id;
         }
     }
 
@@ -172,9 +174,9 @@ DualArmKinematics::DualArmKinematics(
                                  left_end_effector_frame + "'");
 
     ResolveJoints(robot_model_.model_, kRightJointNames, kJointConfigurationSizes,
-                  right_q_indices_, right_v_indices_);
+                  right_q_indices_, right_v_indices_, right_joint_ids_);
     ResolveJoints(robot_model_.model_, kLeftJointNames, kJointConfigurationSizes,
-                  left_q_indices_, left_v_indices_);
+                  left_q_indices_, left_v_indices_, left_joint_ids_);
     ValidateCover(right_q_indices_, left_q_indices_, kJointConfigurationSizes,
                   robot_model_.model_.nq, "q");
     ValidateCover(right_v_indices_, left_v_indices_, kVelocitySizes,
@@ -381,3 +383,19 @@ PoseJacobian DualArmKinematics::ControlledPoseAndJacobian(
     return result;
 }
 
+std::array<Eigen::Vector3d, 9>
+DualArmKinematics::ControlledJointChainInMount() const
+{
+    const pinocchio::FrameIndex base_id = controlled_arm_ == Arm::kRight
+        ? right_base_frame_id_ : left_base_frame_id_;
+    const pinocchio::FrameIndex tool_id = controlled_arm_ == Arm::kRight
+        ? right_frame_id_ : left_frame_id_;
+    const auto& joint_ids = controlled_arm_ == Arm::kRight
+        ? right_joint_ids_ : left_joint_ids_;
+    std::array<Eigen::Vector3d, 9> chain;
+    chain.front() = robot_model_.data_.oMf[base_id].translation();
+    for (std::size_t i = 0; i < joint_ids.size(); ++i)
+        chain[i + 1] = robot_model_.data_.oMi[joint_ids[i]].translation();
+    chain.back() = robot_model_.data_.oMf[tool_id].translation();
+    return chain;
+}

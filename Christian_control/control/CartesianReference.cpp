@@ -104,6 +104,7 @@ bool CartesianReferenceSource::TryActivate(
     ControllerStatus& status)
 {
     const bool provenance_valid = incoming->trajectory_id != 0 &&
+        incoming->trajectory_id >= minimum_trajectory_id_ &&
         incoming->planner_vicon_sequence != 0 && state.world_sequence != 0 &&
         incoming->planner_vicon_sequence <= state.world_sequence &&
         incoming->planner_vicon_sequence >= minimum_planner_vicon_sequence_;
@@ -147,9 +148,24 @@ PoseReference CartesianReferenceSource::Get(
     const MeasuredCartesianState& measured,
     double dt_s,
     double world_stale_elapsed_s,
+    const GoalPreemptCommand& goal_preempt,
     ControllerStatus& status)
 {
     const bool valid_dt = std::isfinite(dt_s) && dt_s > 0.0;
+    if (goal_preempt.preempt) {
+        hold_world_ = measured.ee_pose_world;
+        hold_trajectory_id_ = 0;
+        hold_planner_vicon_sequence_ = 0;
+        hold_reference_time_s_ = 0.0;
+        hold_arrival_eligible_ = false;
+        minimum_trajectory_id_ = goal_preempt.minimum_trajectory_id;
+        if (active_) {
+            mailbox_.Retire(std::move(active_));
+            status.cartesian_traj_cancelled_edge = true;
+        }
+        state_ = CartesianReferenceState::kHolding;
+        complete_reported_ = false;
+    }
     if (!state.world_fresh) {
         if (!prolonged_stale_handled_ &&
             world_stale_elapsed_s >= world_prolonged_stale_s_ &&

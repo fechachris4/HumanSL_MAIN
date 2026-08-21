@@ -54,6 +54,7 @@
 
 #include "Config.h"
 #include "ExecutionCore.h"
+#include "GoalSocket.h"
 #include "Hardware.h"
 #include "PlanningRequest.h"
 #include "PlanningRequestSlot.h"
@@ -81,4 +82,5 @@ LoopResult RunControlLoop(Kinova::Api::Base::BaseClient* base,
                           // measurement and telemetry. nullptr is supported
                           // by hardware-free tests and yields awaiting-world
                           // zero-error hold behaviour.
-                          BasePoseSlot* base_pose = nullptr);
+                          BasePoseSlot* base_pose = nullptr,
+                          GoalCommandSlot* live_goals = nullptr);
