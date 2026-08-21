@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -104,6 +105,48 @@ int main() {
         std::vector<NamedStaticObstacle>{named_cylinder,
                                          NamedStaticObstacle{"second-box", true, second_box}});
     CheckNear(composed_sdf.getSignedDistance(gtsam::Point3(0.3, 0.0, 0.0)), -0.10);
+
+    // The first object must still win when a later object is farther. This
+    // catches a last-object-wins assignment in place of minimum composition.
+    AxisAlignedBox farther_box;
+    farther_box.center = Eigen::Vector3d(-0.3, 0.0, 0.0);
+    farther_box.half_extent = Eigen::Vector3d(0.05, 0.05, 0.05);
+    const NamedStaticObstacle named_farther_box{"farther-box", true, farther_box};
+    const auto first_minimum_sdf = MakeMountSdf(
+        test_grid, std::vector<NamedStaticObstacle>{named_cylinder, named_farther_box});
+    const auto reversed_composition_sdf = MakeMountSdf(
+        test_grid, std::vector<NamedStaticObstacle>{named_farther_box, named_cylinder});
+    CheckNear(first_minimum_sdf.getSignedDistance(gtsam::Point3::Zero()), -0.20);
+    CheckNear(reversed_composition_sdf.getSignedDistance(gtsam::Point3::Zero()), -0.20);
+
+    // The direct construction boundary rejects the geometry invalidated by
+    // strict YAML parsing, while retaining disabled invalid scene entries.
+    AxisAlignedBox zero_extent_box = box;
+    zero_extent_box.half_extent.x() = 0.0;
+    assert(ThrowsWith({NamedStaticObstacle{"zero-extent-box", true, zero_extent_box}},
+                      test_grid, "zero-extent-box"));
+    MountCylinder negative_height_cylinder = cylinder;
+    negative_height_cylinder.height_m = -0.60;
+    assert(ThrowsWith({NamedStaticObstacle{"negative-height-cylinder", true,
+                                             negative_height_cylinder}},
+                      test_grid, "negative-height-cylinder"));
+    AxisAlignedBox nonfinite_extent_box = box;
+    nonfinite_extent_box.half_extent.y() = std::numeric_limits<double>::quiet_NaN();
+    assert(ThrowsWith({NamedStaticObstacle{"nonfinite-extent-box", true,
+                                             nonfinite_extent_box}},
+                      test_grid, "nonfinite-extent-box"));
+    MountCylinder nonfinite_center_cylinder = cylinder;
+    nonfinite_center_cylinder.center_mount_m.z() = std::numeric_limits<double>::infinity();
+    assert(ThrowsWith({NamedStaticObstacle{"nonfinite-center-cylinder", true,
+                                             nonfinite_center_cylinder}},
+                      test_grid, "nonfinite-center-cylinder"));
+    const auto disabled_invalid_sdf = MakeMountSdf(
+        test_grid, std::vector<NamedStaticObstacle>{
+                       NamedStaticObstacle{"disabled-invalid-cylinder", false,
+                                           negative_height_cylinder},
+                       NamedStaticObstacle{"disabled-invalid-box", false,
+                                           nonfinite_extent_box}});
+    CheckNear(disabled_invalid_sdf.getSignedDistance(gtsam::Point3::Zero()), 10.0);
 
     // Full primitive bounds must fit the grid's queryable range. The upper
     // face is exclusive because gpmp2 cannot interpolate exactly at it.
