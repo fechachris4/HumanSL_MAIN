@@ -80,6 +80,7 @@ void ArmExecutionCore::Seed(const JointVector& measured_position_deg,
         commanded_velocity_deg_s_[i] = 0.0;
     }
     actuation_.Prepare(state_);
+    control_elapsed_s_ = 0.0;
     seeded_ = true;
 }
 
@@ -89,14 +90,16 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
         throw std::logic_error("ArmExecutionCore::Step before Seed");
     ArmExecutionResult out;
 
-    // --- dt sampling and overrun counting (Runner.cpp:391-406). The raw
-    // measured dt drives the overrun counter; the CLAMPED dt is what
-    // control integrates, so a stall cannot integrate one large position
-    // jump. The first cycle uses the nominal period.
-    const double dt_s = cycle_ == 0
+    // --- fixed control step plus separate timing health. The controller,
+    // reference clock, arrival monitors and position integrator always use
+    // the authoritative 500 Hz period. Raw elapsed time is retained only for
+    // deadline/overrun diagnostics and stale-world ageing.
+    constexpr double kControlDt = config::kControlDtS;
+    const double control_dt_s = kControlDt;
+    const double actual_dt_s = cycle_ == 0
         ? nominal_dt_s_
-        : ClampedCycleDt(in.dt_s, nominal_dt_s_);
-    if (cycle_ > 0 && in.dt_s > overrun_factor_ * nominal_dt_s_) {
+        : (std::isfinite(in.dt_s) && in.dt_s > 0.0 ? in.dt_s : 0.0);
+    if (cycle_ > 0 && in.dt_s > overrun_factor_ * control_dt_s) {
         ++overrun_count_;
         out.overrun = true;
     } else {
@@ -110,7 +113,7 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
         state_.q_rad[i] = in.measured_position_deg[i] * kDegToRad;
         state_.qdot_rad_s[i] = in.measured_velocity_deg_s[i] * kDegToRad;
     }
-    state_.t_s = in.t_s;
+    state_.t_s = control_elapsed_s_;
 
     // --- world attachment for this cycle: the relocated freshness block
     // (Runner.cpp:421-491). A valid Mount pose updates the ZOH state; an
@@ -157,7 +160,7 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
                 state_.world_mount_twist_valid = false;
             }
         } else {
-            world_stale_elapsed_s_ += dt_s;
+            world_stale_elapsed_s_ += actual_dt_s;
         }
         if (!state_.world_fresh && have_last_fresh_mount_twist_) {
             const double stale_duration_s =
@@ -185,11 +188,11 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
     ControllerStatus status{};
     const MeasuredCartesianState measured = controller_.Measure(state_);
     const PoseReference cycle_reference =
-        reference_.Get(state_, measured, dt_s, world_stale_elapsed_s_,
+        reference_.Get(state_, measured, control_dt_s, world_stale_elapsed_s_,
                        status);
     Eigen::Matrix<double, 7, 1> qdot_raw_rad_s =
         controller_.DesiredVelocity(state_, measured, cycle_reference,
-                                    dt_s, status);
+                                    control_dt_s, status);
 
     // --- the raw output is recorded BEFORE the non-finite hold
     // (Runner.cpp:527-539): a non-finite value is the recorded evidence
@@ -218,7 +221,7 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
         out.saturated[i] = clamp_result.saturated[i];
     }
     const PositionIntegration::ApplyStatus actuation_status =
-        actuation_.Apply(clamp_result.qdot_rad_s, state_, dt_s,
+        actuation_.Apply(clamp_result.qdot_rad_s, state_, control_dt_s,
                          commanded_deg_, commanded_velocity_deg_s_);
 
     out.measured = measured;
@@ -230,6 +233,7 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
 
     joint_limit_warning_ =
         actuation_status.joint_limit_warning_joint.has_value();
+    control_elapsed_s_ += control_dt_s;
     ++cycle_;
     stop_pending_ = true;
     return out;

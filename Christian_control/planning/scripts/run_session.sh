@@ -325,5 +325,13 @@ if [[ "$PLAN" == "on" ]]; then
 else
     echo "Controller holding (planning off). Press Enter to stop the controller."
 fi
-read -r
-echo "stopping controller..."
+while kill -0 "$CONTROLLER_PID" 2>/dev/null; do
+    if read -r -t 1; then
+        echo "stopping controller..."
+        break
+    fi
+done
+if ! kill -0 "$CONTROLLER_PID" 2>/dev/null; then
+    wait "$CONTROLLER_PID" 2>/dev/null || true
+    echo "controller exited; ending the session wrapper"
+fi

@@ -11,6 +11,7 @@
 #include <tuple>
 #include <TransportClientTcp.h>
 #include <TransportClientUdp.h>
+#include <KDetailedException.h>
 
 #include "Hardware.h"
 
@@ -33,6 +34,7 @@ namespace
     // firmware, not a choice of ours — so not in Config.h).
     constexpr unsigned kTcpPort = 10000; // configuration + high-level commands
     constexpr unsigned kUdpPort = 10001; // 1 kHz low-level cyclic streaming
+    constexpr std::uint32_t kCyclicRefreshTimeoutMs = 2;
 
 } // namespace
 
@@ -276,8 +278,20 @@ k_api::BaseCyclic::Feedback CyclicSession::Send(const JointVector& setpoints_deg
     for (int i = 0; i < NUM_JOINTS; ++i)
         command_.mutable_actuators(i)->set_command_id(command_.frame_id());
 
-    // Send the complete seven-joint packet and return the robot's feedback reply.
-    return base_cyclic_->Refresh(command_, 0);
+    // Send the complete seven-joint packet and return the robot's feedback
+    // reply. One short METHOD_TIMEOUT retry tolerates a transient lost reply;
+    // the command object is unchanged, so the retry resends the same frame.
+    const k_api::RouterClientSendOptions options{
+        false, 0, kCyclicRefreshTimeoutMs};
+    try {
+        return base_cyclic_->Refresh(command_, 0, options);
+    } catch (k_api::KDetailedException& error) {
+        const auto subcode = static_cast<k_api::SubErrorCodes>(
+            error.getErrorInfo().getError().error_sub_code());
+        if (subcode != k_api::METHOD_TIMEOUT)
+            throw;
+        return base_cyclic_->Refresh(command_, 0, options);
+    }
 }
 
 // ---------------------------------------------------------------

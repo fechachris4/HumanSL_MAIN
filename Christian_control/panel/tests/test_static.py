@@ -120,3 +120,14 @@ def test_commanded_tcp_fk_is_after_every_stop_exit():
         end = tail.index(stops[index + 1]) if index + 1 < len(stops) else query
         assert start < query
         assert "break;" in tail[start:end]
+
+
+def test_cyclic_refresh_has_one_bounded_timeout_retry_and_wrapper_exits():
+    hardware = (STATIC.parents[1] / "runtime" / "Hardware.cpp").read_text()
+    wrapper = (STATIC.parents[1] / "planning" / "scripts" / "run_session.sh").read_text()
+
+    assert "kCyclicRefreshTimeoutMs = 2" in hardware
+    assert "METHOD_TIMEOUT" in hardware
+    assert hardware.count("Refresh(command_, 0, options)") == 2
+    assert "read -r -t 1" in wrapper
+    assert "kill -0 \"$CONTROLLER_PID\"" in wrapper

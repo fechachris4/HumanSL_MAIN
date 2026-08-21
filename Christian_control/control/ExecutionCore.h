@@ -3,7 +3,7 @@
 // one hardware-independent composition of the existing per-cycle command
 // pipeline, in the exact frozen Runner order:
 //
-//   dt clamp + overrun count
+//   fixed control dt + raw timing overrun count
 //   -> measured joints from the PREVIOUS exchange (deg -> rad here, the
 //      same boundary the Runner used)
 //   -> world-freshness classification + stale-twist decay (relocated
@@ -72,13 +72,10 @@ struct AdapterHealth {
 // One cycle's inputs, assembled by the adapter from the previous exchange
 // reply and the wait-free world slot read.
 struct ArmExecutionInput {
-    // Raw measured cycle interval (t_now - t_prev, s). The core clamps it
-    // for integration (never more than 2x nominal) and counts overruns
-    // from the raw value (> kOverrunFactor x nominal).
+    // Raw measured cycle interval (t_now - t_prev, s). The core uses it only
+    // for timing health and stale-world ageing; control uses Config.h's fixed
+    // kControlDtS. Overrun means raw dt > kOverrunFactor x control period.
     double dt_s = 0.0;
-    // Control time since normal control began (s), stamped into
-    // RobotState.t_s (the null-space ramp input).
-    double t_s = 0.0;
     // THIS cycle's joint measurement = the PREVIOUS exchange reply, in
     // actuator-reported degrees. Degrees -> radians happens inside the
     // core so the conversion stays bitwise-identical to the Runner's.
@@ -104,7 +101,7 @@ struct ArmExecutionResult {
     JointVector qdot_raw_rad_s{};
     bool nonfinite = false;   // this cycle's output was held (not integrated)
     int nonfinite_count = 0;  // consecutive held cycles (decision 12)
-    bool overrun = false;     // raw dt exceeded kOverrunFactor x nominal
+    bool overrun = false;     // raw dt exceeded kOverrunFactor x control period
     int overrun_count = 0;    // consecutive overruns (decision 12)
     // After the per-joint clamp — the program's single speed limit.
     JointVector qdot_limited_deg_s{};
@@ -212,13 +209,13 @@ private:
         Eigen::Vector3d::Zero();
     bool have_last_fresh_mount_twist_ = false;
     // THE stale clock (one clock, one owner — 2026-08-17 consolidation):
-    // zeroed on every fresh cycle, advanced by the clamped cycle dt while
+    // zeroed on every fresh cycle, advanced by actual elapsed cycle time while
     // stale. Besides the stale-twist decay above, its post-update value is
     // handed to CartesianReferenceSource::Get each cycle as the
     // prolonged-stale policy input (the reference keeps no clock of its
-    // own). ClampedCycleDt makes dt finite and >= 0, so "add every stale
-    // cycle" here equals the reference's former "add only a valid dt".
+    // own). Invalid timing samples add zero and remain visible in diagnostics.
     double world_stale_elapsed_s_ = 0.0;
+    double control_elapsed_s_ = 0.0;
 
     // Decision-12 consecutive-cycle counters.
     int nonfinite_count_ = 0;

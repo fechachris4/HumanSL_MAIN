@@ -61,7 +61,7 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
     JointVector& setpoint_velocity_deg_s)
 {
     ApplyStatus status;
-    // Runner supplies a positive steady-clock delta, but Apply is a public
+    // The core supplies the fixed positive control step, but Apply is a public
     // pure seam: direct invalid input must hold rather than reverse or poison
     // the persistent command. Use this one effective value everywhere below.
     const double effective_dt_s = std::isfinite(dt_s) && dt_s > 0.0 ? dt_s : 0.0;

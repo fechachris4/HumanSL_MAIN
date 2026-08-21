@@ -22,19 +22,6 @@
 
 struct ExecutionConfig;
 
-// The dt Apply may integrate over: the measured elapsed cycle time, but
-// never more than twice the nominal period — a scheduler stall must not
-// integrate into one large position jump (the base faults on those).
-// Non-positive or non-finite inputs fail safe to zero rather than reversing
-// or poisoning an integration step.
-inline double ClampedCycleDt(double measured_dt_s, double nominal_dt_s)
-{
-    if (!std::isfinite(measured_dt_s) || !std::isfinite(nominal_dt_s) ||
-        measured_dt_s <= 0.0 || nominal_dt_s <= 0.0)
-        return 0.0;
-    return std::min(measured_dt_s, 2.0 * nominal_dt_s);
-}
-
 // Pure per-joint velocity saturation at the radians/degrees boundary used by
 // the Runner. Inputs and output velocities are radians/second; the limits are
 // degrees/second because that is the configured and operator-facing unit.

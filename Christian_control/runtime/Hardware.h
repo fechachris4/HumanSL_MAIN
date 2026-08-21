@@ -156,10 +156,10 @@ namespace k_api = Kinova::Api;
 // loop (via read_feedback), plus initialization of the command frame's 7
 // actuator slots. Call once, AFTER the servoing-mode switch.
 //
-// Send(): the one exchange per cycle — write `setpoints_deg` (degrees, any
-// winding; wrapped to [0, 360) on the way out) into the frame, stamp the
-// ids the base uses to reject stale packets, send, and return the same
-// cycle's feedback. For actuators in POSITION control mode (the default).
+// Send(): write `setpoints_deg` (degrees, any winding; wrapped to [0, 360) on
+// the way out), stamp the frame/command IDs, and perform one bounded
+// Refresh() retry only for METHOD_TIMEOUT. The retry resends the unchanged
+// command; a second failure propagates to the Runner's communication stop.
 class CyclicSession
 {
 public:

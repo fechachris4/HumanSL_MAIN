@@ -4,8 +4,8 @@
 // Both monitors are fed a per-cycle boolean and the measured cycle dt, and own
 // only a scalar time accumulator: no I/O, no allocation, no blocking, safe
 // inside the 500 Hz loop. Style mirrors Freshness.h. Time is accumulated from
-// the Runner's measured, clamped dt so a scheduler stall stretches wall-clock,
-// not the logical window; a non-finite or non-positive dt is a no-op.
+// the controller's fixed control dt so the logical window follows control
+// cycles; a non-finite or non-positive dt is a no-op.
 //
 
 #pragma once
@@ -22,7 +22,7 @@ public:
     explicit ArrivalSettlingMonitor(double hold_s) : hold_s_(hold_s) {}
 
     // in_tolerance: pose within arrival tolerance AND arrival-eligible this
-    // cycle. dt_s: measured, clamped cycle time (s). Returns whether arrival
+    // cycle. dt_s: fixed control step (s). Returns whether arrival
     // is currently reported.
     bool Update(bool in_tolerance, double dt_s)
     {
@@ -54,8 +54,8 @@ class ArrivalTimeoutMonitor
 public:
     explicit ArrivalTimeoutMonitor(double timeout_s) : timeout_s_(timeout_s) {}
 
-    // waiting: arrival-eligible AND not yet arrived this cycle. dt_s: measured
-    // cycle time (s). Returns true only on the single cycle the wait first
+    // waiting: arrival-eligible AND not yet arrived this cycle. dt_s: fixed
+    // control step (s). Returns true only on the single cycle the wait first
     // reaches timeout_s.
     bool Update(bool waiting, double dt_s)
     {

@@ -398,16 +398,12 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
         {
             next_cycle += period;
 
-            // dt is measured at cycle start and handed to the core RAW: the
-            // core clamps it for integration (nominal on its first cycle,
-            // never more than 2x nominal — a stall cannot integrate one
-            // large jump) and counts overruns from the raw value, exactly
-            // as this loop did inline before the extraction.
+            // dt is measured at cycle start and handed to the core RAW for
+            // timing/freshness diagnostics only. The core uses Config.h's
+            // fixed kControlDtS for all control mathematics and integration.
             const auto t_now = clock::now();
             input.dt_s =
                 std::chrono::duration<double>(t_now - t_prev).count();
-            input.t_s =
-                std::chrono::duration<double>(t_now - control_start).count();
 
             // Measured state from the previous exchange, still in actuator
             // degrees — the degrees -> radians boundary lives inside the

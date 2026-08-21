@@ -33,8 +33,8 @@ public:
     // exactly zero on a fresh cycle. ArmExecutionCore owns that clock
     // (ExecutionCore.h — one clock, one owner; 2026-08-17 consolidation of
     // the former duplicate here); this policy only compares it against the
-    // prolonged-stale threshold. `dt_s` still advances the trajectory clock
-    // and is gated on being finite and positive.
+    // prolonged-stale threshold. `dt_s` is the fixed control step and advances
+    // the trajectory clock.
     PoseReference Get(const RobotState& state,
                       const MeasuredCartesianState& measured,
                       double dt_s,

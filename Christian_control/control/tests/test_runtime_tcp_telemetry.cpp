@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <memory>
 #include <new>
 #include <vector>
 
@@ -43,11 +44,58 @@ void CheckNear(double actual, double expected, double tolerance)
     assert(std::abs(actual - expected) <= tolerance);
 }
 
-ArmExecutionInput InputAt(const JointVector& measured_deg, double t_s)
+ArmExecutionInput InputAt(const JointVector& measured_deg,
+                          double dt_s = config::kControlDtS);
+
+void CheckCoreUsesNominalStep()
+{
+    RobotModel robot_model(GEN3_DUAL_URDF_PATH);
+    DualArmKinematics model(robot_model, Arm::kRight,
+                            config::kLeftNominalRad,
+                            config::kRightBaseFrame,
+                            config::kRightEndEffectorFrame);
+    CartesianTrajectoryMailbox mailbox;
+    ArmExecutionCore core(model, ProductionExecutionConfig(), mailbox,
+                          config::kControlDtS);
+    JointVector zero_deg{};
+    Eigen::Matrix<double, 7, 1> zero_rad =
+        Eigen::Matrix<double, 7, 1>::Zero();
+    const Pose start = model.ToolPoseInMount(Arm::kRight, zero_rad);
+
+    auto trajectory = std::make_unique<WorldCartesianTrajectory>();
+    trajectory->trajectory_id = 1;
+    trajectory->planner_vicon_sequence = 1;
+    trajectory->points.resize(2);
+    trajectory->points[0].position_world_m = start.position;
+    trajectory->points[0].orientation_world =
+        Eigen::Quaterniond(start.rotation);
+    trajectory->points[0].arrival_eligible = false;
+    trajectory->points[1].t_from_start_s = 1.0;
+    trajectory->points[1].position_world_m = start.position;
+    trajectory->points[1].position_world_m.x() += 0.1;
+    trajectory->points[1].orientation_world =
+        Eigen::Quaterniond(start.rotation);
+    trajectory->points[1].arrival_eligible = true;
+    mailbox.Publish(std::move(trajectory));
+
+    core.Seed(zero_deg, zero_deg);
+    ArmExecutionResult first = core.Step(InputAt(zero_deg));
+    core.ResolveStop(first.commanded_deg, AdapterHealth{});
+    ArmExecutionResult second = core.Step(InputAt(zero_deg, 0.0034));
+    core.ResolveStop(second.commanded_deg, AdapterHealth{});
+    ArmExecutionResult third = core.Step(InputAt(zero_deg));
+    core.ResolveStop(third.commanded_deg, AdapterHealth{});
+    assert(second.overrun);
+    CheckNear(second.state.t_s, config::kControlDtS, 1e-12);
+    CheckNear(third.state.t_s, 2.0 * config::kControlDtS, 1e-12);
+    CheckNear(third.reference.t_from_start_s, 2.0 * config::kControlDtS,
+              1e-12);
+}
+
+ArmExecutionInput InputAt(const JointVector& measured_deg, double dt_s)
 {
     ArmExecutionInput input;
-    input.dt_s = config::kControlDtS;
-    input.t_s = t_s;
+    input.dt_s = dt_s;
     input.measured_position_deg = measured_deg;
     input.world.mount_valid = true;
     input.world.mount_position_m.setZero();
@@ -64,6 +112,7 @@ ArmExecutionInput InputAt(const JointVector& measured_deg, double t_s)
 
 int main()
 {
+    CheckCoreUsesNominalStep();
     RobotModel robot_model(GEN3_DUAL_URDF_PATH);
     DualArmKinematics model(robot_model, Arm::kRight,
                             config::kLeftNominalRad,
@@ -77,7 +126,7 @@ int main()
     JointVector zero_deg{};
     core.Seed(command_seed_deg, zero_deg);
 
-    ArmExecutionResult first = core.Step(InputAt(zero_deg, 0.0));
+    ArmExecutionResult first = core.Step(InputAt(zero_deg));
     core.ResolveStop(first.commanded_deg, AdapterHealth{});
 
     // Measured pose reuses the controller's existing FK result at q = 0.
@@ -112,7 +161,7 @@ int main()
                                 equal_mailbox, config::kControlDtS);
     equal_core.Seed(command_seed_deg, zero_deg);
     ArmExecutionResult equal =
-        equal_core.Step(InputAt(command_seed_deg, 0.0));
+        equal_core.Step(InputAt(command_seed_deg));
     equal_core.ResolveStop(equal.commanded_deg, AdapterHealth{});
     CheckNear(equal.measured.ee_pose_mount.position_m.x(), 0.396290, 2e-6);
     CheckNear(equal.measured.ee_pose_mount.position_m.y(), -0.976259, 2e-6);
@@ -137,7 +186,7 @@ int main()
     ArmExecutionCore left_core(left_model, ProductionExecutionConfig(),
                                left_mailbox, config::kControlDtS);
     left_core.Seed(zero_deg, zero_deg);
-    ArmExecutionResult left = left_core.Step(InputAt(zero_deg, 0.0));
+    ArmExecutionResult left = left_core.Step(InputAt(zero_deg));
     left_core.ResolveStop(left.commanded_deg, AdapterHealth{});
     CheckNear(left.measured.ee_pose_mount.position_m.x(), 0.0, 2e-6);
     CheckNear(left.measured.ee_pose_mount.position_m.y(), 1.138995, 2e-6);
@@ -159,7 +208,7 @@ int main()
     for (int i = 0; i < warmup + count; ++i) {
         const auto start = std::chrono::steady_clock::now();
         ArmExecutionResult result =
-            core.Step(InputAt(zero_deg, (i + 1) * config::kControlDtS));
+            core.Step(InputAt(zero_deg));
         const ExecutionStopDecision stop =
             core.ResolveStop(result.commanded_deg, AdapterHealth{});
         assert(stop.priority.reason == StopPriorityReason::kNone);
