@@ -81,3 +81,25 @@ def test_replace_block_returns_none_for_absent_path():
     assert yaml_text.replace_block(
         original, ("obstacles", "scene"), "scene: {}"
     ) is None
+
+
+def test_replace_block_finds_single_and_double_quoted_simple_path_keys():
+    original = """'obstacles':
+  "scene": {}
+solver:
+  max_iterations: 1000
+"""
+
+    changed = yaml_text.replace_block(
+        original,
+        ("obstacles", "scene"),
+        "scene:\n    torso:\n      enabled: true",
+    )
+
+    assert changed == """'obstacles':
+  scene:
+    torso:
+      enabled: true
+solver:
+  max_iterations: 1000
+"""

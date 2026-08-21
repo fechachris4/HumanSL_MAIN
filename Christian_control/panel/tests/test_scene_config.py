@@ -1,5 +1,8 @@
 import importlib
 import json
+import os
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -121,6 +124,68 @@ def test_read_scene_reports_malformed_disk_scene_without_inventing_truth(tmp_pat
     assert "torso" in result["error"]
     assert "height_m" in result["error"]
     assert result["source_fnv1a64"] is not None
+
+
+@pytest.mark.parametrize("quote", ["", "'", '"'])
+def test_fixed_container_keys_accept_yaml_cpp_quote_spellings(tmp_path, quote):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    text = path.read_text()
+    text = text.replace("obstacles:\n", f"{quote}obstacles{quote}:\n")
+    text = text.replace("  scene: {}\n", f"  {quote}scene{quote}: {{}}\n")
+    path.write_text(text)
+    source = scene_config.read_scene(path)["source_fnv1a64"]
+
+    ok, result = scene_config.write_scene(
+        {"torso": valid_cylinder()},
+        source,
+        path=path,
+        commanding=lambda: False,
+    )
+
+    assert ok, result
+    assert result["scene"] == {"torso": valid_cylinder()}
+    assert f"{quote}obstacles{quote}:" in path.read_text()
+
+
+@pytest.mark.parametrize(
+    "duplicate_text, phrase",
+    [
+        (
+            """obstacles:
+  epsilon_dist_m: 0.06
+  collision_sigma: 0.0006
+  scene: {}
+""",
+            "obstacles is duplicated",
+        ),
+        ("  'scene': {}\n", "obstacles.scene is duplicated"),
+        ('  "scene": {}\n', "obstacles.scene is duplicated"),
+    ],
+)
+def test_duplicate_fixed_scene_containers_are_rejected_without_writing(
+    tmp_path, duplicate_text, phrase
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    if duplicate_text.startswith("obstacles:"):
+        path.write_text(path.read_text() + duplicate_text)
+    else:
+        path.write_text(path.read_text().replace(
+            "  scene: {}\n", "  scene: {}\n" + duplicate_text
+        ))
+    before = path.read_bytes()
+    disk = scene_config.read_scene(path)
+
+    assert disk["scene"] == {}
+    assert phrase in disk["error"]
+    ok, reason = scene_config.write_scene(
+        {}, disk["source_fnv1a64"], path=path, commanding=lambda: False
+    )
+    assert not ok
+    assert phrase in reason
+    assert path.read_bytes() == before
+    assert not paths.panel_backup(path).exists()
 
 
 def test_inline_empty_scene_rejects_indented_children(tmp_path):
@@ -333,6 +398,61 @@ def test_first_successful_write_makes_one_backup_of_the_original(tmp_path):
     assert backup.read_bytes() == original
 
 
+def test_backup_copy_failure_publishes_nothing_and_leaves_source_unchanged(
+    tmp_path, monkeypatch
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    original = path.read_bytes()
+    source = scene_config.read_scene(path)["source_fnv1a64"]
+
+    def fail_after_partial_copy(source_file, destination_file, *args, **kwargs):
+        destination_file.write(b"partial backup")
+        raise OSError("injected backup copy failure")
+
+    monkeypatch.setattr(
+        scene_config.shutil, "copyfileobj", fail_after_partial_copy
+    )
+    ok, reason = scene_config.write_scene(
+        {"torso": valid_cylinder()},
+        source,
+        path=path,
+        commanding=lambda: False,
+    )
+
+    assert not ok
+    assert "injected backup copy failure" in reason
+    assert path.read_bytes() == original
+    assert not paths.panel_backup(path).exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_replace_failure_removes_backup_created_by_that_failed_save(
+    tmp_path, monkeypatch
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    original = path.read_bytes()
+    source = scene_config.read_scene(path)["source_fnv1a64"]
+
+    def fail_replace(source_path, destination_path):
+        raise OSError("injected planner replace failure")
+
+    monkeypatch.setattr(scene_config.os, "replace", fail_replace)
+    ok, reason = scene_config.write_scene(
+        {"torso": valid_cylinder()},
+        source,
+        path=path,
+        commanding=lambda: False,
+    )
+
+    assert not ok
+    assert "injected planner replace failure" in reason
+    assert path.read_bytes() == original
+    assert not paths.panel_backup(path).exists()
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_write_refuses_when_an_existing_planner_knob_is_missing(tmp_path):
     scene_config = scene_config_module()
     path = write_fixture(tmp_path)
@@ -401,6 +521,30 @@ def test_scene_get_reports_the_commanding_save_gate(monkeypatch):
     })]
 
 
+@pytest.mark.parametrize("kind", ["malformed", "missing"])
+def test_scene_get_blocks_save_when_disk_truth_is_unavailable(
+    tmp_path, monkeypatch, kind
+):
+    path = write_fixture(tmp_path, "[]")
+    if kind == "missing":
+        path.unlink()
+    monkeypatch.setattr(paths, "PLANNER_YAML", path)
+    monkeypatch.setattr(session, "status", lambda: {"commanding": False})
+    handler, responses = handler_for("/api/scene")
+
+    handler.do_GET()
+
+    code, result = responses[0]
+    assert code == 200
+    assert result["save_allowed"] is False
+    if kind == "missing":
+        assert result["source_fnv1a64"] is None
+    else:
+        assert result["source_fnv1a64"] is not None
+    assert result["error"]
+    assert result["save_blocked_reason"].startswith("planner scene is unavailable:")
+
+
 def test_scene_post_reaches_only_guarded_persistence(monkeypatch):
     called = []
     disk_truth = {
@@ -448,3 +592,173 @@ def test_scene_post_returns_conflict_for_a_rejected_save(monkeypatch):
     handler.do_POST()
 
     assert responses == [(409, {"error": "controller is commanding"})]
+
+
+@pytest.mark.parametrize("submitted", [[], False, "", None])
+def test_scene_post_rejects_falsey_non_mappings_without_changing_disk(
+    tmp_path, monkeypatch, submitted
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    before = path.read_bytes()
+    token = scene_config.read_scene(path)["source_fnv1a64"]
+    monkeypatch.setattr(paths, "PLANNER_YAML", path)
+    monkeypatch.setattr(session, "status", lambda: {"commanding": False})
+    handler, responses = handler_for(
+        "/api/scene", {"scene": submitted, "source_fnv1a64": token}
+    )
+
+    handler.do_POST()
+
+    assert responses == [(409, {"error": "scene must be a mapping"})]
+    assert path.read_bytes() == before
+    assert not paths.panel_backup(path).exists()
+
+
+def test_scene_post_rejects_enormous_json_number_without_500_or_disk_change(
+    tmp_path, monkeypatch
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    before = path.read_bytes()
+    token = scene_config.read_scene(path)["source_fnv1a64"]
+    monkeypatch.setattr(paths, "PLANNER_YAML", path)
+    monkeypatch.setattr(session, "status", lambda: {"commanding": False})
+    handler, responses = handler_for(
+        "/api/scene",
+        {
+            "scene": {"torso": valid_cylinder(radius_m=10**400)},
+            "source_fnv1a64": token,
+        },
+    )
+
+    handler.do_POST()
+
+    assert responses == [(409, {
+        "error": "obstacles.scene.torso.radius_m must be a finite number"
+    })]
+    assert path.read_bytes() == before
+    assert not paths.panel_backup(path).exists()
+
+
+def test_two_concurrent_same_token_writes_have_one_winner_and_one_stale_rejection(
+    tmp_path, monkeypatch
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    original = path.read_bytes()
+    token = scene_config.read_scene(path)["source_fnv1a64"]
+    real_replace = os.replace
+    first_replace_entered = threading.Event()
+    second_thread_started = threading.Event()
+    replacement_calls = []
+
+    def delayed_first_replace(source, destination):
+        if Path(destination) == path:
+            replacement_calls.append(Path(source))
+            if len(replacement_calls) == 1:
+                first_replace_entered.set()
+                assert second_thread_started.wait(timeout=1.0)
+                time.sleep(0.1)
+        return real_replace(source, destination)
+
+    monkeypatch.setattr(scene_config.os, "replace", delayed_first_replace)
+    results = []
+    errors = []
+
+    def save(scene):
+        try:
+            results.append(scene_config.write_scene(
+                scene, token, path=path, commanding=lambda: False
+            ))
+        except BaseException as error:
+            errors.append(error)
+
+    first = threading.Thread(
+        target=save, args=({"first": valid_cylinder()},)
+    )
+    first.start()
+    assert first_replace_entered.wait(timeout=1.0)
+    second = threading.Thread(
+        target=lambda: (
+            second_thread_started.set(),
+            save({"second": valid_box()}),
+        )
+    )
+    second.start()
+    first.join(timeout=2.0)
+    second.join(timeout=2.0)
+
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert [ok for ok, _ in results].count(True) == 1
+    assert [ok for ok, _ in results].count(False) == 1
+    rejection = next(value for ok, value in results if not ok)
+    assert "changed on disk" in rejection
+    assert len(replacement_calls) == 1
+    assert paths.panel_backup(path).read_bytes() == original
+
+
+def test_scene_save_and_session_start_handlers_do_not_overlap(monkeypatch):
+    state_lock = threading.Lock()
+    scene_entered = threading.Event()
+    start_thread_started = threading.Event()
+    active = 0
+    overlapped = False
+
+    def enter(name):
+        nonlocal active, overlapped
+        with state_lock:
+            active += 1
+            overlapped = overlapped or active > 1
+        if name == "scene":
+            scene_entered.set()
+            assert start_thread_started.wait(timeout=1.0)
+            time.sleep(0.1)
+        with state_lock:
+            active -= 1
+
+    def fake_write(*args, **kwargs):
+        enter("scene")
+        return True, {
+            "path": "/tmp/planner.yaml",
+            "scene": {},
+            "source_fnv1a64": "0000000000000054",
+            "error": None,
+        }
+
+    def fake_start(**kwargs):
+        enter("start")
+        return {"ok": True}
+
+    monkeypatch.setattr(server.scene_config, "write_scene", fake_write)
+    monkeypatch.setattr(session, "start", fake_start)
+    scene_handler, scene_responses = handler_for(
+        "/api/scene", {"scene": {}, "source_fnv1a64": "000000000000002a"}
+    )
+    start_handler, start_responses = handler_for(
+        "/api/session/start", {"arm": "right", "confirm": "GO"}
+    )
+    errors = []
+
+    def run(handler):
+        try:
+            handler.do_POST()
+        except BaseException as error:
+            errors.append(error)
+
+    scene_thread = threading.Thread(target=run, args=(scene_handler,))
+    scene_thread.start()
+    assert scene_entered.wait(timeout=1.0)
+    start_thread = threading.Thread(target=lambda: (
+        start_thread_started.set(), run(start_handler)
+    ))
+    start_thread.start()
+    scene_thread.join(timeout=2.0)
+    start_thread.join(timeout=2.0)
+
+    assert not scene_thread.is_alive() and not start_thread.is_alive()
+    assert errors == []
+    assert overlapped is False
+    assert scene_responses[0][0] == 200
+    assert start_responses == [(200, {"ok": True})]

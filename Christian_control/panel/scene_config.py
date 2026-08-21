@@ -12,6 +12,7 @@ live configured planner file for later requests.
 
 from __future__ import annotations
 
+import io
 import json
 import math
 import os
@@ -19,6 +20,7 @@ import re
 import shutil
 import stat
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,6 +29,7 @@ from . import paths, planner_config, yaml_text
 _SCENE_PATH = ("obstacles", "scene")
 _PLAIN_KEY = re.compile(r"^[A-Za-z_]\w*$")
 _TOKEN = re.compile(r"^[0-9a-f]{16}$")
+_WRITE_LOCK = threading.Lock()
 
 
 class _SceneError(ValueError):
@@ -163,11 +166,51 @@ def _disk_vector(raw: str, where: str) -> list[float]:
             for index, part in enumerate(parts)]
 
 
+def _unique_fixed_key(
+    lines: list[str], name: str, *, parent_index: int | None = None
+) -> int:
+    """Find one fixed container key, accepting YAML's three string spellings.
+
+    This deliberately handles only the `obstacles`/`scene` ownership path; it
+    is not a general YAML parser. Duplicate detection happens before any scene
+    value is trusted or replaced.
+    """
+    parent_indent = -2
+    start = 0
+    if parent_index is not None:
+        parent = _mapping_line(lines[parent_index])
+        if parent is None:
+            raise _SceneError(f"{name} is missing")
+        parent_indent = parent[0]
+        start = parent_index + 1
+    expected_indent = parent_indent + 2
+    matches: list[int] = []
+    for index in range(start, len(lines)):
+        entry = _mapping_line(lines[index])
+        if entry is None:
+            continue
+        indent, key, _ = entry
+        if parent_index is not None and indent <= parent_indent:
+            break
+        if indent == expected_indent and key == name:
+            matches.append(index)
+    location = name if parent_index is None else f"obstacles.{name}"
+    if not matches:
+        raise _SceneError(f"{location} is missing")
+    if len(matches) != 1:
+        raise _SceneError(f"{location} is duplicated")
+    return matches[0]
+
+
 def _parse_scene(text: str) -> dict[str, dict[str, Any]]:
     lines = text.split("\n")
-    scene_index = yaml_text.locate(lines, _SCENE_PATH)
-    if scene_index is None:
-        raise _SceneError("obstacles.scene is missing")
+    obstacles_index = _unique_fixed_key(lines, "obstacles")
+    obstacles_entry = _mapping_line(lines[obstacles_index])
+    if obstacles_entry is None or obstacles_entry[2]:
+        raise _SceneError("obstacles must be a table")
+    scene_index = _unique_fixed_key(
+        lines, "scene", parent_index=obstacles_index
+    )
     scene_entry = _mapping_line(lines[scene_index])
     if scene_entry is None:
         raise _SceneError("obstacles.scene is missing")
@@ -256,7 +299,10 @@ def _parse_scene(text: str) -> dict[str, dict[str, Any]]:
 def _number(value: Any, where: str, *, positive: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise _SceneError(f"{where} must be a number")
-    number = float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        raise _SceneError(f"{where} must be a finite number") from None
     if not math.isfinite(number):
         raise _SceneError(f"{where} must be finite")
     if positive and number <= 0.0:
@@ -349,6 +395,35 @@ def _render_scene(scene: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _publish_backup(target: Path, source_bytes: bytes) -> tuple[Path, bool]:
+    """Publish a complete first-edit backup without exposing partial bytes."""
+    backup = paths.panel_backup(target)
+    if backup.exists():
+        return backup, False
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb", dir=target.parent, prefix=f".{backup.name}.",
+            suffix=".tmp", delete=False
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            shutil.copyfileobj(io.BytesIO(source_bytes), temporary)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.chmod(temporary_path, stat.S_IMODE(target.stat().st_mode))
+        try:
+            os.link(temporary_path, backup)
+        except FileExistsError:
+            return backup, False
+        return backup, True
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 def read_scene(path: Path | None = None) -> dict[str, Any]:
     target = path or paths.PLANNER_YAML
     result: dict[str, Any] = {
@@ -376,6 +451,22 @@ def write_scene(
     source_fnv1a64: str,
     *,
     path: Path | None = None,
+    commanding: Callable[[], bool],
+) -> tuple[bool, dict[str, Any] | str]:
+    with _WRITE_LOCK:
+        return _write_scene(
+            submitted,
+            source_fnv1a64,
+            path=path,
+            commanding=commanding,
+        )
+
+
+def _write_scene(
+    submitted: dict[str, Any],
+    source_fnv1a64: str,
+    *,
+    path: Path | None,
     commanding: Callable[[], bool],
 ) -> tuple[bool, dict[str, Any] | str]:
     target = path or paths.PLANNER_YAML
@@ -442,10 +533,19 @@ def write_scene(
         latest = target.read_bytes()
         if _fnv1a64(latest) != source_hash:
             return False, "planner.yaml changed on disk; reload the scene before saving"
-        backup = paths.panel_backup(target)
-        if not backup.exists():
-            shutil.copy2(target, backup)
-        os.replace(temporary_path, target)
+        backup, backup_created = _publish_backup(target, latest)
+        try:
+            os.replace(temporary_path, target)
+        except OSError as replace_error:
+            if backup_created:
+                try:
+                    backup.unlink()
+                except OSError as cleanup_error:
+                    raise OSError(
+                        f"{replace_error}; could not remove failed-save backup: "
+                        f"{cleanup_error}"
+                    ) from replace_error
+            raise
         temporary_path = None
     except OSError as error:
         return False, f"cannot save {target}: {error}"

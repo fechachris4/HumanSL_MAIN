@@ -31,7 +31,9 @@ from typing import Any
 # throughout, and locate() relies on that to tell a child from a grandchild.
 _INDENT = 2
 
-_KEY_RE = re.compile(r"^(\s*)([A-Za-z_]\w*):(.*)$")
+_KEY_RE = re.compile(
+    r"^(\s*)([A-Za-z_]\w*|'[A-Za-z_]\w*'|\"[A-Za-z_]\w*\"):(.*)$"
+)
 _VALUE_LINE_RE = re.compile(r"^(\s*[A-Za-z_]\w*:\s*)([^#]*?)(\s*#.*)?$")
 
 
@@ -75,6 +77,11 @@ def _key_match(line: str) -> re.Match | None:
     return _KEY_RE.match(stripped) if stripped.strip() else None
 
 
+def _key_name(match: re.Match) -> str:
+    raw = match.group(2)
+    return raw[1:-1] if raw[:1] in ("'", '"') else raw
+
+
 def _block_end(lines: list[str], start: int, indent: int) -> int:
     """Index of the first key line at `indent` or shallower — the line that
     closes the block whose children are deeper than `indent`."""
@@ -100,7 +107,7 @@ def locate(lines: list[str], path: tuple[str, ...]) -> int | None:
         index = None
         for i in range(start, end):
             m = _key_match(lines[i])
-            if not m or m.group(2) != name:
+            if not m or _key_name(m) != name:
                 continue
             if len(m.group(1)) == parent_indent + _INDENT:
                 index, parent_indent, start = i, parent_indent + _INDENT, i + 1

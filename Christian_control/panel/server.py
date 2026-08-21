@@ -51,6 +51,13 @@ _LOOPBACK = ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 # previous one, so a 4 ms spike between samples is still reported.
 _STREAM_PERIOD_S = 0.05
 
+# Scene persistence and session start both transition from an idle panel
+# state. Serialising those two HTTP transactions closes the gap between the
+# save's final commanding check and session.start beginning its launch path.
+# This lock is panel workflow coordination only; it never enters the runtime
+# or 500 Hz controller.
+_SCENE_SESSION_TRANSACTION = threading.Lock()
+
 
 def _is_local(client_address: tuple) -> bool:
     return bool(client_address) and client_address[0] in _LOOPBACK
@@ -248,10 +255,20 @@ class _Handler(BaseHTTPRequestHandler):
             elif route == "/api/scene":
                 value = scene_config.read_scene()
                 commanding = bool(session.status().get("commanding"))
-                value["save_allowed"] = not commanding
-                value["save_blocked_reason"] = (
-                    "controller is commanding" if commanding else None
+                available = (
+                    value.get("error") is None
+                    and value.get("source_fnv1a64") is not None
                 )
+                value["save_allowed"] = not commanding and available
+                if commanding:
+                    value["save_blocked_reason"] = "controller is commanding"
+                elif not available:
+                    value["save_blocked_reason"] = (
+                        "planner scene is unavailable: "
+                        + str(value.get("error") or "source token is missing")
+                    )
+                else:
+                    value["save_blocked_reason"] = None
                 self._json(value)
             elif route == "/api/session/status":
                 self._json(session.status())
@@ -313,16 +330,17 @@ class _Handler(BaseHTTPRequestHandler):
                 # session.start makes the loopback decision itself, from the
                 # address it is handed. The server does not pre-judge it: one
                 # module owns that rule, and it is the one that is tested.
-                result = session.start(
-                    arm=str(req.get("arm", "")),
-                    confirm=str(req.get("confirm", "")),
-                    client_address=self.client_address,
-                    mount=str(req.get("mount", "vicon")),
-                    planning=bool(req.get("planning", True)),
-                    recording=bool(req.get("recording", True)),
-                    fixed_pose=req.get("fixed_pose"),
-                    planner=str(req.get("planner", "current")),
-                )
+                with _SCENE_SESSION_TRANSACTION:
+                    result = session.start(
+                        arm=str(req.get("arm", "")),
+                        confirm=str(req.get("confirm", "")),
+                        client_address=self.client_address,
+                        mount=str(req.get("mount", "vicon")),
+                        planning=bool(req.get("planning", True)),
+                        recording=bool(req.get("recording", True)),
+                        fixed_pose=req.get("fixed_pose"),
+                        planner=str(req.get("planner", "current")),
+                    )
                 self._json(result, 200 if result.get("ok") else 400)
             elif route == "/api/session/stop":
                 # Never gated on UI state, staleness, or a live stream: this
@@ -345,13 +363,14 @@ class _Handler(BaseHTTPRequestHandler):
                            else {"error": message}, 200 if ok else 400)
             elif route == "/api/scene":
                 req = self._body()
-                ok, value = scene_config.write_scene(
-                    req.get("scene") or {},
-                    req.get("source_fnv1a64"),
-                    commanding=lambda: bool(
-                        session.status().get("commanding")
-                    ),
-                )
+                with _SCENE_SESSION_TRANSACTION:
+                    ok, value = scene_config.write_scene(
+                        req.get("scene"),
+                        req.get("source_fnv1a64"),
+                        commanding=lambda: bool(
+                            session.status().get("commanding")
+                        ),
+                    )
                 self._json(value if ok else {"error": value},
                            200 if ok else 409)
             else:
