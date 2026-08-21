@@ -34,7 +34,7 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 from . import (build, config_file, dh, diagnose, paths, plan, planner_config,
-               plots, runs, session, telemetry)
+               plots, runs, scene_config, session, telemetry)
 
 # Set by serve(); read by the handler. Plain module state rather than a class
 # attribute so the handler stays a thin dispatcher.
@@ -245,6 +245,14 @@ class _Handler(BaseHTTPRequestHandler):
                     "planner": planner_config.read_planner_knobs(),
                     "joint_limits": planner_config.read_joint_limits_file(),
                 })
+            elif route == "/api/scene":
+                value = scene_config.read_scene()
+                commanding = bool(session.status().get("commanding"))
+                value["save_allowed"] = not commanding
+                value["save_blocked_reason"] = (
+                    "controller is commanding" if commanding else None
+                )
+                self._json(value)
             elif route == "/api/session/status":
                 self._json(session.status())
             elif route == "/api/stream":
@@ -335,6 +343,17 @@ class _Handler(BaseHTTPRequestHandler):
                         str(req.get("name", "")), req.get("value"))
                 self._json({"ok": True, "value": message} if ok
                            else {"error": message}, 200 if ok else 400)
+            elif route == "/api/scene":
+                req = self._body()
+                ok, value = scene_config.write_scene(
+                    req.get("scene") or {},
+                    req.get("source_fnv1a64"),
+                    commanding=lambda: bool(
+                        session.status().get("commanding")
+                    ),
+                )
+                self._json(value if ok else {"error": value},
+                           200 if ok else 409)
             else:
                 self._json({"error": f"no such endpoint: {route}"}, 404)
         except Exception as exc:

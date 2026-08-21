@@ -170,3 +170,35 @@ def remove_key(text: str, path: tuple[str, ...]) -> str | None:
         last = j
     del lines[i:last + 1]
     return "\n".join(lines)
+
+
+def replace_block(text: str, path: tuple[str, ...],
+                  rendered_block: str) -> str | None:
+    """Replace one key and its complete nested block.
+
+    ``rendered_block`` starts with the unindented key line. Its following
+    lines carry their final document indentation; this matches the panel's
+    deterministic scene renderer and keeps this helper from regenerating any
+    neighbouring YAML. The original key's indentation is applied only to the
+    first line.
+    """
+    lines = text.split("\n")
+    i = locate(lines, path)
+    if i is None:
+        return None
+    match = _key_match(lines[i])
+    indent = len(match.group(1))
+    last = i
+    for j in range(i + 1, len(lines)):
+        child = _key_match(lines[j])
+        if child is None:
+            continue
+        if len(child.group(1)) <= indent:
+            break
+        last = j
+    replacement = rendered_block.split("\n")
+    if not replacement:
+        return None
+    replacement[0] = " " * indent + replacement[0].lstrip()
+    lines[i:last + 1] = replacement
+    return "\n".join(lines)

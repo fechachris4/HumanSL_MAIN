@@ -84,6 +84,20 @@ def read_planner_knobs(path: Path | None = None) -> dict[str, dict[str, object]]
     return out
 
 
+def missing_planner_knobs(path: Path | None = None) -> list[str]:
+    """Whitelisted scalar/list knobs absent from one planner file.
+
+    Scene persistence uses this after constructing its temporary candidate:
+    replacing ``obstacles.scene`` must never remove another required planner
+    value. The C++ loader remains the final semantic/range authority.
+    """
+    return [
+        name
+        for name, entry in read_planner_knobs(path).items()
+        if entry["value"] is None
+    ]
+
+
 def _coerce(ktype: str, rule: str, value: object) -> tuple[bool, object]:
     """Validate a submitted value; return (ok, coerced-or-reason)."""
     check, why = _RULES[rule]
