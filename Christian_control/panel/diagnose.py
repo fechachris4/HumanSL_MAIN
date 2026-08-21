@@ -178,20 +178,6 @@ def report(port: int | None = None, lan: bool | None = None,
     except Exception as exc:
         out.append(f"  could not be read: {exc!r}")
 
-    out.append(_section("LAST SOLVED PLAN").rstrip("\n"))
-    for arm in paths.ARMS:
-        try:
-            last = plan.last_plan(arm) or {}
-        except Exception:
-            last = {}
-        if last.get("points"):
-            out.append(f"  {arm:<6} {last['points']} points, "
-                       f"{last.get('duration_s', 0):.2f} s")
-        elif last.get("error"):
-            out.append(f"  {arm:<6} failed: {last['error']}")
-        else:
-            out.append(f"  {arm:<6} nothing solved in this panel session")
-
     out.append(_section(f"CONTROLLER LOG (last {LOG_LINES} lines)").rstrip("\n"))
     log_path = controller_log_path()
     if log_path is None:

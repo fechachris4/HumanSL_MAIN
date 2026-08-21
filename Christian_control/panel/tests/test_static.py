@@ -65,3 +65,20 @@ def test_cylinder_renderer_uses_mount_centre_radius_and_full_height():
     assert "cylinder.radius_m" in script
     assert "const halfHeight = cylinder.height_m / 2" in script
     assert "setObstacles" in script
+
+
+def test_scene_uses_world_pd_directly_and_has_no_cached_plan_overlay():
+    script = (STATIC / "scene.js").read_text()
+    panel = (STATIC / "panel.js").read_text()
+    plan = (STATIC.parent / "plan.py").read_text()
+
+    assert "const desired = pointFromRow(row, 'pd_');" in script
+    assert "transformPoint(baseMatrix(state.selected), desiredBase)" not in script
+    assert "paintDimension" not in script
+    assert "setPlan" not in script
+    assert "setProgress" not in script
+    assert "refreshPlan" not in panel
+    assert "planProgress" not in panel
+    assert "row.traj_activated" not in panel
+    assert "TRAJ_BEGIN" not in plan
+    assert "_LAST_PLAN" not in plan

@@ -220,9 +220,6 @@ class _Handler(BaseHTTPRequestHandler):
                 self._json(plots.list_scripts())
             elif route == "/api/plot-image":
                 self._plot_image((query.get("path") or [""])[0])
-            elif route == "/api/plan":
-                arm = (query.get("arm") or ["right"])[0]
-                self._json(plan.last_plan(arm))
             elif route == "/api/controller-log":
                 # The tail as it stands, so a page that opens after the
                 # interesting part was written still shows it.
@@ -232,9 +229,6 @@ class _Handler(BaseHTTPRequestHandler):
                     "path": str(path) if path else None,
                     "lines": telemetry.tail_log_lines(path, count) if path else [],
                 })
-            elif route == "/api/plan/start-states":
-                arm = (query.get("arm") or ["right"])[0]
-                self._json({"arm": arm, "options": plan.start_state_options(arm)})
             elif route == "/api/dh":
                 arm = (query.get("arm") or ["right"])[0]
                 self._json(dh.read(arm))
@@ -316,10 +310,6 @@ class _Handler(BaseHTTPRequestHandler):
                     str(req.get("arm", "")), req.get("fields") or {})
                 self._json({"ok": True} if ok else {"error": message},
                            200 if ok else 400)
-            elif route == "/api/plan/solve":
-                req = self._body()
-                self._json(plan.solve(str(req.get("arm", "right")),
-                                      req.get("start_deg")))
             elif route == "/api/plots/run":
                 req = self._body()
                 self._json(plots.run(str(req.get("script", "")),

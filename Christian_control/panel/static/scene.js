@@ -1,19 +1,16 @@
 //
-// scene.js — the panel's 3D view: both arms, the plan, and the gap between
-// where the tool is and where it was asked to be.
+// scene.js — the panel's 3D view: both arms and the points the controller
+// publishes.
 //
 // Everything here is drawing. Nothing in this file decides anything about
 // motion, and nothing it draws is a measurement the controller does not
 // already publish: the arms come from meas_j*/cmd_j* through the same DH
-// tables the planner uses, the desired point from pd_*, the plan from a
-// solved trajectory, the clearance from a plan-time validation report.
-// Where a quantity is a property of the plan rather than of this instant,
-// the label says so.
+// tables the planner uses, the desired point from pd_*, and configured
+// obstacles/clearance evidence.
 //
-// Frame: everything is drawn in the `mount` frame, because that is the one
-// frame both arms and the SDF grid share. The CSV's pd_*/p_* columns are in
-// the CONTROLLED arm's own base_link (State.h, PoseReference), so they are
-// carried into mount here through the mounting transform below.
+// Frame: fixed-mount display coordinates equal world coordinates
+// (world_T_mount = I). The controller's pd_* and p_* columns are already
+// world-frame values, so the scene displays them directly.
 //
 // Rendering is a plain 2D canvas with its own perspective projection and a
 // painter's-algorithm depth sort. No WebGL and no three.js: the scene is
@@ -410,37 +407,6 @@ function pointFromRow(row, prefix) {
     return [x, y, z];
 }
 
-// A plan row can reasonably arrive in several shapes, so accept the ones
-// that exist rather than force the server into one: the controller's wire
-// row (t_s then seven joint degrees then seven velocities), a joint vector
-// in degrees or radians, or a tool point already in Cartesian metres. Joint
-// shapes are run through the same forward kinematics as the arms, so the
-// plan polyline and the arm can never come from different models.
-function planRowToPoint(row, joints, baseMatrix) {
-    if (!row) return null;
-    if (Array.isArray(row)) {
-        if (row.length === 3) return row.map(Number);
-        if (row.length === 7) return toolPoint(joints, row, baseMatrix);
-        if (row.length >= 15) return toolPoint(joints, row.slice(1, 8), baseMatrix);
-        return null;
-    }
-    if (Array.isArray(row.q_deg)) return toolPoint(joints, row.q_deg, baseMatrix);
-    if (Array.isArray(row.q_rad)) {
-        return toolPoint(joints, row.q_rad.map(function (v) { return v / DEG; }), baseMatrix);
-    }
-    if (Array.isArray(row.p)) return row.p.map(Number);
-    const x = finite(row.x);
-    const y = finite(row.y);
-    const z = finite(row.z);
-    if (x !== null && y !== null && z !== null) return [x, y, z];
-    return null;
-}
-
-function toolPoint(joints, anglesDeg, baseMatrix) {
-    const chain = forwardKinematics(joints, anglesDeg, baseMatrix);
-    return chain ? chain.points[chain.points.length - 1] : null;
-}
-
 // ---------------------------------------------------------------
 // Camera and projection
 // ---------------------------------------------------------------
@@ -509,7 +475,7 @@ export function createScene(canvas, options) {
     const ctx = canvas.getContext('2d');
 
     const mounts = opts.mountFromBase || DEFAULT_MOUNT_FROM_BASE;
-    const frameLabel = opts.frameLabel || 'mount frame - world = mount, no Vicon';
+    const frameLabel = opts.frameLabel || 'world frame · fixed mount (world = mount)';
     // index.html carries a legend under the canvas, so the scene draws its own
     // only when it is standing alone (scene.test.html): two legends saying the
     // same thing would just cost canvas.
@@ -518,9 +484,7 @@ export function createScene(canvas, options) {
     const state = {
         dh: { right: null, left: null },
         row: { right: null, left: null },
-        plan: { right: null, left: null },
         goalPreview: { right: null, left: null },
-        progress: null,
         obstacles: [],
         clearance: null,
         selected: 'right',
@@ -814,123 +778,6 @@ export function createScene(canvas, options) {
         }
     }
 
-    // ---- the dimension callout ---------------------------------
-    //
-    // The one borrowed flourish in the design: the gap between the measured
-    // tool point and the desired point is annotated the way a draughtsman
-    // annotates a print — extension ticks at both ends, a dimension line
-    // with arrowheads, and the number sitting in a gap in the line.
-    //
-    // The number is the true 3D distance in millimetres, not the distance on
-    // screen, so rotating the view never changes it. `cmd - meas` is what the
-    // controller's following-error guard tests, and this pair (desired point
-    // against measured tool) is the Cartesian reading of the same question.
-    // `awayFrom` is a point the callout should lean away from — the last
-    // wrist joint. Without it the dimension line lands on the forearm about
-    // half the time, since the tool is at the end of a link and the offset
-    // has two equally valid sides.
-    function paintDimension(basis, fromPoint, toPoint, awayFrom) {
-        const a = toCamera(basis, fromPoint);
-        const b = toCamera(basis, toPoint);
-        if (a.z < NEAR_M || b.z < NEAR_M) return;
-        const pa = project(a, viewport);
-        const pb = project(b, viewport);
-        const metres = norm(subtract(toPoint, fromPoint));
-        const millimetres = metres * 1000;
-        const text = (millimetres >= 100 ? millimetres.toFixed(0) : millimetres.toFixed(1)) + ' mm';
-
-        const dx = pb.x - pa.x;
-        const dy = pb.y - pa.y;
-        const screenLength = Math.sqrt(dx * dx + dy * dy);
-        ctx.save();
-        ctx.strokeStyle = palette.ink;
-        ctx.fillStyle = palette.ink;
-        ctx.lineWidth = 1;
-        ctx.font = '11px ' + fonts.mono;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        if (screenLength < 1) {
-            // The two points coincide on screen. A dimension line has no
-            // direction to be drawn along, so state the number on a short
-            // leader instead of inventing one.
-            const tip = { x: pa.x + 34, y: pa.y - 26 };
-            ctx.beginPath();
-            ctx.moveTo(pa.x, pa.y);
-            ctx.lineTo(tip.x, tip.y);
-            ctx.lineTo(tip.x + 26, tip.y);
-            ctx.stroke();
-            labelWithHalo(text, tip.x + 30, tip.y, 'left');
-            ctx.restore();
-            return;
-        }
-
-        const ux = dx / screenLength;
-        const uy = dy / screenLength;
-        let nx = -uy;
-        let ny = ux;
-        if (awayFrom) {
-            const camera = toCamera(basis, awayFrom);
-            if (camera.z >= NEAR_M) {
-                const pv = project(camera, viewport);
-                if (nx * (pa.x - pv.x) + ny * (pa.y - pv.y) < 0) {
-                    nx = -nx;
-                    ny = -ny;
-                }
-            }
-        }
-        // Offset the dimension line clear of the geometry it measures, the
-        // way an offset dimension keeps a drawing readable.
-        const offset = 22;
-        const a1 = { x: pa.x + nx * offset, y: pa.y + ny * offset };
-        const b1 = { x: pb.x + nx * offset, y: pb.y + ny * offset };
-
-        // Extension lines: from each measured point out past the dimension
-        // line, with a small gap at the point itself.
-        ctx.beginPath();
-        ctx.moveTo(pa.x + nx * 3, pa.y + ny * 3);
-        ctx.lineTo(pa.x + nx * (offset + 8), pa.y + ny * (offset + 8));
-        ctx.moveTo(pb.x + nx * 3, pb.y + ny * 3);
-        ctx.lineTo(pb.x + nx * (offset + 8), pb.y + ny * (offset + 8));
-        ctx.stroke();
-
-        const midX = (a1.x + b1.x) / 2;
-        const midY = (a1.y + b1.y) / 2;
-        const textWidth = ctx.measureText(text).width;
-        const gap = textWidth / 2 + 5;
-
-        if (screenLength > 2 * gap + 16) {
-            // Room for the number inside the line: break the line for it.
-            ctx.beginPath();
-            ctx.moveTo(a1.x, a1.y);
-            ctx.lineTo(midX - ux * gap, midY - uy * gap);
-            ctx.moveTo(midX + ux * gap, midY + uy * gap);
-            ctx.lineTo(b1.x, b1.y);
-            ctx.stroke();
-            arrowhead(a1, { x: ux, y: uy });
-            arrowhead(b1, { x: -ux, y: -uy });
-            labelWithHalo(text, midX, midY, 'center');
-        } else {
-            // Too short: arrows point inwards from outside and the number
-            // sits off the end, which is what a draughtsman does with a
-            // small dimension.
-            ctx.beginPath();
-            ctx.moveTo(a1.x - ux * 14, a1.y - uy * 14);
-            ctx.lineTo(b1.x + ux * 14, b1.y + uy * 14);
-            ctx.stroke();
-            arrowhead(a1, { x: -ux, y: -uy });
-            arrowhead(b1, { x: ux, y: uy });
-            labelWithHalo(text, b1.x + ux * 20 + nx * 8, b1.y + uy * 20 + ny * 8, 'left');
-        }
-
-        // Name the far end on the side the callout is not using, so the word
-        // and the number never sit on top of each other.
-        ctx.font = '10px ' + fonts.label;
-        ctx.fillStyle = palette.ask;
-        labelWithHalo('desired', pb.x - nx * 15, pb.y - ny * 15, 'center');
-        ctx.restore();
-    }
-
     function arrowhead(tip, direction) {
         const length = 8;
         const width = 3;
@@ -957,56 +804,6 @@ export function createScene(canvas, options) {
         ctx.strokeText(text, x, y);
         ctx.fillText(text, x, y);
         ctx.restore();
-    }
-
-    // ---- the plan ----------------------------------------------
-
-    function planPolyline(arm) {
-        const rows = state.plan[arm];
-        if (!rows || rows.length < 2) return null;
-        const joints = state.dh[arm];
-        const base = baseMatrix(arm);
-        const points = [];
-        for (let i = 0; i < rows.length; i++) {
-            const point = planRowToPoint(rows[i], joints, base);
-            if (point && isFinite(point[0]) && isFinite(point[1]) && isFinite(point[2])) {
-                points.push(point);
-            }
-        }
-        return points.length >= 2 ? points : null;
-    }
-
-    // Split the polyline at the progress point by ARC LENGTH, not by row
-    // index: the solved states are evenly spaced in time, so an index split
-    // would move the marker at whatever speed the plan happens to run at
-    // while the drawn line stayed still.
-    function splitAtProgress(points, fraction) {
-        if (fraction === null || fraction === undefined || !isFinite(fraction)) return null;
-        const f = Math.min(1, Math.max(0, fraction));
-        let total = 0;
-        const lengths = [];
-        for (let i = 1; i < points.length; i++) {
-            const segment = norm(subtract(points[i], points[i - 1]));
-            lengths.push(segment);
-            total += segment;
-        }
-        if (total <= 0) return null;
-        const wanted = total * f;
-        let travelled = 0;
-        for (let i = 0; i < lengths.length; i++) {
-            if (travelled + lengths[i] >= wanted) {
-                const t = lengths[i] > 0 ? (wanted - travelled) / lengths[i] : 0;
-                const cut = add(points[i], scale(subtract(points[i + 1], points[i]), t));
-                return {
-                    travelled: points.slice(0, i + 1).concat([cut]),
-                    remaining: [cut].concat(points.slice(i + 1)),
-                    point: cut,
-                };
-            }
-            travelled += lengths[i];
-        }
-        const last = points[points.length - 1];
-        return { travelled: points.slice(), remaining: [last], point: last };
     }
 
     // ---- overlay text ------------------------------------------
@@ -1129,32 +926,6 @@ export function createScene(canvas, options) {
                 });
             }
 
-            const plan = planPolyline(arm);
-            if (plan) {
-                if (selected) for (let p = 0; p < plan.length; p++) framed.push(plan[p]);
-                const split = arm === state.selected ? splitAtProgress(plan, state.progress) : null;
-                if (split) {
-                    addPolyline(items, basis, split.travelled, {
-                        colour: palette.ink,
-                        width: 1,
-                        alpha: 0.25,
-                        dash: [3, 3],
-                    });
-                    addPolyline(items, basis, split.remaining, {
-                        colour: palette.ink,
-                        width: 1.4,
-                        alpha: 0.7,
-                    });
-                    addDot(items, basis, split.point, { colour: palette.ink, radius: 3, alpha: 0.8 });
-                } else {
-                    addPolyline(items, basis, plan, {
-                        colour: palette.ink,
-                        width: arm === state.selected ? 1.4 : 1,
-                        alpha: arm === state.selected ? 0.7 : 0.3,
-                    });
-                }
-            }
-
             // The goal preview: what the TYPED, unsaved fields ask for,
             // drawn in the ask colour and labelled as a preview so it can
             // never be mistaken for a plan or a measurement. Dashed, for
@@ -1217,31 +988,19 @@ export function createScene(canvas, options) {
             }
         }
 
-        // The desired tool point and the dimension between it and where the
-        // tool actually is. Both come from the selected arm's row, and the
-        // point is in that arm's base_link, so it is carried into mount here.
-        let dimension = null;
+        // The controller publishes desired and current points in world. In
+        // fixed-mount mode world_T_mount = I, so draw pd_* without inventing
+        // a second transform or error definition.
         let desiredPoint = null;
         const row = state.row[state.selected];
-        const desiredBase = pointFromRow(row, 'pd_');
-        if (desiredBase) {
-            const desired = transformPoint(baseMatrix(state.selected), desiredBase);
+        const desired = pointFromRow(row, 'pd_');
+        if (desired) {
             framed.push(desired);
             addCross(items, basis, desired, { colour: palette.ask, radius: 6 });
             desiredPoint = desired;
-            const chain = measured[state.selected];
-            if (chain) {
-                dimension = {
-                    from: chain.points[chain.points.length - 1],
-                    to: desired,
-                    awayFrom: chain.points[chain.points.length - 2],
-                };
-            }
         }
 
-        // With a dimension drawn, the marker is named by paintDimension on
-        // the side the callout is not using; without one it is named here.
-        if (desiredPoint && !dimension) {
+        if (desiredPoint) {
             notes.push({
                 point: desiredPoint, text: 'desired', colour: palette.ask,
                 dx: 0, dy: 15, align: 'center',
@@ -1267,11 +1026,9 @@ export function createScene(canvas, options) {
         items.sort(function (a, b) { return b.depth - a.depth; });
         for (let i = 0; i < items.length; i++) items[i].paint();
 
-        if (dimension) paintDimension(basis, dimension.from, dimension.to, dimension.awayFrom);
         paintOverlay(basis, notes);
 
         const nothing = !state.row.right && !state.row.left &&
-            !state.plan.right && !state.plan.left &&
             !state.goalPreview.right && !state.goalPreview.left &&
             !state.obstacles.length;
         if (nothing) paintEmptyState();
@@ -1404,22 +1161,12 @@ export function createScene(canvas, options) {
             state.row[arm] = row || null;
             schedule();
         },
-        setPlan: function (arm, planRows) {
-            if (!known(arm)) return;
-            state.plan[arm] = Array.isArray(planRows) && planRows.length ? planRows : null;
-            schedule();
-        },
         // preview is parseGoalPreview's output (or null to clear). Drawing
         // only: setting a preview saves nothing, solves nothing, and sends
         // nothing — there is no code path from here to a request.
         setGoalPreview: function (arm, preview) {
             if (!known(arm)) return;
             state.goalPreview[arm] = preview || null;
-            schedule();
-        },
-        setProgress: function (fraction) {
-            const value = finite(fraction);
-            state.progress = value === null ? null : Math.min(1, Math.max(0, value));
             schedule();
         },
         // Configured mount-frame primitives. Drawing only: no SDF, epsilon,

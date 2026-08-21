@@ -22,7 +22,7 @@
   told:
 
     scene.js     createScene(canvas, {frameLabel}) -> setDh, setTelemetry,
-                 setPlan, setProgress, setClearance,
+                 setClearance,
                  setSelectedArm, resize, draw. It reads its palette from
                  panel.css, so colour is defined in one place.
     readouts.js  createSlot -> {el, set, setLevel}
@@ -172,8 +172,6 @@ const state = {
   slots: {},
   errorRows: [],
   jointBars: [],
-  activation: null,       // {row_time_s} of the last trajectory activation edge
-  plan: null,
   goal: null,             // goal.yaml as parsed by the server, for the scene
   runs: [],
   selectedRun: null,
@@ -184,7 +182,6 @@ const state = {
   buildPoll: null,
   logLines: [],
   lastNotable: '',      // the newest line that looks like an explanation
-  startStates: [],      // runs a solve could plan from, newest first
   driveChosen: false,   // once set by hand, stop following goal.yaml
   sceneConfig: {
     saved: {}, draft: {}, sourceFnv1a64: null,
@@ -220,9 +217,7 @@ function init() {
   refreshConfig();
   refreshGoal();
   refreshRuns();
-  refreshPlan();
   refreshScene();
-  refreshStartStates();
   refreshControllerLogOnce();
   openStreams();
 
@@ -239,11 +234,8 @@ function setArm(arm) {
   $('arm-select').value = arm;
   state.frame = null;
   state.otherWorst = null;
-  state.activation = null;
   $('other-arm-name').textContent = otherArm();
   openStreams();
-  refreshPlan();
-  refreshStartStates();
   renderRun();
 }
 
@@ -445,12 +437,6 @@ function acceptFrame(data) {
   state.connected = true;
 
   const row = data.row || {};
-  // The activation edge is the only honest zero for progress: the controller
-  // does not echo a trajectory identity back, so the panel times from the
-  // cycle it saw the plan accepted.
-  if (numOrNull(row.traj_activated)) state.activation = { time_s: numOrNull(row.time_s) };
-  if (numOrNull(row.traj_complete)) state.activation = null;
-
   renderRun();
 }
 
@@ -587,9 +573,6 @@ function planVerdict(lines) {
   };
   const verdict = last(/hardware_execution_allowed\s+(yes|NO)/);
   const solve = last(/^path: /);
-  const executing = Number(state.frame?.row?.cart_traj_activated) === 1;
-
-  if (executing) return { status: 'EXECUTING', lines: planNumbers(lines, verdict) };
   if (solve && (!verdict || solve.index > verdict.index))
     return { status: 'PLANNING', lines: ['solver running — the report follows in the controller log'] };
   if (!verdict) return { status: 'HOLDING', lines: ['no plan attempted yet'] };
@@ -1009,7 +992,6 @@ function renderRun() {
   // twenty times a second.
   call(state.scene, 'setSelectedArm', state.arm);
   call(state.scene, 'setTelemetry', state.arm, row);
-  call(state.scene, 'setProgress', planProgress(row));
 }
 
 function renderErrorRows(row, worst) {
@@ -1172,18 +1154,8 @@ function derivedState(row) {
   return 'READY';
 }
 
-function planProgress(row) {
-  const duration = numOrNull(pick(state.plan || {}, 'duration_s'));
-  const now = numOrNull(row.time_s);
-  if (!state.activation || duration === null || now === null || duration <= 0) return null;
-  const elapsed = now - (state.activation.time_s ?? 0);
-  return Math.max(0, Math.min(1, elapsed / duration));
-}
-
 function renderBanner() {
   const row = state.frame?.row || {};
-  const progress = planProgress(row);
-  const duration = numOrNull(pick(state.plan || {}, 'duration_s'));
 
   // Rejection is one of the few things worth spelling out in full: the number
   // and the guard it failed are both on the wire, so the message can be exact.
@@ -1192,8 +1164,6 @@ function renderBanner() {
     const started = numOrNull(row.traj_start_error_deg);
     const allowed = scalarOf(pick(state.config?.thresholds || {}, 'kTrajStartToleranceDeg'));
     detail = `the plan started ${fmt(started, 1)} deg from the measured pose on its worst joint; the guard allows ${fmt(allowed, 1)}`;
-  } else if (progress !== null && duration !== null) {
-    detail = `${(progress * 100).toFixed(0)}% · ${fmt(duration * (1 - progress), 1)} s remaining`;
   } else if (state.status?.session?.commanding) {
     detail = 'no trajectory is running; the arm holds where it was left';
   }
@@ -1213,24 +1183,12 @@ function renderBanner() {
   call(state.banner, 'update', {
     state: derivedState(row),
     arm: state.arm,
-    task: planLabel(),
-    progress,
-    remaining_s: progress !== null && duration !== null
-      ? duration * (1 - progress) : null,
+    task: '',
+    progress: null,
+    remaining_s: null,
   });
   setNotice('run-message', detail,
             (numOrNull(row.traj_rejected) || state.lastNotable) ? 'is-warn' : null);
-}
-
-function planLabel() {
-  const plan = state.plan;
-  if (!plan || plan.error) return '';
-  const points = numOrNull(plan.points);
-  const duration = numOrNull(plan.duration_s);
-  const parts = [];
-  if (points !== null) parts.push(`${points} point plan`);
-  if (duration !== null) parts.push(`${duration.toFixed(1)} s`);
-  return parts.join(' · ');
 }
 
 /* ------------------------------------------------------------- config pane */
@@ -1899,71 +1857,6 @@ async function pollBuild() {
 
 function wireTargetsPane() {
   $('goal-save').addEventListener('click', saveGoal);
-  $('plan-solve').addEventListener('click', solvePlan);
-  $('start-state-select').addEventListener('change', onStartStateChange);
-}
-
-// Which measured configuration a solve plans from. "newest" is what the bridge
-// does on its own; the rest exist because the newest run is not always usable.
-function onStartStateChange() {
-  const choice = $('start-state-select').value;
-  const typed = choice === 'typed';
-  $('start-deg-row').hidden = !typed;
-
-  const option = (state.startStates || []).find((o) => o.file === choice);
-  if (option && option.final_deg && !$('start-deg-input').value) {
-    $('start-deg-input').value = option.final_deg.map((v) => v.toFixed(2)).join(' ');
-  }
-  $('start-state-note').textContent = startStateNote(choice, option);
-}
-
-function startStateNote(choice, option) {
-  if (choice === 'typed') return 'seven angles in degrees, in Kortex actuator order';
-  if (choice === 'newest') {
-    const newest = (state.startStates || [])[0];
-    if (!newest) return 'no recorded run to plan from';
-    return newest.usable
-      ? `the bridge will read ${newest.name} (${newest.size_mb} MB)`
-      : `${newest.name} has no data rows — pick another run or type the angles`;
-  }
-  if (!option) return '';
-  return `${option.size_mb} MB, ending at the configuration shown when you switch to typed`;
-}
-
-// The list is rebuilt whenever the arm changes, because a right-arm plan can
-// only start from a right-arm run.
-async function refreshStartStates() {
-  const select = $('start-state-select');
-  try {
-    const data = await getJSON(`/api/plan/start-states?arm=${state.arm}`);
-    state.startStates = data.options || [];
-  } catch {
-    state.startStates = [];
-  }
-  select.textContent = '';
-  const add = (value, label) => {
-    const option = document.createElement('option');
-    option.value = value;
-    option.textContent = label;
-    select.appendChild(option);
-  };
-  const newest = state.startStates[0];
-  add('newest', newest
-    ? `newest run — ${newest.name}${newest.usable ? '' : '  (no data rows)'}`
-    : 'newest run — none recorded');
-  for (const option of state.startStates.slice(1)) {
-    if (!option.usable) continue;
-    add(option.file, `${option.name}  (${option.size_mb} MB)`);
-  }
-  add('typed', 'type the joint angles');
-
-  // If the newest run cannot seed a plan, do not leave it selected and let the
-  // solve fail: choose the newest usable run and say why it moved.
-  if (newest && !newest.usable) {
-    const usable = state.startStates.find((o) => o.usable);
-    select.value = usable ? usable.file : 'typed';
-  }
-  onStartStateChange();
 }
 
 /* -------------------------------------------------------------- goal cards
@@ -2265,114 +2158,6 @@ async function saveGoal() {
 
 // Turns the selector into the request body. Returning an error string rather
 // than throwing keeps the refusal in the same place as every other one.
-function startStateRequest() {
-  const choice = $('start-state-select').value;
-  if (choice === 'newest' || !choice) return {};
-  if (choice === 'typed') {
-    const parts = $('start-deg-input').value.trim().split(/[\s,]+/).filter(Boolean);
-    if (parts.length !== 7) {
-      return { error: `type seven joint angles in degrees — got ${parts.length}` };
-    }
-    const angles = parts.map(Number);
-    if (angles.some((v) => !Number.isFinite(v))) {
-      return { error: 'the joint angles must all be numbers' };
-    }
-    return { start_deg: angles };
-  }
-  const option = (state.startStates || []).find((o) => o.file === choice);
-  if (!option || !option.final_deg) {
-    return { error: 'that run has no usable final configuration' };
-  }
-  return { start_deg: option.final_deg };
-}
-
-// Why a solve produced nothing, in the most useful words available.
-//
-// Three different things can fail and they are not equally informative. If the
-// panel refused before running the bridge, its own message names the file and
-// the way out. If the bridge RAN and rejected the plan, its own "error:" line
-// is the answer — "joint 2 at 224.3 deg exceeds ±126.9" — and the parse result
-// only reports the symptom, that no TRAJ_BEGIN came back. Preferring the parse
-// error there would tell you the bridge emitted nothing while hiding why.
-function solveFailureReason(result) {
-  const plan = result.plan || {};
-  if (plan.returncode === null || plan.returncode === undefined) {
-    return plan.error || 'the solve did not run.';
-  }
-  const stderrError = lastErrorLine(result.stderr || '');
-  if (stderrError) return stderrError;
-  return plan.error || 'the solve did not produce a plan; the solver output below says why.';
-}
-
-function lastErrorLine(text) {
-  const lines = text.split('\n').filter((line) => /^\s*error:/i.test(line));
-  return lines.length ? lines[lines.length - 1].trim() : '';
-}
-
-async function solvePlan() {
-  const chosen = startStateRequest();
-  if (chosen.error) {
-    setNotice('goal-status', chosen.error, 'is-warn');
-    return;
-  }
-  setNotice('goal-status', 'solving…', null);
-  $('plan-arm-note').textContent = `${state.arm} arm`;
-  try {
-    const result = await postJSON('/api/plan/solve', { arm: state.arm, ...chosen });
-    $('plan-stderr').textContent = result.stderr || '(the solver printed nothing)';
-    if (!result.ok) {
-      setNotice('goal-status', solveFailureReason(result), 'is-warn');
-      refreshStartStates();
-      return;
-    }
-    state.plan = result.plan || null;
-    renderPlanSummary();
-    drawPlan();
-    setNotice('goal-status', 'solved. The plan is drawn in the scene; nothing was sent to an arm.', null);
-  } catch (err) {
-    setNotice('goal-status', `the solve failed: ${err.message}`, 'is-stop');
-  }
-}
-
-// The last solved plan, so the run screen can draw where the arm was going
-// even after the panel has been restarted mid-session.
-async function refreshPlan() {
-  try {
-    const plan = await getJSON(`/api/plan?arm=${state.arm}`);
-    state.plan = plan && !plan.error ? plan : null;
-  } catch {
-    state.plan = null;
-  }
-  renderPlanSummary();
-  drawPlan();
-}
-
-// The scene draws the plan as a polyline through the solved joint states, so
-// it is handed the rows themselves rather than the summary around them.
-function drawPlan() {
-  call(state.scene, 'setPlan', state.arm,
-       state.plan && Array.isArray(state.plan.rows) ? state.plan.rows : null);
-}
-
-function renderPlanSummary() {
-  const empty = !state.plan;
-  $('plan-empty').hidden = !empty;
-  renderReadOnlyTable('plan-summary', empty ? {} : summaryOf(state.plan), empty ? '' :
-    'Clearance is a property of this plan, measured when it was solved. Nothing measures clearance while the arm moves.');
-}
-
-// Plans carry their whole trajectory; the summary shows the scalars and says
-// how large the rest is rather than printing thousands of joint angles.
-function summaryOf(plan) {
-  const out = {};
-  for (const [key, value] of Object.entries(plan)) {
-    if (key === 'rows') { out.rows = `${value.length} sampled points`; continue; }
-    out[key] = Array.isArray(value) && value.length > 8
-      ? `${value.length} values` : value;
-  }
-  return out;
-}
-
 /* --------------------------------------------------------------- runs pane */
 
 async function refreshRuns() {

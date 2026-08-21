@@ -313,50 +313,9 @@
       </details>
       <div class="button-row">
         <button type="button" id="goal-save" class="action">SAVE GOAL</button>
-        <button type="button" id="plan-solve" class="action">SOLVE AND PREVIEW</button>
-        <span class="hint">Solving reads the goal and produces a plan. It never sends anything to an arm.</span>
       </div>
       <p class="card-foot" id="goal-status"></p>
 
-      <!-- A plan starts from where the arm actually is. With no controller
-           running that has to come from a recorded run, and the newest run is
-           not always usable: a session that failed before its loop started
-           leaves a newer, emptier file than the good run before it. -->
-      <div class="start-state">
-        <div class="field-row">
-          <label class="field">
-            <span class="field-label">plan from</span>
-            <select id="start-state-select"></select>
-          </label>
-          <span class="hint" id="start-state-note"></span>
-        </div>
-        <div class="field-row" id="start-deg-row" hidden>
-          <span class="field-label">joint angles, degrees</span>
-          <input type="text" id="start-deg-input" class="num start-deg-input"
-                 spellcheck="false" autocomplete="off"
-                 placeholder="285.0 251.0 358.0 18.7 256.5 345.6 155.3">
-        </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Plan</h2>
-        <span class="card-note" id="plan-arm-note"></span>
-      </div>
-      <div id="plan-summary" class="kv-table"></div>
-      <div class="empty inline-empty" id="plan-empty">
-        <p>No plan solved yet.</p>
-        <p>Press <strong>SOLVE AND PREVIEW</strong> to solve the goal above and draw it in the scene.</p>
-      </div>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Solver output</h2>
-        <span class="card-note">verbatim · carries plan-initialisation quality and goal-orientation warnings</span>
-      </div>
-      <pre class="log-pane" id="plan-stderr">Nothing solved in this panel session.</pre>
     </section>
   </section>
 
