@@ -1,5 +1,7 @@
 #pragma once
 #include <optional>
+#include <string>
+#include <vector>
 #include <Eigen/Dense>
 #include <gpmp2/obstacle/SignedDistanceField.h>
 #include "StaticScene.h"
@@ -47,13 +49,6 @@ struct GridGeometry {
 // The static mount-frame grid built from the measured constants above.
 GridGeometry MountGridGeometry();
 
-// One grid covering both arms' workspaces, in the `mount` frame. Cells hold
-// distance to the box surface (negative inside); with no box, a uniform
-// large free distance.
-gpmp2::SignedDistanceField MakeMountSdf(
-    const GridGeometry& geometry,
-    const std::optional<AxisAlignedBox>& box_mount);
-
 // The volume the SDF grid can actually be QUERIED over, in `mount`:
 // [origin, origin + (n-1)*cell] per axis — see the (n-1) note in the .cpp.
 // gpmp2 returns zero obstacle cost for any query outside this volume ("no
@@ -65,3 +60,31 @@ struct GridBounds {
     Eigen::Vector3d max_m;
 };
 GridBounds MountGridBounds(const GridGeometry& geometry);
+
+// The axis-aligned full bounds of a static primitive in the `mount` frame.
+// A vertical cylinder has a circular x-y footprint and flat caps at
+// center_mount_m.z() +/- height_m / 2.
+GridBounds StaticObstacleBounds(const StaticObstacleGeometry& geometry);
+
+// An object must be contained in the grid's actual interpolatable volume.
+// The lower face is included; the upper face is excluded because gpmp2's
+// trilinear SDF cannot interpolate there.
+bool StaticObstacleWithinGridBounds(const StaticObstacleGeometry& geometry,
+                                    const GridBounds& bounds);
+
+// One grid covering both arms' workspaces, in the `mount` frame. Each sample
+// contains the minimum signed distance to all enabled primitives, or 10 m for
+// an empty scene.
+gpmp2::SignedDistanceField MakeMountSdf(
+    const GridGeometry& geometry,
+    const std::vector<NamedStaticObstacle>& scene_mount);
+
+// Migration-only overload. Task 3 switches callers to the named scene API
+// and removes this seam.
+gpmp2::SignedDistanceField MakeMountSdf(
+    const GridGeometry& geometry,
+    const std::optional<AxisAlignedBox>& box_mount);
+
+// Human-readable planner diagnostics for the persisted mount-frame scene.
+std::string DescribeStaticScene(const std::vector<NamedStaticObstacle>& scene_mount,
+                                const GridGeometry& geometry);
