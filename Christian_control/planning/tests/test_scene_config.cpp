@@ -78,13 +78,17 @@ seeding:
     return path.string();
 }
 
-void ExpectReject(const std::string& scene_yaml, const std::string& what) {
+void ExpectReject(const std::string& scene_yaml, const std::string& what,
+                  const std::string& required_diagnostic = "") {
     const std::string path = WriteConfig(scene_yaml);
     try {
         static_cast<void>(LoadPlannerConfig(path));
         Check(false, what);
-    } catch (const std::runtime_error&) {
+    } catch (const std::runtime_error& error) {
         Check(true, what);
+        if (!required_diagnostic.empty())
+            Check(std::string(error.what()).find(required_diagnostic) != std::string::npos,
+                  what + " diagnostic names " + required_diagnostic);
     }
     std::filesystem::remove(path);
 }
@@ -152,6 +156,49 @@ int main() {
         }
     }
 
+    const std::string large_cylinder_path = WriteConfig(R"(scene:
+  large_cylinder:
+    enabled: false
+    shape: cylinder
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 5.1
+    height_m: 6.2
+)");
+    const PlannerConfig large_cylinder = LoadPlannerConfig(large_cylinder_path);
+    std::filesystem::remove(large_cylinder_path);
+    Check(large_cylinder.scene.size() == 1, "large disabled cylinder parses");
+    if (large_cylinder.scene.size() == 1) {
+        Check(std::holds_alternative<MountCylinder>(large_cylinder.scene[0].geometry),
+              "large disabled cylinder selects cylinder geometry");
+    }
+    if (large_cylinder.scene.size() == 1 &&
+        std::holds_alternative<MountCylinder>(large_cylinder.scene[0].geometry)) {
+        const auto& cylinder = std::get<MountCylinder>(large_cylinder.scene[0].geometry);
+        Check(cylinder.radius_m == 5.1 && cylinder.height_m == 6.2,
+              "large cylinder dimensions are retained");
+    }
+
+    const std::string large_box_path = WriteConfig(R"(scene:
+  large_box:
+    enabled: false
+    shape: box
+    center_mount_m: [0.0, 0.0, 0.0]
+    half_extent_m: [5.1, 6.2, 7.3]
+)");
+    const PlannerConfig large_box = LoadPlannerConfig(large_box_path);
+    std::filesystem::remove(large_box_path);
+    Check(large_box.scene.size() == 1, "large disabled box parses");
+    if (large_box.scene.size() == 1) {
+        Check(std::holds_alternative<AxisAlignedBox>(large_box.scene[0].geometry),
+              "large disabled box selects box geometry");
+    }
+    if (large_box.scene.size() == 1 &&
+        std::holds_alternative<AxisAlignedBox>(large_box.scene[0].geometry)) {
+        const auto& box = std::get<AxisAlignedBox>(large_box.scene[0].geometry);
+        Check(Near(box.half_extent, Eigen::Vector3d(5.1, 6.2, 7.3)),
+              "large box dimensions are retained");
+    }
+
     ExpectReject(R"(scene:
   torso:
     enabled: true
@@ -162,10 +209,17 @@ int main() {
     ExpectReject(R"(scene:
   torso:
     enabled: true
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 0.2
+    height_m: 0.4
+)", "missing shape is rejected", "obstacles.scene.torso.shape");
+    ExpectReject(R"(scene:
+  torso:
+    enabled: true
     shape: cylinder
     center_mount_m: [0.0, 0.0, 0.0]
     radius_m: 0.2
-)", "missing shape key is rejected");
+)", "missing height is rejected", "obstacles.scene.torso");
     ExpectReject(R"(scene:
   torso:
     enabled: true
@@ -175,6 +229,38 @@ int main() {
     height_m: 0.4
     ignored: 1
 )", "extra shape key is rejected");
+    ExpectReject(R"(scene:
+  torso:
+    enabled: true
+    shape: cylinder
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 0.2
+    height_m: 0.4
+  torso:
+    enabled: true
+    shape: cylinder
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 0.2
+    height_m: 0.4
+)", "duplicate scene id is rejected", "obstacles.scene.torso");
+    ExpectReject(R"(scene:
+  torso:
+    enabled: true
+    shape: cylinder
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 0.2
+    radius_m: 0.3
+    height_m: 0.4
+)", "duplicate radius is rejected", "obstacles.scene.torso.radius_m");
+    ExpectReject(R"(scene:
+  torso:
+    enabled: true
+    enabled: false
+    shape: cylinder
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 0.2
+    height_m: 0.4
+)", "duplicate enabled is rejected", "obstacles.scene.torso.enabled");
     ExpectReject("scene: []", "non-map scene is rejected");
     ExpectReject(R"(scene:
   torso:

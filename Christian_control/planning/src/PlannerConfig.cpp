@@ -28,6 +28,27 @@ std::string Join(const std::vector<std::string>& names) {
     return joined.str();
 }
 
+std::string MappingKey(const YAML::Node& key, const std::string& location) {
+    if (!key || !key.IsScalar())
+        Fail(location + " keys must be strings");
+    try {
+        return key.as<std::string>();
+    } catch (const YAML::Exception&) {
+        Fail(location + " keys must be strings");
+    }
+}
+
+void RequireNoDuplicateKeys(const YAML::Node& table, const std::string& location) {
+    if (!table || !table.IsMap())
+        Fail(location + " must be a table");
+    std::set<std::string> seen;
+    for (const auto& entry : table) {
+        const std::string key = MappingKey(entry.first, location);
+        if (!seen.insert(key).second)
+            Fail(location + "." + key + " is duplicated");
+    }
+}
+
 // Every expected key present, and no others. Reporting BOTH lists in one
 // message is what turns a typo into a one-read fix: a misspelt key shows up
 // as its correct name missing AND the misspelling extra, side by side.
@@ -35,9 +56,10 @@ void RequireExactKeys(const YAML::Node& table, const std::set<std::string>& expe
                       const std::string& location) {
     if (!table || !table.IsMap())
         Fail(location + " must be a table");
+    RequireNoDuplicateKeys(table, location);
     std::set<std::string> actual;
     for (const auto& entry : table)
-        actual.insert(entry.first.as<std::string>());
+        actual.insert(MappingKey(entry.first, location));
 
     std::vector<std::string> missing;
     std::vector<std::string> extra;
@@ -208,8 +230,9 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     const YAML::Node scene = obstacles["scene"];
     if (!scene || !scene.IsMap())
         Fail("obstacles.scene must be a table");
+    RequireNoDuplicateKeys(scene, "obstacles.scene");
     for (const auto& entry : scene) {
-        const std::string id = entry.first.as<std::string>();
+        const std::string id = MappingKey(entry.first, "obstacles.scene");
         const YAML::Node object = entry.second;
         const std::string location = "obstacles.scene." + id;
         if (!object || !object.IsMap())
