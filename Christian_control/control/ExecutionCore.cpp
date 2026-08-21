@@ -13,6 +13,7 @@
 #include <stdexcept>
 
 #include "Frames.h"
+#include "Kinematics.h"
 
 namespace
 {
@@ -34,7 +35,8 @@ ArmExecutionCore::ArmExecutionCore(DualArmKinematics& model,
                                    const ExecutionConfig& execution_config,
                                    CartesianTrajectoryMailbox& mailbox,
                                    double nominal_dt_s)
-    : config_(Validated(execution_config)),
+    : model_(model),
+      config_(Validated(execution_config)),
       nominal_dt_s_(nominal_dt_s),
       // Construction-time snapshot: the overrun definition is compiled
       // policy (Config.h) not yet represented in ExecutionConfig; it is
@@ -47,6 +49,21 @@ ArmExecutionCore::ArmExecutionCore(DualArmKinematics& model,
     if (!std::isfinite(nominal_dt_s_) || nominal_dt_s_ <= 0.0)
         throw std::invalid_argument(
             "ArmExecutionCore: nominal_dt_s must be finite and > 0");
+}
+
+CartesianPose ArmExecutionCore::CommandedTcpMount()
+{
+    if (!seeded_)
+        throw std::logic_error("ArmExecutionCore::CommandedTcpMount before Seed");
+    if (stop_pending_)
+        throw std::logic_error(
+            "ArmExecutionCore::CommandedTcpMount before ResolveStop");
+    Eigen::Matrix<double, 7, 1> commanded_rad;
+    for (int i = 0; i < kNumJoints; ++i)
+        commanded_rad[i] = commanded_deg_[i] * kDegToRad;
+    const Pose pose =
+        model_.ToolPoseInMount(model_.controlled_arm(), commanded_rad);
+    return CartesianPose{pose.position, pose.rotation};
 }
 
 void ArmExecutionCore::Seed(const JointVector& measured_position_deg,

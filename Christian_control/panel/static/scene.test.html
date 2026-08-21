@@ -1,171 +1,54 @@
 <!doctype html>
 <meta charset="utf-8">
-<title>scene.js — eye check</title>
+<title>scene.js — TCP marker eye check</title>
 <link rel="stylesheet" href="panel.css">
 <style>
   body { margin: 0; padding: 14px; }
-  h1 { font-size: 13px; letter-spacing: 0.09em; text-transform: uppercase; margin: 0 0 4px; }
-  .lede { font-size: 12px; color: var(--ink-dim); max-width: 78ch; margin: 0 0 12px; }
-  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 12px; align-items: start; }
-  .holder { position: relative; height: 560px; border: 1px solid var(--rule); background: var(--ground); }
+  h1 { font-size: 13px; letter-spacing: 0.09em; text-transform: uppercase; }
+  .holder { height: 560px; border: 1px solid var(--rule); background: var(--ground); }
   canvas { display: block; width: 100%; height: 100%; }
-  .controls { background: var(--panel); border: 1px solid var(--rule); padding: 10px 12px; }
-  .joint { display: grid; grid-template-columns: 2.2rem 1fr 4.5rem; gap: 8px; align-items: center; margin-bottom: 6px; }
-  .joint label { font-size: 11px; color: var(--ink-dim); }
-  .joint output { font-family: var(--num-font); font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
-  .buttons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  button { font-family: var(--label-font); font-size: 11px; letter-spacing: 0.08em; padding: 5px 9px;
-           background: var(--ground); border: 1px solid var(--rule); color: var(--ink); cursor: pointer; }
-  .note { font-size: 11px; color: var(--ink-dim); margin-top: 10px; }
-  .bad { color: var(--warn); }
+  .buttons { display: flex; gap: 6px; margin-top: 10px; }
 </style>
 
-<h1>scene.js — eye check</h1>
-<p class="lede">
-  No server, no robot. The DH table below is the real generated one for the right
-  arm, pasted in, so this page renders exactly what the panel renders. Drag to
-  orbit, wheel to zoom. Use it to check that the arm looks like an arm, that the
-  commanded ghost separates from the measured arm when you offset it, and that
-  the dimension callout stays legible at small sizes.
-</p>
-
-<div class="layout">
-  <div class="holder"><canvas id="scene"></canvas></div>
-  <div class="controls">
-    <div id="joints"></div>
-    <div class="buttons">
-      <button id="zero">ZERO</button>
-      <button id="reach">REACH</button>
-      <button id="fold">FOLD</button>
-      <button id="offset">OFFSET COMMAND</button>
-      <button id="obstacle">OBSTACLE</button>
-      <button id="clearance">CLEARANCE</button>
-      <button id="left">SECOND ARM</button>
-      <button id="nan" class="bad">NaN ROW</button>
-      <button id="empty">NOTHING</button>
-    </div>
-    <p class="note" id="note">Measured and commanded coincide, so only one arm is visible.</p>
-  </div>
+<h1>scene.js — runtime TCP marker eye check</h1>
+<p>No server and no robot. This page supplies mount-frame telemetry points,
+not joints or a browser kinematic model.</p>
+<div class="holder"><canvas id="scene"></canvas></div>
+<div class="buttons">
+  <button id="together">COINCIDENT</button>
+  <button id="apart">SEPARATED</button>
+  <button id="obstacle">TORSO</button>
+  <button id="empty">EMPTY</button>
 </div>
 
 <script type="module">
 import { createScene } from './scene.js';
 
-// The right arm's generated table (planner_bridge/build/config/dh_params_tool.yaml).
-// Copied rather than fetched so this page needs no server at all.
-const DH_RIGHT = [
-  { joint_id: 1, joint_type: 'continuous', a: 0.0, alpha: 1.5707963267948966, d: -0.2848103248984093, theta_offset: 0.0 },
-  { joint_id: 2, joint_type: 'revolute',   a: 0.0, alpha: 1.5707963267948966, d: -0.01174877315393466, theta_offset: 3.141592653589793 },
-  { joint_id: 3, joint_type: 'continuous', a: 0.0, alpha: 1.5707963267948966, d: -0.42075974316452047, theta_offset: 3.141592653589793 },
-  { joint_id: 4, joint_type: 'revolute',   a: 0.0, alpha: 1.5707963267948966, d: -0.012749665585716052, theta_offset: 3.141592653589793 },
-  { joint_id: 5, joint_type: 'continuous', a: 0.0, alpha: 1.5707963267948966, d: -0.3143599924117288, theta_offset: 3.141592653589793 },
-  { joint_id: 6, joint_type: 'revolute',   a: 0.0, alpha: 1.5707963267948966, d: -0.0003481574062934034, theta_offset: 3.141592653589793 },
-  { joint_id: 7, joint_type: 'continuous', a: 0.0, alpha: 3.141592653589793, d: -0.28745503985179127, theta_offset: 3.141592653589793 },
-];
-
 const scene = createScene(document.getElementById('scene'));
-scene.setDh('right', {
-  joints: DH_RIGHT,
-  mount_from_base: { xyz: [0, 0, 0], rpy: [0, 0, 0] },
-});
 scene.setSelectedArm('right');
 
-const POSES = {
-  zero:  [0, 0, 0, 0, 0, 0, 0],
-  reach: [30, 45, -20, 60, 10, -35, 15],
-  fold:  [0, 100, 0, 140, 0, -80, 0],
+function telemetry(measured, commanded) {
+  return {
+    measured_tcp_x_mount_m: measured[0],
+    measured_tcp_y_mount_m: measured[1],
+    measured_tcp_z_mount_m: measured[2],
+    commanded_tcp_x_mount_m: commanded[0],
+    commanded_tcp_y_mount_m: commanded[1],
+    commanded_tcp_z_mount_m: commanded[2],
+  };
+}
+
+document.getElementById('together').onclick = () =>
+  scene.setTelemetry('right', telemetry([0.35, -0.4, 0.55], [0.35, -0.4, 0.55]));
+document.getElementById('apart').onclick = () =>
+  scene.setTelemetry('right', telemetry([0.35, -0.4, 0.55], [0.48, -0.28, 0.62]));
+document.getElementById('obstacle').onclick = () =>
+  scene.setObstacles([{ id: 'torso', enabled: true, shape: 'cylinder',
+    center_mount_m: [0, 0, 0.35], radius_m: 0.2, height_m: 0.7 }]);
+document.getElementById('empty').onclick = () => {
+  scene.setTelemetry('right', null);
+  scene.setObstacles([]);
 };
 
-let angles = POSES.reach.slice();
-let commandOffset = 0;
-let secondArm = false;
-
-const jointsHost = document.getElementById('joints');
-const outputs = [];
-for (let j = 0; j < 7; j++) {
-  const row = document.createElement('div');
-  row.className = 'joint';
-  const label = document.createElement('label');
-  label.textContent = `J${j + 1}`;
-  label.htmlFor = `j${j}`;
-  const slider = document.createElement('input');
-  slider.type = 'range';
-  slider.id = `j${j}`;
-  slider.min = -180; slider.max = 180; slider.step = 1;
-  slider.value = angles[j];
-  const out = document.createElement('output');
-  slider.addEventListener('input', () => {
-    angles[j] = Number(slider.value);
-    push();
-  });
-  row.append(label, slider, out);
-  jointsHost.appendChild(row);
-  outputs.push({ slider, out });
-}
-
-function push(note) {
-  const measured = {};
-  const commanded = {};
-  for (let j = 0; j < 7; j++) {
-    measured[`meas_j${j + 1}`] = angles[j];
-    commanded[`cmd_j${j + 1}`] = angles[j] + commandOffset;
-    outputs[j].slider.value = angles[j];
-    outputs[j].out.textContent = angles[j].toFixed(0) + '°';
-  }
-  // A desired point a little off the tool, so the dimension callout has
-  // something to measure.
-  const row = { ...measured, ...commanded, pd_x: 0.45, pd_y: -0.25, pd_z: 0.55 };
-  scene.setTelemetry('right', row);
-  if (secondArm) {
-    const other = {};
-    for (let j = 0; j < 7; j++) {
-      other[`meas_j${j + 1}`] = angles[j] * 0.6;
-      other[`cmd_j${j + 1}`] = angles[j] * 0.6;
-    }
-    scene.setDh('left', DH_RIGHT);
-    scene.setTelemetry('left', other);
-  }
-  if (note) document.getElementById('note').textContent = note;
-}
-
-const on = (id, fn) => document.getElementById(id).addEventListener('click', fn);
-
-on('zero',  () => { angles = POSES.zero.slice();  push('Zero configuration.'); });
-on('reach', () => { angles = POSES.reach.slice(); push('A reaching pose.'); });
-on('fold',  () => { angles = POSES.fold.slice();  push('Folded, to check self-overlap.'); });
-on('offset', () => {
-  commandOffset = commandOffset ? 0 : 8;
-  push(commandOffset
-    ? 'Command offset by 8° per joint: the ghosted arm should separate visibly.'
-    : 'Command matches measurement again.');
-});
-on('obstacle', () => {
-  scene.setObstacle({ arm: 'right', centre: [0.5, 0.0, 0.3], halfExtent: [0.05, 0.05, 0.05] });
-  push('An axis-aligned box, the only obstacle the planner supports.');
-});
-on('clearance', () => {
-  scene.setClearance({ arm: 'right', x: 0.4, y: -0.1, z: 0.35 }, 0.062);
-  push('Minimum clearance — a property of the plan, not a live measurement.');
-});
-on('left', () => {
-  secondArm = !secondArm;
-  if (!secondArm) scene.setTelemetry('left', null);
-  push(secondArm ? 'Both arms drawn in one scene.' : 'Second arm removed.');
-});
-on('nan', () => {
-  scene.setTelemetry('right', {
-    meas_j1: null, meas_j2: 0, meas_j3: null, meas_j4: 0,
-    meas_j5: 0, meas_j6: 0, meas_j7: 0, pd_x: null, pd_y: null, pd_z: null,
-  });
-  document.getElementById('note').textContent =
-    'A row with nulls must draw NO arm — never an arm folded at the origin.';
-});
-on('empty', () => {
-  scene.setTelemetry('right', null);
-  scene.setTelemetry('left', null);
-  document.getElementById('note').textContent =
-    'Nothing at all: the empty state, not a blank canvas.';
-});
-
-push();
+document.getElementById('apart').click();
 </script>

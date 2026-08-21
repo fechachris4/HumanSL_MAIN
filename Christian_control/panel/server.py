@@ -229,9 +229,6 @@ class _Handler(BaseHTTPRequestHandler):
                     "path": str(path) if path else None,
                     "lines": telemetry.tail_log_lines(path, count) if path else [],
                 })
-            elif route == "/api/dh":
-                arm = (query.get("arm") or ["right"])[0]
-                self._json(dh.read(arm))
             elif route == "/api/diagnose":
                 # Plain text, so it is readable in a terminal with curl and
                 # pasteable without unwrapping JSON.
@@ -496,8 +493,7 @@ def status_snapshot() -> dict:
         "freshness": freshness,
         "session": session.status(),
         "goal_arms": plan.session_arms(),
-        "dh": {arm: {k: v for k, v in dh.read(arm).items() if k != "joints"}
-               for arm in paths.ARMS},
+        "dh": {arm: dh.read(arm) for arm in paths.ARMS},
         "replay": replay_active(),
         "hardware": True,  # there is no simulator in this repository
         "wall_ms": _now_ms(),

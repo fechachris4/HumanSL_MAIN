@@ -197,3 +197,10 @@ add_execution_core_to(expand_run_poses)
 add_executable(print_dual_arm_fk tools/print_dual_arm_fk.cpp)
 add_execution_core_to(print_dual_arm_fk)
 
+include(CTest)
+if (BUILD_TESTING)
+    add_executable(test_runtime_tcp_telemetry
+            tests/test_runtime_tcp_telemetry.cpp)
+    add_execution_core_to(test_runtime_tcp_telemetry)
+    add_test(NAME runtime_tcp_telemetry COMMAND test_runtime_tcp_telemetry)
+endif ()

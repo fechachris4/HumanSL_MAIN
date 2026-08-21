@@ -19,10 +19,6 @@ CONFIG_H = CONTROL / "Config.h"
 CONFIG_H_BACKUP = CONFIG_H.with_suffix(".h.panel.bak")
 CONTROLLER_BUILD = RUNTIME / "build"
 CONTROLLER_BIN = CONTROLLER_BUILD / "controller"
-# Built by control/, into the runtime build tree because runtime adds that
-# directory. The browser's scene checks its own forward kinematics against it.
-PRINT_DUAL_ARM_FK = CONTROLLER_BUILD / "control" / "print_dual_arm_fk"
-
 PLANNING = CHRISTIAN_CONTROL / "planning"
 BRIDGE_SRC = PLANNING / "src"
 BRIDGE_OPTIMISATION = PLANNING / "optimisation"
@@ -34,12 +30,10 @@ JOINT_LIMITS_YAML = PLANNING / "config" / "joint_limits.yaml"
 RUN_SESSION_SH = PLANNING / "scripts" / "run_session.sh"
 
 URDF = CHRISTIAN_CONTROL / "model" / "GEN3_dual_mounted.urdf"
-MOUNTING_YAML = CHRISTIAN_CONTROL / "model" / "dual_arm_mounting.yaml"
 
-# The controller build's nested planner target generates the DH tables the
-# browser uses for forward kinematics. run_session.sh checks these against the
-# URDF for staleness; the right arm is described to the tool frame, the left to
-# the flange.
+# The controller build's nested planner target generates the planner's DH
+# tables. The panel reports only their existence/staleness; they never enter
+# browser rendering.
 DH_YAML = {
     "right": CONTROLLER_BUILD / "planning" / "config" / "dh_params_tool.yaml",
     "left": CONTROLLER_BUILD / "planning" / "config" / "dh_params_flange.yaml",

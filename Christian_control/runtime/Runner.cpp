@@ -23,6 +23,7 @@ namespace
 {
     constexpr int NUM_JOINTS = std::tuple_size_v<JointVector>;
     constexpr double kRadToDeg = 180.0 / M_PI;
+    constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 
     struct TakeoverStop
     {
@@ -41,7 +42,8 @@ namespace
                     const ControllerStatus& status,
                     const RobotState& state,
                     const MeasuredCartesianState& measured,
-                    const PoseReference& reference)
+                    const PoseReference& reference,
+                    bool cartesian_available = true)
     {
         for (int i = 0; i < 3; ++i)
         {
@@ -103,6 +105,11 @@ namespace
             s.cart_ref_quat_world_xyzw[i] = ref_q.coeffs()[i];
             s.cart_measured_quat_world_xyzw[i] = measured_q.coeffs()[i];
         }
+        for (int i = 0; i < 3; ++i) {
+            s.measured_tcp_mount_m[i] = cartesian_available
+                ? measured.ee_pose_mount.position_m[i] : kNaN;
+            s.commanded_tcp_mount_m[i] = kNaN;
+        }
         s.world_fresh = state.world_fresh;
         s.world_mount_twist_valid = state.world_mount_twist_valid;
         s.command_frame_id = command_frame_id;
@@ -113,7 +120,7 @@ namespace
     }
 
     // Takeover rows run before world measurement/reference generation. They
-    // use the same robot/actuation fields and leave format-13 Cartesian
+    // use the same robot/actuation fields and leave Cartesian
     // evidence at its explicit default values.
     void FillSample(LoopLogSample& s, const k_api::BaseCyclic::Feedback& fb,
                     std::uint32_t command_frame_id,
@@ -123,7 +130,7 @@ namespace
     {
         FillSample(s, fb, command_frame_id, commanded_deg,
                    commanded_velocity_deg_s, status, RobotState{},
-                   MeasuredCartesianState{}, PoseReference{});
+                   MeasuredCartesianState{}, PoseReference{}, false);
     }
 } // namespace
 
@@ -589,6 +596,13 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 log.push(sample);
                 break;
             }
+            // UI-only canonical FK: transmission and stop resolution are
+            // complete. Selected stop paths above skip this work.
+            const CartesianPose commanded_tcp_mount =
+                core.CommandedTcpMount();
+            for (int i = 0; i < 3; ++i)
+                sample.commanded_tcp_mount_m[i] =
+                    commanded_tcp_mount.position_m[i];
             log.push(sample);
 
             // Fixed-rate pacing on a grid (sleep_until, so errors don't add

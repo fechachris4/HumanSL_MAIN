@@ -86,7 +86,7 @@
       <section class="card scene-card">
         <div class="card-head">
           <h2>Scene</h2>
-          <span class="card-note">mount frame · world equals mount · no Vicon</span>
+          <span class="card-note">mount frame · runtime TCP markers</span>
         </div>
         <div class="scene-holder">
           <canvas id="scene" class="scene"></canvas>
@@ -94,7 +94,6 @@
         <div class="legend">
           <span class="legend-item"><i class="swatch swatch-meas"></i>measured</span>
           <span class="legend-item"><i class="swatch swatch-ask"></i>commanded</span>
-          <span class="legend-item"><i class="swatch swatch-plan"></i>plan</span>
           <span class="legend-item" id="clearance-note">clearance is a property of the plan; nothing measures it live</span>
         </div>
         <div class="scene-editor" id="scene-torso-editor">
@@ -127,8 +126,7 @@
           </div>
           <div id="error-rows"></div>
           <p class="card-foot" id="world-frame-note">
-            End-effector error is in the world frame. World equals mount today,
-            so this is the base-frame number; it separates when Vicon is wired.
+            Controller-reported end-effector error in the world frame.
           </p>
         </section>
 
@@ -415,7 +413,7 @@
         <div class="field-row" id="fixed-pose-row" hidden>
           <label class="field inline">
             <input type="checkbox" id="fixed-identity" checked>
-            <span class="field-label">world = mount (identity)</span>
+            <span class="field-label">fixed world pose (identity)</span>
           </label>
           <label class="field inline" id="fixed-pose-fields" hidden>
             <span class="field-label">world_T_mount</span>

@@ -268,7 +268,7 @@ function slotScenario(which) {
 const rowHost = document.getElementById("rows");
 const rows = {
   position: createErrorRow({
-    label: "position error (world frame — world = mount, no Vicon)",
+    label: "position error (controller world frame)",
     unit: "m", decimals: 4,
     bands: [{ at: 0.001, name: "arrival" }, { at: 0.05, name: "replan advised" }],
   }),

@@ -34,7 +34,7 @@ def find_default_csv():
 def has_exchange_timestamps(meta, columns):
     """Whether a log has both clocks required for timestamp matching.
 
-    The preamble version describes the full schema, but formats 2 through 13
+    The preamble version describes the full schema, but formats 2 through 14
     all retain these two columns with the same semantics. Unknown, malformed,
     and legacy versions deliberately fall back even if a file happens to
     contain similarly named columns, because their timestamp semantics are
@@ -49,5 +49,5 @@ def has_exchange_timestamps(meta, columns):
         log_format = int(meta.get("log_format"))
     except (AttributeError, TypeError, ValueError):
         return False
-    # The current writer emits 13 (world-Cartesian reference evidence).
-    return 2 <= log_format <= 13 and "t_send_s" in columns and "t_recv_s" in columns
+    # The current writer emits 14 (canonical mount-frame TCP telemetry).
+    return 2 <= log_format <= 14 and "t_send_s" in columns and "t_recv_s" in columns

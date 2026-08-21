@@ -245,3 +245,14 @@ add_bundled_eigen_to(make_synthetic_log)
 target_link_libraries(make_synthetic_log
         ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
 
+include(CTest)
+if (BUILD_TESTING)
+    add_executable(test_log_schema tests/test_log_schema.cpp Hardware.cpp)
+    target_include_directories(test_log_schema PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+            ${CONTROL_GENERATED_DIR})
+    add_bundled_eigen_to(test_log_schema)
+    target_link_libraries(test_log_schema
+            ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
+    add_test(NAME log_schema COMMAND test_log_schema)
+endif ()

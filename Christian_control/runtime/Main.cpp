@@ -146,7 +146,7 @@ void WriteCsvPreamble(const ParsedMainArgs& args,
                       const config::ArmConfig& arm_config,
                       std::ostream& csv) {
     csv << "# controller run config — parsers skip '#' lines\n";
-    csv << "# log_format = 13 (compiled)\n";
+    csv << "# log_format = 14 (compiled)\n";
     // Where this run's world pose came from. mount_source names the
     // producer that filled the slot; vicon_source still records what this
     // BINARY was built with, so an all-NaN vicon column can be told apart:

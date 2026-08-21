@@ -21,8 +21,7 @@
   The two sibling view modules own the drawing; this file owns what they are
   told:
 
-    scene.js     createScene(canvas, {frameLabel}) -> setDh, setTelemetry,
-                 setClearance,
+    scene.js     createScene(canvas, {frameLabel}) -> setTelemetry,
                  setSelectedArm, resize, draw. It reads its palette from
                  panel.css, so colour is defined in one place.
     readouts.js  createSlot -> {el, set, setLevel}
@@ -787,7 +786,7 @@ function buildRunView() {
   // defined once, in panel.css, and cannot drift between the drawing and the
   // page around it.
   state.scene = createScene($('scene'), {
-    frameLabel: 'mount frame · world = mount · no Vicon',
+    frameLabel: 'mount frame · runtime TCP telemetry',
   });
   call(state.scene, 'setSelectedArm', state.arm);
 
@@ -808,26 +807,6 @@ function buildRunView() {
   }
 
   $('other-arm-name').textContent = otherArm();
-  loadDhTables();
-}
-
-// Forward kinematics runs in the browser from the build-generated DH tables,
-// which is why the panel can draw an arm at all. If a table is stale against
-// the URDF the server says so and the scene is labelled, never silently drawn
-// from the wrong geometry.
-async function loadDhTables() {
-  for (const arm of ['right', 'left']) {
-    try {
-      const dh = await getJSON(`/api/dh?arm=${arm}`);
-      call(state.scene, 'setDh', arm, dh);
-      if (dh && dh.stale) {
-        setNotice('clearance-note', dh.reason
-          || `the ${arm} DH table is older than the URDF — rebuild planner_bridge before trusting the drawn arm`, 'is-warn');
-      }
-    } catch {
-      /* No table: the scene draws what it can and says nothing it cannot. */
-    }
-  }
 }
 
 /* ------------------------------------------------------- scene editor -- */
@@ -2481,7 +2460,7 @@ function renderRequired() {
     row('Vicon world pose', 'required',
         'the session needs a live world_T_mount; the controller holds until the first fresh sample');
   } else {
-    row('Vicon', 'unused', 'fixed mount: a constant world_T_mount is published in-process');
+    row('Vicon', 'unused', 'fixed world-pose source selected; runtime uses the configured pose');
   }
   if (choices.planning && choices.planner === 'baseline') {
     const dhReasons = Object.values(freshness?.dh || {})
@@ -2637,8 +2616,8 @@ function sessionChoices() {
   };
 }
 
-// null = identity (world = mount, the default the controller assumes with no
-// flag); an array of 7 finite numbers otherwise; a string = the typo, shown
+// null = identity for the selected fixed world pose; an array of 7 finite
+// numbers otherwise; a string = the typo, shown
 // to the operator instead of being sent anywhere.
 function fixedPoseChoice() {
   if ($('mount-select').value !== 'fixed' || $('fixed-identity').checked)

@@ -139,6 +139,7 @@ struct CartesianPose {
 // Mount pose/twist and measured arm joints. Every quantity is expressed in
 // Vicon world W; the controller law never performs another frame conversion.
 struct MeasuredCartesianState {
+    CartesianPose ee_pose_mount; // same canonical FK result, before W_T_M
     CartesianPose ee_pose_world;
     Eigen::Matrix<double, 6, 7> jacobian_world =
         Eigen::Matrix<double, 6, 7>::Zero();

@@ -128,7 +128,7 @@ joint-boundary handling, or servoing teardown.
 | `Runner.cpp` | 500 Hz timing, Kortex takeover/exchange, and teardown around the core |
 | `Actuation.cpp` | velocity-limited position integration and joint boundaries |
 | `Safety.cpp` / `StopPriority.h` | readiness, fault decoding, stop precedence, servoing restoration |
-| `Hardware.cpp` | Kortex exchange and format-13 telemetry |
+| `Hardware.cpp` | Kortex exchange and format-14 telemetry |
 | `ViconSource.cpp` | non-real-time Vicon acquisition and filtered Mount twist |
 | `Main.cpp` | per-arm construction, planner threads, and shutdown |
 
@@ -172,8 +172,9 @@ produce a typed trajectory.
 
 ## Telemetry
 
-Format 13 records the full explanation chain: Vicon pose/twist and age,
+Format 14 records the full explanation chain: Vicon pose/twist and age,
 reference identity/provenance/time, reference and measured world pose/twist,
+canonical measured and transmitted-command TCP positions in model mount,
 trajectory activation/rejection/completion/cancellation/replan edges, raw task
 and null-space velocities, requested/clamped/integrated joint commands, measured
 joints, command acknowledgements, faults, and timing. CSV writing is buffered on

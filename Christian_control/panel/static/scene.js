@@ -1,16 +1,9 @@
 //
-// scene.js — the panel's 3D view: both arms and the points the controller
-// publishes.
+// scene.js — mount-frame TCP telemetry, requested goal previews, and
+// planner-owned scene geometry.
 //
-// Everything here is drawing. Nothing in this file decides anything about
-// motion, and nothing it draws is a measurement the controller does not
-// already publish: the arms come from meas_j*/cmd_j* through the same DH
-// tables the planner uses, the desired point from pd_*, and configured
-// obstacles/clearance evidence.
-//
-// Frame: fixed-mount display coordinates equal world coordinates
-// (world_T_mount = I). The controller's pd_* and p_* columns are already
-// world-frame values, so the scene displays them directly.
+// The runtime owns robot kinematics. This file projects supplied points and
+// draws configured primitives; it contains no DH chain or robot FK.
 //
 // Rendering is a plain 2D canvas with its own perspective projection and a
 // painter's-algorithm depth sort. No WebGL and no three.js: the scene is
@@ -22,13 +15,6 @@
 //
 
 const DEG = Math.PI / 180;
-
-// The fixed rotation between the DH chain's root and base_link. It is a
-// convention, not data: PinocchioKinematicsAdapter::DhRootInBaseLink() is
-// Rx(pi) with no translation, and every hand-rolled DH chain in this
-// repository composes with it. Getting it wrong turns the arm upside down,
-// which is at least obvious.
-const DH_ROOT_ROLL_RAD = Math.PI;
 
 // Only four colours, because the scene draws nothing abnormal: the warning
 // amber and the stop red are reserved for states the panel's readouts judge,
@@ -43,10 +29,6 @@ const PALETTE_FALLBACK = {
 // ---------------------------------------------------------------
 // Small linear algebra. 4x4 row-major, plain arrays of sixteen.
 // ---------------------------------------------------------------
-
-function identity() {
-    return [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-}
 
 function multiply(a, b) {
     const out = new Array(16);
@@ -80,14 +62,6 @@ function rotationZ(angle) {
 
 function translation(x, y, z) {
     return [1, 0, 0, x, 0, 1, 0, y, 0, 0, 1, z, 0, 0, 0, 1];
-}
-
-function transformPoint(m, p) {
-    return [
-        m[0] * p[0] + m[1] * p[1] + m[2] * p[2] + m[3],
-        m[4] * p[0] + m[5] * p[1] + m[6] * p[2] + m[7],
-        m[8] * p[0] + m[9] * p[1] + m[10] * p[2] + m[11],
-    ];
 }
 
 // Column `index` of the rotation part: the frame's own x, y or z axis
@@ -134,76 +108,6 @@ function normalise(v) {
 }
 
 // ---------------------------------------------------------------
-// Forward kinematics
-// ---------------------------------------------------------------
-
-// One joint's Denavit-Hartenberg transform:
-//
-//     Rz(theta + theta_offset) * Tz(d) * Tx(a) * Rx(alpha)
-//
-// This is the convention generate_dh_params.cpp derives the tables under
-// and the one gpmp2's Arm chains: same order, same base roll. Checked
-// against tools/print_dual_arm_fk on 2026-08-11 — both arms, in base_link
-// and in mount, agree to within 6 micrometres, which is the floor the URDF's
-// five-significant-figure rotations impose. It also reproduces the
-// startup_position_m recorded in runs/2026-08-11/loop_log_right_20260811_153920.
-function jointTransform(joint, thetaRad) {
-    const offset = Number(joint.theta_offset) || 0;
-    const d = Number(joint.d) || 0;
-    const a = Number(joint.a) || 0;
-    const alpha = Number(joint.alpha) || 0;
-    let m = rotationZ(thetaRad + offset);
-    m = multiply(m, translation(0, 0, d));
-    m = multiply(m, translation(a, 0, 0));
-    return multiply(m, rotationX(alpha));
-}
-
-// Joint-frame origins along the chain and the tool frame at its end.
-//
-// Angles arrive in DEGREES because that is what the CSV carries. They also
-// arrive unwrapped — Kortex reports [0, 360) so a joint at -20 deg reads
-// 340 — which does not matter here, since only cos and sin of the angle are
-// used and both are periodic. Wrapping matters where a DIFFERENCE is taken
-// (State.h WrappedJointError), not here.
-//
-// Returns null rather than a half-drawn arm when the inputs are unusable, so
-// a row of NaN produces no arm instead of an arm at the origin.
-//
-// Exported without the canvas so the forward kinematics can be cross-checked
-// against tools/print_dual_arm_fk from a test runner.
-export function forwardKinematics(joints, anglesDeg, baseMatrix) {
-    if (!Array.isArray(joints) || joints.length === 0) return null;
-    if (!Array.isArray(anglesDeg) || anglesDeg.length < joints.length) return null;
-    let frame = multiply(baseMatrix || identity(), rotationX(DH_ROOT_ROLL_RAD));
-    const points = [originOf(frame)];
-    for (let i = 0; i < joints.length; i++) {
-        // A column the controller did not compute arrives as null, and
-        // Number(null) is 0 — finite, and indistinguishable from a joint
-        // genuinely at zero. Reject the empty values before converting, or a
-        // missing measurement is drawn as a real one.
-        const raw = anglesDeg[i];
-        if (raw === null || raw === undefined || raw === "") return null;
-        const angle = Number(raw);
-        if (!isFinite(angle)) return null;
-        frame = multiply(frame, jointTransform(joints[i], angle * DEG));
-        points.push(originOf(frame));
-    }
-    return { points: points, tool: frame };
-}
-
-// Trans(xyz) then Rot(rpy), fixed-axis roll-pitch-yaw, the way a URDF
-// <origin> composes.
-function mountTransform(placement) {
-    if (!placement) return identity();
-    const xyz = placement.xyz || [0, 0, 0];
-    const rpy = placement.rpy || [0, 0, 0];
-    let m = translation(xyz[0] || 0, xyz[1] || 0, xyz[2] || 0);
-    m = multiply(m, rotationZ(rpy[2] || 0));
-    m = multiply(m, rotationY(rpy[1] || 0));
-    return multiply(m, rotationX(rpy[0] || 0));
-}
-
-// ---------------------------------------------------------------
 // Goal preview — pure functions, exported so a test runner can pin
 // them without a canvas. Nothing in here talks to a server: a preview
 // is arithmetic on the numbers the operator typed, and that is the
@@ -213,7 +117,7 @@ function mountTransform(placement) {
 // The frames a goal block may declare, and what the viewer can do with
 // each. Anything else is refused BY NAME, saying which transform is
 // missing, rather than drawn somewhere misleading.
-const PREVIEW_FRAMES = ['mount', 'right_base', 'left_base'];
+const PREVIEW_FRAMES = ['mount'];
 
 // Two orthonormal vectors spanning the plane whose normal is `normal`.
 // The seed-picking is copied line for line from PlaneBasis in
@@ -305,7 +209,7 @@ export function parseGoalPreview(fields) {
 
 // R = Rz*Ry*Rx from degrees at a position — the composition goal.yaml,
 // the controller and print_dual_arm_fk share (and the same order
-// mountTransform composes in).
+// poseFromRpyDeg composes below).
 function poseFromRpyDeg(position, rpyDeg) {
     let m = translation(position[0], position[1], position[2]);
     m = multiply(m, rotationZ((rpyDeg[2] || 0) * DEG));
@@ -315,21 +219,19 @@ function poseFromRpyDeg(position, rpyDeg) {
 
 const CIRCLE_PREVIEW_SEGMENTS = 64;
 
-// A parsed preview carried into the mount frame, ready to draw:
+// A mount-frame preview ready to draw:
 //   { target, points|null, centre|null, triad|null }
 // `target` is the point goal, or the circle's start point (the rim at
-// start angle zero, exactly where GenerateCircle begins). `frameMatrix`
-// is mount<-declared-frame; the scene passes its own baseMatrix so the
-// preview and the arms can never disagree about the mounting.
-export function goalPreviewGeometry(preview, frameMatrix) {
-    const base = frameMatrix || identity();
+// start angle zero, exactly where GenerateCircle begins). Non-mount requests
+// are refused by parseGoalPreview before reaching this function.
+export function goalPreviewGeometry(preview) {
     if (preview.kind === 'point') {
         return {
-            target: transformPoint(base, preview.point),
+            target: preview.point.slice(),
             points: null,
             centre: null,
             triad: preview.rpyDeg
-                ? multiply(base, poseFromRpyDeg(preview.point, preview.rpyDeg))
+                ? poseFromRpyDeg(preview.point, preview.rpyDeg)
                 : null,
         };
     }
@@ -340,15 +242,15 @@ export function goalPreviewGeometry(preview, frameMatrix) {
         const rim = add(preview.centre,
             add(scale(basis.u, preview.radius * Math.cos(angle)),
                 scale(basis.v, preview.radius * Math.sin(angle))));
-        points.push(transformPoint(base, rim));
+        points.push(rim);
     }
     const start = add(preview.centre, scale(basis.u, preview.radius));
     return {
-        target: transformPoint(base, start),
+        target: start,
         points: points,
-        centre: transformPoint(base, preview.centre),
+        centre: preview.centre.slice(),
         triad: preview.rpyDeg
-            ? multiply(base, poseFromRpyDeg(start, preview.rpyDeg))
+            ? poseFromRpyDeg(start, preview.rpyDeg)
             : null,
     };
 }
@@ -358,31 +260,23 @@ export function goalPreviewGeometry(preview, frameMatrix) {
 // ---------------------------------------------------------------
 
 // A CSV cell that is 'nan', empty, absent or a non-number becomes null. It
-// must never become 0, because zero reads as perfect tracking: the panel
-// would draw a desired point sitting exactly on the tool and a 0.0 mm
-// dimension that nothing measured.
+// must never become 0, because zero would fabricate a TCP at the mount origin.
 function finite(value) {
     if (value === null || value === undefined || value === '') return null;
     const number = typeof value === 'number' ? value : Number(value);
     return isFinite(number) ? number : null;
 }
 
-function jointAngles(row, prefix) {
+function tcpMountPoint(row, kind) {
     if (!row) return null;
-    const angles = [];
-    for (let i = 1; i <= 7; i++) {
-        const value = finite(row[prefix + i]);
-        if (value === null) return null;
-        angles.push(value);
-    }
-    return angles;
-}
-
-function pointFromRow(row, prefix) {
-    if (!row) return null;
-    const x = finite(row[prefix + 'x']);
-    const y = finite(row[prefix + 'y']);
-    const z = finite(row[prefix + 'z']);
+    const fields = kind === 'measured'
+        ? ['measured_tcp_x_mount_m', 'measured_tcp_y_mount_m',
+           'measured_tcp_z_mount_m']
+        : ['commanded_tcp_x_mount_m', 'commanded_tcp_y_mount_m',
+           'commanded_tcp_z_mount_m'];
+    const x = finite(row[fields[0]]);
+    const y = finite(row[fields[1]]);
+    const z = finite(row[fields[2]]);
     if (x === null || y === null || z === null) return null;
     return [x, y, z];
 }
@@ -454,19 +348,16 @@ export function createScene(canvas, options) {
     const opts = options || {};
     const ctx = canvas.getContext('2d');
 
-    const frameLabel = opts.frameLabel || 'world frame · fixed mount (world = mount)';
+    const frameLabel = opts.frameLabel || 'mount frame · runtime TCP telemetry';
     // index.html carries a legend under the canvas, so the scene draws its own
     // only when it is standing alone (scene.test.html): two legends saying the
     // same thing would just cost canvas.
     const drawLegend = opts.legend === true;
 
     const state = {
-        dh: { right: null, left: null },
-        mounts: { right: null, left: null },
         row: { right: null, left: null },
         goalPreview: { right: null, left: null },
         obstacles: [],
-        clearance: null,
         selected: 'right',
     };
 
@@ -517,11 +408,6 @@ export function createScene(canvas, options) {
             mono: mono && mono.trim() ? mono.trim() : 'ui-monospace, Menlo, Consolas, monospace',
             label: label && label.trim() ? label.trim() : 'system-ui, -apple-system, sans-serif',
         };
-    }
-
-    function baseMatrix(arm) {
-        const placement = state.mounts[arm];
-        return placement ? mountTransform(placement) : null;
     }
 
     // ---- redraw scheduling -------------------------------------
@@ -621,8 +507,7 @@ export function createScene(canvas, options) {
         });
     }
 
-    // The desired point is drawn as an open cross rather than a filled dot,
-    // so it reads as a target and never as a joint.
+    // Open crosses distinguish supplied points from filled scene geometry.
     function addCross(items, basis, point, style) {
         const camera = toCamera(basis, point);
         if (camera.z < NEAR_M) return;
@@ -724,30 +609,8 @@ export function createScene(canvas, options) {
         return axes;
     }
 
-    function addArm(items, basis, arm, prefix, style) {
-        const joints = state.dh[arm];
-        const base = baseMatrix(arm);
-        if (!joints || !base) return null;
-        const angles = jointAngles(state.row[arm], prefix);
-        if (!angles) return null;
-        const chain = forwardKinematics(joints, angles, base);
-        if (!chain) return null;
-        addPolyline(items, basis, chain.points, style);
-        for (let i = 0; i < chain.points.length; i++) {
-            addDot(items, basis, chain.points[i], {
-                colour: style.colour,
-                radius: style.jointRadius === undefined ? 2 : style.jointRadius,
-                alpha: style.alpha,
-            });
-        }
-        return chain;
-    }
-
-    // A short triad at the tool, so the tool's orientation is visible even
-    // when no orientation error is being shown. Its axes are NOT lettered:
-    // the tool is exactly where the dimension callout and the desired marker
-    // already are, and three more characters there cost more than they say.
-    // The lettered triad at the mount origin names the axes for the scene.
+    // A short unlettered triad for a requested fixed-orientation preview.
+    // The lettered triad at the mount origin names the scene axes.
     function addTriad(items, basis, frame, style) {
         const origin = originOf(frame);
         for (let i = 0; i < 3; i++) {
@@ -800,10 +663,7 @@ export function createScene(canvas, options) {
         ctx.fillText(frameLabel, 10, viewport.height - 10);
         ctx.globalAlpha = 1;
 
-        // A legend, because "solid" and "ghosted" only mean something if the
-        // screen says which is which. The desired point shares the commanded
-        // colour on purpose: in this palette that one blue means "what was
-        // asked for", and both of them are that.
+        // Standalone test pages opt into this compact marker legend.
         if (drawLegend) {
             const legendY = 16;
             ctx.textAlign = 'right';
@@ -811,7 +671,6 @@ export function createScene(canvas, options) {
             ctx.fillText('measured', viewport.width - 10, legendY);
             ctx.fillStyle = palette.ask;
             ctx.fillText('commanded', viewport.width - 10, legendY + 14);
-            ctx.fillText('desired point', viewport.width - 10, legendY + 28);
         }
         ctx.restore();
 
@@ -853,12 +712,9 @@ export function createScene(canvas, options) {
         const basis = cameraBasis(view);
         const items = [];
         const notes = [];
-        // Points worth having on screen, collected for the one-time framing
-        // below: the SELECTED arm, its plan and its desired point. The grid
-        // and the SDF bounds are deliberately not in it — they are fixed
-        // volumes far larger than an arm, and framing them would shrink the
-        // arm to nothing — and neither is the unselected arm, which can be
-        // anywhere and would do the same.
+        // Selected-arm TCP and preview points drive one-time camera framing.
+        // Fixed scene volumes and the unselected arm do not, so they cannot
+        // shrink or move the operator's view unexpectedly.
         const framed = [];
 
         const axes = addGrid(items, basis);
@@ -866,61 +722,49 @@ export function createScene(canvas, options) {
             notes.push({ point: axes[i].v, text: axes[i].label, alpha: 0.5, size: 9 });
         }
 
-        // Both arms, the selected one at full weight. The unselected arm is
-        // still drawn — inter-arm proximity is only visible when both are on
-        // screen — but quieter, so the numbers panel and the scene agree
-        // about which arm is being read.
+        // Runtime-owned canonical mount-frame TCP positions. The browser
+        // projects markers only; it performs no robot forward kinematics.
         const arms = ['right', 'left'];
-        const measured = {};
         for (let i = 0; i < arms.length; i++) {
             const arm = arms[i];
             const selected = arm === state.selected;
-            const commanded = addArm(items, basis, arm, 'cmd_j', {
-                colour: palette.ask,
-                width: selected ? 3.5 : 2.5,
-                alpha: selected ? 0.55 : 0.3,
-                jointRadius: 0,
-            });
-            const chain = addArm(items, basis, arm, 'meas_j', {
-                colour: palette.ink,
-                width: selected ? 1.8 : 1.2,
-                alpha: selected ? 1 : 0.45,
-                jointRadius: selected ? 2.4 : 1.6,
-            });
-            if (chain) {
-                measured[arm] = chain;
-                if (selected) {
-                    for (let p = 0; p < chain.points.length; p++) framed.push(chain.points[p]);
-                }
-                addTriad(items, basis, chain.tool, {
+            const row = state.row[arm];
+            const measured = tcpMountPoint(row, 'measured');
+            const commanded = tcpMountPoint(row, 'commanded');
+
+            if (measured) {
+                addDot(items, basis, measured, {
                     colour: palette.ink,
-                    alpha: selected ? 0.8 : 0.35,
-                    length: 0.08,
+                    radius: selected ? 4 : 3,
+                    alpha: selected ? 1 : 0.45,
+                });
+                addCross(items, basis, measured, {
+                    colour: palette.ink,
+                    radius: selected ? 8 : 6,
+                    width: selected ? 1.6 : 1,
+                });
+                if (selected) framed.push(measured);
+                notes.push({
+                    point: measured, text: arm + ' measured TCP',
+                    colour: palette.ink, dx: 10, dy: 12,
                 });
             }
-            if (commanded && !chain) {
-                // Commanded without measured is worth seeing rather than
-                // hiding: it means the row carried no measured angles.
-                notes.push({
-                    point: originOf(commanded.tool),
-                    text: arm + ': commanded only',
+            if (commanded) {
+                addCross(items, basis, commanded, {
                     colour: palette.ask,
+                    radius: selected ? 8 : 6,
+                    width: selected ? 1.6 : 1,
+                });
+                if (selected) framed.push(commanded);
+                notes.push({
+                    point: commanded, text: arm + ' commanded TCP',
+                    colour: palette.ask, dx: 10, dy: -10,
                 });
             }
 
-            // The goal preview: what the TYPED, unsaved fields ask for,
-            // drawn in the ask colour and labelled as a preview so it can
-            // never be mistaken for a plan or a measurement. Dashed, for
-            // the same reason. The distance in the label is from this
-            // arm's measured tool to the target (the point, or the
-            // circle's start), in true 3D millimetres.
             const preview = state.goalPreview[arm];
             if (preview) {
-                const frameM = preview.frame === 'mount'
-                    ? identity()
-                    : baseMatrix(preview.frame === 'right_base' ? 'right' : 'left');
-                if (!frameM) continue;
-                const geometry = goalPreviewGeometry(preview, frameM);
+                const geometry = goalPreviewGeometry(preview);
                 if (selected) framed.push(geometry.target);
                 if (geometry.points) {
                     addPolyline(items, basis, geometry.points, {
@@ -934,11 +778,6 @@ export function createScene(canvas, options) {
                         radius: 2.5,
                         alpha: selected ? 0.8 : 0.4,
                     });
-                    notes.push({
-                        point: geometry.centre, text: 'centre',
-                        colour: palette.ask, alpha: 0.6, size: 9,
-                    });
-                    if (selected) framed.push(geometry.centre);
                 }
                 addCross(items, basis, geometry.target, {
                     colour: palette.ask,
@@ -953,59 +792,15 @@ export function createScene(canvas, options) {
                         width: 1.4,
                     });
                 }
-                const measuredChain = measured[arm];
-                const tool = measuredChain
-                    ? measuredChain.points[measuredChain.points.length - 1] : null;
-                const gap = tool
-                    ? formatMetres(norm(subtract(geometry.target, tool)))
-                    : 'no measured arm';
-                const what = geometry.points ? 'circle start' : 'goal';
                 notes.push({
                     point: geometry.target,
-                    text: arm + ' goal preview · ' + what + ' · ' + gap,
-                    colour: palette.ask,
-                    dx: 10,
-                    dy: -10,
-                    mono: true,
+                    text: arm + ' requested goal preview',
+                    colour: palette.ask, dx: 10, dy: -24, mono: true,
                 });
             }
         }
 
-        // The controller publishes desired and current points in world. In
-        // fixed-mount mode world_T_mount = I, so draw pd_* without inventing
-        // a second transform or error definition.
-        let desiredPoint = null;
-        const row = state.row[state.selected];
-        const desired = pointFromRow(row, 'pd_');
-        if (desired) {
-            framed.push(desired);
-            addCross(items, basis, desired, { colour: palette.ask, radius: 6 });
-            desiredPoint = desired;
-        }
-
-        if (desiredPoint) {
-            notes.push({
-                point: desiredPoint, text: 'desired', colour: palette.ask,
-                dx: 0, dy: 15, align: 'center',
-            });
-        }
-
         if (state.obstacles.length) drawObstacles(items, basis);
-        if (state.clearance) {
-            const point = state.clearance.point;
-            addDot(items, basis, point, { colour: palette.ink, radius: 3.5 });
-            addCross(items, basis, point, { colour: palette.ink, radius: 8, width: 1 });
-            notes.push({
-                point: point,
-                // Named as a property of the plan, because nothing measures
-                // clearance while the arm is moving.
-                text: 'plan min clearance ' + formatMetres(state.clearance.metres),
-                dx: 11,
-                dy: 10,
-                mono: true,
-            });
-        }
-
         items.sort(function (a, b) { return b.depth - a.depth; });
         for (let i = 0; i < items.length; i++) items[i].paint();
 
@@ -1060,12 +855,6 @@ export function createScene(canvas, options) {
                     [c[0] + h[0], c[1] + h[1], c[2] + h[2]], style);
             }
         }
-    }
-
-    function formatMetres(metres) {
-        if (metres === null || metres === undefined || !isFinite(metres)) return 'unknown';
-        const mm = metres * 1000;
-        return (mm >= 100 ? mm.toFixed(0) : mm.toFixed(1)) + ' mm';
     }
 
     // ---- orbit control -----------------------------------------
@@ -1130,17 +919,6 @@ export function createScene(canvas, options) {
     }
 
     return {
-        // joints is the `joints` array of /api/dh, or that whole response
-        // object — both are accepted so the caller need not unwrap it.
-        setDh: function (arm, joints) {
-            if (!known(arm)) return;
-            const payload = Array.isArray(joints) ? { joints } : joints;
-            const list = payload && payload.joints;
-            state.dh[arm] = Array.isArray(list) && list.length ? list : null;
-            state.mounts[arm] = payload && payload.mount_from_base
-                ? payload.mount_from_base : null;
-            schedule();
-        },
         // row is one parsed telemetry row, keys by CSV column NAME.
         setTelemetry: function (arm, row) {
             if (!known(arm)) return;
@@ -1173,28 +951,6 @@ export function createScene(canvas, options) {
                     return false;
                 })
                 : [];
-            schedule();
-        },
-        // point is in mount unless it carries {frame:'base', arm:...}.
-        setClearance: function (point, metres) {
-            if (!point) {
-                state.clearance = null;
-            } else {
-                const xyz = Array.isArray(point)
-                    ? point.map(Number)
-                    : [Number(point.x), Number(point.y), Number(point.z)];
-                if (!xyz.every(isFinite)) {
-                    state.clearance = null;
-                } else {
-                    const frame = !Array.isArray(point) && point.frame === 'base'
-                        ? baseMatrix(point.arm || state.selected)
-                        : identity();
-                    state.clearance = {
-                        point: transformPoint(frame, xyz),
-                        metres: finite(metres),
-                    };
-                }
-            }
             schedule();
         },
         setSelectedArm: function (arm) {

@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from Christian_control.panel import dh, paths
-
+from Christian_control.runtime.scripts import runlog
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
 
@@ -69,13 +68,11 @@ def test_cylinder_renderer_uses_mount_centre_radius_and_full_height():
     assert "setObstacles" in script
 
 
-def test_scene_uses_world_pd_directly_and_has_no_cached_plan_overlay():
+def test_scene_has_no_cached_plan_overlay():
     script = (STATIC / "scene.js").read_text()
     panel = (STATIC / "panel.js").read_text()
     plan = (STATIC.parent / "plan.py").read_text()
 
-    assert "const desired = pointFromRow(row, 'pd_');" in script
-    assert "transformPoint(baseMatrix(state.selected), desiredBase)" not in script
     assert "paintDimension" not in script
     assert "setPlan" not in script
     assert "setProgress" not in script
@@ -86,15 +83,40 @@ def test_scene_uses_world_pd_directly_and_has_no_cached_plan_overlay():
     assert "_LAST_PLAN" not in plan
 
 
-def test_mount_geometry_is_read_from_canonical_yaml_and_supplied_to_scene():
-    geometry = dh.parse_mounting_yaml(paths.MOUNTING_YAML.read_text())
-    assert geometry == {
-        "right": {"xyz": [0.0, -0.0375, 0.0], "rpy": [1.2085, 0.0, 0.0]},
-        "left": {"xyz": [0.0, 0.0375, 0.0], "rpy": [-1.2085, 0.0, 0.0]},
-    }
-
+def test_scene_uses_runtime_tcp_markers_and_has_no_browser_fk():
     scene = (STATIC / "scene.js").read_text()
-    assert "DEFAULT_MOUNT_FROM_BASE" not in scene
-    assert "0.0375" not in scene
-    assert "1.2085" not in scene
-    assert "mount_from_base" in scene
+    panel = (STATIC / "panel.js").read_text()
+    for forbidden in (
+        "forwardKinematics",
+        "jointTransform",
+        "DH_ROOT_ROLL_RAD",
+        "setDh",
+        "mount_from_base",
+        "meas_j1",
+        "cmd_j1",
+    ):
+        assert forbidden not in scene
+    assert "measured_tcp_x_mount_m" in scene
+    assert "commanded_tcp_x_mount_m" in scene
+    assert "/api/dh" not in panel
+
+
+def test_format_14_keeps_exchange_timestamps():
+    assert runlog.has_exchange_timestamps(
+        {"log_format": "14"}, {"t_send_s", "t_recv_s"})
+
+
+def test_commanded_tcp_fk_is_after_every_stop_exit():
+    runner = (STATIC.parents[1] / "runtime" / "Runner.cpp").read_text()
+    tail = runner[runner.index("const ExecutionStopDecision stop_decision") :]
+    query = tail.index("core.CommandedTcpMount()")
+    stops = (
+        "if (stop_decision.priority.reason != StopPriorityReason::kNone)",
+        "if (stop_decision.nonfinite_stop)",
+        "if (stop_decision.overrun_stop)",
+    )
+    for index, marker in enumerate(stops):
+        start = tail.index(marker)
+        end = tail.index(stops[index + 1]) if index + 1 < len(stops) else query
+        assert start < query
+        assert "break;" in tail[start:end]

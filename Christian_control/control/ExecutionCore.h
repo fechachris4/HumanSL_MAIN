@@ -173,8 +173,15 @@ public:
     ExecutionStopDecision ResolveStop(const JointVector& reply_position_deg,
                                       const AdapterHealth& health);
 
+    // Telemetry-only canonical FK for the integrated command last returned by
+    // Step. Runner calls this only after a successful exchange and a no-stop
+    // ResolveStop verdict, so display work cannot delay send or stop handling.
+    // Throws before Seed or while a Step still awaits ResolveStop.
+    CartesianPose CommandedTcpMount();
+
 private:
     // Immutable after construction.
+    DualArmKinematics& model_;
     ExecutionConfig config_;
     double nominal_dt_s_;
     double overrun_factor_; // construction-time config::kOverrunFactor

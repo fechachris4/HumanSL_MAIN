@@ -57,6 +57,9 @@ MeasuredCartesianState TrackingController::Measure(const RobotState& state)
             mount_twist_world);
 
     MeasuredCartesianState measured;
+    measured.ee_pose_mount = world_frames::ComposePose(
+        {mount_T_base.translation(), mount_T_base.rotation()},
+        {base.position, base.rotation});
     measured.ee_pose_world = world.ee_pose_world;
     measured.jacobian_world = world.jacobian_world;
     measured.ee_twist_world = world.ee_twist_world;
