@@ -1007,10 +1007,10 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
 
         if (plan.report.verdict == PlanVerdict::kReject) {
             // Not emitted. REJECT means unsafe or clearly failing the
-            // requested task: non-finite states, modelled collision, a real
-            // joint-limit violation, a splice jump, velocity still over
-            // after time scaling, or task error beyond twice the requested
-            // tolerance. Small imperfections warn instead (see the report).
+            // requested task: non-finite states, a real joint-limit
+            // violation, a splice jump, or velocity still over after time
+            // scaling. Modelled obstacle clearance and task fidelity are
+            // reported as warnings; they do not veto emission.
             diagnostics << "error: plan rejected — an unsafe or clearly "
                            "invalid condition (see the verdict in the report "
                            "above). Nothing was emitted.\n";

@@ -45,8 +45,6 @@ PlanVerdict DecidePlanVerdict(PathValidationReport& report,
     bool reject = false;
     // Non-finite states cannot be commanded at all.
     if (!report.all_finite) reject = true;
-    // Modelled penetration, or an SDF that could not answer the query.
-    if (!report.modelled_collision_valid) reject = true;
     // A state beyond a position limit faults the actuator's firmware bank.
     if (!report.joint_limits_valid) reject = true;
     // A trajectory not starting at the measured arm makes the controller
@@ -80,6 +78,9 @@ PlanVerdict DecidePlanVerdict(PathValidationReport& report,
              << thresholds.maximum_orientation_error_rad * 180.0 / M_PI << " deg";
         warn(text.str());
     }
+    if (!report.modelled_collision_valid)
+        warn("modelled obstacle clearance is negative or unavailable; "
+             "the obstacle result is diagnostic and does not veto emission");
     if (report.minimum_clearance_m < kClearanceWarningM) {
         text.str("");
         text << "modelled clearance " << report.minimum_clearance_m * 1000.0

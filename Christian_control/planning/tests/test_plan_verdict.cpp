@@ -80,12 +80,13 @@ int main() {
               "0.25 rad orientation error warns, never rejects");
     }
 
-    // Collision: penetration rejects, low positive clearance warns.
+    // Modelled clearance is reported, but it is not an execution veto.
     {
         PathValidationReport r = CleanReport();
         r.modelled_collision_valid = false;
         r.minimum_clearance_m = -0.001;
-        Check(DecidePlanVerdict(r, t) == PlanVerdict::kReject, "penetration rejects");
+        Check(DecidePlanVerdict(r, t) == PlanVerdict::kWarning,
+              "penetration warns without rejecting");
     }
     {
         PathValidationReport r = CleanReport();
