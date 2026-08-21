@@ -2,11 +2,7 @@
 #include <optional>
 #include <Eigen/Dense>
 #include <gpmp2/obstacle/SignedDistanceField.h>
-
-struct AxisAlignedBox {           // metres, `mount` frame
-    Eigen::Vector3d center;
-    Eigen::Vector3d half_extent;
-};
+#include "StaticScene.h"
 
 // Grid geometry, shared by MakeMountSdf and MountGridBounds so the two can
 // never disagree. Expressed in the `mount` frame (the URDF root, at the

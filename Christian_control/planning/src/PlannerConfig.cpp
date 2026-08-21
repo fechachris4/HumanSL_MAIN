@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -94,7 +95,9 @@ int Integer(const YAML::Node& table, const std::string& key,
 }
 
 Eigen::Vector3d ReadVector3(const YAML::Node& table, const std::string& key,
-                        const std::string& location, double minimum, double maximum) {
+                            const std::string& location,
+                            double minimum = -std::numeric_limits<double>::infinity(),
+                            double maximum = std::numeric_limits<double>::infinity()) {
     const std::string where = location + "." + key;
     const YAML::Node node = table[key];
     if (!node || !node.IsSequence() || node.size() != 3)
@@ -118,6 +121,34 @@ Eigen::Vector3d ReadVector3(const YAML::Node& table, const std::string& key,
         value[i] = component;
     }
     return value;
+}
+
+double PositiveNumber(const YAML::Node& table, const std::string& key,
+                      const std::string& location) {
+    const std::string where = location + "." + key;
+    double value = 0.0;
+    try {
+        value = table[key].as<double>();
+    } catch (const YAML::Exception&) {
+        Fail(where + " must be a number");
+    }
+    if (!std::isfinite(value))
+        Fail(where + " must be finite");
+    if (value <= 0.0)
+        Fail(where + " must be strictly positive (got " + std::to_string(value) + ")");
+    return value;
+}
+
+bool Boolean(const YAML::Node& table, const std::string& key,
+             const std::string& location) {
+    const std::string where = location + "." + key;
+    if (!table[key] || !table[key].IsScalar())
+        Fail(where + " must be true or false");
+    try {
+        return table[key].as<bool>();
+    } catch (const YAML::Exception&) {
+        Fail(where + " must be true or false");
+    }
 }
 
 std::uint64_t Fnv1a64(const std::string& bytes) {
@@ -169,11 +200,51 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     config.motion.waypoints = Integer(motion, "waypoints", "motion", 2, 200);
 
     const YAML::Node obstacles = root["obstacles"];
-    RequireExactKeys(obstacles, {"epsilon_dist_m", "collision_sigma"}, "obstacles");
+    RequireExactKeys(obstacles, {"epsilon_dist_m", "collision_sigma", "scene"}, "obstacles");
     config.optimizer.epsilon_dist_m =
         Number(obstacles, "epsilon_dist_m", "obstacles", 0.0, 1.0);
     config.optimizer.collision_sigma =
         Number(obstacles, "collision_sigma", "obstacles", 1e-9, 1.0);
+    const YAML::Node scene = obstacles["scene"];
+    if (!scene || !scene.IsMap())
+        Fail("obstacles.scene must be a table");
+    for (const auto& entry : scene) {
+        const std::string id = entry.first.as<std::string>();
+        const YAML::Node object = entry.second;
+        const std::string location = "obstacles.scene." + id;
+        if (!object || !object.IsMap())
+            Fail(location + " must be a table");
+        if (!object["shape"] || !object["shape"].IsScalar())
+            Fail(location + ".shape must be a string");
+        const std::string shape = object["shape"].as<std::string>();
+
+        NamedStaticObstacle obstacle;
+        obstacle.id = id;
+        obstacle.enabled = Boolean(object, "enabled", location);
+        if (shape == "cylinder") {
+            RequireExactKeys(object,
+                             {"enabled", "shape", "center_mount_m", "radius_m", "height_m"},
+                             location);
+            MountCylinder cylinder;
+            cylinder.center_mount_m = ReadVector3(object, "center_mount_m", location);
+            cylinder.radius_m = PositiveNumber(object, "radius_m", location);
+            cylinder.height_m = PositiveNumber(object, "height_m", location);
+            obstacle.geometry = cylinder;
+        } else if (shape == "box") {
+            RequireExactKeys(object,
+                             {"enabled", "shape", "center_mount_m", "half_extent_m"},
+                             location);
+            AxisAlignedBox box;
+            box.center = ReadVector3(object, "center_mount_m", location);
+            box.half_extent = ReadVector3(object, "half_extent_m", location);
+            if ((box.half_extent.array() <= 0.0).any())
+                Fail(location + ".half_extent_m must have strictly positive components");
+            obstacle.geometry = box;
+        } else {
+            Fail(location + ".shape must be box or cylinder (got " + shape + ")");
+        }
+        config.scene.push_back(std::move(obstacle));
+    }
 
     const YAML::Node smoothness = root["smoothness"];
     RequireExactKeys(smoothness, {"qc_scale"}, "smoothness");
@@ -252,6 +323,25 @@ std::string EffectiveConfigText(const PlannerConfig& config) {
     text << "  motion.waypoints         = " << config.motion.waypoints << "\n";
     text << "  obstacles.epsilon_dist_m = " << config.optimizer.epsilon_dist_m << "\n";
     text << "  obstacles.collision_sigma= " << config.optimizer.collision_sigma << "\n";
+    text << "  obstacles.scene.count    = " << config.scene.size() << "\n";
+    for (const NamedStaticObstacle& obstacle : config.scene) {
+        text << "  obstacles.scene." << obstacle.id << " = "
+             << (obstacle.enabled ? "enabled" : "disabled") << " "
+             << StaticObstacleShapeName(obstacle.geometry);
+        if (const auto* box = std::get_if<AxisAlignedBox>(&obstacle.geometry)) {
+            text << " center_mount_m=[" << box->center.x() << ", " << box->center.y()
+                 << ", " << box->center.z() << "] half_extent_m=["
+                 << box->half_extent.x() << ", " << box->half_extent.y() << ", "
+                 << box->half_extent.z() << "]";
+        } else {
+            const auto& cylinder = std::get<MountCylinder>(obstacle.geometry);
+            text << " center_mount_m=[" << cylinder.center_mount_m.x() << ", "
+                 << cylinder.center_mount_m.y() << ", " << cylinder.center_mount_m.z()
+                 << "] radius_m=" << cylinder.radius_m
+                 << " height_m=" << cylinder.height_m;
+        }
+        text << "\n";
+    }
     text << "  smoothness.qc_scale      = " << config.optimizer.qc_scale << "\n";
     text << "  goal.position_sigma_xyz  = [" << position.x() << ", " << position.y()
          << ", " << position.z() << "]\n";

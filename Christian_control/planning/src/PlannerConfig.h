@@ -16,7 +16,9 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
+#include "StaticScene.h"
 #include "TrajectoryOptimization.h"  // OptimizerTuning
 
 // How the plan is shaped in time. The defaults are the literals PlanSolver
@@ -74,6 +76,10 @@ struct PlannerConfig {
     std::uint64_t effective_ik_seed = 20260807;
     PathFollowingConfig path_following;
     OptimizerTuning optimizer;
+    // Named obstacle geometry, persisted once in config/planner.yaml. Every
+    // value is in the mount frame, in metres; enabled objects remain present
+    // when disabled so the panel does not lose an intentionally hidden shape.
+    std::vector<NamedStaticObstacle> scene;
 
     // Provenance: which file this came from, and a digest of its exact
     // bytes. Both are echoed on every run so a session log identifies the
