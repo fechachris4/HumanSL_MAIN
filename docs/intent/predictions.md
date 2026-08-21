@@ -683,3 +683,24 @@ edits. Prediction: he picks two separate commits (migration remainder first,
 then the verdict change), because he has consistently split commits by topic
 today (c28dd978 / a45fb7f3) and the migration was already verified.
 Actual: two commits. **Hit.**
+
+## 2026-08-20 — unbounded IK-gap seeding questions
+
+Prediction before asking: (1) he keeps waypoint priors tight everywhere,
+because the sigma work was deliberate and he frames GPMP2 as the solver that
+should fight through — though loosening at interpolated samples is my
+recommendation, so this one may be a miss; (2) closed-path edge runs wrap
+around rather than hard-fail; (3) hard-fail only when nothing at all solved.
+Actual: loosen priors at gaps (**miss** as predicted-primary), wrap-around
+(**hit**), fail only when no sample solved (**hit**).
+
+## 2026-08-21 — first planner visualisation to build
+
+Process failure: I asked before writing the prediction, so there is no
+prediction to score. Recording the answer only, and flagging the miss of
+process rather than back-filling a guess.
+
+Question: plan debugger / plan viewer only / text summary table / explain
+only. Actual: the plan debugger (my recommended option) — Cartesian plots
+plus joint angles against limits and per-sample IK success, accepting that
+it needs a diagnostic side-file from the planner.

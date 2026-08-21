@@ -7382,3 +7382,90 @@ i thought this would have reduced and replaced code
 ## 2026-08-20 19:19:15 BST
 
 commit this
+
+## 2026-08-20 19:23:42 BST
+
+The new logs show the IK change is working differently, but the planner is still being stopped before GPMP2 gets a chance.
+
+Previously it failed immediately at one IK sample:
+
+IK failed at sample 23 of 29
+
+After your change, it now survives individual failures, but it found 4 consecutive unresolved IK samples and your new rule only allows interpolation across gaps of up to 2, so initialization still hard-fails:
+
+path IK initialization failed: unresolved run of 4 sample(s)
+
+Also, the 1.2 mm GPMP2 path sigma is correctly active now. But it is irrelevant in this run because GPMP2 never receives the seed.
+
+So I would change the architecture one more step:
+
+IK succeeds → use solution
+IK fails → interpolate / hold previous as rough seed
+                 ↓
+              GPMP2
+                 ↓
+       final physical validation
+
+I would remove the arbitrary “maximum 2 unresolved samples” rejection. Four failed IK samples do not prove four Cartesian points are unreachable. They only prove your local IK initializer failed four times.
+
+The only IK failures that should probably stop before GPMP2 are cases where you cannot construct a finite, continuous seed at all, such as the first pose having no usable initialization. The final 5 mm Cartesian validator should decide whether GPMP2 actually managed to solve the requested path.
+
+## 2026-08-20 19:24:10 BST
+
+ask question before you go for the solutioon
+
+## 2026-08-20 19:39:57 BST
+
+you changes were mistakenly deleted i believe but are they still required
+
+## 2026-08-21 01:25:33 BST
+
+I want to test the planner and um basically see it, get it to work and see what the output actually looks like, what the output actually looks like without adding it to the controller. So I want to know what is the planner's inputs and its outputs.
+
+## 2026-08-21 01:29:57 BST
+
+is there a way to test the planner see visualisation of it and debu it visually maybe with a graph or a table like some sort of visualisation.
+
+## 2026-08-21 01:30:29 BST
+
+is there a way to test the planner see visualisation of it and debu it visually maybe with a graph or a table like some sort of visualisation. Like, there might not be any visualization on the report right now that allowed that for, but it would be useful for me, so I want to know, like, if there's anything that comes to mind that would be useful for me to see this.
+
+## 2026-08-21 01:43:11 BST
+
+what you are making is not working in you very own terminal
+
+## 2026-08-21 01:44:40 BST
+
+Improve the planner’s debugging workflow without changing planning behaviour, solver behaviour, IK behaviour, GPMP2 behaviour, validation thresholds, or architecture. Keep the existing `--debug-dir` mechanism, but make it useful for fast diagnosis of both successful and failed plans. For every planning attempt, print a short high-priority terminal summary first showing success/failure, failure stage if applicable, exact failed sample indices/range, path progress percentage, final Cartesian error, worst Cartesian error, minimum joint-limit margin, minimum collision clearance where available, and neighbouring successful samples around any failure. Write per-sample diagnostic data to the debug directory containing path index/progress, requested Cartesian pose, solved/FK Cartesian pose if available, position and orientation error, IK success/failure, joint configuration, joint-limit margins, collision clearance, and any relevant failure reason using values already produced by the planner rather than recomputing planner decisions in Python. Automatically generate a single easy-to-read planner overview image or HTML/report plus individual PNGs showing: a 3D requested path versus actual planned TCP path with start, goal, obstacles and failed samples clearly marked; Cartesian position/orientation error versus path progress; all seven joint trajectories against their limits with failure regions highlighted; and a compact per-sample table around the worst or failed region. Failed planning attempts must still preserve and visualise all useful intermediate samples rather than discarding them. Keep detailed configuration dumps, sigma values, hashes and similar low-priority information behind `--verbose` so normal debugging remains concise. Reuse the repository’s existing Python/matplotlib plotting conventions and integrate generated plots with the existing browser panel PNG discovery if practical. Do not introduce MuJoCo or a large new subsystem yet. The goal is that after one planner command I can immediately see what trajectory the planner attempted, exactly where it failed or became poor, and the most likely geometric/joint/collision reason, so debugging takes seconds rather than reading a long terminal dump.
+
+## 2026-08-21 02:11:45 BST
+
+I would make five bounded changes, without redesigning the planner or touching the controller interface.
+
+1. Stop requiring IK at every Cartesian path sample before GPMP2 can run. This is the main brittleness. Keep measured `q_start` as the exact start, solve IK only for a small number of strategically spaced anchor poses, then interpolate between those anchors to build a continuous joint-space initial guess. GPMP2 should receive the full Cartesian path as factors and do the detailed path fitting.
+2. Make anchor IK robust but time-bounded. For each required anchor, try the natural continuation seed first, then perhaps 4 to 8 structured perturbations, then a bounded random/multi-start fallback. Stop on the first solution that satisfies the IK residual and joint limits. Use both an attempt limit and a wall-clock limit, for example `max 50 attempts OR 10 ms`, rather than blindly doing 100 attempts every time. This gives you the useful behaviour of the older planner without making normal plans slow.
+3. Do not let a single failed intermediate anchor automatically kill the plan. If an optional intermediate anchor cannot be solved, drop that anchor and initialise that section by interpolation between neighbouring valid anchors. Only the truly necessary anchors, normally the path entry and possibly endpoint depending on the task, should be able to make initialisation fail. GPMP2 then gets a chance to repair the rough trajectory.
+4. Simplify validation. Have one final hard validator after optimisation. Hard rejection should be reserved for things that make the trajectory physically invalid, such as non-finite values, joint-limit violations, definite collisions, and invalid trajectory timing. Cartesian tracking error, orientation error, joint-limit margin, optimiser convergence quality, clearance margin and similar metrics should be reported as quality information or warnings unless you have a specific physical reason they must be hard limits.
+
+
+dont do test and ask questions
+
+## 2026-08-21 02:12:21 BST
+
+I would make five bounded changes, without redesigning the planner or touching the controller interface.
+
+1. Stop requiring IK at every Cartesian path sample before GPMP2 can run. This is the main brittleness. Keep measured `q_start` as the exact start, solve IK only for a small number of strategically spaced anchor poses, then interpolate between those anchors to build a continuous joint-space initial guess. GPMP2 should receive the full Cartesian path as factors and do the detailed path fitting.
+2. Make anchor IK robust but time-bounded. For each required anchor, try the natural continuation seed first, then perhaps 4 to 8 structured perturbations, then a bounded random/multi-start fallback. Stop on the first solution that satisfies the IK residual and joint limits. Use both an attempt limit and a wall-clock limit, for example `max 50 attempts OR 10 ms`, rather than blindly doing 100 attempts every time. This gives you the useful behaviour of the older planner without making normal plans slow.
+3. Do not let a single failed intermediate anchor automatically kill the plan. If an optional intermediate anchor cannot be solved, drop that anchor and initialise that section by interpolation between neighbouring valid anchors. Only the truly necessary anchors, normally the path entry and possibly endpoint depending on the task, should be able to make initialisation fail. GPMP2 then gets a chance to repair the rough trajectory.
+4. Simplify validation. Have one final hard validator after optimisation. Hard rejection should be reserved for things that make the trajectory physically invalid, such as non-finite values, joint-limit violations, definite collisions, and invalid trajectory timing. Cartesian tracking error, orientation error, joint-limit margin, optimiser convergence quality, clearance margin and similar metrics should be reported as quality information or warnings unless you have a specific physical reason they must be hard limits.
+
+
+dont do test and ask questions
+
+## 2026-08-21 02:19:02 BST
+
+i want you to verify the work make sure its written in clean code and minimal simplest implementation
+
+## 2026-08-21 02:35:31 BST
+
+Commit this.
