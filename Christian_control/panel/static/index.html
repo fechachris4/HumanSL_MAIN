@@ -97,6 +97,25 @@
           <span class="legend-item"><i class="swatch swatch-plan"></i>plan</span>
           <span class="legend-item" id="clearance-note">clearance is a property of the plan; nothing measures it live</span>
         </div>
+        <div class="scene-editor" id="scene-torso-editor">
+          <div class="scene-editor-head">
+            <strong>Torso cylinder</strong>
+            <span class="hint">mount frame · metres · unsaved edits only affect this drawing</span>
+          </div>
+          <div class="scene-editor-fields">
+            <label>x <input class="knob-input num" id="scene-torso-x" type="number" step="0.01"></label>
+            <label>y <input class="knob-input num" id="scene-torso-y" type="number" step="0.01"></label>
+            <label>z <input class="knob-input num" id="scene-torso-z" type="number" step="0.01"></label>
+            <label>radius <input class="knob-input num" id="scene-torso-radius" type="number" min="0.001" step="0.01"></label>
+            <label>height <input class="knob-input num" id="scene-torso-height" type="number" min="0.001" step="0.01"></label>
+          </div>
+          <div class="button-row scene-editor-actions">
+            <button type="button" class="action" id="scene-torso-create">CREATE TORSO DRAFT</button>
+            <button type="button" class="action" id="scene-torso-reset">RESET TO SAVED</button>
+            <button type="button" class="action" id="scene-torso-save">SAVE SCENE</button>
+            <span class="hint" id="scene-torso-state">loading planner scene…</span>
+          </div>
+        </div>
       </section>
 
       <aside class="readout-column">

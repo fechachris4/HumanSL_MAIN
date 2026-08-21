@@ -343,6 +343,36 @@ main {
 .swatch-ask  { background: var(--ask); }
 .swatch-plan { background: var(--rule); }
 
+.scene-editor {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+.scene-editor-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.scene-editor-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+.scene-editor-fields label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-dim);
+  font-size: 11px;
+}
+.scene-editor-fields .knob-input { width: 8ch; }
+.scene-editor-actions { margin-top: 6px; }
+#scene-torso-state.is-draft { color: var(--warn); }
+#scene-torso-state.is-blocked { color: var(--stop); font-weight: 600; }
+
 .readout-column {
   display: flex;
   flex-direction: column;

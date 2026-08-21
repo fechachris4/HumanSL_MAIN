@@ -186,6 +186,10 @@ const state = {
   lastNotable: '',      // the newest line that looks like an explanation
   startStates: [],      // runs a solve could plan from, newest first
   driveChosen: false,   // once set by hand, stop following goal.yaml
+  sceneConfig: {
+    saved: {}, draft: {}, sourceFnv1a64: null,
+    dirty: false, saveAllowed: false, saveBlockedReason: null,
+  },
 };
 
 const STALE_AFTER_S = 2.0;   // the hard visual break, from the design document
@@ -202,6 +206,7 @@ function init() {
   wirePlotsPane();
 
   buildRunView();
+  wireSceneEditor();
 
   setInterval(tick, 100);
   // Re-ask the server what is true, whether or not the event stream is alive.
@@ -216,6 +221,7 @@ function init() {
   refreshGoal();
   refreshRuns();
   refreshPlan();
+  refreshScene();
   refreshStartStates();
   refreshControllerLogOnce();
   openStreams();
@@ -839,6 +845,147 @@ async function loadDhTables() {
       /* No table: the scene draws what it can and says nothing it cannot. */
     }
   }
+}
+
+/* ------------------------------------------------------- scene editor -- */
+
+const TORSO_INPUTS = [
+  'scene-torso-x', 'scene-torso-y', 'scene-torso-z',
+  'scene-torso-radius', 'scene-torso-height',
+];
+
+function cloneScene(scene) {
+  return JSON.parse(JSON.stringify(scene || {}));
+}
+
+function torsoFromInputs() {
+  const values = TORSO_INPUTS.map((id) => Number($(id).value));
+  if (!values.every(Number.isFinite)) return null;
+  if (!(values[3] > 0) || !(values[4] > 0)) return null;
+  return {
+    enabled: true,
+    shape: 'cylinder',
+    center_mount_m: values.slice(0, 3),
+    radius_m: values[3],
+    height_m: values[4],
+  };
+}
+
+function drawSceneDraft() {
+  const objects = Object.entries(state.sceneConfig.draft).map(([id, value]) => ({ id, ...value }));
+  call(state.scene, 'setObstacles', objects);
+}
+
+function setTorsoInputs(torso) {
+  const values = torso && torso.shape === 'cylinder'
+    ? [...torso.center_mount_m, torso.radius_m, torso.height_m]
+    : ['', '', '', '', ''];
+  TORSO_INPUTS.forEach((id, index) => { $(id).value = values[index]; });
+}
+
+function renderSceneEditorState(message) {
+  const config = state.sceneConfig;
+  const status = $('scene-torso-state');
+  status.classList.remove('is-draft', 'is-blocked');
+  if (message) {
+    status.textContent = message;
+    status.classList.add('is-blocked');
+  } else if (config.dirty) {
+    status.textContent = 'UNSAVED DRAFT — not used by planner';
+    status.classList.add('is-draft');
+  } else if (!config.saveAllowed) {
+    status.textContent = `SAVE BLOCKED — ${config.saveBlockedReason || 'planner scene unavailable'}`;
+    status.classList.add('is-blocked');
+  } else {
+    status.textContent = 'SAVED — planner.yaml disk truth';
+  }
+  const hasTorso = Boolean(config.draft.torso && config.draft.torso.shape === 'cylinder');
+  $('scene-torso-reset').disabled = !config.dirty;
+  $('scene-torso-save').disabled = !config.dirty || !config.saveAllowed || !hasTorso;
+}
+
+function updateTorsoDraftFromInputs() {
+  const torso = torsoFromInputs();
+  if (!torso) {
+    renderSceneEditorState('X/Y/Z must be finite; radius and height must be greater than zero');
+    return;
+  }
+  state.sceneConfig.draft.torso = torso;
+  state.sceneConfig.dirty = JSON.stringify(state.sceneConfig.draft) !==
+                            JSON.stringify(state.sceneConfig.saved);
+  drawSceneDraft();
+  renderSceneEditorState();
+}
+
+function createTorsoDraft() {
+  state.sceneConfig.draft.torso = {
+    enabled: true,
+    shape: 'cylinder',
+    center_mount_m: [0, 0, 0],
+    radius_m: 0.1,
+    height_m: 0.1,
+  };
+  setTorsoInputs(state.sceneConfig.draft.torso);
+  updateTorsoDraftFromInputs();
+}
+
+function resetSceneDraft() {
+  state.sceneConfig.draft = cloneScene(state.sceneConfig.saved);
+  state.sceneConfig.dirty = false;
+  setTorsoInputs(state.sceneConfig.draft.torso);
+  drawSceneDraft();
+  renderSceneEditorState();
+}
+
+async function refreshScene() {
+  try {
+    const result = await getJSON('/api/scene');
+    if (result.error) {
+      state.sceneConfig.saveAllowed = false;
+      state.sceneConfig.saveBlockedReason = result.error;
+      renderSceneEditorState(`planner scene unavailable: ${result.error}`);
+      return;
+    }
+    state.sceneConfig.saved = cloneScene(result.scene);
+    state.sceneConfig.draft = cloneScene(result.scene);
+    state.sceneConfig.sourceFnv1a64 = result.source_fnv1a64;
+    state.sceneConfig.dirty = false;
+    state.sceneConfig.saveAllowed = Boolean(result.save_allowed);
+    state.sceneConfig.saveBlockedReason = result.save_blocked_reason || null;
+    setTorsoInputs(state.sceneConfig.draft.torso);
+    drawSceneDraft();
+    renderSceneEditorState();
+  } catch (error) {
+    state.sceneConfig.saveAllowed = false;
+    renderSceneEditorState(`could not read planner scene: ${error.message}`);
+  }
+}
+
+async function saveScene() {
+  const torso = torsoFromInputs();
+  if (!torso) {
+    renderSceneEditorState('cannot save: enter finite X/Y/Z and positive radius/height');
+    return;
+  }
+  state.sceneConfig.draft.torso = torso;
+  const result = await postJSON('/api/scene', {
+    scene: state.sceneConfig.draft,
+    source_fnv1a64: state.sceneConfig.sourceFnv1a64,
+  });
+  if (result.error) {
+    renderSceneEditorState(`not saved: ${result.error}`);
+    return;
+  }
+  await refreshScene();
+}
+
+function wireSceneEditor() {
+  TORSO_INPUTS.forEach((id) => $(id).addEventListener('input', updateTorsoDraftFromInputs));
+  $('scene-torso-create').addEventListener('click', createTorsoDraft);
+  $('scene-torso-reset').addEventListener('click', resetSceneDraft);
+  $('scene-torso-save').addEventListener('click', () => {
+    saveScene().catch((error) => renderSceneEditorState(`not saved: ${error.message}`));
+  });
 }
 
 function renderRun() {

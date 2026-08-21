@@ -521,7 +521,7 @@ export function createScene(canvas, options) {
         plan: { right: null, left: null },
         goalPreview: { right: null, left: null },
         progress: null,
-        obstacle: null,
+        obstacles: [],
         clearance: null,
         selected: 'right',
     };
@@ -722,6 +722,31 @@ export function createScene(canvas, options) {
                 if (i & bit) continue; // draw each edge once
                 addSegment(items, basis, corner(i), corner(i | bit), style);
             }
+        }
+    }
+
+    // Display geometry only. The planner owns the finite-cylinder SDF and
+    // every collision decision; this draws the same persisted centre, radius
+    // and full height without adding epsilon or a clearance boundary.
+    function addCylinder(items, basis, cylinder, style) {
+        const centre = cylinder.center_mount_m;
+        const radius = cylinder.radius_m;
+        const halfHeight = cylinder.height_m / 2;
+        const segments = 24;
+        for (let i = 0; i < segments; i++) {
+            const a = (2 * Math.PI * i) / segments;
+            const b = (2 * Math.PI * (i + 1)) / segments;
+            const lowerA = [centre[0] + radius * Math.cos(a),
+                            centre[1] + radius * Math.sin(a),
+                            centre[2] - halfHeight];
+            const lowerB = [centre[0] + radius * Math.cos(b),
+                            centre[1] + radius * Math.sin(b),
+                            centre[2] - halfHeight];
+            const upperA = [lowerA[0], lowerA[1], centre[2] + halfHeight];
+            const upperB = [lowerB[0], lowerB[1], centre[2] + halfHeight];
+            addSegment(items, basis, lowerA, lowerB, style);
+            addSegment(items, basis, upperA, upperB, style);
+            if (i % 4 === 0) addSegment(items, basis, lowerA, upperA, style);
         }
     }
 
@@ -1223,7 +1248,7 @@ export function createScene(canvas, options) {
             });
         }
 
-        if (state.obstacle) drawObstacle(items, basis);
+        if (state.obstacles.length) drawObstacles(items, basis);
         if (state.clearance) {
             const point = state.clearance.point;
             addDot(items, basis, point, { colour: palette.ink, radius: 3.5 });
@@ -1247,7 +1272,8 @@ export function createScene(canvas, options) {
 
         const nothing = !state.row.right && !state.row.left &&
             !state.plan.right && !state.plan.left &&
-            !state.goalPreview.right && !state.goalPreview.left;
+            !state.goalPreview.right && !state.goalPreview.left &&
+            !state.obstacles.length;
         if (nothing) paintEmptyState();
 
         if (!framingOwned && framed.length) {
@@ -1280,39 +1306,19 @@ export function createScene(canvas, options) {
         view.distance = Math.min(12, (radius / Math.tan(0.35)) * 1.35);
     }
 
-    function drawObstacle(items, basis) {
-        const box = state.obstacle;
-        if (box.centre && box.halfExtent) {
-            const base = box.frame === 'mount' ? identity() : baseMatrix(box.arm || state.selected);
-            const style = { colour: palette.ink, width: 1, alpha: 0.6 };
-            // The box is axis-aligned in ITS OWN frame (goal.yaml is explicit
-            // that it must be), so its corners are transformed individually
-            // rather than the min/max pair: in mount it is no longer
-            // axis-aligned, and drawing it as if it were would move its faces.
-            const c = box.centre;
-            const h = box.halfExtent;
-            const corner = function (i) {
-                return transformPoint(base, [
-                    c[0] + (i & 1 ? h[0] : -h[0]),
-                    c[1] + (i & 2 ? h[1] : -h[1]),
-                    c[2] + (i & 4 ? h[2] : -h[2]),
-                ]);
-            };
-            for (let i = 0; i < 8; i++) {
-                for (let bit = 1; bit <= 4; bit <<= 1) {
-                    if (i & bit) continue;
-                    addSegment(items, basis, corner(i), corner(i | bit), style);
-                }
+    function drawObstacles(items, basis) {
+        const style = { colour: palette.ink, width: 1.2, alpha: 0.75 };
+        for (const obstacle of state.obstacles) {
+            if (!obstacle || obstacle.enabled === false) continue;
+            if (obstacle.shape === 'cylinder') {
+                addCylinder(items, basis, obstacle, style);
+            } else if (obstacle.shape === 'box') {
+                const c = obstacle.center_mount_m;
+                const h = obstacle.half_extent_m;
+                addBox(items, basis,
+                    [c[0] - h[0], c[1] - h[1], c[2] - h[2]],
+                    [c[0] + h[0], c[1] + h[1], c[2] + h[2]], style);
             }
-        }
-        if (box.bounds && box.bounds.min && box.bounds.max) {
-            // The SDF grid is defined in mount and only ever queried there.
-            addBox(items, basis, box.bounds.min, box.bounds.max, {
-                colour: palette.hairline,
-                width: 0.8,
-                alpha: 0.7,
-                dash: [5, 5],
-            });
         }
     }
 
@@ -1416,22 +1422,24 @@ export function createScene(canvas, options) {
             state.progress = value === null ? null : Math.min(1, Math.max(0, value));
             schedule();
         },
-        // box: {centre:[x,y,z], halfExtent:[x,y,z], frame:'base'|'mount',
-        // arm:'right'|'left', bounds:{min:[..], max:[..]}}. `centre`/
-        // `center` and `halfExtent`/`half_extent` are both accepted because
-        // goal.yaml spells them the second way.
-        setObstacle: function (box) {
-            if (!box) {
-                state.obstacle = null;
-            } else {
-                state.obstacle = {
-                    centre: box.centre || box.center || null,
-                    halfExtent: box.halfExtent || box.half_extent || null,
-                    frame: box.frame || 'base',
-                    arm: box.arm || null,
-                    bounds: box.bounds || null,
-                };
-            }
+        // Configured mount-frame primitives. Drawing only: no SDF, epsilon,
+        // collision or save behavior lives in this module.
+        setObstacles: function (obstacles) {
+            state.obstacles = Array.isArray(obstacles)
+                ? obstacles.filter((obstacle) => {
+                    if (!obstacle || !Array.isArray(obstacle.center_mount_m) ||
+                        obstacle.center_mount_m.length !== 3 ||
+                        !obstacle.center_mount_m.every(Number.isFinite)) return false;
+                    if (obstacle.shape === 'cylinder')
+                        return Number.isFinite(obstacle.radius_m) && obstacle.radius_m > 0 &&
+                               Number.isFinite(obstacle.height_m) && obstacle.height_m > 0;
+                    if (obstacle.shape === 'box')
+                        return Array.isArray(obstacle.half_extent_m) &&
+                               obstacle.half_extent_m.length === 3 &&
+                               obstacle.half_extent_m.every((value) => Number.isFinite(value) && value > 0);
+                    return false;
+                })
+                : [];
             schedule();
         },
         // point is in mount unless it carries {frame:'base', arm:...}.
