@@ -84,9 +84,9 @@ def parse_goal(text: str) -> dict[str, Any]:
     """The parts of a goal file the panel draws.
 
     Returns {"session_arms": str|None, "arms": {arm: {...}}}. Each arm block
-    carries whichever of frame, goal, orientation_rpy_deg, box and path it
-    declares — `box` and `path` as nested dicts. Commented-out keys are
-    invisible here, which is the point: the file shows several as examples.
+    carries whichever of frame, goal, orientation_rpy_deg and path it
+    declares. A retired `box` key is retained only long enough for validation
+    to reject it with migration guidance. Commented-out keys are invisible.
     """
     session_arms: str | None = None
     arms: dict[str, dict[str, Any]] = {}
@@ -177,15 +177,9 @@ def validate_goal(text: str) -> list[str]:
             problems.append(
                 f"{arm}: goal must be three finite numbers "
                 f"[x, y, z] in metres, not {block['goal']!r}")
-        box = block.get("box")
-        if isinstance(box, dict):
-            for key in ("center", "half_extent"):
-                if key not in box:
-                    problems.append(f"{arm}: box is missing {key}")
-                elif not _three_finite(box[key]):
-                    problems.append(
-                        f"{arm}: box {key} must be three finite numbers, "
-                        f"not {box[key]!r}")
+        if "box" in block:
+            problems.append(
+                f"{arm}: box is retired — edit obstacles.scene in planner.yaml")
     return problems
 
 
@@ -215,9 +209,6 @@ def write_goal(text: str, path: Path | None = None) -> tuple[bool, str]:
 # The order path keys are (re)built in, matching the file's own layout.
 _PATH_KEYS = ("type", "centre", "radius_m", "normal", "duration_s",
               "orientation", "orientation_rpy_deg")
-_BOX_KEYS = ("center", "half_extent")
-
-
 def _set_key(text: str, path_t: tuple[str, ...], value: Any) -> str | None:
     """Replace the key's value, or insert the key at its parent's block end.
     Insertion is how a commented-out example key (invisible to the parser)
@@ -290,6 +281,8 @@ def write_goal_fields(arm: str, fields: dict,
     """
     if arm not in paths.ARMS:
         return False, f"unknown arm {arm!r}"
+    if "box" in fields:
+        return False, "box is retired — edit obstacles.scene in planner.yaml"
     mode = fields.get("mode")
     if mode not in ("point", "circle"):
         return False, "mode must be point or circle"
@@ -342,15 +335,6 @@ def write_goal_fields(arm: str, fields: dict,
                 text = step(_set_key(text, (arm, "orientation_rpy_deg"), rpy),
                             "set the orientation")
 
-        if "box" in fields:
-            box = fields["box"]
-            if box is None:
-                if yaml_text.locate(text.split("\n"), (arm, "box")) is not None:
-                    text = step(yaml_text.remove_key(text, (arm, "box")),
-                                "remove the box")
-            else:
-                text = step(_set_block(text, (arm,), "box", _BOX_KEYS, box),
-                            "build the box block")
     except ValueError as exc:
         return False, str(exc)
 

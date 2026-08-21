@@ -22,7 +22,6 @@
 #include "PlanSolver.h"
 #include "StartState.h"
 #include "WorldTrajectoryProjection.h"
-#include "MountSdf.h"
 #include "PathFrames.h"
 #include "PathValidation.h"
 #include "PlanDebugDump.h"
@@ -43,7 +42,6 @@ constexpr char kUsageText[] =
     "                       [--state-csv PATH | --start-deg J1..J7]\n"
     "                       [--runs-root PATH] [--dh PATH]\n"
     "                       [--joint-limits PATH]\n"
-    "                       [--box CX CY CZ HX HY HZ]\n"
     "                       [--output world-cartesian]\n"
     "                       [--world-mount-pose-m-quat PX PY PZ QX QY QZ QW\n"
     "                        --vicon-sequence N --trajectory-id N]\n"
@@ -67,8 +65,7 @@ constexpr char kUsageText[] =
     "                         [x, y, z]` metres, an optional `frame:` (mount,\n"
     "                         right_base or left_base; default\n"
     "                         config::kReferenceFrame) governing that block\n"
-    "                         whole, and an optional `box:` with `center:`\n"
-    "                         and `half_extent:` lists. One file can hold\n"
+    "                         whole. One file can hold\n"
     "                         both arms' targets for a --arm both session\n"
     "                         without either reading the other's numbers.\n"
     "                         When neither --goal nor --goal-file is given,\n"
@@ -105,15 +102,6 @@ constexpr char kUsageText[] =
     "                         than silently planning something else. The\n"
     "                         effective values and the file's digest are\n"
     "                         echoed here on every run.\n"
-    "  --box CX CY CZ HX HY HZ  Optional axis-aligned obstacle box:\n"
-    "                         centre and half-extents, metres, in the\n"
-    "                         goal block's declared frame (default\n"
-    "                         config::kReferenceFrame, currently mount);\n"
-    "                         converted to mount at the boundary. Must lie\n"
-    "                         fully inside the\n"
-    "                         SDF grid volume (MountSdf.h MountGridBounds())\n"
-    "                         or the run is rejected — outside that volume\n"
-    "                         gpmp2 silently reports no obstacle.\n"
     "  --verbose              Echo the full effective planner config and\n"
     "                         other low-priority detail. Without it a run\n"
     "                         prints the config path, digest and IK seed\n"
@@ -300,31 +288,6 @@ void DumpPlanDebug(const std::optional<std::string>& directory,
     diagnostics << "debug dump written to " << *directory << "\n";
 }
 
-// Describes a GridBounds volume once, for both the --box rejection
-// diagnostic and anywhere else the checked volume needs stating.
-std::string DescribeGridBounds(const GridBounds& bounds) {
-    std::ostringstream text;
-    text << "x [" << bounds.min_m.x() << ", " << bounds.max_m.x() << "] m, "
-         << "y [" << bounds.min_m.y() << ", " << bounds.max_m.y() << "] m, "
-         << "z [" << bounds.min_m.z() << ", " << bounds.max_m.z() << "] m";
-    return text.str();
-}
-
-// True when `box`'s full extent (center +/- half_extent, every axis) fits
-// inside `bounds`. Used to reject a --box before it is ever handed to
-// gpmp2, which returns zero obstacle cost for out-of-grid queries with no
-// warning of its own.
-// The upper comparison is STRICT. gpmp2 accepts a query landing exactly on
-// origin + (n-1)*cell but cannot interpolate there — it reads one sample past
-// the end (see MountGridBounds in MountSdf.cpp). The lower face has no such
-// problem, so only the upper one is exclusive.
-bool BoxWithinGridBounds(const AxisAlignedBox& box, const GridBounds& bounds) {
-    const Eigen::Vector3d box_min = box.center - box.half_extent;
-    const Eigen::Vector3d box_max = box.center + box.half_extent;
-    return (box_min.array() >= bounds.min_m.array()).all() &&
-           (box_max.array() < bounds.max_m.array()).all();
-}
-
 // Directory containing the running executable, via /proc/self/exe. Falls
 // back to "." if the link cannot be read (e.g. non-Linux, sandboxed exec).
 std::string ExecutableDirectory() {
@@ -386,21 +349,10 @@ std::uint64_t ParseUint64(const std::string& token) {
     return value;
 }
 
-// An obstacle box exactly as DECLARED — centre and half-extents in the goal
-// block's declared frame, which may be mount, an arm base, or world. A
-// deliberately different type from AxisAlignedBox (MountSdf.h), which is
-// mount-frame by contract: keeping the raw declaration out of that type
-// means nothing downstream can mistake unconverted numbers for mount ones.
-// Only the frame boundary below turns one into the other, via ToMount.
-struct DeclaredBox {
-    Eigen::Vector3d center;
-    Eigen::Vector3d half_extent;
-};
-
 struct ParsedArgs {
     std::optional<Eigen::Vector3d> goal;
-    // The frame `goal` and `box` were written in, before conversion. Set from
-    // a goal file's `frame:` key, otherwise config::kReferenceFrame.
+    // The frame `goal` was written in, before conversion. Set from a goal
+    // file's `frame:` key, otherwise config::kReferenceFrame.
     config::ReferenceFrame frame = config::kReferenceFrame;
     std::optional<std::string> goal_file;
     std::optional<std::string> state_csv;
@@ -427,7 +379,6 @@ struct ParsedArgs {
     // Full config echo and similar low-priority detail. Off by default so
     // the summary is what a normal run's diagnostics end with.
     bool verbose = false;
-    std::optional<DeclaredBox> box;
     std::optional<Eigen::Isometry3d> world_T_mount;
     std::optional<std::uint64_t> vicon_sequence;
     std::optional<std::uint64_t> trajectory_id;
@@ -495,10 +446,10 @@ Eigen::Vector3d ReadVector3(const YAML::Node& node, const std::string& what) {
     return value;
 }
 
-// Fills `parsed.goal` (and `parsed.box`, unless --box already set one) from
-// a YAML goal file. Goal files are ARM-KEYED: one top-level block per arm
-// ("right:" and/or "left:"), each with its own goal/frame/box, so one file
-// can hold both arms' targets for a --arm both session without either
+// Fills `parsed.goal` from a YAML goal file. Goal files are ARM-KEYED: one
+// top-level block per arm ("right:" and/or "left:"), each with its own
+// goal/frame, so one file can hold both arms' targets for a --arm both
+// session without either
 // silently reading the other's numbers. This function reads only the block
 // matching `left_arm`; the other block (if present) is untouched. Any
 // failure — missing file, missing arm block, wrong shape, non-numeric value
@@ -519,9 +470,11 @@ void LoadGoalFile(const std::string& path, ParsedArgs& parsed, bool left_arm) {
             throw std::invalid_argument(
                 "no '" + arm_key + ":' block — goal files are arm-keyed: a "
                 "top-level 'right:' and/or 'left:' block, each with its own "
-                "goal/frame/box");
-        // One `frame:` per arm block governs that block whole — goal and box
-        // alike, so a block can never end up half-converted. Omitted means
+                "goal/frame");
+        if (arm_node["box"])
+            throw std::invalid_argument(
+                "box is retired — edit obstacles.scene in planner.yaml");
+        // One `frame:` per arm block governs that block whole. Omitted means
         // the compiled config::kReferenceFrame, which is also what a bare
         // --goal uses.
         if (arm_node["frame"])
@@ -601,13 +554,6 @@ void LoadGoalFile(const std::string& path, ParsedArgs& parsed, bool left_arm) {
                 ReadVector3(arm_node["orientation_rpy_deg"], "orientation_rpy_deg");
             parsed.goal_rpy_rad = rpy_deg * (M_PI / 180.0);
         }
-        if (arm_node["box"] && !parsed.box) {
-            DeclaredBox box;
-            box.center = ReadVector3(arm_node["box"]["center"], "box center");
-            box.half_extent =
-                ReadVector3(arm_node["box"]["half_extent"], "box half_extent");
-            parsed.box = box;
-        }
     } catch (const std::exception& error) {
         throw std::invalid_argument("goal file " + path + ": " + error.what());
     }
@@ -656,13 +602,6 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             parsed.debug_dir = next();
         } else if (flag == "--verbose") {
             parsed.verbose = true;
-        } else if (flag == "--box") {
-            DeclaredBox box;
-            box.center = Eigen::Vector3d(ParseDouble(next()), ParseDouble(next()),
-                                          ParseDouble(next()));
-            box.half_extent = Eigen::Vector3d(ParseDouble(next()), ParseDouble(next()),
-                                               ParseDouble(next()));
-            parsed.box = box;
         } else if (flag == "--output") {
             const std::string value = next();
             if (value != "world-cartesian")
@@ -770,51 +709,13 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                 << " planning_frame=mount output_frame=world\n";
 
     // THE frame boundary. Everything below this point is `mount`, the
-    // planner's only internal frame: the grid-bounds check, the solve, IK
-    // and the SDF all share it. The one mount->world conversion is the
+    // planner's only internal frame: the solve, IK and the SDF all share it.
+    // The one mount->world conversion is the
     // output projection that builds the controller's world-frame block.
     const config::ReferenceFrame declared_frame = parsed.frame;
-    // The mount-frame obstacle. AxisAlignedBox is mount-by-contract
-    // (MountSdf.h), so it is CONSTRUCTED here from the declaration and
-    // nowhere else — the declared numbers never travel in the mount type.
-    std::optional<AxisAlignedBox> box_mount;
     try {
         if (parsed.goal)
             parsed.goal = PointToMount(*parsed.goal, declared_frame, world_T_mount);
-        if (parsed.box) {
-            // A box declared in an arm's base frame (rolled ~69 deg from
-            // mount) or in world (wherever the rig currently sits) is
-            // axis-aligned THERE, not in the mount grid. The SDF can only
-            // represent axis-aligned boxes, so the rotated shape is replaced
-            // by its enclosing axis-aligned box: bigger than asked for,
-            // never smaller, which is the safe direction for obstacle
-            // avoidance. The inflation is printed rather than applied
-            // quietly.
-            AxisAlignedBox converted;
-            converted.center =
-                PointToMount(parsed.box->center, declared_frame, world_T_mount);
-            converted.half_extent = parsed.box->half_extent;
-            if (declared_frame != config::ReferenceFrame::kMount) {
-                const Eigen::Matrix3d mount_R_declared = RotationToMount(
-                    Eigen::Matrix3d::Identity(), declared_frame, world_T_mount);
-                // Enclosing AABB of a rotated box: |R| * half_extent, the
-                // standard result (each mount axis picks up every declared
-                // axis in proportion to |cos| of the angle between them).
-                converted.half_extent =
-                    mount_R_declared.cwiseAbs() * parsed.box->half_extent;
-                diagnostics << "obstacle_box: declared_frame="
-                            << FrameName(declared_frame)
-                            << " -> mount; half-extent inflated to the "
-                            << "enclosing axis-aligned box, ["
-                            << parsed.box->half_extent.x() << ", "
-                            << parsed.box->half_extent.y() << ", "
-                            << parsed.box->half_extent.z() << "] -> ["
-                            << converted.half_extent.x() << ", "
-                            << converted.half_extent.y() << ", "
-                            << converted.half_extent.z() << "] m\n";
-            }
-            box_mount = converted;
-        }
     } catch (const std::exception& error) {
         diagnostics << "error: " << error.what() << "\n";
         result.exit_code = 1;
@@ -828,18 +729,6 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         diagnostics << "goal_mount_m: [" << parsed.goal->x() << ", "
                     << parsed.goal->y() << ", " << parsed.goal->z()
                     << "] (declared_frame=" << FrameName(declared_frame) << ")\n";
-    }
-
-    if (box_mount) {
-        const GridBounds bounds = MountGridBounds(MountGridGeometry());
-        if (!BoxWithinGridBounds(*box_mount, bounds)) {
-            diagnostics << "error: obstacle box extends outside the SDF grid volume ("
-                        << DescribeGridBounds(bounds) << ", mount frame); gpmp2 reports "
-                        << "no obstacle for out-of-grid queries, so this box "
-                        << "cannot be honoured\n";
-            result.exit_code = 1;
-            return result;
-        }
     }
 
     Eigen::Matrix<double, 7, 1> q_start_rad;
@@ -979,7 +868,7 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         PathPlanOutcome plan;
         {
             const CoutRedirectGuard cout_guard(diagnostics);
-            plan = SolveAlongPath(model, task_path, q_start_rad, box_mount,
+            plan = SolveAlongPath(model, task_path, q_start_rad,
                                   parsed.joint_limits_path, planner_config,
                                   validation);
         }
@@ -1049,7 +938,7 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                          Fixed(plan.report.minimum_clearance_m * 1e3) +
                              " mm at t=" +
                              Fixed(plan.report.minimum_clearance_time_s, 2) +
-                             " s (SDF models workspace + declared box only)");
+                             " s (SDF models the persistent static scene only)");
             summary.Line("min joint-limit margin (trajectory)",
                          Fixed(plan.report.minimum_joint_limit_margin_rad *
                                180.0 / M_PI) +
@@ -1113,7 +1002,6 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
     PlanRequest request;
     request.q_start_rad = q_start_rad;
     request.goal_position_m = *parsed.goal;
-    request.obstacle = box_mount;
     if (parsed.goal_rpy_rad) {
         request.goal_rotation =
             RotationToMount(RotationFromRpy(*parsed.goal_rpy_rad), declared_frame,

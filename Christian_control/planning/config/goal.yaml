@@ -5,8 +5,8 @@
 # sees the left block's numbers, or vice versa. It validates the planned
 # path, and only then writes the trajectory block to the controller.
 #
-# Which frame `goal` and `box` are written in, per block: mount, right_base
-# or left_base. Omitting a block's `frame:` means the compiled
+# Which frame `goal` is written in, per block: mount, right_base or left_base.
+# Omitting a block's `frame:` means the compiled
 # config::kReferenceFrame (currently mount).
 #
 # ORIENTATION. A goal is a POSE, not just a position — the planner needs an
@@ -40,15 +40,6 @@ right:
   # explicitly for that reason.
   frame: mount
   goal: [ 0.5, 0.0, 0.4 ]
-
-  # Optional obstacle for the planner to avoid: axis-aligned box, metres,
-  # in THIS block's arm's own base frame only — an axis-aligned box in
-  # another frame is not axis-aligned in base_link, and the SDF grid can
-  # only represent axis-aligned boxes. Must lie inside the SDF grid volume
-  # or the run is rejected.
-  # box:
-  #   center: [0.5, 0.0, 0.3]
-  #   half_extent: [0.05, 0.05, 0.05]
 
 left:
   # UNVERIFIED placeholder (2026-08-06): a conservative offset from the
@@ -84,5 +75,3 @@ left:
   # (0.06 mm). Pick one that suits the task, and note it is read in THIS
   # block's declared frame — the `mount` above, not left_base.
   # orientation_rpy_deg: [ 12.3, -63.0, 107.3 ]
-
-  # box: — same rule as the right block above, left_base only.

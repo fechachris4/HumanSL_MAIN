@@ -63,9 +63,9 @@ struct PathValidationReport {
     CircleGeometryError command_circle;
 
     // --- collision -------------------------------------------------------
-    // Named for what it actually checks. The SDF contains the arm's own
-    // workspace grid plus an optional operator-supplied box: no wearer, no
-    // torso, no second arm. A bare `collision_valid` would read as "safe to
+    // Named for what it actually checks. The SDF contains the persistent
+    // mount-frame static scene: no wearer or second arm unless explicitly
+    // represented there. A bare `collision_valid` would read as "safe to
     // move near a person", which this cannot support (CLAUDE.md: never call
     // a plan safe because something would have vetoed it — state what was
     // verified).
@@ -141,4 +141,3 @@ struct ValidationInputs {
     Eigen::Vector3d circle_normal = Eigen::Vector3d::UnitZ();
     double circle_radius_m = 0.0;
 };
-

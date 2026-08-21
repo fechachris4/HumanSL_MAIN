@@ -1,9 +1,9 @@
 #include "PlanSolver.h"
 #include <algorithm>
 #include <cmath>
-#include <sstream>
 
 #include "GenerateTrajectory.h"
+#include "MountSdf.h"
 #include "PathAssembly.h"
 #include "PathIk.h"
 #include "TrajectoryOptimization.h"
@@ -55,8 +55,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         outcome.init_source = init.source;
         outcome.init_position_error_m = init.position_error_m;
         outcome.init_orientation_error_rad = init.orientation_error_rad;
-        const GridGeometry grid = MountGridGeometry();
-        const auto sdf = MakeMountSdf(grid, request.obstacle);
+        const auto sdf = MakeMountSdf(MountGridGeometry(), config.scene);
         outcome.result = optimizeJointTrajectory(
             *model.arm_model, sdf, init.values, goal_pose,
             gtsam::Vector(request.q_start_rad), pos_limits, vel_limits,
@@ -193,24 +192,11 @@ TimedJointSampler MakeDenseSampler(
     };
 }
 
-std::string DescribeSdf(const std::optional<AxisAlignedBox>& obstacle,
-                        const GridGeometry& geometry) {
-    std::ostringstream text;
-    const GridBounds bounds = MountGridBounds(geometry);
-    text << "arm-workspace grid x [" << bounds.min_m.x() << ", " << bounds.max_m.x()
-         << "] y [" << bounds.min_m.y() << ", " << bounds.max_m.y() << "] z ["
-         << bounds.min_m.z() << ", " << bounds.max_m.z() << "] m; "
-         << (obstacle ? "1 operator box" : "no obstacles")
-         << "; NOT modelled: the wearer, the torso, the other arm";
-    return text.str();
-}
-
 }  // namespace
 
 PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const CartesianPath& task_path,
                                const Eigen::Matrix<double, 7, 1>& q_start_rad,
-                               const std::optional<AxisAlignedBox>& obstacle,
                                const std::string& joint_limits_yaml,
                                const PlannerConfig& config,
                                const ValidationInputs& validation_template) {
@@ -304,8 +290,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         }
 
         const GridGeometry grid = MountGridGeometry();
-        const auto sdf = MakeMountSdf(grid, obstacle);
-        const std::string sdf_contents = DescribeSdf(obstacle, grid);
+        const auto sdf = MakeMountSdf(grid, config.scene);
+        const std::string sdf_contents = DescribeStaticScene(config.scene, grid);
 
         // ---- 3. solve -------------------------------------------------
         OptimizeTrajectory optimizer;

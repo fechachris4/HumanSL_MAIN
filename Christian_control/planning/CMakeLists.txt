@@ -180,6 +180,12 @@ target_link_libraries(test_scene_config PRIVATE bridge_core)
 set_target_properties(test_scene_config PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME scene_config COMMAND test_scene_config)
 
+add_executable(test_bridge_args tests/test_bridge_args.cpp src/PlannerPreview.cpp)
+target_include_directories(test_bridge_args PRIVATE src)
+target_link_libraries(test_bridge_args PRIVATE bridge_core)
+set_target_properties(test_bridge_args PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME bridge_args COMMAND test_bridge_args)
+
 add_executable(test_projection_exit tests/test_projection_exit.cpp)
 target_include_directories(test_projection_exit PRIVATE src)
 target_link_libraries(test_projection_exit PRIVATE bridge_core)

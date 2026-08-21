@@ -129,8 +129,8 @@ GridBounds MountGridBounds(const GridGeometry& geometry) {
     // one sample past the end. The accepted range is one sample wider than
     // the interpolatable one. This function returns gpmp2's accepted range,
     // because that is what the SDF will and won't throw on; the exact upper
-    // face is excluded by BoxWithinGridBounds in BridgeMain, and the arm is
-    // kept 0.05 m clear of it by the measured coverage margin.
+    // face is excluded by StaticObstacleWithinGridBounds below, and the arm
+    // is kept 0.05 m clear of it by the measured coverage margin.
     bounds.max_m =
         bounds.min_m +
         Eigen::Vector3d(geometry.nx - 1, geometry.ny - 1, geometry.nz - 1) *
@@ -168,15 +168,6 @@ bool StaticObstacleWithinGridBounds(const StaticObstacleGeometry& geometry,
     } catch (const std::invalid_argument&) {
         return false;
     }
-}
-
-gpmp2::SignedDistanceField MakeMountSdf(
-    const GridGeometry& geometry,
-    const std::optional<AxisAlignedBox>& box_mount) {
-    if (!box_mount)
-        return MakeMountSdf(geometry, std::vector<NamedStaticObstacle>{});
-    return MakeMountSdf(
-        geometry, std::vector<NamedStaticObstacle>{{"legacy-box", true, *box_mount}});
 }
 
 std::string DescribeStaticScene(const std::vector<NamedStaticObstacle>& scene_mount,

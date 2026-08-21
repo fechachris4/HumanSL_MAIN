@@ -1,5 +1,4 @@
 #pragma once
-#include <optional>
 #include <string>
 #include <vector>
 #include <Eigen/Dense>
@@ -52,9 +51,8 @@ GridGeometry MountGridGeometry();
 // The volume the SDF grid can actually be QUERIED over, in `mount`:
 // [origin, origin + (n-1)*cell] per axis — see the (n-1) note in the .cpp.
 // gpmp2 returns zero obstacle cost for any query outside this volume ("no
-// obstacle"), silently — so a `box` that is not fully contained here must be
-// rejected before solving, not discovered as a missed obstacle after the
-// fact.
+// obstacle"), silently — so every enabled static obstacle must be fully
+// contained here. MakeMountSdf owns that representability check.
 struct GridBounds {
     Eigen::Vector3d min_m;
     Eigen::Vector3d max_m;
@@ -78,12 +76,6 @@ bool StaticObstacleWithinGridBounds(const StaticObstacleGeometry& geometry,
 gpmp2::SignedDistanceField MakeMountSdf(
     const GridGeometry& geometry,
     const std::vector<NamedStaticObstacle>& scene_mount);
-
-// Migration-only overload. Task 3 switches callers to the named scene API
-// and removes this seam.
-gpmp2::SignedDistanceField MakeMountSdf(
-    const GridGeometry& geometry,
-    const std::optional<AxisAlignedBox>& box_mount);
 
 // Human-readable planner diagnostics for the persisted mount-frame scene.
 std::string DescribeStaticScene(const std::vector<NamedStaticObstacle>& scene_mount,

@@ -1,4 +1,5 @@
 #pragma once
+#include <optional>
 #include <string>
 #include "PlannerConfig.h"
 #include "PlannerModel.h"
@@ -6,7 +7,6 @@
 #include "PathIk.h"
 #include "PathValidationReport.h"
 #include "TrajectoryInitiation.h"  // InitSource
-#include "MountSdf.h"
 
 // The operating limits the plan was actually solved against: the table
 // values with the planner's margin already applied, not the raw numbers in
@@ -21,7 +21,6 @@ struct PlanJointLimits {
 struct PlanRequest {
     Eigen::Matrix<double, 7, 1> q_start_rad;  // Kortex order
     Eigen::Vector3d goal_position_m;          // metres, `mount`
-    std::optional<AxisAlignedBox> obstacle;
     // Orientation the tool should hold AT the goal, in `mount` (declared
     // frames are converted at the boundary, PathFrames.h). Unset means "inherit whatever orientation the arm happens
     // to have at q_start", which is the historical behaviour and is a trap:
@@ -111,7 +110,6 @@ struct PathPlanOutcome {
 PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const CartesianPath& task_path,
                                const Eigen::Matrix<double, 7, 1>& q_start_rad,
-                               const std::optional<AxisAlignedBox>& obstacle,
                                const std::string& joint_limits_yaml,
                                const PlannerConfig& config,
                                const ValidationInputs& validation_template);

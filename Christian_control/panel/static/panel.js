@@ -22,7 +22,7 @@
   told:
 
     scene.js     createScene(canvas, {frameLabel}) -> setDh, setTelemetry,
-                 setPlan, setProgress, setObstacle, setClearance,
+                 setPlan, setProgress, setClearance,
                  setSelectedArm, resize, draw. It reads its palette from
                  panel.css, so colour is defined in one place.
     readouts.js  createSlot -> {el, set, setLevel}
@@ -238,7 +238,6 @@ function setArm(arm) {
   openStreams();
   refreshPlan();
   refreshStartStates();
-  drawObstacle();
   renderRun();
 }
 
@@ -1992,33 +1991,6 @@ function renderGoalCards() {
     card.appendChild(orientRow);
     card.appendChild(warn);
 
-    // obstacle box
-    const boxRow = document.createElement('div');
-    boxRow.className = 'goal-row';
-    const boxOn = document.createElement('input');
-    boxOn.type = 'checkbox';
-    boxOn.dataset.field = 'box-on';
-    boxOn.checked = 'box' in block;
-    const boxLabel = document.createElement('label');
-    boxLabel.append(boxOn, ` obstacle box (axis-aligned, ${arm}_base frame)`);
-    boxRow.appendChild(boxLabel);
-    card.appendChild(boxRow);
-    const boxPane = document.createElement('div');
-    boxPane.dataset.pane = 'box';
-    boxPane.hidden = !boxOn.checked;
-    const boxCentreRow = document.createElement('div');
-    boxCentreRow.className = 'goal-row';
-    boxCentreRow.append('center ');
-    vecInputs(boxCentreRow, 'box-center', block.box?.center);
-    boxPane.appendChild(boxCentreRow);
-    const boxExtentRow = document.createElement('div');
-    boxExtentRow.className = 'goal-row';
-    boxExtentRow.append('half extent ');
-    vecInputs(boxExtentRow, 'box-half', block.box?.half_extent);
-    boxPane.appendChild(boxExtentRow);
-    boxOn.addEventListener('change', () => { boxPane.hidden = !boxOn.checked; });
-    card.appendChild(boxPane);
-
     // save and preview
     const saveRow = document.createElement('div');
     saveRow.className = 'goal-row';
@@ -2109,10 +2081,6 @@ async function saveGoalCard(card, arm) {
     };
     fields.orientation_rpy_deg = null;
   }
-  fields.box = goalField(card, 'box-on').checked
-    ? { center: vecValue(card, 'box-center'),
-        half_extent: vecValue(card, 'box-half') }
-    : null;
   const result = await postJSON('/api/goal/fields', { arm, fields });
   if (result.error) {
     setNotice('goal-status', `${arm}: ${result.error}`, 'is-stop');
@@ -2128,7 +2096,6 @@ async function refreshGoal() {
     $('goal-text').value = goal.text ?? '';
     state.goal = goal.parsed || null;
     renderGoalCards();
-    drawObstacle();
   } catch (err) {
     setNotice('goal-status', `could not read goal.yaml: ${err.message}`, 'is-stop');
   }
@@ -2256,17 +2223,6 @@ function summaryOf(plan) {
       ? `${value.length} values` : value;
   }
   return out;
-}
-
-// goal.yaml supports one optional axis-aligned box per arm, and it is
-// commented out today. Only a box the planner actually has is drawn: an
-// exclusion zone nothing avoids would be worse than drawing nothing.
-function drawObstacle() {
-  const block = state.goal?.arms?.[state.arm];
-  const box = block && block.box;
-  const usable = box && (box.centre || box.center) && (box.halfExtent || box.half_extent);
-  call(state.scene, 'setObstacle',
-       usable ? { ...box, frame: block.frame || 'base', arm: state.arm } : null);
 }
 
 /* --------------------------------------------------------------- runs pane */
