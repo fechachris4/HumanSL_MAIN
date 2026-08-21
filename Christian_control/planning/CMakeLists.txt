@@ -187,6 +187,16 @@ target_link_libraries(test_plan_verdict PRIVATE bridge_core)
 set_target_properties(test_plan_verdict PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME plan_verdict COMMAND test_plan_verdict)
 
+# The joint-type contract: continuous joints 1/3/5/7 carry no position
+# limit anywhere in the planner, bounded joints 2/4/6 do. Checked against
+# the generated kBoundedMask, so the validator cannot drift from
+# joint_limits.yaml and the URDF.
+add_executable(test_joint_type_contract tests/test_joint_type_contract.cpp)
+target_include_directories(test_joint_type_contract PRIVATE src)
+target_link_libraries(test_joint_type_contract PRIVATE bridge_core)
+set_target_properties(test_joint_type_contract PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME joint_type_contract COMMAND test_joint_type_contract)
+
 endif ()
 
 # Offline reachability probe for traced paths. Its target registration was

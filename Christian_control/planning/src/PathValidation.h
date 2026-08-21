@@ -1,25 +1,31 @@
 #pragma once
-#include <array>
 #include <optional>
 #include <string>
 #include <vector>
 #include "PlannerModel.h"
 
-// Controller-side acceptance rules: joints 2/4/6 within the controller's
-// effective software stop, config::kJointSoftwareLimitDeg (Config.h:168 —
-// upper Table-39 magnitude less a 2 deg margin, capped by the firmware
-// warn threshold; NOT the wider warn limit alone); 1/3/5/7 continuous but
-// still bounded at ±360 deg, matching the controller's own ingest gate
-// (Targets.cpp's kContinuousJointBoundDeg) — a sanity check against the
-// optimizer settling a solution a full revolution off, not a real joint
-// limit. Returns an error description, or nullopt when every support
-// state passes.
+// Controller-side acceptance: would the controller's software stop refuse
+// any state of this plan?
+//
+// Both halves of that question come from one place, config::limits
+// (generated from planning/config/joint_limits.yaml, which matches the
+// URDF). Which joints are bounded is kBoundedMask; where their stops are
+// is kControllerLowerDeg/kControllerUpperDeg, the physical limit less the
+// controller margin. Nothing is restated here, so this check cannot drift
+// from the limits the controller actually enforces — which is exactly what
+// happened while it kept its own copy (2026-08-21).
+//
+// Continuous joints 1/3/5/7 have no mechanical stop and are NOT checked
+// here at all — no absolute angular bound, and no wrap into a principal
+// range either. Equivalent configurations differing by whole revolutions
+// are the same configuration, and this function must not pick between
+// them. Continuity across the path is enforced where it belongs: PathIk
+// measures every step with std::remainder against the previous solved
+// sample and reports maximum_joint_step_rad, and ValidatePlannedPath
+// reports each joint's speed and acceleration against its own limit. An
+// unnecessary full revolution therefore shows up as a velocity,
+// acceleration or joint-step finding, never as a position-limit rejection.
+//
+// Returns an error description, or nullopt when every support state passes.
 std::optional<std::string> ValidateJointPath(
     const std::vector<gtsam::Vector>& trajectory_pos);
-
-// The joints-2/4/6 limits ValidateJointPath enforces, degrees, indexed
-// like config::JointVector (index 1/3/5; the rest are the continuous-joint
-// zero sentinel). Exposed read-only so tests can pin these literals against
-// config::kJointSoftwareLimitDeg without bridge_core depending on
-// control's Config.h.
-const std::array<double, 7>& ValidationLimitsDeg();
