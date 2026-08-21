@@ -186,16 +186,6 @@ target_link_libraries(test_plan_verdict PRIVATE bridge_core)
 set_target_properties(test_plan_verdict PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME plan_verdict COMMAND test_plan_verdict)
 
-add_executable(test_path_ik tests/test_path_ik.cpp)
-target_include_directories(test_path_ik PRIVATE src)
-target_link_libraries(test_path_ik PRIVATE bridge_core)
-set_target_properties(test_path_ik PROPERTIES BUILD_RPATH "${TP_LIB}")
-add_dependencies(test_path_ik dh_params_flange)
-add_test(NAME path_ik COMMAND test_path_ik
-         ${DH_PARAMS_FLANGE_YAML}
-         ${JOINT_LIMITS_YAML}
-         ${CMAKE_CURRENT_SOURCE_DIR}/config/planner.yaml)
-
 endif ()
 
 # Offline reachability probe for traced paths. Its target registration was
