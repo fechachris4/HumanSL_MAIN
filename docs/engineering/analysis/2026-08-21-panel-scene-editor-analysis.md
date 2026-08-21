@@ -96,16 +96,21 @@ closest point on an axis segment and therefore describes rounded capsule ends
 after subtracting a radius. The new primitive must use the flat-capped formula
 above. The box formula has the same inside/outside decomposition in three
 axes. Non-positive, non-finite or shape-inapplicable dimensions are rejected
-at the configuration boundary; they do not reach either formula.
+at the configuration boundary; they do not reach either formula. No arbitrary
+`5.0 m` dimension rail is authorised: dimensions must be finite and strictly
+positive, and each enabled primitive must fit the safely interpolatable grid.
 
-For enabled primitives, `d_scene(p) = min_i d_i(p)` represents their union.
-An enabled primitive participates in grid-bounds checking and the minimum. A
+For enabled primitives, the required field is
+`d_scene(p) = min_i d_i(p)`. This minimum has the union's sign and zero set,
+which is what collision factors require, but inside overlapping primitives it
+is not always the exact Euclidean signed distance to the union boundary. An
+enabled primitive participates in grid-bounds checking and the minimum. A
 disabled primitive must still parse as complete, finite, positive geometry so
 that enabling it cannot reveal malformed state, but it has no effect on
 bounds or field construction; therefore a disabled out-of-grid primitive is
 allowed. With no enabled primitive, every stored grid sample is exactly
 `10.0 m`, preserving the existing free field. Overlap requires no special
-branch: the minimum remains the union distance.
+branch: the field remains the minimum individual value.
 
 The primitive equations are evaluated at SDF grid samples. GPMP2 queries the
 stored field by trilinear interpolation, so the factor sees an interpolated
@@ -113,10 +118,11 @@ field between samples, not a fresh analytic evaluation. The current cell size
 is 0.04 m. This discretisation is a named error contribution and no sub-cell
 physical-clearance claim follows from an analytic sample test.
 
-The queryable grid coordinates are
+The range-check-admitted grid coordinates are
 `[origin, origin + (n-1)*cell]`. The installed GPMP2 range check admits the
 exact upper coordinate, but its trilinear interpolation then indexes the
-next sample. Consequently every enabled primitive must satisfy
+next sample. The safely interpolatable interval includes the lower bound and
+excludes that upper bound. Consequently every enabled primitive must satisfy
 `primitive_min >= grid_min` and `primitive_max < grid_max` on every axis. The
 upper comparison is deliberately strict; an object touching an upper face is
 rejected before optimisation rather than clipped. Cylinder bounds are
@@ -130,7 +136,8 @@ states, `ObstacleSDFFactorArm` applies the field; between support states,
 bundled GPMP2 factor adds each sphere radius and the configured
 `epsilon_dist_m` to the hinge-loss threshold. `MakeMountSdf()` therefore
 stores primitive distance only; it must not inflate the scene, and the panel
-must not draw an implied epsilon boundary.
+must not draw an implied epsilon boundary. `epsilon_dist_m` is an optimisation
+cost activation distance, not a final hard clearance threshold.
 
 Obstacle factors are optimisation residuals, not proof that the final path is
 clear. Traced paths additionally sweep every modelled sphere over the final
@@ -246,10 +253,12 @@ paths so no second obstacle definition survives.
 
 ## Adversarial analysis review
 
-Verdict: **PENDING**
+Verdict: **ACCEPTED**
 
-The author has not accepted their own packet. A separate read-only reviewer
-must challenge and resolve, at minimum:
+Acceptance was supplied by the separate Task 0 adversarial reviewer, not by
+the packet author. That reviewer checked all nine challenges below and the
+2026-08-21 minimal-gating clarification, and returned ACCEPTED with no blocking
+findings:
 
 1. full `height_m` versus half-height use in equations, bounds, drawing and handles;
 2. flat caps versus the older clamped-axis capsule behavior;
@@ -261,6 +270,6 @@ must challenge and resolve, at minimum:
 8. UI safety implications, including an always-usable stop path and no clearance claim;
 9. the point-goal final SDF-sweep gap.
 
-No production scene, SDF, persistence or panel implementation is authorised
-until a fresh reviewer supplies an acceptance record and this verdict is
-updated from PENDING on that reviewer-backed evidence.
+This reviewer-backed record releases the analysis gate for the approved
+implementation slice only. It is not physical-clearance evidence and does not
+authorise robot operation.
