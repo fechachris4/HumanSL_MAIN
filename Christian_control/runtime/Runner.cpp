@@ -620,12 +620,18 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
     }
     catch (k_api::KDetailedException& ex)
     {
-        reason = LoopStop::kCommunication;
+        const auto subcode = static_cast<k_api::SubErrorCodes>(
+            ex.getErrorInfo().getError().error_sub_code());
+        // WRONG_SERVOING_MODE is a robot-state/ownership failure, not a
+        // transport failure. Preserve that distinction in the stop report;
+        // the exception is still fatal and follows the same safe teardown.
+        reason = subcode == k_api::WRONG_SERVOING_MODE
+            ? LoopStop::kLeftLowLevel
+            : LoopStop::kCommunication;
         sample.refresh_ok = false;
         log.push(sample);
         std::cout << "Kortex API error: " << ex.what() << " (sub-code "
-            << k_api::SubErrorCodes_Name(static_cast<k_api::SubErrorCodes>(
-                ex.getErrorInfo().getError().error_sub_code()))
+            << k_api::SubErrorCodes_Name(subcode)
             << ")\n";
     }
     catch (std::runtime_error& ex)

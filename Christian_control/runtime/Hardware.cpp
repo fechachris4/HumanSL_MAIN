@@ -36,8 +36,7 @@ namespace
     constexpr unsigned kUdpPort = 10001; // 1 kHz low-level cyclic streaming
     // The controller period is 2 ms, but a cyclic reply can legitimately
     // arrive later than one period because of transport and device jitter.
-    // Keep the exchange bounded without making the control law wait on the
-    // SDK's much longer default timeout.
+    // Keep the exchange bounded without using the SDK's much longer default.
     constexpr std::uint32_t kCyclicRefreshTimeoutMs = 5;
 
 } // namespace
