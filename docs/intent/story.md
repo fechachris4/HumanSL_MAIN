@@ -64,6 +64,23 @@ commit.
   transcript, 2026-08-12 ~16:19 (mid-turn message, predates hook capture
   for that turn); design approved the same session — spec at
   Christian_control/docs/superpowers/specs/2026-08-12-planner-config-panel-design.md.)
+- The planner's static obstacle scene has one persistent definition in the
+  planner's YAML and is edited and visualised from the existing panel. The
+  panel may hold an explicitly unsaved visual draft, but it owns no second
+  scene, SDF, collision rule or clearance judgement; `MakeMountSdf()` and
+  GPMP2 remain the consuming collision path. The first approved slice uses
+  named mount-frame boxes and finite vertical cylinders, lets their position
+  and dimensions be changed numerically or with viewer handles, retires the
+  per-arm `goal.yaml` box path, and never solves or commands merely because a
+  scene was edited or saved. Because the live in-process planner rereads
+  `planner.yaml` on later replans, the panel refuses persistence while a
+  controller is commanding, while still allowing a browser-local draft. The
+  why: Christian wants to understand visually why a plan avoids an obstacle
+  and eventually compare obstacles, planned and executed trajectories and
+  collision geometry, without letting the visualisation become a second
+  source of physical truth. (Prompt and explicit design approval: current
+  session, 2026-08-21; accepted design recorded in
+  `docs/superpowers/specs/2026-08-21-panel-scene-editor-design.md`.)
 - The arm should move as fast as the Kinova's own limits allow, not slower
   because of numbers chosen during bring-up. Christian's stated source is
   his professor: move "as fast as possible according to the physical limits
@@ -718,3 +735,17 @@ and why. Dismissals are binding — do not re-pitch.
   by merging, and the honest count was reported rather than padded.
   (Prompt: raw-prompt-log 2026-08-18 19:47:03, which asked for rejected
   moves and for the design to be falsified.)
+- 2026-08-21 (panel scene editor): adopted keeping the named static scene
+  inside the existing planner YAML, with the panel as editor/renderer and
+  `MakeMountSdf()` as the sole collision conversion. Considered and dismissed
+  for the first slice: a separate `scene.yaml` (extra runtime/archive/digest
+  path before scene size justifies it) and invoking a planner executable on
+  every drag (a process boundary on the interaction path). Deferred rather
+  than dismissed: freezing a running session onto its archived planner config,
+  which is stronger than the adopted panel save gate but changes runtime
+  configuration ownership. Also adopted: retire the per-arm goal box rather
+  than preserve two obstacle-definition paths; first-slice primitives are
+  mount-axis-aligned boxes and finite +Z cylinders, while planner-exported
+  collision spheres remain a later diagnostic slice rather than copied into
+  JavaScript. (Explicit approval in the current 2026-08-21 session; design:
+  `docs/superpowers/specs/2026-08-21-panel-scene-editor-design.md`.)
