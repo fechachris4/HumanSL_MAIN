@@ -45,6 +45,13 @@ _SESSION_ARMS = ("right", "left", "both")
 # parser below tells a nested block from a scalar.
 _KEY_RE = re.compile(r"^(\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:\s*(.*)$")
 
+# A deliberately narrow supplement to _KEY_RE: YAML permits quoted mapping
+# keys, but this hand-parser otherwise understands only the repository's bare
+# keys. Retirement must not be bypassable by spelling box as "box" or 'box'.
+# Validation applies this only while inside a known top-level arm block, after
+# comments have been stripped.
+_RETIRED_BOX_KEY_RE = re.compile(r"^\s+(?:box|\"box\"|'box')\s*:")
+
 # JointTrajectory.h: TRAJ_BEGIN's count must be an integer in [2, 1000], and
 # each row is fifteen numbers. Restated here so a preview can say why a block
 # would be refused; the controller remains the authority that refuses it.
@@ -85,8 +92,9 @@ def parse_goal(text: str) -> dict[str, Any]:
 
     Returns {"session_arms": str|None, "arms": {arm: {...}}}. Each arm block
     carries whichever of frame, goal, orientation_rpy_deg and path it
-    declares. A retired `box` key is retained only long enough for validation
-    to reject it with migration guidance. Commented-out keys are invisible.
+    declares. A bare retired `box` key is retained only long enough for
+    validation to reject it; quoted retired spellings are detected separately
+    without broadening this into a general YAML parser. Comments are invisible.
     """
     session_arms: str | None = None
     arms: dict[str, dict[str, Any]] = {}
@@ -127,6 +135,23 @@ def parse_goal(text: str) -> dict[str, Any]:
     return {"session_arms": session_arms, "arms": arms}
 
 
+def _arms_with_retired_box_key(text: str) -> set[str]:
+    """Known arm blocks containing an active bare or quoted ``box:`` key."""
+    found: set[str] = set()
+    arm: str | None = None
+    for raw in text.splitlines():
+        line = _strip_comment(raw)
+        if not line.strip():
+            continue
+        key = _KEY_RE.match(line)
+        if key and not key.group(1):
+            arm = key.group(2) if key.group(2) in _ARM_KEYS else None
+            continue
+        if arm is not None and _RETIRED_BOX_KEY_RE.match(line):
+            found.add(arm)
+    return found
+
+
 def read_goal(path: Path | None = None) -> dict[str, Any]:
     """The goal file as text, and as much structure as the panel needs.
 
@@ -161,6 +186,7 @@ def validate_goal(text: str) -> list[str]:
     sensible — to the bridge, which is the thing that can actually decide.
     """
     parsed = parse_goal(text)
+    retired_box_arms = _arms_with_retired_box_key(text)
     problems: list[str] = []
 
     arms_value = parsed["session_arms"]
@@ -177,7 +203,7 @@ def validate_goal(text: str) -> list[str]:
             problems.append(
                 f"{arm}: goal must be three finite numbers "
                 f"[x, y, z] in metres, not {block['goal']!r}")
-        if "box" in block:
+        if "box" in block or arm in retired_box_arms:
             problems.append(
                 f"{arm}: box is retired — edit obstacles.scene in planner.yaml")
     return problems

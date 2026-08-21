@@ -186,6 +186,11 @@ target_link_libraries(test_bridge_args PRIVATE bridge_core)
 set_target_properties(test_bridge_args PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME bridge_args COMMAND test_bridge_args)
 
+add_test(NAME solver_scene_ownership
+    COMMAND ${CMAKE_COMMAND}
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/src/PlanSolver.cpp
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/check_solver_scene_ownership.cmake)
+
 add_executable(test_projection_exit tests/test_projection_exit.cpp)
 target_include_directories(test_projection_exit PRIVATE src)
 target_link_libraries(test_projection_exit PRIVATE bridge_core)

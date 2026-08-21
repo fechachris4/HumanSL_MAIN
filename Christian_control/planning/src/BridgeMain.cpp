@@ -602,6 +602,9 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             parsed.debug_dir = next();
         } else if (flag == "--verbose") {
             parsed.verbose = true;
+        } else if (flag == "--box") {
+            throw std::invalid_argument(
+                "--box is retired — edit obstacles.scene in planner.yaml");
         } else if (flag == "--output") {
             const std::string value = next();
             if (value != "world-cartesian")
