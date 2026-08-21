@@ -395,12 +395,15 @@ def _render_scene(scene: dict[str, dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _publish_backup(target: Path, source_bytes: bytes) -> tuple[Path, bool]:
+def _publish_backup(
+    target: Path, source_bytes: bytes
+) -> tuple[Path, os.stat_result | None]:
     """Publish a complete first-edit backup without exposing partial bytes."""
     backup = paths.panel_backup(target)
     if backup.exists():
-        return backup, False
+        return backup, None
     temporary_path: Path | None = None
+    ownership: os.stat_result | None = None
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb", dir=target.parent, prefix=f".{backup.name}.",
@@ -411,17 +414,40 @@ def _publish_backup(target: Path, source_bytes: bytes) -> tuple[Path, bool]:
             temporary.flush()
             os.fsync(temporary.fileno())
         os.chmod(temporary_path, stat.S_IMODE(target.stat().st_mode))
+        candidate_ownership = temporary_path.lstat()
         try:
             os.link(temporary_path, backup)
         except FileExistsError:
-            return backup, False
-        return backup, True
+            return backup, None
+        ownership = candidate_ownership
+        return backup, ownership
     finally:
         if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
+            # Once link() publishes the complete inode, this name is only
+            # redundant cleanup. Its failure must not erase ownership or turn
+            # a valid publication into an unowned failed save. Retry once and
+            # otherwise leave only the complete temporary hard link.
+            for _ in range(2):
+                try:
+                    temporary_path.unlink()
+                    break
+                except FileNotFoundError:
+                    break
+                except OSError:
+                    continue
+
+
+def _remove_owned_backup(
+    backup: Path, ownership: os.stat_result | None
+) -> None:
+    if ownership is None:
+        return
+    try:
+        current = backup.lstat()
+    except FileNotFoundError:
+        return
+    if (current.st_dev, current.st_ino) == (ownership.st_dev, ownership.st_ino):
+        backup.unlink()
 
 
 def read_scene(path: Path | None = None) -> dict[str, Any]:
@@ -533,18 +559,17 @@ def _write_scene(
         latest = target.read_bytes()
         if _fnv1a64(latest) != source_hash:
             return False, "planner.yaml changed on disk; reload the scene before saving"
-        backup, backup_created = _publish_backup(target, latest)
+        backup, backup_ownership = _publish_backup(target, latest)
         try:
             os.replace(temporary_path, target)
         except OSError as replace_error:
-            if backup_created:
-                try:
-                    backup.unlink()
-                except OSError as cleanup_error:
-                    raise OSError(
-                        f"{replace_error}; could not remove failed-save backup: "
-                        f"{cleanup_error}"
-                    ) from replace_error
+            try:
+                _remove_owned_backup(backup, backup_ownership)
+            except OSError as cleanup_error:
+                raise OSError(
+                    f"{replace_error}; could not remove failed-save backup: "
+                    f"{cleanup_error}"
+                ) from replace_error
             raise
         temporary_path = None
     except OSError as error:

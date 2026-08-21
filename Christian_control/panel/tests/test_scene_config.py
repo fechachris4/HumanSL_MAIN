@@ -427,6 +427,18 @@ def test_backup_copy_failure_publishes_nothing_and_leaves_source_unchanged(
     assert list(tmp_path.glob("*.tmp")) == []
 
 
+def test_backup_publication_returns_its_inode_ownership_token(tmp_path):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+
+    backup, ownership = scene_config._publish_backup(path, path.read_bytes())
+
+    published = backup.lstat()
+    assert ownership is not None
+    assert ownership.st_dev == published.st_dev
+    assert ownership.st_ino == published.st_ino
+
+
 def test_replace_failure_removes_backup_created_by_that_failed_save(
     tmp_path, monkeypatch
 ):
@@ -451,6 +463,79 @@ def test_replace_failure_removes_backup_created_by_that_failed_save(
     assert path.read_bytes() == original
     assert not paths.panel_backup(path).exists()
     assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_post_link_temp_unlink_failure_keeps_ownership_for_replace_rollback(
+    tmp_path, monkeypatch
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    original = path.read_bytes()
+    token = scene_config.read_scene(path)["source_fnv1a64"]
+    backup = paths.panel_backup(path)
+    real_unlink = Path.unlink
+
+    def fail_backup_temp_unlink(unlink_path, *args, **kwargs):
+        if unlink_path.name.startswith(f".{backup.name}."):
+            raise OSError("injected redundant backup temp unlink failure")
+        return real_unlink(unlink_path, *args, **kwargs)
+
+    def fail_replace(source_path, destination_path):
+        raise OSError("injected planner replace failure after backup link")
+
+    monkeypatch.setattr(Path, "unlink", fail_backup_temp_unlink)
+    monkeypatch.setattr(scene_config.os, "replace", fail_replace)
+    ok, reason = scene_config.write_scene(
+        {"torso": valid_cylinder()},
+        token,
+        path=path,
+        commanding=lambda: False,
+    )
+
+    assert not ok
+    assert "planner replace failure after backup link" in reason
+    assert path.read_bytes() == original
+    assert not backup.exists()
+    # The only permitted residue is the redundant complete temp hard link.
+    leftovers = list(tmp_path.glob(f".{backup.name}.*.tmp"))
+    assert len(leftovers) == 1
+    assert leftovers[0].read_bytes() == original
+    real_unlink(leftovers[0])
+
+
+def test_replace_failure_does_not_delete_foreign_backup_path_replacement(
+    tmp_path, monkeypatch
+):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    original = path.read_bytes()
+    token = scene_config.read_scene(path)["source_fnv1a64"]
+    backup = paths.panel_backup(path)
+    foreign = b"backup replaced by an external writer"
+    foreign_path = tmp_path / "foreign-backup"
+    foreign_path.write_bytes(foreign)
+    real_replace = os.replace
+
+    def replace_backup_path_then_fail(source_path, destination_path):
+        # Keep both inodes allocated before the rename so inode-number reuse
+        # cannot make the foreign replacement look like this save's link.
+        real_replace(foreign_path, backup)
+        raise OSError("injected planner replace failure after foreign backup")
+
+    monkeypatch.setattr(
+        scene_config.os, "replace", replace_backup_path_then_fail
+    )
+    ok, reason = scene_config.write_scene(
+        {"torso": valid_cylinder()},
+        token,
+        path=path,
+        commanding=lambda: False,
+    )
+
+    assert not ok
+    assert "planner replace failure after foreign backup" in reason
+    assert path.read_bytes() == original
+    assert backup.read_bytes() == foreign
 
 
 def test_write_refuses_when_an_existing_planner_knob_is_missing(tmp_path):
