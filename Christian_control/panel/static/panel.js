@@ -859,7 +859,9 @@ function cloneScene(scene) {
 }
 
 function torsoFromInputs() {
-  const values = TORSO_INPUTS.map((id) => Number($(id).value));
+  const raw = TORSO_INPUTS.map((id) => $(id).value.trim());
+  if (raw.some((value) => value === '')) return null;
+  const values = raw.map(Number);
   if (!values.every(Number.isFinite)) return null;
   if (!(values[3] > 0) || !(values[4] > 0)) return null;
   return {
@@ -991,7 +993,6 @@ function wireSceneEditor() {
 function renderRun() {
   const empty = !state.frame && !state.status?.session?.commanding;
   $('run-empty').hidden = !empty;
-  document.querySelector('.run-grid').hidden = empty;
 
   const row = state.frame?.row || {};
   const worst = state.frame?.worst || {};

@@ -18,6 +18,27 @@ def test_run_scene_has_numeric_torso_cylinder_editor():
         "scene-torso-state",
     ):
         assert f'id="{element_id}"' in html
+    for label in ("x [m]", "y [m]", "z [m]", "radius [m]", "height [m]"):
+        assert f"<label>{label} " in html
+
+
+def test_scene_editor_stays_visible_without_telemetry():
+    script = (STATIC / "panel.js").read_text()
+    start = script.index("function renderRun()")
+    end = script.index("\nfunction ", start + 1)
+    body = script[start:end]
+
+    assert "document.querySelector('.run-grid').hidden = empty" not in body
+
+
+def test_blank_scene_numbers_are_not_coerced_to_zero():
+    script = (STATIC / "panel.js").read_text()
+    start = script.index("function torsoFromInputs()")
+    end = script.index("\nfunction ", start + 1)
+    body = script[start:end]
+
+    assert ".value.trim()" in body
+    assert "value === ''" in body
 
 
 def test_scene_save_uses_only_the_scene_endpoint():
