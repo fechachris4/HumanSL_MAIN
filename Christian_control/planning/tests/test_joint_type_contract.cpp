@@ -25,6 +25,7 @@
 
 #include "Config.h"
 #include "PathValidation.h"
+#include "utils.h"
 
 namespace {
 
@@ -55,6 +56,16 @@ gtsam::Vector OnlyJointAt(std::size_t joint, double degrees) {
 }  // namespace
 
 int main() {
+    const PlannerJointLimits limits = createJointLimits("../config/joint_limits.yaml");
+    Check(std::abs(limits.hardware_acceleration_rad_s2.upper(0) - 5.2) < 1e-12 &&
+              std::abs(limits.hardware_acceleration_rad_s2.upper(3) - 5.2) < 1e-12 &&
+              std::abs(limits.hardware_acceleration_rad_s2.upper(4) - 10.0) < 1e-12 &&
+              std::abs(limits.hardware_acceleration_rad_s2.upper(6) - 10.0) < 1e-12,
+          "hardware acceleration uses the Gen3 1-4/5-7 split");
+    Check((limits.effective_acceleration_rad_s2.upper -
+           limits.hardware_acceleration_rad_s2.upper).cwiseAbs().maxCoeff() < 1e-12,
+          "effective acceleration equals fraction times hardware acceleration");
+
     for (std::size_t j = 0; j < config::limits::kBoundedMask.size(); ++j) {
         const std::string name = "joint " + std::to_string(j + 1);
 

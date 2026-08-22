@@ -86,10 +86,15 @@ std::optional<std::string> WriteJointLimitsCsv(const std::string& directory,
     if (const auto error = OpenCsv(directory, "joint_limits.csv", file))
         return error;
 
-    file << "joint,lower_deg,upper_deg\n";
+    file << "joint,lower_deg,upper_deg,hardware_velocity_deg_s,effective_velocity_deg_s,"
+            "hardware_acceleration_rad_s2,effective_acceleration_rad_s2\n";
     for (int joint = 0; joint < 7; ++joint) {
         file << (joint + 1) << "," << limits.lower_rad(joint) * kRadToDeg
-             << "," << limits.upper_rad(joint) * kRadToDeg << "\n";
+             << "," << limits.upper_rad(joint) * kRadToDeg
+             << "," << limits.hardware_velocity_rad_s(joint) * kRadToDeg
+             << "," << limits.effective_velocity_rad_s(joint) * kRadToDeg
+             << "," << limits.hardware_acceleration_rad_s2(joint)
+             << "," << limits.effective_acceleration_rad_s2(joint) << "\n";
     }
     return file ? std::nullopt
                 : std::optional<std::string>("failed writing joint_limits.csv");

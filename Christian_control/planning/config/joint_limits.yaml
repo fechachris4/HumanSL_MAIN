@@ -77,6 +77,7 @@ margins:
   position_controller_margin_deg: 1.0
   velocity_planner_fraction: 0.95
   velocity_controller_fraction: 0.99
+  acceleration_planner_fraction: 1.0
 
 # NOT here: the firmware JOINT_LIMIT warning/error thresholds. Those are
 # still separately authored in control/Config.h, deliberately, until the
@@ -124,24 +125,26 @@ velocity_limits:
     upper_limit: 1.2218   # +70.004°/s (live hard limit)
     unit: "rad/s"
 
-# Joint acceleration limits (Table 43)
-# For angular joystick and joint trajectory
+# Joint acceleration limits (official Kinova Gen3 7-DoF User Guide, Table 43)
+# For angular joystick and joint trajectory. The 7-DoF grouping is joints 1–4
+# at 5.2 rad/s² and joints 5–7 at 10.0 rad/s²; these are physical hardware
+# values and are derated only by acceleration_planner_fraction above.
 acceleration_limits:
   actuator_1:
-    lower_limit: -1.0   # -57.3°/s²
-    upper_limit: 1.0    # +57.3°/s²
+    lower_limit: -5.2
+    upper_limit: 5.2
     unit: "rad/s²"
   actuator_2:
-    lower_limit: -1.0   # -57.3°/s²
-    upper_limit: 1.0    # +57.3°/s²
+    lower_limit: -5.2
+    upper_limit: 5.2
     unit: "rad/s²"
   actuator_3:
-    lower_limit: -1.0   # -57.3°/s²
-    upper_limit: 1.0    # +57.3°/s²
+    lower_limit: -5.2
+    upper_limit: 5.2
     unit: "rad/s²"
   actuator_4:
-    lower_limit: -1.0   # -57.3°/s²
-    upper_limit: 1.0    # +57.3°/s²
+    lower_limit: -5.2
+    upper_limit: 5.2
     unit: "rad/s²"
   actuator_5:
     lower_limit: -10.0  # -572.95°/s²

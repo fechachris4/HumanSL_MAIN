@@ -9,13 +9,15 @@
 #include "TrajectoryInitiation.h"  // InitSource
 
 // The operating limits the plan was actually solved against: the table
-// values with the planner's margin already applied, not the raw numbers in
-// joint_limits.yaml. Carried out with the outcome so a diagnostic dump can
-// draw the joint trajectory against the band the solver really used, rather
-// than re-deriving it from the file and getting the margin wrong.
+    // Physical and effective values carried with the outcome so artifacts
+    // state both the Kinova table and the planner-enforced operating band.
 struct PlanJointLimits {
     Eigen::Matrix<double, 7, 1> lower_rad = Eigen::Matrix<double, 7, 1>::Zero();
     Eigen::Matrix<double, 7, 1> upper_rad = Eigen::Matrix<double, 7, 1>::Zero();
+    Eigen::Matrix<double, 7, 1> hardware_velocity_rad_s = Eigen::Matrix<double, 7, 1>::Zero();
+    Eigen::Matrix<double, 7, 1> effective_velocity_rad_s = Eigen::Matrix<double, 7, 1>::Zero();
+    Eigen::Matrix<double, 7, 1> hardware_acceleration_rad_s2 = Eigen::Matrix<double, 7, 1>::Zero();
+    Eigen::Matrix<double, 7, 1> effective_acceleration_rad_s2 = Eigen::Matrix<double, 7, 1>::Zero();
 };
 
 struct PlanRequest {

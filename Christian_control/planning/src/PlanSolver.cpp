@@ -17,10 +17,16 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
     PlanOutcome outcome;
     try
     {
-        const auto [pos_limits, vel_limits] = createJointLimits(joint_limits_yaml);
+        const PlannerJointLimits limits = createJointLimits(joint_limits_yaml);
+        const JointLimits& pos_limits = limits.position_rad;
+        const JointLimits& vel_limits = limits.effective_velocity_rad_s;
         for (int joint = 0; joint < 7; ++joint) {
             outcome.joint_limits.lower_rad(joint) = pos_limits.lower(joint);
             outcome.joint_limits.upper_rad(joint) = pos_limits.upper(joint);
+            outcome.joint_limits.hardware_velocity_rad_s(joint) = limits.hardware_velocity_rad_s.upper(joint);
+            outcome.joint_limits.effective_velocity_rad_s(joint) = vel_limits.upper(joint);
+            outcome.joint_limits.hardware_acceleration_rad_s2(joint) = limits.hardware_acceleration_rad_s2.upper(joint);
+            outcome.joint_limits.effective_acceleration_rad_s2(joint) = limits.effective_acceleration_rad_s2.upper(joint);
         }
         const gtsam::Pose3 start_pose = ToolPoseInMount(model, request.q_start_rad);
         // An explicitly requested orientation wins; otherwise inherit the
@@ -207,10 +213,16 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const ValidationInputs& validation_template) {
     PathPlanOutcome outcome;
     try {
-        const auto [pos_limits, vel_limits] = createJointLimits(joint_limits_yaml);
+        const PlannerJointLimits limits = createJointLimits(joint_limits_yaml);
+        const JointLimits& pos_limits = limits.position_rad;
+        const JointLimits& vel_limits = limits.effective_velocity_rad_s;
         for (int joint = 0; joint < 7; ++joint) {
             outcome.joint_limits.lower_rad(joint) = pos_limits.lower(joint);
             outcome.joint_limits.upper_rad(joint) = pos_limits.upper(joint);
+            outcome.joint_limits.hardware_velocity_rad_s(joint) = limits.hardware_velocity_rad_s.upper(joint);
+            outcome.joint_limits.effective_velocity_rad_s(joint) = vel_limits.upper(joint);
+            outcome.joint_limits.hardware_acceleration_rad_s2(joint) = limits.hardware_acceleration_rad_s2.upper(joint);
+            outcome.joint_limits.effective_acceleration_rad_s2(joint) = limits.effective_acceleration_rad_s2.upper(joint);
         }
 
         // ---- 1. continuation IK along the requested path ---------------
@@ -299,10 +311,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             config.path_following.maximum_orientation_error_rad;
         for (int j = 0; j < 7; ++j) {
             inputs.joint_velocity_limits_rad_s(j) = vel_limits.upper(j);
-            // No acceleration table exists in joint_limits.yaml; derive a
-            // conservative bound from velocity (reach the limit in ~0.5 s)
-            // rather than skipping the check entirely.
-            inputs.joint_acceleration_limits_rad_s2(j) = vel_limits.upper(j) * 2.0;
+            inputs.joint_acceleration_limits_rad_s2(j) =
+                limits.effective_acceleration_rad_s2.upper(j);
         }
 
         // Where the traced phase begins, as a FRACTION of the base trajectory.

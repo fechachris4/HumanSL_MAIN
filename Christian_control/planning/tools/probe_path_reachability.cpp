@@ -208,9 +208,8 @@ int main(int argc, char** argv) {
     probe_arm.end_effector_frame = model.end_effector_frame;
     probe_arm.left_arm = model.left_arm;
 
-    const auto [position_limits, velocity_limits] =
-        createJointLimits(joint_limits_path);
-    (void)velocity_limits;
+    const PlannerJointLimits limits = createJointLimits(joint_limits_path);
+    const JointLimits& position_limits = limits.position_rad;
     PathIkJointLimits path_limits;
     for (int joint = 0; joint < 7; ++joint) {
         path_limits.lower_rad(joint) = position_limits.lower(joint);

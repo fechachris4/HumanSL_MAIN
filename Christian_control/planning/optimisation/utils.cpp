@@ -236,10 +236,9 @@ void analyzeTrajectoryResults(
 }
 
 
-std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_path) {
+PlannerJointLimits createJointLimits(const std::string& config_path) {
 
-    JointLimits pos_limits(7);
-    JointLimits vel_limits(7);
+    PlannerJointLimits limits;
 
     YAML::Node config = YAML::LoadFile(config_path);
 
@@ -265,8 +264,15 @@ std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_
             "limits alone");
     const double position_margin_deg =
         margins["position_planner_margin_deg"].as<double>();
-    const double velocity_fraction =
-        margins["velocity_planner_fraction"].as<double>();
+    const double velocity_fraction = margins["velocity_planner_fraction"].as<double>();
+    const double acceleration_fraction =
+        margins["acceleration_planner_fraction"].as<double>();
+    if (!std::isfinite(velocity_fraction) || velocity_fraction <= 0.0 ||
+        velocity_fraction > 1.0)
+        throw std::runtime_error("createJointLimits: velocity_planner_fraction must be finite and in (0, 1]");
+    if (!std::isfinite(acceleration_fraction) || acceleration_fraction <= 0.0 ||
+        acceleration_fraction > 1.0)
+        throw std::runtime_error("createJointLimits: acceleration_planner_fraction must be finite and in (0, 1]");
 
     for (int i = 1; i <= 7; ++i) {
         std::string actuator_key = "actuator_" + std::to_string(i);
@@ -278,14 +284,14 @@ std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_
         // unmargined. Do not give them a fabricated angle.
         const bool continuous = entry["continuous"] && entry["continuous"].as<bool>();
         if (continuous) {
-            pos_limits.lower(i-1) = -1e20;
-            pos_limits.upper(i-1) = 1e20;
+            limits.position_rad.lower(i-1) = -1e20;
+            limits.position_rad.upper(i-1) = 1e20;
             continue;
         }
         const double lower_deg = entry["lower_limit"].as<double>() + position_margin_deg;
         const double upper_deg = entry["upper_limit"].as<double>() - position_margin_deg;
-        pos_limits.lower(i-1) = lower_deg * M_PI / 180.0;
-        pos_limits.upper(i-1) = upper_deg * M_PI / 180.0;
+        limits.position_rad.lower(i-1) = lower_deg * M_PI / 180.0;
+        limits.position_rad.upper(i-1) = upper_deg * M_PI / 180.0;
     }
 
     // Velocity limits are symmetric hard limits in rad/s; the planner's
@@ -294,12 +300,29 @@ std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_
     for (int i = 1; i <= 7; ++i) {
         std::string actuator_key = "actuator_" + std::to_string(i);
         if (config["velocity_limits"][actuator_key]) {
-            vel_limits.lower(i-1) = config["velocity_limits"][actuator_key]["lower_limit"].as<double>() * velocity_fraction;
-            vel_limits.upper(i-1) = config["velocity_limits"][actuator_key]["upper_limit"].as<double>() * velocity_fraction;
+            const auto entry = config["velocity_limits"][actuator_key];
+            limits.hardware_velocity_rad_s.lower(i-1) = entry["lower_limit"].as<double>();
+            limits.hardware_velocity_rad_s.upper(i-1) = entry["upper_limit"].as<double>();
+            limits.effective_velocity_rad_s.lower(i-1) =
+                limits.hardware_velocity_rad_s.lower(i-1) * velocity_fraction;
+            limits.effective_velocity_rad_s.upper(i-1) =
+                limits.hardware_velocity_rad_s.upper(i-1) * velocity_fraction;
         }
     }
-
-    return std::make_pair(pos_limits, vel_limits);
+    for (int i = 1; i <= 7; ++i) {
+        const std::string actuator_key = "actuator_" + std::to_string(i);
+        const auto entry = config["acceleration_limits"][actuator_key];
+        if (!entry) continue;
+        limits.hardware_acceleration_rad_s2.lower(i - 1) =
+            entry["lower_limit"].as<double>();
+        limits.hardware_acceleration_rad_s2.upper(i - 1) =
+            entry["upper_limit"].as<double>();
+        limits.effective_acceleration_rad_s2.lower(i - 1) =
+            limits.hardware_acceleration_rad_s2.lower(i - 1) * acceleration_fraction;
+        limits.effective_acceleration_rad_s2.upper(i - 1) =
+            limits.hardware_acceleration_rad_s2.upper(i - 1) * acceleration_fraction;
+    }
+    return limits;
 }
 
 DHParameters createDHParams(const std::string& yaml_path) {

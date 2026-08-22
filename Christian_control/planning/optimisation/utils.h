@@ -39,6 +39,19 @@ struct JointLimits {
     JointLimits(size_t dof) : lower(gtsam::Vector::Zero(dof)), upper(gtsam::Vector::Zero(dof)) {}
 };
 
+struct PlannerJointLimits {
+    JointLimits position_rad;
+    JointLimits hardware_velocity_rad_s;
+    JointLimits effective_velocity_rad_s;
+    JointLimits hardware_acceleration_rad_s2;
+    JointLimits effective_acceleration_rad_s2;
+
+    explicit PlannerJointLimits(size_t dof = 7)
+        : position_rad(dof), hardware_velocity_rad_s(dof),
+          effective_velocity_rad_s(dof), hardware_acceleration_rad_s2(dof),
+          effective_acceleration_rad_s2(dof) {}
+};
+
 
 struct DHParameters {
     gtsam::Vector a;
@@ -178,7 +191,7 @@ void analyzeTrajectoryResults(
 
 DHParameters createDHParams(const std::string& yaml_path);
 
-std::pair<JointLimits, JointLimits> createJointLimits(const std::string& config_path);
+PlannerJointLimits createJointLimits(const std::string& config_path);
 
 // FK/IK via Pinocchio against the canonical URDF, NOT the dh argument
 // (kept only so legacy call sites compile — see the .cpp). end_effector_frame
@@ -218,4 +231,3 @@ std::tuple<Eigen::VectorXd, Eigen::VectorXd, Eigen::VectorXd> world2base(
 ManipulabilityEllipsoid computeManipulabilityEllipsoid(const Eigen::Vector<double,7>& config, const gtsam::Pose3& base_pose_world);
 
 double computeDM(const gtsam::Vector& config, const gtsam::Pose3& current_ee_pose_world, const gtsam::Pose3& base_pose_world, double angle);
-
