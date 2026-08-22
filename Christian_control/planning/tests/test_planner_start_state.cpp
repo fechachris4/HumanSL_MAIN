@@ -100,8 +100,7 @@ int main(int argc, char** argv) {
     validation.circle_centre = circle.centre_m;
     validation.circle_normal = circle.normal;
     validation.circle_radius_m = circle.radius_m;
-    const Eigen::Matrix<double, 7, 1> path_qdot =
-        Eigen::Matrix<double, 7, 1>::Zero();
+    const Eigen::Matrix<double, 7, 1> path_qdot = qdot_meas;
 
     const PathPlanOutcome traced = SolveAlongPath(
         model, path, q_plan, path_qdot, joint_limits, config, validation);

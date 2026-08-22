@@ -458,6 +458,11 @@ std::pair<std::vector<gtsam::Vector>, std::vector<gtsam::Vector>> OptimizeTrajec
         dense_idx++;
     }
 
+    if (!dense_velocities.empty() &&
+        optimized_values.exists(gtsam::Symbol('v', 0)))
+        dense_velocities.front() =
+            optimized_values.at<gtsam::Vector>(gtsam::Symbol('v', 0));
+
     std::cout << "Generated " << dense_trajectory.size() << " dense position waypoints" << std::endl;
     std::cout << "Generated " << dense_velocities.size() << " dense velocity waypoints" << std::endl;
     

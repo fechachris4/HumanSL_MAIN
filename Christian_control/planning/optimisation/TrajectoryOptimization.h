@@ -112,10 +112,10 @@ public:
     // `init_values` (x0..xN and v0..vN, so N+1 of each), and times must be
     // strictly increasing from zero.
     //
-    // zero_velocity_indices: support states pinned to rest. The trajectory
-    // start, the first task-path state, and the end, so the arm comes to a
-    // stop before it begins tracing rather than blending an arbitrary
-    // approach direction into the path tangent.
+    // zero_velocity_indices: task-entry and endpoint support states pinned to
+    // rest, so the arm comes to a stop before tracing rather than blending an
+    // arbitrary approach direction into the path tangent. State zero is
+    // governed by the measured start equalities instead.
     TrajectoryResult optimizeTaskTrajectory(
         const gpmp2::ArmModel& arm_model,
         const gpmp2::SignedDistanceField& sdf,

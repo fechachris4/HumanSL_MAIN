@@ -277,24 +277,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             Eigen::Vector3d::Constant(config.path_following.rotation_prior_sigma_rad),
             Eigen::Vector3d::Constant(config.path_following.position_prior_sigma_m));
 
-        gtsam::Values init_values;
         const std::size_t states = assembled.waypoints.size();
-        for (std::size_t i = 0; i < states; ++i) {
-            init_values.insert(gtsam::Symbol('x', i),
-                               gtsam::Vector(assembled.initial_configurations[i]));
-            // Average velocity across the step, so the initial guess is at
-            // least self-consistent in position and velocity.
-            gtsam::Vector velocity = gtsam::Vector::Zero(7);
-            if (i + 1 < states) {
-                const double dt = assembled.waypoints[i + 1].time_s -
-                                  assembled.waypoints[i].time_s;
-                if (dt > 0.0)
-                    velocity = gtsam::Vector((assembled.initial_configurations[i + 1] -
-                                              assembled.initial_configurations[i]) / dt);
-            }
-            init_values.insert(gtsam::Symbol('v', i), velocity);
-        }
-
         const GridGeometry grid = MountGridGeometry();
         const auto sdf = MakeMountSdf(grid, config.scene);
         std::optional<gtsam::Vector> start_vel;
@@ -302,24 +285,12 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             start_vel = gtsam::Vector(*qdot_start_rad_s);
         const std::string sdf_contents = DescribeStaticScene(config.scene, grid);
 
-        // ---- 3. solve -------------------------------------------------
-        OptimizeTrajectory optimizer;
-        double duration_s = assembled.total_duration_s;
-        TrajectoryResult solved = optimizer.optimizeTaskTrajectory(
-            *model.arm_model, sdf, init_values, assembled.waypoints,
-            gtsam::Vector(q_start_rad), start_vel,
-            assembled.zero_velocity_indices,
-            pos_limits, vel_limits, duration_s, config.optimizer);
-        if (solved.trajectory_pos.empty()) {
-            outcome.error = "optimizer returned an empty trajectory";
-            return outcome;
-        }
-
-        // ---- 4. validate the exact dense result, scaling if needed ------
+        // ---- 3. solve and validate, rebuilding every duration attempt ---
         // Time scaling changes qdot and timestamps, so the dense view is
         // rebuilt and re-measured on every pass. No wire decimation sits
         // between the final GPMP2 artefact and this validation.
         constexpr int kMaxScalingPasses = 3;
+        const double base_duration_s = assembled.total_duration_s;
         ValidationInputs inputs = validation_template;
         inputs.desired_task_path = &task_path;
         inputs.measured_start = q_start_rad;
@@ -344,10 +315,44 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             assembled.waypoints[assembled.task_start_index].time_s /
             assembled.total_duration_s;
 
+        double duration_s = base_duration_s;
         for (int pass = 0; pass < kMaxScalingPasses; ++pass) {
             outcome.time_scaling_passes = pass + 1;
             inputs.task_start_time_s = duration_s * task_start_fraction;
             outcome.task_start_time_s = inputs.task_start_time_s;
+
+            const double time_scale = duration_s / base_duration_s;
+            std::vector<OptimisationWaypoint> attempt_waypoints =
+                assembled.waypoints;
+            for (OptimisationWaypoint& waypoint : attempt_waypoints)
+                waypoint.time_s *= time_scale;
+            gtsam::Values init_values;
+            for (std::size_t i = 0; i < states; ++i) {
+                init_values.insert(
+                    gtsam::Symbol('x', i),
+                    gtsam::Vector(assembled.initial_configurations[i]));
+                gtsam::Vector velocity = gtsam::Vector::Zero(7);
+                if (i + 1 < states) {
+                    const double dt = attempt_waypoints[i + 1].time_s -
+                                      attempt_waypoints[i].time_s;
+                    if (dt > 0.0)
+                        velocity = gtsam::Vector(
+                            (assembled.initial_configurations[i + 1] -
+                             assembled.initial_configurations[i]) /
+                            dt);
+                }
+                init_values.insert(gtsam::Symbol('v', i), velocity);
+            }
+            OptimizeTrajectory optimizer;
+            TrajectoryResult solved = optimizer.optimizeTaskTrajectory(
+                *model.arm_model, sdf, init_values, attempt_waypoints,
+                gtsam::Vector(q_start_rad), start_vel,
+                assembled.zero_velocity_indices, pos_limits, vel_limits,
+                duration_s, config.optimizer);
+            if (solved.trajectory_pos.empty()) {
+                outcome.error = "optimizer returned an empty trajectory";
+                return outcome;
+            }
 
             const TimedJointTrajectory reconstructed =
                 DenseValidationTrajectory(solved, duration_s);
@@ -392,7 +397,6 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             // 1/alpha because the same displacement now takes alpha times
             // as long.
             duration_s *= alpha;
-            for (auto& velocity : solved.trajectory_vel) velocity /= alpha;
         }
 
         outcome.ok = true;
