@@ -8,25 +8,25 @@
 int main(int argc, char** argv) {
     assert(argc == 3);
     MountCylinder cylinder;
-    cylinder.radius_m = 0.2;
-    cylinder.height_m = 0.6;
+    cylinder.radius_m = 0.25;
+    cylinder.height_m = 0.5;
     const auto side = QueryStaticObstacle(
-        cylinder, Eigen::Vector3d(0.3, 0.0, 0.0), 0.05);
+        cylinder, Eigen::Vector3d(0.35, 0.0, 0.0), 0.05);
     assert(std::abs(side.clearance_m - 0.05) < 1e-12);
     assert(side.outward_normal_mount == Eigen::Vector3d::UnitX());
     const auto cap = QueryStaticObstacle(
-        cylinder, Eigen::Vector3d(0.0, 0.0, 0.4), 0.05);
-    assert(std::abs(cap.clearance_m - 0.05) < 1e-12);
+        cylinder, Eigen::Vector3d(0.0, 0.0, 0.3), 0.05);
+    assert(std::abs(cap.clearance_m - 0.0) < 1e-12);
     assert(cap.outward_normal_mount == Eigen::Vector3d::UnitZ());
     const auto cylinder_corner = QueryStaticObstacle(
-        cylinder, Eigen::Vector3d(0.3, 0.0, 0.4), 0.05);
+        cylinder, Eigen::Vector3d(0.35, 0.0, 0.35), 0.05);
     assert((cylinder_corner.outward_normal_mount -
             Eigen::Vector3d(1.0, 0.0, 1.0).normalized()).norm() < 1e-12);
     const auto cylinder_inside_side = QueryStaticObstacle(
         cylinder, Eigen::Vector3d(0.1, 0.0, 0.0), 0.05);
     assert(cylinder_inside_side.outward_normal_mount == Eigen::Vector3d::UnitX());
     const auto cylinder_inside_tie = QueryStaticObstacle(
-        cylinder, Eigen::Vector3d(0.1, 0.0, 0.2), 0.05);
+        cylinder, Eigen::Vector3d(0.125, 0.0, 0.125), 0.05);
     assert(cylinder_inside_tie.outward_normal_mount == Eigen::Vector3d::UnitX());
 
     AxisAlignedBox box;

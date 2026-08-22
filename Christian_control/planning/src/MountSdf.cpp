@@ -99,7 +99,7 @@ ObstacleQuery QueryStaticObstacle(const StaticObstacleGeometry& geometry,
                 else normal.x() = q.x();
                 normal.z() = (local.z() >= 0.0 ? 1.0 : -1.0) * q.y();
                 normal.normalize();
-            } else if (q.x() > 0.0 || (q.y() <= 0.0 && q.x() + 1e-12 >= q.y())) {
+            } else if (q.x() > 0.0 || (q.y() <= 0.0 && q.x() >= q.y())) {
                 if (radial > 0.0) normal.head<2>() = local.head<2>() / radial;
                 else normal.x() = 1.0;
             } else {
@@ -159,19 +159,14 @@ static gpmp2::SignedDistanceField BuildSingleObstacleSdf(
     const NamedStaticObstacle& obstacle) {
     ValidateGridGeometry(geometry);
     const GridBounds grid_bounds = MountGridBounds(geometry);
-    {
-        if (!obstacle.enabled)
-            throw std::invalid_argument("static obstacle '" + obstacle.id + "' is disabled");
-        try {
-            ValidateStaticObstacleGeometry(obstacle.geometry);
-        } catch (const std::invalid_argument& error) {
-            throw std::invalid_argument("static obstacle '" + obstacle.id + "': " +
-                                        error.what());
-        }
-        if (!StaticObstacleWithinGridBounds(obstacle.geometry, grid_bounds)) {
-            throw std::invalid_argument("static obstacle '" + obstacle.id +
-                                        "' extends outside the mount SDF grid");
-        }
+    try {
+        ValidateStaticObstacleGeometry(obstacle.geometry);
+    } catch (const std::invalid_argument& error) {
+        throw std::invalid_argument("static obstacle '" + obstacle.id + "': " + error.what());
+    }
+    if (!StaticObstacleWithinGridBounds(obstacle.geometry, grid_bounds)) {
+        throw std::invalid_argument("static obstacle '" + obstacle.id +
+                                    "' extends outside the mount SDF grid");
     }
     const gtsam::Point3 origin(geometry.origin_mount_m);
     // gpmp2 layout: one z-slice per matrix; matrix rows = y, cols = x.

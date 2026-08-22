@@ -325,6 +325,14 @@ int main() {
     height_m: 0.4
     permitted_sphere_groups: [unknown_group]
 )", "unknown sphere group is rejected", "unknown group");
+    ExpectReject(R"(scene:
+  torso:
+    enabled: true
+    shape: cylinder
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 0.2
+    height_m: 0.4
+)", "missing sphere groups are rejected", "obstacles.scene.torso");
 
     if (failures == 0)
         std::puts("test_scene_config: all checks passed");
