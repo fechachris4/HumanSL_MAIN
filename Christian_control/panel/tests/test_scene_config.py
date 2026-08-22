@@ -371,6 +371,12 @@ def test_permitted_sphere_groups_round_trip_and_unknown_group_rejects(tmp_path):
                                           path=path, commanding=lambda: False)
     assert not ok
     assert "unknown" in reason
+    missing = valid_cylinder()
+    missing.pop("permitted_sphere_groups")
+    ok, reason = scene_config.write_scene({"torso": missing}, result["source_fnv1a64"],
+                                          path=path, commanding=lambda: False)
+    assert not ok
+    assert "permitted_sphere_groups" in reason
 
 
 def test_write_is_deterministic_and_preserves_every_unrelated_byte(tmp_path):

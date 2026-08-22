@@ -61,8 +61,8 @@ double StaticObstacleSignedDistance(const Eigen::Vector3d& p,
 }
 }  // namespace
 
-gpmp2::SignedDistanceField BuildSingleObstacleSdf(
-    const GridGeometry&, const std::vector<NamedStaticObstacle>&);
+static gpmp2::SignedDistanceField BuildSingleObstacleSdf(
+    const GridGeometry&, const NamedStaticObstacle&);
 
 ObstacleQuery QueryStaticObstacle(const StaticObstacleGeometry& geometry,
                                   const Eigen::Vector3d& point,
@@ -99,11 +99,9 @@ ObstacleQuery QueryStaticObstacle(const StaticObstacleGeometry& geometry,
                 else normal.x() = q.x();
                 normal.z() = (local.z() >= 0.0 ? 1.0 : -1.0) * q.y();
                 normal.normalize();
-            } else if (q.x() > 0.0) {
+            } else if (q.x() > 0.0 || (q.y() <= 0.0 && q.x() + 1e-12 >= q.y())) {
                 if (radial > 0.0) normal.head<2>() = local.head<2>() / radial;
                 else normal.x() = 1.0;
-            } else if (q.y() > 0.0 || q.x() >= q.y()) {
-                normal.z() = local.z() >= 0.0 ? 1.0 : -1.0;
             } else {
                 normal.z() = local.z() >= 0.0 ? 1.0 : -1.0;
             }
@@ -137,7 +135,7 @@ std::vector<NamedObstacleField> MakeNamedObstacleFields(
         field.id = obstacle->id;
         field.geometry = obstacle->geometry;
         field.participating_sphere_indices = std::move(indices);
-        field.sdf = BuildSingleObstacleSdf(grid, {*obstacle});
+        field.sdf = BuildSingleObstacleSdf(grid, *obstacle);
         field.participating_arm = std::make_unique<gpmp2::ArmModel>(
             model.arm_model->fk_model(), prohibited);
         fields.push_back(std::move(field));
@@ -156,14 +154,14 @@ GridGeometry MountGridGeometry() {
     return geometry;
 }
 
-gpmp2::SignedDistanceField BuildSingleObstacleSdf(
+static gpmp2::SignedDistanceField BuildSingleObstacleSdf(
     const GridGeometry& geometry,
-    const std::vector<NamedStaticObstacle>& scene_mount) {
+    const NamedStaticObstacle& obstacle) {
     ValidateGridGeometry(geometry);
     const GridBounds grid_bounds = MountGridBounds(geometry);
-    for (const NamedStaticObstacle& obstacle : scene_mount) {
+    {
         if (!obstacle.enabled)
-            continue;
+            throw std::invalid_argument("static obstacle '" + obstacle.id + "' is disabled");
         try {
             ValidateStaticObstacleGeometry(obstacle.geometry);
         } catch (const std::invalid_argument& error) {
@@ -185,13 +183,7 @@ gpmp2::SignedDistanceField BuildSingleObstacleSdf(
                 const Eigen::Vector3d p =
                     geometry.origin_mount_m +
                     Eigen::Vector3d(i, j, k) * geometry.cell_m;
-                double distance_m = 10.0;
-                for (const NamedStaticObstacle& obstacle : scene_mount) {
-                    if (obstacle.enabled)
-                        distance_m = std::min(
-                            distance_m, StaticObstacleSignedDistance(p, obstacle.geometry));
-                }
-                field[k](j, i) = distance_m;
+                field[k](j, i) = StaticObstacleSignedDistance(p, obstacle.geometry);
             }
     return gpmp2::SignedDistanceField(origin, geometry.cell_m, field);
 }

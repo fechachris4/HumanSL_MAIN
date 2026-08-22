@@ -365,12 +365,19 @@ def _validate_scene(submitted: Any) -> dict[str, dict[str, Any]]:
             )
         if not isinstance(value["enabled"], bool):
             raise _SceneError(f"{location}.enabled must be true or false")
+        groups = value["permitted_sphere_groups"]
+        if not isinstance(groups, (list, tuple)):
+            raise _SceneError(f"{location}.permitted_sphere_groups must be a list")
+        for group in groups:
+            if not isinstance(group, str) or group not in _SPHERE_GROUPS:
+                raise _SceneError(
+                    f"{location}.permitted_sphere_groups contains unknown group {group!r}")
         item: dict[str, Any] = {
             "enabled": value["enabled"],
             "shape": shape,
             "center_mount_m": _vector(value["center_mount_m"],
                                        f"{location}.center_mount_m"),
-            "permitted_sphere_groups": list(value["permitted_sphere_groups"]),
+            "permitted_sphere_groups": list(groups),
         }
         if shape == "box":
             item["half_extent_m"] = _vector(

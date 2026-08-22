@@ -54,27 +54,7 @@ obstacles:
   preferred_clearance_m: 0.10
   collision_sigma: 0.0005
 )";
-    std::string normalized = scene_yaml;
-    for (const std::string& marker : {"height_m:", "half_extent_m:"}) {
-        std::size_t position = 0;
-        while ((position = normalized.find(marker, position)) != std::string::npos) {
-            const std::size_t line_end = normalized.find('\n', position);
-            if (line_end == std::string::npos) break;
-            const std::size_t next_line_end = normalized.find('\n', line_end + 1);
-            const std::string next_line = normalized.substr(
-                line_end + 1, next_line_end == std::string::npos
-                                  ? std::string::npos
-                                  : next_line_end - line_end - 1);
-            if (next_line.find("permitted_sphere_groups:") != std::string::npos) {
-                position = line_end + 1;
-                continue;
-            }
-            const std::string group = "\n    permitted_sphere_groups: []";
-            normalized.insert(line_end, group);
-            position = line_end + group.size();
-        }
-    }
-    file << Indent(normalized, "  ") << R"(
+    file << Indent(scene_yaml, "  ") << R"(
 smoothness:
   qc_scale: 1.0
 goal:
@@ -164,6 +144,7 @@ int main() {
     shape: box
     center_mount_m: [0.0, 0.0, 0.0]
     half_extent_m: [0.1, 0.2, 0.3]
+    permitted_sphere_groups: []
 )");
     const PlannerConfig disabled = LoadPlannerConfig(disabled_path);
     std::filesystem::remove(disabled_path);
@@ -187,6 +168,7 @@ int main() {
     center_mount_m: [0.0, 0.0, 0.0]
     radius_m: 5.1
     height_m: 6.2
+    permitted_sphere_groups: []
 )");
     const PlannerConfig large_cylinder = LoadPlannerConfig(large_cylinder_path);
     std::filesystem::remove(large_cylinder_path);
@@ -208,6 +190,7 @@ int main() {
     shape: box
     center_mount_m: [0.0, 0.0, 0.0]
     half_extent_m: [5.1, 6.2, 7.3]
+    permitted_sphere_groups: []
 )");
     const PlannerConfig large_box = LoadPlannerConfig(large_box_path);
     std::filesystem::remove(large_box_path);

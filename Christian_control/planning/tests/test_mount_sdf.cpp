@@ -18,15 +18,27 @@ int main(int argc, char** argv) {
         cylinder, Eigen::Vector3d(0.0, 0.0, 0.4), 0.05);
     assert(std::abs(cap.clearance_m - 0.05) < 1e-12);
     assert(cap.outward_normal_mount == Eigen::Vector3d::UnitZ());
+    const auto cylinder_corner = QueryStaticObstacle(
+        cylinder, Eigen::Vector3d(0.3, 0.0, 0.4), 0.05);
+    assert((cylinder_corner.outward_normal_mount -
+            Eigen::Vector3d(1.0, 0.0, 1.0).normalized()).norm() < 1e-12);
+    const auto cylinder_inside_side = QueryStaticObstacle(
+        cylinder, Eigen::Vector3d(0.1, 0.0, 0.0), 0.05);
+    assert(cylinder_inside_side.outward_normal_mount == Eigen::Vector3d::UnitX());
+    const auto cylinder_inside_tie = QueryStaticObstacle(
+        cylinder, Eigen::Vector3d(0.1, 0.0, 0.2), 0.05);
+    assert(cylinder_inside_tie.outward_normal_mount == Eigen::Vector3d::UnitX());
 
     AxisAlignedBox box;
     box.half_extent = Eigen::Vector3d::Constant(0.2);
     const auto corner = QueryStaticObstacle(
         box, Eigen::Vector3d(0.3, 0.3, 0.3), 0.05);
     assert(std::abs(corner.clearance_m - (std::sqrt(0.03) - 0.05)) < 1e-12);
+    assert((corner.outward_normal_mount - Eigen::Vector3d::Constant(1.0 / std::sqrt(3.0))).norm() < 1e-12);
     const auto inside = QueryStaticObstacle(
         box, Eigen::Vector3d::Zero(), 0.05);
     assert(inside.clearance_m < 0.0);
+    assert(inside.outward_normal_mount == Eigen::Vector3d::UnitX());
     const auto box_face = QueryStaticObstacle(
         box, Eigen::Vector3d(0.3, 0.0, 0.0), 0.05);
     assert(box_face.outward_normal_mount == Eigen::Vector3d::UnitX());

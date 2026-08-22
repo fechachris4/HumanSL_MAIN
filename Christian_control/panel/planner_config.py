@@ -26,7 +26,7 @@ PLANNER_KNOBS: dict[str, tuple[str, str, str]] = {
     "motion.waypoints": ("int", "min2",
         "Optimizer support states between start and goal"),
     "obstacles.minimum_clearance_m": ("double", "nonnegative",
-        "Hard modelled minimum clearance in metres"),
+        "Configured minimum for final timed-trajectory validation"),
     "obstacles.preferred_clearance_m": ("double", "nonnegative",
         "Preferred route-shaping clearance in metres"),
     "obstacles.collision_sigma": ("double", "positive",
