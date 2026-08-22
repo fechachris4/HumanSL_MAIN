@@ -27,6 +27,9 @@ std::vector<std::string> ArgumentsForRequest(
         "--start-deg"};
     for (int joint = 0; joint < 7; ++joint)
         args.push_back(Number(request.q_rad(joint) * 180.0 / M_PI));
+    args.push_back("--start-velocity-deg-s");
+    for (int joint = 0; joint < 7; ++joint)
+        args.push_back(Number((*request.qdot_rad_s)(joint) * 180.0 / M_PI));
 
     if (request.goal.kind == GoalKind::kPoint) {
         args.push_back("--goal");

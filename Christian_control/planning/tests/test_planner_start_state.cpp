@@ -1,0 +1,159 @@
+#include <cmath>
+#include <cstdio>
+#include <sstream>
+#include <string>
+
+#include "CartesianPath.h"
+#include "PlanSolver.h"
+#include "PlannerConfig.h"
+#include "PlannerModel.h"
+#include "PlannerRuntime.h"
+#include "StartState.h"
+
+namespace {
+int failures = 0;
+
+void Check(bool condition, const std::string& message) {
+    if (!condition) {
+        std::printf("FAIL: %s\n", message.c_str());
+        ++failures;
+    }
+}
+
+double MaxAbs(const Eigen::Matrix<double, 7, 1>& value) {
+    return value.cwiseAbs().maxCoeff();
+}
+
+Eigen::Matrix<double, 7, 1> MeasuredQ() {
+    const Eigen::Matrix<double, 7, 1> q_deg =
+        (Eigen::Matrix<double, 7, 1>() <<
+            94.868255615234375, 103.06673431396484, 336.72296142578125,
+            7.3997693061828613, 350.69995117187494, 354.3056640625,
+            184.83963012695315).finished();
+    Eigen::Matrix<double, 7, 1> q_rad = q_deg * M_PI / 180.0;
+    for (int joint = 0; joint < 7; ++joint)
+        q_rad(joint) = WrapToPrincipalRad(q_rad(joint));
+    return q_rad;
+}
+
+Eigen::Matrix<double, 7, 1> MeasuredQdot() {
+    return (Eigen::Matrix<double, 7, 1>() <<
+        0.001, -0.002, 0.003, -0.004, 0.005, -0.006, 0.007).finished();
+}
+}  // namespace
+
+int main(int argc, char** argv) {
+    Check(argc == 3, "usage: test_planner_start_state dh_tool.yaml dh_flange.yaml");
+    if (argc != 3) return 1;
+
+    const PlannerModel model = LoadPlannerModel(argv[1], /*has_tool=*/true);
+    const PlannerConfig config = LoadPlannerConfig("../config/planner.yaml");
+    const std::string joint_limits = "../config/joint_limits.yaml";
+    const Eigen::Matrix<double, 7, 1> q_plan = MeasuredQ();
+    const Eigen::Matrix<double, 7, 1> qdot_meas = MeasuredQdot();
+    const Eigen::Vector3d start_position = ToolPositionInMount(model, q_plan);
+    const gtsam::Pose3 start_pose = ToolPoseInMount(model, q_plan);
+
+    PlanRequest point_request;
+    point_request.q_start_rad = q_plan;
+    point_request.qdot_start_rad_s = qdot_meas;
+    point_request.goal_position_m = start_position;
+    point_request.goal_rotation = start_pose.rotation().matrix();
+    const PlanOutcome point =
+        SolveToPosition(model, point_request, joint_limits, config);
+    Check(point.ok, "point plan solves");
+    if (point.ok) {
+        Check(MaxAbs(point.result.trajectory_pos.front() - q_plan) < 1e-12,
+              "point q0 equals canonical measured q");
+        Check(MaxAbs(point.result.trajectory_vel.front() - qdot_meas) < 1e-12,
+              "point qdot0 equals measured qdot");
+        Check(point.result.start_costs.count("StartPosEquality") == 1,
+              "point graph contains position equality");
+        Check(point.result.start_costs.count("StartVelEquality") == 1,
+              "point graph contains velocity equality");
+    }
+
+    PlanRequest offline_point = point_request;
+    offline_point.qdot_start_rad_s.reset();
+    const PlanOutcome offline =
+        SolveToPosition(model, offline_point, joint_limits, config);
+    Check(offline.ok, "offline point plan solves");
+    if (offline.ok) {
+        Check(offline.result.start_costs.count("StartVelEquality") == 0,
+              "offline point has no start velocity equality");
+        Check(offline.result.start_costs.count("StartVelPrior") == 0,
+              "offline point has no zero start prior");
+    }
+
+    CircleSpec circle;
+    circle.centre_m = start_position - Eigen::Vector3d(0.005, 0.0, 0.0);
+    circle.radius_m = 0.005;
+    circle.normal = Eigen::Vector3d::UnitZ();
+    circle.samples = 8;
+    circle.duration_s = 12.0;
+    circle.orientation = OrientationPolicy::kFixed;
+    const Eigen::Vector3d zyx = start_pose.rotation().matrix().eulerAngles(2, 1, 0);
+    circle.fixed_rpy_rad = Eigen::Vector3d(zyx.z(), zyx.y(), zyx.x());
+    const CartesianPath path = GenerateCircle(circle);
+    ValidationInputs validation;
+    validation.circle_applicable = true;
+    validation.circle_centre = circle.centre_m;
+    validation.circle_normal = circle.normal;
+    validation.circle_radius_m = circle.radius_m;
+    const Eigen::Matrix<double, 7, 1> path_qdot =
+        Eigen::Matrix<double, 7, 1>::Zero();
+
+    const PathPlanOutcome traced = SolveAlongPath(
+        model, path, q_plan, path_qdot, joint_limits, config, validation);
+    Check(traced.ok, "traced plan solves");
+    if (traced.ok) {
+        Check(MaxAbs(traced.result.trajectory_pos.front() - q_plan) < 1e-12,
+              "traced q0 equals canonical measured q");
+        Check(MaxAbs(traced.result.trajectory_vel.front() - path_qdot) < 1e-12,
+              "traced qdot0 equals measured qdot");
+        Check(traced.result.start_costs.count("StartPosEquality") == 1,
+              "traced graph contains position equality");
+        Check(traced.result.start_costs.count("StartVelEquality") == 1,
+              "traced graph contains velocity equality");
+    }
+
+    const PathPlanOutcome offline_path = SolveAlongPath(
+        model, path, q_plan, std::nullopt, joint_limits, config, validation);
+    Check(offline_path.ok, "offline traced plan solves");
+    if (offline_path.ok) {
+        Check(offline_path.result.start_costs.count("StartVelEquality") == 0,
+              "offline traced path has no start velocity equality");
+        Check(offline_path.result.start_costs.count("StartVelPrior") == 0,
+              "offline traced path has no zero start prior");
+    }
+
+    PlanningRequest live;
+    live.request_id = 1;
+    live.arm = PlanningArm::kRight;
+    live.vicon_sequence = 1;
+    live.receive_steady_s = 1.0;
+    live.age_s = 0.001;
+    live.q_rad = q_plan;
+    live.qdot_rad_s = qdot_meas;
+    live.goal.command_id = 1;
+    live.goal.kind = GoalKind::kPoint;
+    live.goal.point_m = start_position;
+    Check(!ValidatePlanningRequest(live),
+          "live request with measured velocity validates");
+
+    PlannerRuntimeConfig runtime;
+    runtime.planner_config_file = "../config/planner.yaml";
+    runtime.joint_limits_file = joint_limits;
+    runtime.right_dh_file = argv[1];
+    runtime.left_dh_file = argv[2];
+    runtime.runs_root = ".";
+    std::ostringstream diagnostics;
+    const PlannerSolveResult transported =
+        SolvePlanForRequest(live, runtime, diagnostics);
+    Check(transported.exit_code == 0,
+          "live request solves through typed transport");
+
+    if (failures == 0)
+        std::puts("test_planner_start_state: all assertions passed");
+    return failures == 0 ? 0 : 1;
+}

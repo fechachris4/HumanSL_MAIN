@@ -56,9 +56,13 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         outcome.init_position_error_m = init.position_error_m;
         outcome.init_orientation_error_rad = init.orientation_error_rad;
         const auto sdf = MakeMountSdf(MountGridGeometry(), config.scene);
+        std::optional<gtsam::Vector> start_vel;
+        if (request.qdot_start_rad_s)
+            start_vel = gtsam::Vector(*request.qdot_start_rad_s);
         outcome.result = optimizeJointTrajectory(
             *model.arm_model, sdf, init.values, goal_pose,
-            gtsam::Vector(request.q_start_rad), pos_limits, vel_limits,
+            gtsam::Vector(request.q_start_rad), start_vel,
+            pos_limits, vel_limits,
             total_time_step, total_time_sec, config.optimizer);
         if (outcome.result.trajectory_pos.empty())
         {
@@ -197,6 +201,8 @@ TimedJointSampler MakeDenseSampler(
 PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const CartesianPath& task_path,
                                const Eigen::Matrix<double, 7, 1>& q_start_rad,
+                               const std::optional<Eigen::Matrix<double, 7, 1>>&
+                                   qdot_start_rad_s,
                                const std::string& joint_limits_yaml,
                                const PlannerConfig& config,
                                const ValidationInputs& validation_template) {
@@ -291,6 +297,9 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
 
         const GridGeometry grid = MountGridGeometry();
         const auto sdf = MakeMountSdf(grid, config.scene);
+        std::optional<gtsam::Vector> start_vel;
+        if (qdot_start_rad_s)
+            start_vel = gtsam::Vector(*qdot_start_rad_s);
         const std::string sdf_contents = DescribeStaticScene(config.scene, grid);
 
         // ---- 3. solve -------------------------------------------------
@@ -298,7 +307,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         double duration_s = assembled.total_duration_s;
         TrajectoryResult solved = optimizer.optimizeTaskTrajectory(
             *model.arm_model, sdf, init_values, assembled.waypoints,
-            gtsam::Vector(q_start_rad), assembled.zero_velocity_indices,
+            gtsam::Vector(q_start_rad), start_vel,
+            assembled.zero_velocity_indices,
             pos_limits, vel_limits, duration_s, config.optimizer);
         if (solved.trajectory_pos.empty()) {
             outcome.error = "optimizer returned an empty trajectory";

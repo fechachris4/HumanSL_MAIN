@@ -3,6 +3,8 @@
 #include <set>
 #include <stdexcept>
 
+#include <gtsam/nonlinear/NonlinearEquality.h>
+
 gtsam::SharedNoiseModel PoseNoiseModel(const Eigen::Vector3d& rotation_sigma_rad,
                                        const Eigen::Vector3d& translation_sigma_m) {
     // ROTATION FIRST. gpmp2::GaussianPriorWorkspacePose's error is
@@ -24,7 +26,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     const gtsam::Values& init_values,
     const gtsam::Pose3& target_pose,
     const gtsam::Vector& start_config,
-    const gtsam::Vector& start_vel,
+    const std::optional<gtsam::Vector>& start_vel,
     const JointLimits& pos_limits,
     const JointLimits& vel_limits,
     const size_t total_time_step,
@@ -47,7 +49,6 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
     double collision_sigma = tuning.collision_sigma;
     double epsilon_dist = tuning.epsilon_dist_m;
-    auto pose_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.0005);
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
     
     gtsam::Vector end_vel = gtsam::Vector::Zero(7);
@@ -60,6 +61,10 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     
     
     gtsam::NonlinearFactorGraph graph;
+    gtsam::Values initial_values = init_values;
+    initial_values.update(gtsam::Symbol('x', 0), start_config);
+    if (start_vel)
+        initial_values.update(gtsam::Symbol('v', 0), *start_vel);
     
     for (size_t i = 0; i <= total_time_step; ++i) {
         gtsam::Symbol key_pos('x', i);
@@ -67,10 +72,12 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
         
         // Start/end priors
         if (i == 0) {
-            graph.add(gtsam::PriorFactor<gtsam::Vector>(key_pos, start_config, pose_fix_model));
-                    factor_keys.push_back("StartPosPrior");
-            graph.add(gtsam::PriorFactor<gtsam::Vector>(key_vel, start_vel, vel_fix_model));
-                    factor_keys.push_back("StartVelPrior");
+            graph.add(gtsam::NonlinearEquality<gtsam::Vector>(key_pos, start_config));
+            factor_keys.push_back("StartPosEquality");
+            if (start_vel) {
+                graph.add(gtsam::NonlinearEquality<gtsam::Vector>(key_vel, *start_vel));
+                factor_keys.push_back("StartVelEquality");
+            }
         
         } else if (i == total_time_step) {
             graph.add(gtsam::PriorFactor<gtsam::Vector>(key_vel, end_vel, vel_fix_model));
@@ -142,7 +149,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
 
     for (size_t i = 0; i < graph.size(); ++i) {
 
-        double constraint_error = graph.at(i)->error(init_values);
+        double constraint_error = graph.at(i)->error(initial_values);
 
         init_factor_costs[factor_keys[i]] += constraint_error;
     }
@@ -157,7 +164,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     parameters.setlambdaFactor(10.0);
     parameters.setlambdaUpperBound(1e6);
     
-    gtsam::LevenbergMarquardtOptimizer optimizer(graph, init_values, parameters);
+    gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, parameters);
     
     // Optimize
     gtsam::Values result = optimizer.optimize();
@@ -175,7 +182,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     TrajectoryResult trajectory_result;
 
     trajectory_result.dt = target_dt;
-    trajectory_result.start_error = graph.error(init_values);
+    trajectory_result.start_error = graph.error(initial_values);
     trajectory_result.final_error = graph.error(result);
     trajectory_result.trajectory_pos = densified_pos;
     trajectory_result.trajectory_vel = densified_vel;
@@ -191,6 +198,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     const gtsam::Values& init_values,
     const std::vector<OptimisationWaypoint>& waypoints,
     const gtsam::Vector& start_config,
+    const std::optional<gtsam::Vector>& start_vel,
     const std::vector<size_t>& zero_velocity_indices,
     const JointLimits& pos_limits,
     const JointLimits& vel_limits,
@@ -231,19 +239,19 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
     const double collision_sigma = tuning.collision_sigma;
     const double epsilon_dist = tuning.epsilon_dist_m;
-    auto pose_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.0005);
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
 
     const gtsam::Vector rest_vel = gtsam::Vector::Zero(7);
 
-    // Which support states are pinned to rest. Always the first and last;
-    // the caller adds the task-path start so the arm stops before it begins
-    // tracing rather than blending an arbitrary approach direction into the
-    // path tangent. A set, so a caller repeating an index is harmless.
+    // Which support states are pinned to rest. The caller supplies the
+    // task-path start and endpoint; a set makes a repeated index harmless.
     std::set<size_t> rest_indices(zero_velocity_indices.begin(),
                                   zero_velocity_indices.end());
-    rest_indices.insert(0);
     rest_indices.insert(total_time_step);
+    gtsam::Values initial_values = init_values;
+    initial_values.update(gtsam::Symbol('x', 0), start_config);
+    if (start_vel)
+        initial_values.update(gtsam::Symbol('v', 0), *start_vel);
 
     gtsam::Matrix self_collision_data(3, 4);  // 3 checks, 4 columns each
     self_collision_data <<
@@ -258,12 +266,13 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
         gtsam::Symbol key_pos('x', i);
         gtsam::Symbol key_vel('v', i);
 
-        // The measured configuration is pinned stiffly at waypoint 0: the
-        // controller's splice guard rejects a block whose first point is
-        // more than 2 deg from where the arm actually is.
         if (i == 0) {
-            graph.add(gtsam::PriorFactor<gtsam::Vector>(key_pos, start_config, pose_fix_model));
-                    factor_keys.push_back("StartPosPrior");
+            graph.add(gtsam::NonlinearEquality<gtsam::Vector>(key_pos, start_config));
+            factor_keys.push_back("StartPosEquality");
+            if (start_vel) {
+                graph.add(gtsam::NonlinearEquality<gtsam::Vector>(key_vel, *start_vel));
+                factor_keys.push_back("StartVelEquality");
+            }
         }
         // Rest states. Hermite through a zero-velocity support state
         // genuinely comes to a stop there, so no repeated waypoints (and no
@@ -353,7 +362,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
 
     for (size_t i = 0; i < graph.size(); ++i) {
       
-        double constraint_error = graph.at(i)->error(init_values);
+        double constraint_error = graph.at(i)->error(initial_values);
 
         init_factor_costs[factor_keys[i]] += constraint_error;    
     }
@@ -368,7 +377,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     parameters.setlambdaFactor(10.0);
     parameters.setlambdaUpperBound(1e6);
     
-    gtsam::LevenbergMarquardtOptimizer optimizer(graph, init_values, parameters);
+    gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, parameters);
     
     // Optimize
     gtsam::Values result = optimizer.optimize();
@@ -386,7 +395,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     TrajectoryResult trajectory_result;
 
     trajectory_result.dt = target_dt;
-    trajectory_result.start_error = graph.error(init_values);
+    trajectory_result.start_error = graph.error(initial_values);
     trajectory_result.final_error = graph.error(result);
     trajectory_result.trajectory_pos = densified_pos;
     trajectory_result.trajectory_vel = densified_vel;
@@ -448,7 +457,7 @@ std::pair<std::vector<gtsam::Vector>, std::vector<gtsam::Vector>> OptimizeTrajec
         
         dense_idx++;
     }
-    
+
     std::cout << "Generated " << dense_trajectory.size() << " dense position waypoints" << std::endl;
     std::cout << "Generated " << dense_velocities.size() << " dense velocity waypoints" << std::endl;
     
@@ -620,4 +629,3 @@ TrajectoryResult OptimizeTrajectory::reOptimizeJointTrajectory(
     
     return trajectory_result;
 }
-

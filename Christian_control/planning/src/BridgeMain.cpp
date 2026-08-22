@@ -41,6 +41,7 @@ constexpr char kUsageText[] =
     "                       [--goal X Y Z | --circle CX CY CZ R NX NY NZ D\n"
     "                        | --goal-file PATH]\n"
     "                       [--state-csv PATH | --start-deg J1..J7]\n"
+    "                       [--start-velocity-deg-s J1..J7]\n"
     "                       [--runs-root PATH] [--dh PATH]\n"
     "                       [--joint-limits PATH]\n"
     "                       [--output world-cartesian]\n"
@@ -358,6 +359,7 @@ struct ParsedArgs {
     std::optional<std::string> goal_file;
     std::optional<std::string> state_csv;
     std::optional<std::array<double, 7>> start_deg;
+    std::optional<std::array<double, 7>> start_velocity_deg_s;
     // Required, no default: which physical arm this plan is for. unset ==
     // --arm was never given, refused by RunBridge before anything else runs.
     std::optional<bool> left_arm;
@@ -616,6 +618,10 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             std::array<double, 7> degrees{};
             for (double& d : degrees) d = ParseDouble(next());
             parsed.start_deg = degrees;
+        } else if (flag == "--start-velocity-deg-s") {
+            std::array<double, 7> velocity{};
+            for (double& value : velocity) value = ParseDouble(next());
+            parsed.start_velocity_deg_s = velocity;
         } else if (flag == "--dh") {
             parsed.dh_path = next();
         } else if (flag == "--joint-limits") {
@@ -910,7 +916,15 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         PathPlanOutcome plan;
         {
             const CoutRedirectGuard cout_guard(diagnostics);
+            std::optional<Eigen::Matrix<double, 7, 1>> qdot_start_rad_s;
+            if (parsed.start_velocity_deg_s) {
+                Eigen::Matrix<double, 7, 1> qdot;
+                for (int joint = 0; joint < 7; ++joint)
+                    qdot(joint) = (*parsed.start_velocity_deg_s)[joint] * kDegToRad;
+                qdot_start_rad_s = qdot;
+            }
             plan = SolveAlongPath(model, task_path, q_start_rad,
+                                  qdot_start_rad_s,
                                   parsed.joint_limits_path, planner_config,
                                   validation);
         }
@@ -1043,6 +1057,12 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
 
     PlanRequest request;
     request.q_start_rad = q_start_rad;
+    if (parsed.start_velocity_deg_s) {
+        Eigen::Matrix<double, 7, 1> qdot;
+        for (int joint = 0; joint < 7; ++joint)
+            qdot(joint) = (*parsed.start_velocity_deg_s)[joint] * kDegToRad;
+        request.qdot_start_rad_s = qdot;
+    }
     request.goal_position_m = *parsed.goal;
     if (parsed.goal_rpy_rad) {
         request.goal_rotation =

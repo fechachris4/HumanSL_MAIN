@@ -51,9 +51,9 @@ struct ApproachPacing {
 
 struct AssembledPath {
     std::vector<OptimisationWaypoint> waypoints;
-    // Support states pinned to rest: trajectory start, the task-path start
-    // (so the arm STOPS before tracing rather than blending an arbitrary
-    // approach direction into the path tangent) and the end.
+    // Support states pinned to rest: the task-path start (so the arm STOPS
+    // before tracing rather than blending an arbitrary approach direction
+    // into the path tangent) and the end.
     std::vector<std::size_t> zero_velocity_indices;
     // Index of the first task waypoint, so the validator can measure
     // fidelity over the traced phase alone — the approach has no requested

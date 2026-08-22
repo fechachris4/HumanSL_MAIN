@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "utils.h"
 #include <unordered_map>
 
@@ -87,7 +89,7 @@ public:
         const gtsam::Values& init_values,
         const gtsam::Pose3& target_pose,
         const gtsam::Vector& start_config,
-        const gtsam::Vector& start_vel,
+        const std::optional<gtsam::Vector>& start_vel,
         const JointLimits& pos_limits,
         const JointLimits& vel_limits,
         const size_t total_time_step,
@@ -120,6 +122,7 @@ public:
         const gtsam::Values& init_values,
         const std::vector<OptimisationWaypoint>& waypoints,
         const gtsam::Vector& start_config,
+        const std::optional<gtsam::Vector>& start_vel,
         const std::vector<size_t>& zero_velocity_indices,
         const JointLimits& pos_limits,
         const JointLimits& vel_limits,

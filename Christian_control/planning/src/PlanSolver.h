@@ -20,6 +20,7 @@ struct PlanJointLimits {
 
 struct PlanRequest {
     Eigen::Matrix<double, 7, 1> q_start_rad;  // Kortex order
+    std::optional<Eigen::Matrix<double, 7, 1>> qdot_start_rad_s;
     Eigen::Vector3d goal_position_m;          // metres, `mount`
     // Orientation the tool should hold AT the goal, in `mount` (declared
     // frames are converted at the boundary, PathFrames.h). Unset means "inherit whatever orientation the arm happens
@@ -110,6 +111,8 @@ struct PathPlanOutcome {
 PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const CartesianPath& task_path,
                                const Eigen::Matrix<double, 7, 1>& q_start_rad,
+                               const std::optional<Eigen::Matrix<double, 7, 1>>&
+                                   qdot_start_rad_s,
                                const std::string& joint_limits_yaml,
                                const PlannerConfig& config,
                                const ValidationInputs& validation_template);

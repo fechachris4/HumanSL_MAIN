@@ -506,6 +506,7 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 request.world_T_mount.linear() =
                     result.state.world_R_mountseg;
                 request.q_rad = result.state.q_rad;
+                request.qdot_rad_s = result.state.qdot_rad_s;
                 request.goal = latest_goal;
                 planning_requests->Publish(request);
             }

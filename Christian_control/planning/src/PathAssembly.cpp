@@ -74,14 +74,13 @@ AssembledPath AssembleCirclePlan(
     assembled.initial_configurations.reserve(total);
 
     // ---- waypoint 0: the measured configuration -----------------------
-    // No pose prior. The optimiser applies its stiff JOINT prior here, and
-    // a competing pose prior would pull against the one thing the
+    // No pose prior. The optimiser applies an exact measured-position
+    // equality here, and a competing pose prior would pull against the one
     // controller's splice guard actually requires.
     OptimisationWaypoint start;
     start.time_s = 0.0;
     assembled.waypoints.push_back(start);
     assembled.initial_configurations.push_back(measured);
-    assembled.zero_velocity_indices.push_back(0);
 
     // ---- approach: unconstrained --------------------------------------
     // Initial guess only. Joint-space interpolation toward the first task

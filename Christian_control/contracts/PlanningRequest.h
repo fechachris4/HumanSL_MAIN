@@ -22,6 +22,7 @@ struct PlanningRequest {
     Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
     Eigen::Matrix<double, 7, 1> q_rad =
         Eigen::Matrix<double, 7, 1>::Zero();
+    std::optional<Eigen::Matrix<double, 7, 1>> qdot_rad_s;
     GoalCommand goal;
 };
 
