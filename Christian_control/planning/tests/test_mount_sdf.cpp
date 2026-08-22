@@ -1,10 +1,12 @@
 #include <cassert>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
 #include "MountSdf.h"
 
-int main() {
+int main(int argc, char** argv) {
+    assert(argc == 3);
     MountCylinder cylinder;
     cylinder.radius_m = 0.2;
     cylinder.height_m = 0.6;
@@ -25,11 +27,31 @@ int main() {
     const auto inside = QueryStaticObstacle(
         box, Eigen::Vector3d::Zero(), 0.05);
     assert(inside.clearance_m < 0.0);
+    const auto box_face = QueryStaticObstacle(
+        box, Eigen::Vector3d(0.3, 0.0, 0.0), 0.05);
+    assert(box_face.outward_normal_mount == Eigen::Vector3d::UnitX());
+    const auto box_inside = QueryStaticObstacle(
+        box, Eigen::Vector3d(0.19, 0.0, 0.0), 0.05);
+    assert(box_inside.outward_normal_mount == Eigen::Vector3d::UnitX());
 
     const GridGeometry grid = MountGridGeometry();
     const GridBounds bounds = MountGridBounds(grid);
     assert(bounds.min_m.x() < bounds.max_m.x());
     assert(StaticObstacleWithinGridBounds(cylinder, bounds));
+    const PlannerModel model = LoadPlannerModel(argv[1], true);
+    NamedStaticObstacle filtered;
+    filtered.id = "filtered";
+    filtered.enabled = true;
+    filtered.geometry = cylinder;
+    filtered.permitted_sphere_groups = {CollisionSphereGroup::kMountInterface};
+    const auto fields = MakeNamedObstacleFields(grid, model, {filtered});
+    assert(fields.size() == 1);
+    assert(std::find(fields[0].participating_sphere_indices.begin(),
+                     fields[0].participating_sphere_indices.end(), 0) ==
+           fields[0].participating_sphere_indices.end());
+    assert(std::find(fields[0].participating_sphere_indices.begin(),
+                     fields[0].participating_sphere_indices.end(), 1) !=
+           fields[0].participating_sphere_indices.end());
     std::puts("test_mount_sdf: all assertions passed");
     return 0;
 }

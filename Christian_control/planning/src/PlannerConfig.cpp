@@ -225,9 +225,9 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     RequireExactKeys(obstacles, {"minimum_clearance_m", "preferred_clearance_m", "collision_sigma", "scene"}, "obstacles");
     config.minimum_clearance_m =
         Number(obstacles, "minimum_clearance_m", "obstacles", 0.0, 10.0);
-    config.preferred_clearance_m =
+    config.optimizer.preferred_clearance_m =
         Number(obstacles, "preferred_clearance_m", "obstacles", 0.0, 10.0);
-    if (config.minimum_clearance_m > config.preferred_clearance_m)
+    if (config.minimum_clearance_m > config.optimizer.preferred_clearance_m)
         Fail("obstacles.minimum_clearance_m must not exceed preferred_clearance_m");
     config.optimizer.collision_sigma =
         Number(obstacles, "collision_sigma", "obstacles", 1e-9, 1.0);
@@ -361,7 +361,7 @@ std::string EffectiveConfigText(const PlannerConfig& config) {
     text << "  motion.min_duration_s    = " << config.motion.min_duration_s << "\n";
     text << "  motion.waypoints         = " << config.motion.waypoints << "\n";
     text << "  obstacles.minimum_clearance_m = " << config.minimum_clearance_m << "\n";
-    text << "  obstacles.preferred_clearance_m = " << config.preferred_clearance_m << "\n";
+    text << "  obstacles.preferred_clearance_m = " << config.optimizer.preferred_clearance_m << "\n";
     text << "  obstacles.collision_sigma= " << config.optimizer.collision_sigma << "\n";
     text << "  obstacles.scene.count    = " << config.scene.size() << "\n";
     for (const NamedStaticObstacle& obstacle : config.scene) {

@@ -77,7 +77,6 @@ struct PlannerConfig {
     PathFollowingConfig path_following;
     OptimizerTuning optimizer;
     double minimum_clearance_m = 0.05;
-    double preferred_clearance_m = 0.10;
     // Named obstacle geometry, persisted once in config/planner.yaml. Every
     // value is in the mount frame, in metres; enabled objects remain present
     // when disabled so the panel does not lose an intentionally hidden shape.

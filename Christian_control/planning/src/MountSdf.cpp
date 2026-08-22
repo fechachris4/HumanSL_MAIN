@@ -94,10 +94,15 @@ ObstacleQuery QueryStaticObstacle(const StaticObstacleGeometry& geometry,
             const double cap = std::abs(local.z()) - obstacle.height_m * 0.5;
             const Eigen::Vector2d q(radial - obstacle.radius_m, cap);
             distance = q.cwiseMax(0.0).norm() + std::min(q.maxCoeff(), 0.0);
-            if (q.x() > 0.0 && q.x() >= q.y()) {
+            if (q.x() > 0.0 && q.y() > 0.0) {
+                if (radial > 0.0) normal.head<2>() = local.head<2>() / radial * q.x();
+                else normal.x() = q.x();
+                normal.z() = (local.z() >= 0.0 ? 1.0 : -1.0) * q.y();
+                normal.normalize();
+            } else if (q.x() > 0.0) {
                 if (radial > 0.0) normal.head<2>() = local.head<2>() / radial;
                 else normal.x() = 1.0;
-            } else if (q.y() > 0.0 || q.y() >= q.x()) {
+            } else if (q.y() > 0.0 || q.x() >= q.y()) {
                 normal.z() = local.z() >= 0.0 ? 1.0 : -1.0;
             } else {
                 normal.z() = local.z() >= 0.0 ? 1.0 : -1.0;
