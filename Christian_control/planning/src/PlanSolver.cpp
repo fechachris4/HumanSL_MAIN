@@ -101,15 +101,10 @@ namespace {
 //
 // The multiplier uses the same velocity/acceleration scaling law to select
 // the next duration; the fresh solve determines its own resulting samples.
-double TimeScalingFactor(const PathValidationReport& report,
-                         double velocity_limit_rad_s,
-                         double acceleration_limit_rad_s2) {
+double TimeScalingFactor(const PathValidationReport& report) {
     double alpha = 1.0;
-    if (velocity_limit_rad_s > 0.0)
-        alpha = std::max(alpha, report.max_joint_velocity_rad_s / velocity_limit_rad_s);
-    if (acceleration_limit_rad_s2 > 0.0)
-        alpha = std::max(alpha, std::sqrt(report.max_joint_acceleration_rad_s2 /
-                                          acceleration_limit_rad_s2));
+    alpha = std::max(alpha, report.max_velocity_limit_ratio);
+    alpha = std::max(alpha, std::sqrt(report.max_acceleration_limit_ratio));
     return alpha;
 }
 
@@ -392,9 +387,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             // trajectory that traces the wrong shape or clips an obstacle,
             // and pretending otherwise would burn solves while the report
             // said the same thing each time.
-            const double alpha = TimeScalingFactor(
-                report, inputs.joint_velocity_limits_rad_s.minCoeff(),
-                inputs.joint_acceleration_limits_rad_s2.minCoeff());
+            const double alpha = TimeScalingFactor(report);
             if (!(alpha > 1.0)) break;  // limits failed for another reason
             if (pass + 1 == kMaxScalingPasses) {
                 outcome.time_scaling_settled = false;
