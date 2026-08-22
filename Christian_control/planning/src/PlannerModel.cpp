@@ -32,7 +32,9 @@ PlannerModel LoadPlannerModel(const std::string& yaml_path, bool has_tool) {
     model.end_effector_frame = has_tool ? config::kRightEndEffectorFrame
                                         : config::kLeftEndEffectorFrame;
     ArmModel factory;
-    model.arm_model = factory.createArmModel(model.base_pose, model.dh, has_tool);
+    model.arm_model = factory.createArmModel(model.base_pose, model.dh, has_tool,
+                                             &model.sphere_groups,
+                                             &model.authored_spheres);
     return model;
 }
 

@@ -67,7 +67,7 @@ PathValidationReport ValidatePlannedPath(
     const std::vector<gtsam::Vector>& gp_dense,
     double gp_dense_duration_s,
     const TimedJointSampler& sample_at,
-    const gpmp2::SignedDistanceField& sdf,
+    const std::vector<NamedObstacleField>& obstacle_fields,
     const std::string& sdf_contents,
     const ValidationInputs& inputs,
     bool optimiser_converged) {
@@ -135,28 +135,22 @@ PathValidationReport ValidatePlannedPath(
 
         // Clearance: every collision sphere against the SDF. Reported as
         // distance from the sphere SURFACE, so negative means penetrating.
-        const gtsam::Matrix centres =
-            model.arm_model->sphereCentersMat(gtsam::Vector(sample.q_rad));
-        for (int s = 0; s < centres.cols(); ++s) {
-            const gtsam::Point3 centre(centres(0, s), centres(1, s), centres(2, s));
-            double distance = 0.0;
-            try {
-                distance = sdf.getSignedDistance(centre);
-            } catch (const std::exception&) {
-                // Outside the grid: gpmp2 cannot answer, and treating an
-                // unanswerable query as clear would be the silent failure
-                // this whole report exists to prevent.
-                distance = std::numeric_limits<double>::quiet_NaN();
-            }
-            const double clearance =
-                distance - model.arm_model->sphere_radius(static_cast<size_t>(s));
-            if (std::isnan(clearance)) {
-                finite = false;
-                continue;
-            }
-            if (clearance < min_clearance) {
-                min_clearance = clearance;
-                min_clearance_t = t;
+        for (const auto& field : obstacle_fields) {
+            const gtsam::Matrix centres =
+                field.participating_arm->sphereCentersMat(gtsam::Vector(sample.q_rad));
+            for (int local = 0; local < centres.cols(); ++local) {
+                const gtsam::Point3 centre(centres(0, local), centres(1, local), centres(2, local));
+                const auto query = QueryStaticObstacle(
+                    field.geometry, Eigen::Vector3d(centre.x(), centre.y(), centre.z()),
+                    field.participating_arm->sphere_radius(static_cast<size_t>(local)));
+                if (!std::isfinite(query.clearance_m)) {
+                    finite = false;
+                    continue;
+                }
+                if (query.clearance_m < min_clearance) {
+                    min_clearance = query.clearance_m;
+                    min_clearance_t = t;
+                }
             }
         }
 
@@ -257,8 +251,9 @@ PathValidationReport ValidatePlannedPath(
     report.minimum_clearance_m =
         std::isfinite(min_clearance) ? min_clearance : 0.0;
     report.minimum_clearance_time_s = min_clearance_t;
-    report.modelled_collision_valid = finite && std::isfinite(min_clearance) &&
-                                      min_clearance > 0.0;
+    report.modelled_collision_valid = finite &&
+                                      (obstacle_fields.empty() ||
+                                       (std::isfinite(min_clearance) && min_clearance > 0.0));
 
     report.max_joint_velocity_rad_s = max_velocity;
     report.max_joint_acceleration_rad_s2 = max_acceleration;

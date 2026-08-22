@@ -24,7 +24,7 @@ PathValidationReport ValidatePlannedPath(
     const std::vector<gtsam::Vector>& gp_dense,
     double gp_dense_duration_s,
     const TimedJointSampler& sample_at,
-    const gpmp2::SignedDistanceField& sdf,
+    const std::vector<NamedObstacleField>& obstacle_fields,
     const std::string& sdf_contents,
     const ValidationInputs& inputs,
     bool optimiser_converged);

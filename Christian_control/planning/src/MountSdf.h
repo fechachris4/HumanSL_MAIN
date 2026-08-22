@@ -4,8 +4,9 @@
 #include <Eigen/Dense>
 #include <gpmp2/obstacle/SignedDistanceField.h>
 #include "StaticScene.h"
+#include "PlannerModel.h"
 
-// Grid geometry, shared by MakeMountSdf and MountGridBounds so the two can
+// Grid geometry shared by obstacle fields and MountGridBounds so the two can
 // never disagree. Expressed in the `mount` frame (the URDF root, at the
 // midpoint of the two arm bases), so ONE grid serves both arms and an
 // obstacle is described once for the whole rig rather than once per arm.
@@ -52,11 +53,32 @@ GridGeometry MountGridGeometry();
 // [origin, origin + (n-1)*cell] per axis — see the (n-1) note in the .cpp.
 // gpmp2 returns zero obstacle cost for any query outside this volume ("no
 // obstacle"), silently — so every enabled static obstacle must be fully
-// contained here. MakeMountSdf owns that representability check.
+// contained here.
 struct GridBounds {
     Eigen::Vector3d min_m;
     Eigen::Vector3d max_m;
 };
+
+struct ObstacleQuery {
+    double clearance_m = 0.0;
+    Eigen::Vector3d outward_normal_mount = Eigen::Vector3d::Zero();
+};
+
+ObstacleQuery QueryStaticObstacle(const StaticObstacleGeometry& geometry,
+                                  const Eigen::Vector3d& sphere_center_mount,
+                                  double sphere_radius_m);
+
+struct NamedObstacleField {
+    std::string id;
+    StaticObstacleGeometry geometry;
+    gpmp2::SignedDistanceField sdf;
+    std::unique_ptr<gpmp2::ArmModel> participating_arm;
+    std::vector<std::size_t> participating_sphere_indices;
+};
+
+std::vector<NamedObstacleField> MakeNamedObstacleFields(
+    const GridGeometry&, const PlannerModel&,
+    const std::vector<NamedStaticObstacle>&);
 GridBounds MountGridBounds(const GridGeometry& geometry);
 
 // The axis-aligned full bounds of a static primitive in the `mount` frame.
@@ -69,13 +91,6 @@ GridBounds StaticObstacleBounds(const StaticObstacleGeometry& geometry);
 // trilinear SDF cannot interpolate there.
 bool StaticObstacleWithinGridBounds(const StaticObstacleGeometry& geometry,
                                     const GridBounds& bounds);
-
-// One grid covering both arms' workspaces, in the `mount` frame. Each sample
-// contains the minimum signed distance to all enabled primitives, or 10 m for
-// an empty scene.
-gpmp2::SignedDistanceField MakeMountSdf(
-    const GridGeometry& geometry,
-    const std::vector<NamedStaticObstacle>& scene_mount);
 
 // Human-readable planner diagnostics for the persisted mount-frame scene.
 std::string DescribeStaticScene(const std::vector<NamedStaticObstacle>& scene_mount,

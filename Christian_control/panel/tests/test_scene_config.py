@@ -17,7 +17,8 @@ motion:
   min_duration_s: 1.0
   waypoints: 10
 obstacles:
-  epsilon_dist_m: 0.05  # unrelated inline comment survives
+  minimum_clearance_m: 0.05  # unrelated inline comment survives
+  preferred_clearance_m: 0.10
   collision_sigma: 0.0005
   # scene comment belongs to the replaced block
   scene: {}
@@ -64,6 +65,7 @@ def valid_cylinder(**updates):
         "center_mount_m": [0.1, -0.2, 0.3],
         "radius_m": 0.22,
         "height_m": 0.6,
+        "permitted_sphere_groups": [],
     }
     value.update(updates)
     return value
@@ -75,6 +77,7 @@ def valid_box(**updates):
         "shape": "box",
         "center_mount_m": [0.4, 0.0, -0.1],
         "half_extent_m": [0.3, 0.5, 0.1],
+        "permitted_sphere_groups": [],
     }
     value.update(updates)
     return value
@@ -116,7 +119,8 @@ def test_read_scene_reports_malformed_disk_scene_without_inventing_truth(tmp_pat
     path = write_fixture(
         tmp_path,
         "\n    torso:\n      enabled: true\n      shape: cylinder\n"
-        "      center_mount_m: [0.0, 0.0, 0.0]\n      radius_m: 0.2",
+        "      center_mount_m: [0.0, 0.0, 0.0]\n"
+        "      permitted_sphere_groups: []\n      radius_m: 0.2",
     )
 
     result = scene_config.read_scene(path)
@@ -154,7 +158,8 @@ def test_fixed_container_keys_accept_yaml_cpp_quote_spellings(tmp_path, quote):
     [
         (
             """obstacles:
-  epsilon_dist_m: 0.06
+  minimum_clearance_m: 0.06
+  preferred_clearance_m: 0.10
   collision_sigma: 0.0006
   scene: {}
 """,
@@ -352,6 +357,22 @@ def test_whole_scene_write_adds_renames_deletes_and_changes_shape(tmp_path):
     assert "radius_m:" not in text
 
 
+def test_permitted_sphere_groups_round_trip_and_unknown_group_rejects(tmp_path):
+    scene_config = scene_config_module()
+    path = write_fixture(tmp_path)
+    source = scene_config.read_scene(path)["source_fnv1a64"]
+    value = valid_cylinder(permitted_sphere_groups=["mount_interface"])
+    ok, result = scene_config.write_scene({"torso": value}, source,
+                                          path=path, commanding=lambda: False)
+    assert ok, result
+    assert result["scene"]["torso"]["permitted_sphere_groups"] == ["mount_interface"]
+    bad = valid_cylinder(permitted_sphere_groups=["unknown_group"])
+    ok, reason = scene_config.write_scene({"torso": bad}, result["source_fnv1a64"],
+                                          path=path, commanding=lambda: False)
+    assert not ok
+    assert "unknown" in reason
+
+
 def test_write_is_deterministic_and_preserves_every_unrelated_byte(tmp_path):
     scene_config = scene_config_module()
     path = write_fixture(tmp_path)
@@ -370,7 +391,7 @@ def test_write_is_deterministic_and_preserves_every_unrelated_byte(tmp_path):
     prefix, suffix = PLANNER_TEXT.split("  # scene comment belongs to the replaced block\n  scene: {}")
     assert changed.startswith(prefix)
     assert changed.endswith(suffix)
-    assert "epsilon_dist_m: 0.05  # unrelated inline comment survives" in changed
+    assert "minimum_clearance_m: 0.05  # unrelated inline comment survives" in changed
 
 
 def test_first_successful_write_makes_one_backup_of_the_original(tmp_path):

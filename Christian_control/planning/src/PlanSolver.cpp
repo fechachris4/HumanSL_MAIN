@@ -61,12 +61,13 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         outcome.init_source = init.source;
         outcome.init_position_error_m = init.position_error_m;
         outcome.init_orientation_error_rad = init.orientation_error_rad;
-        const auto sdf = MakeMountSdf(MountGridGeometry(), config.scene);
+        const auto obstacle_fields = MakeNamedObstacleFields(
+            MountGridGeometry(), model, config.scene);
         std::optional<gtsam::Vector> start_vel;
         if (request.qdot_start_rad_s)
             start_vel = gtsam::Vector(*request.qdot_start_rad_s);
         outcome.result = optimizeJointTrajectory(
-            *model.arm_model, sdf, init.values, goal_pose,
+            *model.arm_model, obstacle_fields, init.values, goal_pose,
             gtsam::Vector(request.q_start_rad), start_vel,
             pos_limits, vel_limits,
             total_time_step, total_time_sec, config.optimizer);
@@ -285,7 +286,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
 
         const std::size_t states = assembled.waypoints.size();
         const GridGeometry grid = MountGridGeometry();
-        const auto sdf = MakeMountSdf(grid, config.scene);
+        const auto obstacle_fields = MakeNamedObstacleFields(
+            grid, model, config.scene);
         std::optional<gtsam::Vector> start_vel;
         if (qdot_start_rad_s)
             start_vel = gtsam::Vector(*qdot_start_rad_s);
@@ -347,7 +349,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             }
             OptimizeTrajectory optimizer;
             TrajectoryResult solved = optimizer.optimizeTaskTrajectory(
-                *model.arm_model, sdf, init_values, attempt_waypoints,
+                *model.arm_model, obstacle_fields, init_values, attempt_waypoints,
                 gtsam::Vector(q_start_rad), start_vel,
                 assembled.zero_velocity_indices, pos_limits, vel_limits,
                 duration_s, config.optimizer);
@@ -369,7 +371,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             const auto sample_at = MakeDenseSampler(solved, duration_s);
             const PathValidationReport report = ValidatePlannedPath(
                 model, reconstructed, solved.trajectory_pos, duration_s, sample_at,
-                sdf, sdf_contents, inputs, /*optimiser_converged=*/true);
+                obstacle_fields, sdf_contents, inputs, /*optimiser_converged=*/true);
 
             outcome.result = solved;
             outcome.report = report;

@@ -18,7 +18,7 @@
 // own caller).
 TrajectoryResult optimizeJointTrajectory(
     const gpmp2::ArmModel& arm_model,
-    const gpmp2::SignedDistanceField& sdf,
+    const std::vector<NamedObstacleField>& obstacle_fields,
     const gtsam::Values& init_values,
     const gtsam::Pose3& target_pose,
     const gtsam::Vector& start_config,
@@ -31,7 +31,7 @@ TrajectoryResult optimizeJointTrajectory(
     OptimizeTrajectory optimizer;
     const auto start_time = std::chrono::steady_clock::now();
     TrajectoryResult result = optimizer.optimizeJointTrajectory(
-        arm_model, sdf, init_values, target_pose, start_config, start_vel,
+        arm_model, obstacle_fields, init_values, target_pose, start_config, start_vel,
         pos_limits, vel_limits, total_time_step, total_time_sec, tuning);
     const auto end_time = std::chrono::steady_clock::now();
     result.optimization_duration =

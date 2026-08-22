@@ -222,9 +222,13 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     config.motion.waypoints = Integer(motion, "waypoints", "motion", 2, 200);
 
     const YAML::Node obstacles = root["obstacles"];
-    RequireExactKeys(obstacles, {"epsilon_dist_m", "collision_sigma", "scene"}, "obstacles");
-    config.optimizer.epsilon_dist_m =
-        Number(obstacles, "epsilon_dist_m", "obstacles", 0.0, 1.0);
+    RequireExactKeys(obstacles, {"minimum_clearance_m", "preferred_clearance_m", "collision_sigma", "scene"}, "obstacles");
+    config.minimum_clearance_m =
+        Number(obstacles, "minimum_clearance_m", "obstacles", 0.0, 10.0);
+    config.preferred_clearance_m =
+        Number(obstacles, "preferred_clearance_m", "obstacles", 0.0, 10.0);
+    if (config.minimum_clearance_m > config.preferred_clearance_m)
+        Fail("obstacles.minimum_clearance_m must not exceed preferred_clearance_m");
     config.optimizer.collision_sigma =
         Number(obstacles, "collision_sigma", "obstacles", 1e-9, 1.0);
     const YAML::Node scene = obstacles["scene"];
@@ -246,7 +250,7 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
         obstacle.enabled = Boolean(object, "enabled", location);
         if (shape == "cylinder") {
             RequireExactKeys(object,
-                             {"enabled", "shape", "center_mount_m", "radius_m", "height_m"},
+                             {"enabled", "shape", "center_mount_m", "radius_m", "height_m", "permitted_sphere_groups"},
                              location);
             MountCylinder cylinder;
             cylinder.center_mount_m = ReadVector3(object, "center_mount_m", location);
@@ -255,7 +259,7 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
             obstacle.geometry = cylinder;
         } else if (shape == "box") {
             RequireExactKeys(object,
-                             {"enabled", "shape", "center_mount_m", "half_extent_m"},
+                             {"enabled", "shape", "center_mount_m", "half_extent_m", "permitted_sphere_groups"},
                              location);
             AxisAlignedBox box;
             box.center = ReadVector3(object, "center_mount_m", location);
@@ -265,6 +269,18 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
             obstacle.geometry = box;
         } else {
             Fail(location + ".shape must be box or cylinder (got " + shape + ")");
+        }
+        const YAML::Node groups = object["permitted_sphere_groups"];
+        if (!groups || !groups.IsSequence())
+            Fail(location + ".permitted_sphere_groups must be a list");
+        for (const auto& group : groups) {
+            const std::string name = group.as<std::string>();
+            if (name == "mount_interface") obstacle.permitted_sphere_groups.push_back(CollisionSphereGroup::kMountInterface);
+            else if (name == "proximal_arm") obstacle.permitted_sphere_groups.push_back(CollisionSphereGroup::kProximalArm);
+            else if (name == "upper_arm") obstacle.permitted_sphere_groups.push_back(CollisionSphereGroup::kUpperArm);
+            else if (name == "forearm") obstacle.permitted_sphere_groups.push_back(CollisionSphereGroup::kForearm);
+            else if (name == "tool") obstacle.permitted_sphere_groups.push_back(CollisionSphereGroup::kTool);
+            else Fail(location + ".permitted_sphere_groups contains unknown group '" + name + "'");
         }
         config.scene.push_back(std::move(obstacle));
     }
@@ -344,7 +360,8 @@ std::string EffectiveConfigText(const PlannerConfig& config) {
     text << "  motion.nominal_speed_mps = " << config.motion.nominal_speed_mps << "\n";
     text << "  motion.min_duration_s    = " << config.motion.min_duration_s << "\n";
     text << "  motion.waypoints         = " << config.motion.waypoints << "\n";
-    text << "  obstacles.epsilon_dist_m = " << config.optimizer.epsilon_dist_m << "\n";
+    text << "  obstacles.minimum_clearance_m = " << config.minimum_clearance_m << "\n";
+    text << "  obstacles.preferred_clearance_m = " << config.preferred_clearance_m << "\n";
     text << "  obstacles.collision_sigma= " << config.optimizer.collision_sigma << "\n";
     text << "  obstacles.scene.count    = " << config.scene.size() << "\n";
     for (const NamedStaticObstacle& obstacle : config.scene) {

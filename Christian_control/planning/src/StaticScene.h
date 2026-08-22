@@ -2,6 +2,7 @@
 
 #include <string>
 #include <variant>
+#include <vector>
 
 #include <Eigen/Dense>
 
@@ -21,10 +22,19 @@ struct MountCylinder {
 
 using StaticObstacleGeometry = std::variant<AxisAlignedBox, MountCylinder>;
 
+enum class CollisionSphereGroup {
+    kMountInterface,
+    kProximalArm,
+    kUpperArm,
+    kForearm,
+    kTool
+};
+
 struct NamedStaticObstacle {
     std::string id;
     bool enabled = false;
     StaticObstacleGeometry geometry;
+    std::vector<CollisionSphereGroup> permitted_sphere_groups;
 };
 
 inline const char* StaticObstacleShapeName(const StaticObstacleGeometry& geometry) {

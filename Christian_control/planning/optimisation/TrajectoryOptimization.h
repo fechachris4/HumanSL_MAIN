@@ -29,6 +29,7 @@
 
 #include "JerkPenaltyFactor.h"
 #include "OptimisationWaypoint.h"
+#include "../src/MountSdf.h"
 
 // THE one place gpmp2's workspace-pose error ordering is written down.
 //
@@ -54,7 +55,7 @@ gtsam::SharedNoiseModel PoseNoiseModel(const Eigen::Vector3d& rotation_sigma_rad
 // constraint, which is the opposite of what "tolerance" would suggest.
 struct OptimizerTuning {
     // Metres from an obstacle surface at which its cost switches on.
-    double epsilon_dist_m = 0.05;
+    double preferred_clearance_m = 0.10;
     // Obstacle-avoidance weight; also weights the self-collision checks.
     double collision_sigma = 0.0005;
     // Scales the GP prior covariance Qc — the smoothness knob. Larger is
@@ -85,7 +86,7 @@ public:
     // unaffected.
     TrajectoryResult optimizeJointTrajectory(
         const gpmp2::ArmModel& arm_model,
-        const gpmp2::SignedDistanceField& sdf,
+        const std::vector<NamedObstacleField>& obstacle_fields,
         const gtsam::Values& init_values,
         const gtsam::Pose3& target_pose,
         const gtsam::Vector& start_config,
@@ -118,7 +119,7 @@ public:
     // governed by the measured start equalities instead.
     TrajectoryResult optimizeTaskTrajectory(
         const gpmp2::ArmModel& arm_model,
-        const gpmp2::SignedDistanceField& sdf,
+        const std::vector<NamedObstacleField>& obstacle_fields,
         const gtsam::Values& init_values,
         const std::vector<OptimisationWaypoint>& waypoints,
         const gtsam::Vector& start_config,
@@ -130,21 +131,6 @@ public:
         const OptimizerTuning& tuning = OptimizerTuning{},
         const double target_dt = 0.001
     );
-
-    TrajectoryResult reOptimizeJointTrajectory(
-        const gpmp2::ArmModel& arm_model,
-        const gpmp2::SignedDistanceField& sdf,
-        const gtsam::Values& init_values,
-        const gtsam::Pose3& target_pose,
-        const std::vector<gtsam::Vector>& start_configs,
-        const std::vector<gtsam::Vector>& start_velocities,
-        const JointLimits& pos_limits,
-        const JointLimits& vel_limits,
-        const size_t total_time_step,
-        const double total_time_sec,
-        const double target_dt = 0.001
-    );
-
 
     std::pair<std::vector<gtsam::Vector>, std::vector<gtsam::Vector>> densifyTrajectory(
         const gtsam::Values& optimized_values,

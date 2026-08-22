@@ -22,7 +22,7 @@ OptimizeTrajectory::OptimizeTrajectory() {}
 
 TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     const gpmp2::ArmModel& arm_model,
-    const gpmp2::SignedDistanceField& sdf,
+    const std::vector<NamedObstacleField>& obstacle_fields,
     const gtsam::Values& init_values,
     const gtsam::Pose3& target_pose,
     const gtsam::Vector& start_config,
@@ -48,7 +48,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7) * tuning.qc_scale;
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
     double collision_sigma = tuning.collision_sigma;
-    double epsilon_dist = tuning.epsilon_dist_m;
+    double epsilon_dist = tuning.preferred_clearance_m;
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
     
     gtsam::Vector end_vel = gtsam::Vector::Zero(7);
@@ -99,9 +99,12 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
         factor_keys.push_back("JointVelLimits");
 
         // Obstacle collision avoidance
-        graph.add(gpmp2::ObstacleSDFFactorArm(
-            key_pos, arm_model, sdf, collision_sigma, epsilon_dist));
-        factor_keys.push_back("ObstacleFactor");
+        for (const auto& field : obstacle_fields) {
+            graph.add(gpmp2::ObstacleSDFFactorArm(
+                key_pos, *field.participating_arm, field.sdf,
+                collision_sigma, tuning.preferred_clearance_m));
+            factor_keys.push_back("ObstacleFactor:" + field.id);
+        }
 
         if (i > 0) {
             gtsam::Symbol key_pos_prev('x', i - 1);
@@ -110,11 +113,14 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
             double delta_t_segment = delta_t / 5.0;  // divide segment into 5 parts
             for (int interp = 1; interp < 5; ++interp) {  // skip endpoints (checked at waypoints)
                 double tau_check = interp * delta_t_segment;
-                graph.add(gpmp2::ObstacleSDFFactorGPArm(
-                    key_pos_prev, key_vel_prev, key_pos, key_vel,
-                    arm_model, sdf, collision_sigma, epsilon_dist,
-                    Qc_model, delta_t, tau_check));
-                factor_keys.push_back("ObstacleFactorGP");
+                for (const auto& field : obstacle_fields) {
+                    graph.add(gpmp2::ObstacleSDFFactorGPArm(
+                        key_pos_prev, key_vel_prev, key_pos, key_vel,
+                        *field.participating_arm, field.sdf, collision_sigma,
+                        tuning.preferred_clearance_m, Qc_model, delta_t,
+                        tau_check));
+                    factor_keys.push_back("ObstacleFactorGP:" + field.id);
+                }
             }
         }
 
@@ -194,7 +200,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
 
 TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     const gpmp2::ArmModel& arm_model,
-    const gpmp2::SignedDistanceField& sdf,
+    const std::vector<NamedObstacleField>& obstacle_fields,
     const gtsam::Values& init_values,
     const std::vector<OptimisationWaypoint>& waypoints,
     const gtsam::Vector& start_config,
@@ -238,7 +244,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7) * tuning.qc_scale;
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
     const double collision_sigma = tuning.collision_sigma;
-    const double epsilon_dist = tuning.epsilon_dist_m;
+    const double epsilon_dist = tuning.preferred_clearance_m;
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
 
     const gtsam::Vector rest_vel = gtsam::Vector::Zero(7);
@@ -297,9 +303,12 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
         factor_keys.push_back("JointVelLimits");
 
         // Obstacle collision avoidance
-        graph.add(gpmp2::ObstacleSDFFactorArm(
-            key_pos, arm_model, sdf, collision_sigma, epsilon_dist));
-        factor_keys.push_back("ObstacleFactor");
+        for (const auto& field : obstacle_fields) {
+            graph.add(gpmp2::ObstacleSDFFactorArm(
+                key_pos, *field.participating_arm, field.sdf,
+                collision_sigma, tuning.preferred_clearance_m));
+            factor_keys.push_back("ObstacleFactor:" + field.id);
+        }
 
         if (i > 0) {
             gtsam::Symbol key_pos_prev('x', i - 1);
@@ -308,11 +317,14 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
             double delta_t_segment = delta_t / 5.0;  // divide segment into 5 parts
             for (int interp = 1; interp < 5; ++interp) {  // skip endpoints (checked at waypoints)
                 double tau_check = interp * delta_t_segment;
-                graph.add(gpmp2::ObstacleSDFFactorGPArm(
-                    key_pos_prev, key_vel_prev, key_pos, key_vel,
-                    arm_model, sdf, collision_sigma, epsilon_dist,
-                    Qc_model, delta_t, tau_check));
-                factor_keys.push_back("ObstacleFactorGP");
+                for (const auto& field : obstacle_fields) {
+                    graph.add(gpmp2::ObstacleSDFFactorGPArm(
+                        key_pos_prev, key_vel_prev, key_pos, key_vel,
+                        *field.participating_arm, field.sdf, collision_sigma,
+                        tuning.preferred_clearance_m, Qc_model, delta_t,
+                        tau_check));
+                    factor_keys.push_back("ObstacleFactorGP:" + field.id);
+                }
             }
         }
 
@@ -472,165 +484,4 @@ std::pair<std::vector<gtsam::Vector>, std::vector<gtsam::Vector>> OptimizeTrajec
     std::cout << "Actual frequency: " << actual_freq << " Hz" << std::endl;
     
     return std::make_pair(dense_trajectory, dense_velocities);
-}
-
-TrajectoryResult OptimizeTrajectory::reOptimizeJointTrajectory(
-    const gpmp2::ArmModel& arm_model,
-    const gpmp2::SignedDistanceField& sdf,
-    const gtsam::Values& init_values,
-    const gtsam::Pose3& target_pose,
-    const std::vector<gtsam::Vector>& start_configs,
-    const std::vector<gtsam::Vector>& start_velocities,
-    const JointLimits& pos_limits,
-    const JointLimits& vel_limits,
-    const size_t total_time_step,
-    const double total_time_sec,
-    const double target_dt) {
-    
-    std::cout << "Creating re-optimized arm trajectory..." << std::endl;
-    
-    std::vector<std::string> factor_keys;
-    std::unordered_map<std::string, double> init_factor_costs;
-    std::unordered_map<std::string, double> final_factor_costs;
-
-    // Trajectory parameters
-    double delta_t = total_time_sec / total_time_step;
-    
-    // GP and optimization parameters
-    gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7);
-    auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
-    double collision_sigma = 0.0005;
-    double epsilon_dist = 0.05;
-    auto pose_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.0005);
-    auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-    
-    gtsam::Matrix self_collision_data(3, 4);
-    self_collision_data << 
-        0, 4, 0.03, collision_sigma,
-        0, 6, 0.03, collision_sigma,
-        2, 6, 0.03, collision_sigma;
-    
-    gtsam::NonlinearFactorGraph graph;
-    
-    auto start_time = std::chrono::high_resolution_clock::now();
-    
-    for (size_t i = 0; i <= total_time_step; ++i) {
-        gtsam::Symbol key_pos('x', i);
-        gtsam::Symbol key_vel('v', i);
-        
-        // GP priors
-        if (i > 0) {
-            gtsam::Symbol key_pos1('x', i-1);
-            gtsam::Symbol key_pos2('x', i);
-            gtsam::Symbol key_vel1('v', i-1);
-            gtsam::Symbol key_vel2('v', i);
-            
-            graph.add(gpmp2::GaussianProcessPriorLinear(key_pos1, key_vel1, key_pos2, key_vel2, delta_t, Qc_model));
-            factor_keys.push_back("GPPrior");
-        }
-        
-        // Start/end priors - Modified to use extracted states for first 3 timesteps
-        // if (i == 0 || i == 1 || i == 2) {
-        if (i == 0) {
-            if (i < start_configs.size()) {
-                graph.add(gtsam::PriorFactor<gtsam::Vector>(key_pos, start_configs[i], pose_fix_model));
-                factor_keys.push_back("StartPosPrior");
-            }
-            if (i < start_velocities.size()) {
-                graph.add(gtsam::PriorFactor<gtsam::Vector>(key_vel, start_velocities[i], vel_fix_model));
-                factor_keys.push_back("StartVelPrior");
-            }
-        }
-        
-        // End constraints (zero velocity at final timestep)
-        if (i == total_time_step) {
-            gtsam::Vector end_vel = gtsam::Vector::Zero(7);
-            graph.add(gtsam::PriorFactor<gtsam::Vector>(key_vel, end_vel, vel_fix_model));
-            factor_keys.push_back("EndVelPrior");
-        }
-        
-        // Obstacle avoidance
-        graph.add(gpmp2::ObstacleSDFFactorArm(key_pos, arm_model, sdf, collision_sigma, epsilon_dist));
-        factor_keys.push_back("ObstacleAvoidance");
-        
-        // Self collision avoidance
-        graph.add(gpmp2::SelfCollisionArm(key_pos, arm_model, self_collision_data));
-        factor_keys.push_back("SelfCollisionFactor");
-        
-        // Velocity limits
-        auto vel_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector vel_limit_thresh = gtsam::Vector::Constant(7, 0.05);
-        graph.add(gpmp2::VelocityLimitFactorVector(
-            key_vel, vel_limit_model, vel_limits.upper, vel_limit_thresh));
-        factor_keys.push_back("JointVelLimits");
-    }
-    
-    // Add jerk penalty factors for consecutive position triplets
-    // auto jerk_noise_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.0001);
-    // for (size_t i = 1; i < total_time_step; ++i) {
-
-    //     // if(i == 1 || i == total_time_step - 1){}
-    //     gtsam::Symbol key_pos1('x', i - 1);
-    //     gtsam::Symbol key_pos2('x', i);
-    //     gtsam::Symbol key_pos3('x', i + 1);
-        
-    //     graph.add(JerkPenaltyFactor(
-    //         key_pos1, key_pos2, key_pos3, jerk_noise_model, delta_t));
-    //     factor_keys.push_back("JerkFactor");
-    // }
-    
-    // Target pose constraint at end
-    auto workspace_model = gtsam::noiseModel::Isotropic::Sigma(6, 1e-4);
-    graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
-        gtsam::Symbol('x', total_time_step), arm_model, 6, target_pose, workspace_model));
-    factor_keys.push_back("PoseFactor");
-    
-    // Calculate initial error
-    double init_error = graph.error(init_values);
-
-    for (size_t i = 0; i < graph.size(); ++i) {
-      
-        double constraint_error = graph.at(i)->error(init_values);
-
-        init_factor_costs[factor_keys[i]] += constraint_error;    
-    }
-    
-    // Optimization
-    gtsam::LevenbergMarquardtParams lm_params;
-    lm_params.setMaxIterations(1000);
-    lm_params.setRelativeErrorTol(1e-8);
-    lm_params.setAbsoluteErrorTol(1e-8);
-    
-    gtsam::LevenbergMarquardtOptimizer optimizer(graph, init_values, lm_params);
-    gtsam::Values result = optimizer.optimize();
-    
-    auto end_time = std::chrono::high_resolution_clock::now();
-    auto optimization_duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-    
-
-    for (size_t i = 0; i < graph.size(); ++i) {
-  
-        double constraint_error = graph.at(i)->error(result);
-   
-        final_factor_costs[factor_keys[i]] += constraint_error;
-    }
-
-    double final_error = graph.error(result);
-
-    auto [densified_pos, densified_vel] = densifyTrajectory(result, Qc_model, delta_t, total_time_sec, target_dt);    
-    
-    // Formulate result
-    TrajectoryResult trajectory_result;
-
-    trajectory_result.dt = target_dt;
-    trajectory_result.start_error = graph.error(init_values);
-    trajectory_result.final_error = graph.error(result);
-    trajectory_result.trajectory_pos = densified_pos;
-    trajectory_result.trajectory_vel = densified_vel;
-    trajectory_result.start_costs = init_factor_costs;
-    trajectory_result.final_costs = final_factor_costs;
-
-    std::cout << "Re-optimization completed. Error: " << init_error << " -> " << final_error << std::endl;
-    
-    return trajectory_result;
 }

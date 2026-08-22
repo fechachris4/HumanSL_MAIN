@@ -34,7 +34,7 @@
  */
 TrajectoryResult optimizeJointTrajectory(
     const gpmp2::ArmModel& arm_model,
-    const gpmp2::SignedDistanceField& sdf,
+    const std::vector<NamedObstacleField>& obstacle_fields,
     const gtsam::Values& init_values,
     const gtsam::Pose3& target_pose,
     const gtsam::Vector& start_config,

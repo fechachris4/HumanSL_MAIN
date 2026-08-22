@@ -7,13 +7,26 @@
 ArmModel::ArmModel(){};
 
 
-std::unique_ptr<gpmp2::ArmModel> ArmModel::createArmModel(const gtsam::Pose3& base_pose, const DHParameters& dh_params, bool has_tool) {
+std::unique_ptr<gpmp2::ArmModel> ArmModel::createArmModel(const gtsam::Pose3& base_pose, const DHParameters& dh_params, bool has_tool, std::vector<CollisionSphereGroup>* sphere_groups, gpmp2::BodySphereVector* authored_spheres) {
 
     // Create 7-DOF arms
     auto arm = std::make_unique<gpmp2::Arm>(7, dh_params.a, dh_params.alpha, dh_params.d,
                                                 base_pose, dh_params.theta);
 
     auto arm_spheres = generateArmSpheres(0, 0.05, dh_params.d, has_tool);
+    if (authored_spheres) *authored_spheres = arm_spheres;
+    if (sphere_groups) {
+        sphere_groups->clear();
+        sphere_groups->reserve(arm_spheres.size());
+        for (std::size_t index = 0; index < arm_spheres.size(); ++index) {
+            const std::size_t link = arm_spheres[index].link_id;
+            if (index == 0) sphere_groups->push_back(CollisionSphereGroup::kMountInterface);
+            else if (link == 0) sphere_groups->push_back(CollisionSphereGroup::kProximalArm);
+            else if (link == 2) sphere_groups->push_back(CollisionSphereGroup::kUpperArm);
+            else if (link == 4) sphere_groups->push_back(CollisionSphereGroup::kForearm);
+            else sphere_groups->push_back(CollisionSphereGroup::kTool);
+        }
+    }
 
     // Create ArmModel instances
     auto arm_model = std::make_unique<gpmp2::ArmModel>(*arm, arm_spheres);

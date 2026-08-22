@@ -816,6 +816,7 @@ const TORSO_INPUTS = [
   'scene-torso-x', 'scene-torso-y', 'scene-torso-z',
   'scene-torso-radius', 'scene-torso-height',
 ];
+const SPHERE_GROUPS = ['mount_interface', 'proximal_arm', 'upper_arm', 'forearm', 'tool'];
 
 function cloneScene(scene) {
   return JSON.parse(JSON.stringify(scene || {}));
@@ -827,12 +828,16 @@ function torsoFromInputs() {
   const values = raw.map(Number);
   if (!values.every(Number.isFinite)) return null;
   if (!(values[3] > 0) || !(values[4] > 0)) return null;
+  const permitted_sphere_groups = SPHERE_GROUPS.filter((group) =>
+    [...document.querySelectorAll('#scene-torso-groups input[type="checkbox"]')]
+      .find((input) => input.value === group)?.checked);
   return {
     enabled: true,
     shape: 'cylinder',
     center_mount_m: values.slice(0, 3),
     radius_m: values[3],
     height_m: values[4],
+    permitted_sphere_groups,
   };
 }
 
@@ -846,6 +851,9 @@ function setTorsoInputs(torso) {
     ? [...torso.center_mount_m, torso.radius_m, torso.height_m]
     : ['', '', '', '', ''];
   TORSO_INPUTS.forEach((id, index) => { $(id).value = values[index]; });
+  const groups = new Set(torso?.permitted_sphere_groups || []);
+  document.querySelectorAll('#scene-torso-groups input[type="checkbox"]')
+    .forEach((input) => { input.checked = groups.has(input.value); });
 }
 
 function renderSceneEditorState(message) {
@@ -889,6 +897,7 @@ function createTorsoDraft() {
     center_mount_m: [0, 0, 0],
     radius_m: 0.1,
     height_m: 0.1,
+    permitted_sphere_groups: [],
   };
   setTorsoInputs(state.sceneConfig.draft.torso);
   updateTorsoDraftFromInputs();
@@ -946,6 +955,8 @@ async function saveScene() {
 
 function wireSceneEditor() {
   TORSO_INPUTS.forEach((id) => $(id).addEventListener('input', updateTorsoDraftFromInputs));
+  document.querySelectorAll('#scene-torso-groups input[type="checkbox"]')
+    .forEach((input) => input.addEventListener('change', updateTorsoDraftFromInputs));
   $('scene-torso-create').addEventListener('click', createTorsoDraft);
   $('scene-torso-reset').addEventListener('click', resetSceneDraft);
   $('scene-torso-save').addEventListener('click', () => {

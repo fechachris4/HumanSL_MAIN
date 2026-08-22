@@ -22,6 +22,8 @@ struct PlannerModel {
     DHParameters dh;
     gtsam::Pose3 base_pose;                      // = DhRootInMount(...)
     std::unique_ptr<gpmp2::ArmModel> arm_model;  // collision-sphere model
+    std::vector<CollisionSphereGroup> sphere_groups;
+    gpmp2::BodySphereVector authored_spheres;
     // Which arm this model describes, for every Pinocchio-backed evaluation
     // (utils::forwardKinematics, analytical_ik) that must query the SAME
     // chain the dh table was generated from — mismatching them offsets

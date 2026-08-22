@@ -1,6 +1,7 @@
 #pragma once
 
 #include "utils.h"
+#include "../src/StaticScene.h"
 #include <gpmp2/kinematics/Arm.h>
 #include <gpmp2/kinematics/ArmModel.h>
 #include <gpmp2/kinematics/RobotModel.h>
@@ -42,8 +43,7 @@ class ArmModel{
         std::unique_ptr<gpmp2::ArmModel> createArmModel(
             const gtsam::Pose3& base_pose,
             const DHParameters& dh_params,
-            bool has_tool = true);
+            bool has_tool = true,
+            std::vector<CollisionSphereGroup>* sphere_groups = nullptr,
+            gpmp2::BodySphereVector* authored_spheres = nullptr);
 };
-
-
-

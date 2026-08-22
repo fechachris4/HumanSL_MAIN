@@ -50,10 +50,31 @@ std::string WriteConfig(const std::string& scene_yaml) {
   min_duration_s: 1.0
   waypoints: 10
 obstacles:
-  epsilon_dist_m: 0.05
+  minimum_clearance_m: 0.05
+  preferred_clearance_m: 0.10
   collision_sigma: 0.0005
 )";
-    file << Indent(scene_yaml, "  ") << R"(
+    std::string normalized = scene_yaml;
+    for (const std::string& marker : {"height_m:", "half_extent_m:"}) {
+        std::size_t position = 0;
+        while ((position = normalized.find(marker, position)) != std::string::npos) {
+            const std::size_t line_end = normalized.find('\n', position);
+            if (line_end == std::string::npos) break;
+            const std::size_t next_line_end = normalized.find('\n', line_end + 1);
+            const std::string next_line = normalized.substr(
+                line_end + 1, next_line_end == std::string::npos
+                                  ? std::string::npos
+                                  : next_line_end - line_end - 1);
+            if (next_line.find("permitted_sphere_groups:") != std::string::npos) {
+                position = line_end + 1;
+                continue;
+            }
+            const std::string group = "\n    permitted_sphere_groups: []";
+            normalized.insert(line_end, group);
+            position = line_end + group.size();
+        }
+    }
+    file << Indent(normalized, "  ") << R"(
 smoothness:
   qc_scale: 1.0
 goal:
@@ -108,6 +129,7 @@ int main() {
     center_mount_m: [0.1, -0.2, 0.3]
     radius_m: 0.22
     height_m: 0.60
+    permitted_sphere_groups: [mount_interface]
 )");
     const PlannerConfig config = LoadPlannerConfig(cylinder_path);
     std::filesystem::remove(cylinder_path);
@@ -123,6 +145,8 @@ int main() {
             Check(torso.radius_m == 0.22 && torso.height_m == 0.60,
                   "radius/full height");
         }
+        Check(config.scene[0].permitted_sphere_groups.size() == 1,
+              "permitted sphere group round trips");
     }
     const std::string effective_text = EffectiveConfigText(config);
     Check(effective_text.find("obstacles.scene.count    = 1") != std::string::npos,
@@ -309,6 +333,15 @@ int main() {
     center_mount_m: [0.0, 0.0, 0.0]
     half_extent_m: [0.1, 0.0, 0.3]
 )", "non-positive box half extent is rejected");
+    ExpectReject(R"(scene:
+  torso:
+    enabled: true
+    shape: cylinder
+    center_mount_m: [0.0, 0.0, 0.0]
+    radius_m: 0.2
+    height_m: 0.4
+    permitted_sphere_groups: [unknown_group]
+)", "unknown sphere group is rejected", "unknown group");
 
     if (failures == 0)
         std::puts("test_scene_config: all checks passed");

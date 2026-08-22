@@ -4,7 +4,8 @@ from Christian_control.panel import yaml_text
 def test_replace_block_preserves_unrelated_text_byte_for_byte():
     original = """# header
 obstacles:
-  epsilon_dist_m: 0.05  # keep this
+  minimum_clearance_m: 0.05  # keep this
+  preferred_clearance_m: 0.10
   scene: {}
 solver:
   max_iterations: 1000
@@ -18,7 +19,8 @@ solver:
 
     assert changed == """# header
 obstacles:
-  epsilon_dist_m: 0.05  # keep this
+  minimum_clearance_m: 0.05  # keep this
+  preferred_clearance_m: 0.10
   scene:
     torso:
       enabled: true
@@ -29,7 +31,8 @@ solver:
 
 def test_replace_block_replaces_nested_children_once():
     original = """obstacles:
-  epsilon_dist_m: 0.05
+  minimum_clearance_m: 0.05
+  preferred_clearance_m: 0.10
   scene:
     old:
       enabled: false
@@ -46,7 +49,8 @@ def test_replace_block_replaces_nested_children_once():
     )
 
     assert changed == """obstacles:
-  epsilon_dist_m: 0.05
+  minimum_clearance_m: 0.05
+  preferred_clearance_m: 0.10
   scene:
     new:
       enabled: true
@@ -76,7 +80,7 @@ def test_replace_block_preserves_trailing_comment_before_the_next_sibling():
 
 
 def test_replace_block_returns_none_for_absent_path():
-    original = "obstacles:\n  epsilon_dist_m: 0.05\n"
+    original = "obstacles:\n  minimum_clearance_m: 0.05\n  preferred_clearance_m: 0.10\n"
 
     assert yaml_text.replace_block(
         original, ("obstacles", "scene"), "scene: {}"

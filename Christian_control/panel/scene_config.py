@@ -165,6 +165,22 @@ def _disk_vector(raw: str, where: str) -> list[float]:
     return [_disk_number(part, f"{where}[{index}]")
             for index, part in enumerate(parts)]
 
+_SPHERE_GROUPS = {
+    "mount_interface", "proximal_arm", "upper_arm", "forearm", "tool"
+}
+
+def _disk_groups(raw: str, where: str) -> list[str]:
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise _SceneError(f"{where} must be a list") from error
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise _SceneError(f"{where} must be a list of group names")
+    for item in value:
+        if item not in _SPHERE_GROUPS:
+            raise _SceneError(f"{where} contains unknown group {item!r}")
+    return value
+
 
 def _unique_fixed_key(
     lines: list[str], name: str, *, parent_index: int | None = None
@@ -276,6 +292,9 @@ def _parse_scene(text: str) -> dict[str, dict[str, Any]]:
             "center_mount_m": _disk_vector(
                 fields.get("center_mount_m", ""), f"{location}.center_mount_m"
             ),
+            "permitted_sphere_groups": _disk_groups(
+                fields.get("permitted_sphere_groups", ""),
+                f"{location}.permitted_sphere_groups"),
         }
         if "radius_m" in fields:
             parsed["radius_m"] = _disk_number(fields["radius_m"], f"{location}.radius_m")
@@ -287,7 +306,7 @@ def _parse_scene(text: str) -> dict[str, dict[str, Any]]:
             )
         unknown = set(fields) - {
             "enabled", "shape", "center_mount_m", "radius_m", "height_m",
-            "half_extent_m",
+            "half_extent_m", "permitted_sphere_groups",
         }
         for field in sorted(unknown):
             parsed[field] = fields[field]
@@ -336,6 +355,7 @@ def _validate_scene(submitted: Any) -> dict[str, dict[str, Any]]:
         expected = ({"enabled", "shape", "center_mount_m", "half_extent_m"}
                     if shape == "box" else
                     {"enabled", "shape", "center_mount_m", "radius_m", "height_m"})
+        expected.add("permitted_sphere_groups")
         missing = sorted(expected - set(value))
         unknown = sorted(set(value) - expected)
         if missing or unknown:
@@ -350,6 +370,7 @@ def _validate_scene(submitted: Any) -> dict[str, dict[str, Any]]:
             "shape": shape,
             "center_mount_m": _vector(value["center_mount_m"],
                                        f"{location}.center_mount_m"),
+            "permitted_sphere_groups": list(value["permitted_sphere_groups"]),
         }
         if shape == "box":
             item["half_extent_m"] = _vector(
@@ -384,6 +405,8 @@ def _render_scene(scene: dict[str, dict[str, Any]]) -> str:
         lines.append(f"      shape: {obstacle['shape']}")
         center = ", ".join(_render_number(v) for v in obstacle["center_mount_m"])
         lines.append(f"      center_mount_m: [{center}]")
+        groups = ", ".join(json.dumps(group) for group in obstacle["permitted_sphere_groups"])
+        lines.append(f"      permitted_sphere_groups: [{groups}]")
         if obstacle["shape"] == "box":
             extent = ", ".join(
                 _render_number(v) for v in obstacle["half_extent_m"]
