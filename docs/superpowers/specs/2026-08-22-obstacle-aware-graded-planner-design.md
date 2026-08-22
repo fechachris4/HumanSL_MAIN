@@ -1,7 +1,7 @@
 # Obstacle-Aware Graded Planner
 
 **Date:** 2026-08-22  
-**Status:** Design approved in chat; written-form review pending  
+**Status:** Approved
 **Classification:** C — planner motion-generation and emission behaviour  
 **Evidence level:** source audit, recorded-run diagnosis and hardware-free replay;
 physical execution remains unproven
@@ -95,8 +95,16 @@ Let `P` be the configured set of prohibited pairs `(robot sphere, named scene
 object)`. For candidate trajectory `q(t)`, modelled feasibility requires
 
 ```text
-clearance_p(q(t)) >= obstacles.epsilon_dist_m  for every p in P and dense t
+clearance_p(q(t)) >= obstacles.minimum_clearance_m  for every p in P and dense t
 ```
+
+`minimum_clearance_m` is the hard modelled boundary. The existing obstacle
+factor activation distance becomes `preferred_clearance_m`: it shapes routes
+and ranks validated candidates, but clearance benefit saturates at that value.
+This keeps clearance important without rewarding a much larger detour for
+negligible clearance beyond the preferred margin. Configuration requires
+`0 <= minimum_clearance_m <= preferred_clearance_m`; both are explicit metres,
+not hidden constants.
 
 This is explicitly modelled-scene evidence. It is not a claim of human
 clearance, unmodelled cable clearance or physical-world safety.
@@ -120,6 +128,8 @@ permitted are prohibited. A permission requires a Christian-confirmed physical
 reason. No overlap is auto-permitted because the measured start contains it.
 
 ```yaml
+minimum_clearance_m: 0.05
+preferred_clearance_m: 0.10
 scene:
   torso:
     enabled: true
@@ -129,6 +139,10 @@ scene:
     height_m: 1.0
     permitted_sphere_groups: []
 ```
+
+The initial 0.05 m hard value preserves the already-approved boundary; 0.10 m
+is the first capped preference to benchmark, not a new claim about physical
+human clearance. Change either only from recorded route and tracking evidence.
 
 Optimization adds one scene-obstacle factor per object using that object's
 filtered arm model. Dense validation independently evaluates every prohibited
@@ -167,9 +181,8 @@ If no exact candidate produces a validated route, shortened candidates are
 generated. Their default ranking is lexicographic, without a hidden
 translation/rotation scalar:
 
-1. modelled scene/self-collision, joint-position and velocity feasibility are
-   mandatory; acceleration remains the planning evidence described in section
-   4.4;
+1. modelled scene/self-collision, joint-position, velocity and acceleration
+   feasibility are mandatory for a candidate after its bounded repair attempts;
 2. candidates preserving requested orientation within tolerance form the
    first tier; within that tier minimize terminal position error;
 3. only when that tier is empty, minimize orientation error first and position
@@ -203,10 +216,12 @@ minimize  J_path_position + J_path_orientation + J_smoothness + J_obstacle
 subject to the approved exact start state
 ```
 
-Modelled clearance, finite values, joint-position limits, effective velocity
-limits and terminal correctness are final executable conditions. Intermediate
-path deviation is quality evidence, not a rejection condition. A detoured
-circle that reaches its requested terminal pose is `REACHED`, not blocked.
+Modelled clearance, finite values, effective joint-position, velocity and
+acceleration limits, and terminal correctness are final executable conditions.
+They disqualify one candidate; they do not end the request while another route,
+terminal branch or shortened candidate remains. Intermediate path deviation is
+quality evidence, not a rejection condition. A detoured circle that reaches its
+requested terminal pose is `REACHED`, not blocked.
 
 The planner reports mean, RMS, p95 and maximum position deviation, maximum
 orientation deviation, worst path parameter and terminal rejoin error. Current
@@ -292,29 +307,50 @@ shortfall and cannot claim rejoin.
 
 ### 4.4 Duration attempts
 
-Duration repair is orthogonal to route search. A candidate is re-solved from
-scratch at a longer duration only when its dense failure is exclusively a
-time-dependent configured velocity or acceleration violation.
+Duration repair is orthogonal to route search. A geometrically valid candidate
+is re-solved from scratch at a longer duration when dense measurement finds a
+time-dependent effective velocity or acceleration violation.
 
 - Maximum three total duration attempts for that candidate.
 - Exact `q(0)` and supplied `qdot(0)` are re-applied on every attempt.
 - No post-hoc velocity scaling.
-- Collision, joint-position, terminal, IK, non-finite or optimizer failure
-  never triggers a duration attempt.
-- If measured `qdot(0)` itself exceeds the effective velocity limit, fail that
-  request immediately; duration cannot repair the physical starting state.
+- Collision, joint-position, terminal, IK, non-finite or optimizer failure does
+  not trigger a duration attempt; the bounded candidate search continues where
+  another candidate remains.
+- If measured `qdot(0)` itself exceeds the effective velocity limit, return
+  `FAILED` immediately with `start_velocity_over_effective_limit`. Every
+  candidate must preserve that same exact measurement, so no branch, route,
+  shortened target or duration can repair it. Never replace the measurement or
+  manufacture zero velocity.
+- A candidate still above either effective dynamic limit after three attempts
+  is abandoned; this does not become whole-request `FAILED` until all exact and
+  shortened candidates are exhausted.
 
-The current acceleration ratio is based on a heuristic despite an unused
-mode-specific acceleration table in `joint_limits.yaml`. It may trigger a
-longer-duration candidate and remains labelled planning-model evidence, but an
-acceleration overage alone cannot turn an otherwise validated route into
-`FAILED`. Velocity and approved position limits remain mandatory. This
-migration does not invent a physical acceleration safety boundary.
+The official [Kinova Gen3 7-DoF User Guide](https://www.kinovarobotics.com/uploads/User-Guide-Gen3-R07.pdf)
+documents hardware speed limits of 1.39 rad/s
+for joints 1–4 and 1.22 rad/s for joints 5–7, and hardware acceleration limits
+of 5.2 rad/s² for joints 1–4 and 10.0 rad/s² for joints 5–7. The repository
+stores these physical tables separately from derived operating limits:
+
+```text
+effective_velocity_j     = velocity_planner_fraction     * hardware_velocity_j
+effective_acceleration_j = acceleration_planner_fraction * hardware_acceleration_j
+```
+
+Fractions are explicit configuration, dimensionless, in `(0, 1]`. They are not
+buried literals. The checked-in acceleration fraction begins at `1.0`; any
+future headroom reduction requires measured tracking evidence and a separate
+approved tuning change. The existing 7-DoF grouping must not be replaced with
+the 6-DoF grouping. The dense acceleration estimate is now a documented
+physical planning boundary and participates in duration repair and final
+candidate feasibility.
 
 ## 5. Validation and outcomes
 
-Point and traced plans use one dense validation path before world projection.
-It measures:
+Point and traced plans use the existing dense validation path before world
+projection. It samples the final timed GPMP2 trajectory on the configured
+uniform `path_following.validation_dt_s` grid, including both endpoints; no
+second validator or wire-format reconstruction is introduced. It measures:
 
 - exact measured start position and supplied start velocity;
 - finite joint states and timestamps;
@@ -322,8 +358,8 @@ It measures:
 - configured self-collision-pair separation;
 - bounded-joint position limits;
 - per-joint effective velocity limits;
-- planning acceleration evidence, used for duration repair and reporting but
-  not as an invented hard failure boundary;
+- per-joint effective acceleration limits, used for duration repair and final
+  candidate feasibility;
 - terminal pose correctness for the candidate type;
 - trace quality metrics when a requested path exists.
 
@@ -338,16 +374,22 @@ FAILED        no executable trajectory
 ```
 
 Only `REACHED` and `GOAL_BLOCKED` may carry a trajectory. `FAILED` carries the
-stage and reason but no default or stale trajectory. Optimizer convergence is
-candidate evidence; it is not itself proof of executability or task success.
+stage and reason but no default or stale trajectory. Optimizer convergence,
+factor costs, IK failures, route-seed failures and path deviation are search or
+quality evidence; none is an independent whole-request rejection gate. Exact
+start is imposed by equality. A measured mismatch after solving is therefore
+classified as an invalid numerical trajectory, not as a second configurable
+protective threshold.
 
 Weighted GPMP2 objectives are recorded but never compared across route
-hypotheses with different collision strengths. Among validated routes for one
-exact point terminal, select greatest minimum prohibited-pair clearance, then
-shortest duration, then smallest integrated joint travel. For a trace, compute
-position RMS on a common, uniformly sampled requested path parameter so
-duration and sample count cannot bias the number; select lowest RMS, then
-lowest maximum deviation, then greatest clearance. Shortened routes first use
+hypotheses with different collision strengths. Define route clearance quality
+as `min(minimum_clearance, preferred_clearance_m)`, so extra distance beyond the
+preferred margin cannot justify a larger detour. Among validated routes for one
+exact point terminal, select greatest capped clearance quality, then shortest
+duration, then smallest integrated joint travel. For a trace, compute position
+RMS on a common, uniformly sampled requested path parameter so duration and
+sample count cannot bias the number; select lowest RMS, then lowest maximum
+deviation, then greatest capped clearance quality. Shortened routes first use
 the terminal ranking in section 3.3 and then the corresponding route rule. All
 selected routes have already passed the same hard model-validity conditions.
 
@@ -411,10 +453,13 @@ Expected owners, subject to the implementation plan's source audit:
 - existing IK/initialization files: bounded terminal branches and bypass seed
   construction, without a second solver abstraction;
 - `StaticScene.*`, `PlannerConfig.*`, `MountSdf.*` and arm-sphere definition:
-  stable prohibited-pair configuration, per-object fields and one conversion
-  path;
-- `ValidatePath.*` and `PathValidationReport.*`: common dense point/path
-  validation and quality metrics;
+  stable prohibited-pair configuration, capped clearance policy, per-object
+  fields and one conversion path;
+- existing joint-limit loader/generator: hardware acceleration values and the
+  explicit planner fraction, producing effective per-joint acceleration limits
+  beside the existing velocity derivation;
+- the existing `ValidatePath.*` and `PathValidationReport.*`, renamed rather
+  than wrapped: common dense point/path validation and quality metrics;
 - `BridgeMain.cpp` and existing debug artifacts: statuses, candidate table and
   projection only for executable outcomes;
 - existing panel scene-config parser/editor: preserve and edit the required
@@ -467,7 +512,9 @@ One focused planner behaviour fixture set covers distinct contracts:
    returns a validated `GOAL_BLOCKED` trajectory;
 4. no validated shortened route returns `FAILED` with no trajectory;
 5. nonzero measured start velocity remains exact through alternative routes
-   and duration repair.
+   and duration repair; a synthetic velocity/acceleration excess causes a
+   longer from-scratch solve and the final candidate meets both effective
+   dynamic limits.
 
 Expected clearance and endpoint residuals are recomputed from primitive scene
 geometry and FK outputs, not by calling the verdict helper under test. Mutation
@@ -532,7 +579,8 @@ alone is not physical proof.
 8. **Moving replan:** every exact and shortened attempt preserves supplied
    `qdot(0)`; substituting zero is detectable.
 9. **Dynamic-only excess:** a longer-duration re-solve changes the trajectory
-   while preserving the exact start; collision or optimizer failure produces
+   while preserving the exact start and ends within documented effective
+   velocity and acceleration limits; collision or optimizer failure produces
    no duration retry.
 10. **Local-search limitation:** a `GOAL_BLOCKED` or `FAILED` report lists the
     exhausted bounded candidates and never says the exact goal was proven
