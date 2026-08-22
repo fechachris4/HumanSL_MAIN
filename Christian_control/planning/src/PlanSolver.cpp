@@ -87,15 +87,14 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
 
 namespace {
 
-// Uniform time scaling: the factor by which the trajectory must be slowed
-// so no joint exceeds its velocity or acceleration limit. Geometry is
-// untouched — the arm follows the same joint path, just later.
+// Duration multiplier for a fresh solve when the validated trajectory exceeds
+// a dynamic limit. The waypoint geometry is retained, but the optimizer is
+// rerun at the longer duration rather than modifying solved samples.
 //
 //   alpha = max(1, max|qdot|/qdot_max, sqrt(max|qddot|/qddot_max))
 //
-// Velocity scales as 1/alpha and acceleration as 1/alpha^2, which is why
-// the acceleration term takes a square root: slowing by alpha reduces
-// acceleration by alpha squared.
+// The multiplier uses the same velocity/acceleration scaling law to select
+// the next duration; the fresh solve determines its own resulting samples.
 double TimeScalingFactor(const PathValidationReport& report,
                          double velocity_limit_rad_s,
                          double acceleration_limit_rad_s2) {
@@ -306,11 +305,9 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             inputs.joint_acceleration_limits_rad_s2(j) = vel_limits.upper(j) * 2.0;
         }
 
-        // Where the traced phase begins, as a FRACTION of the trajectory.
-        // Uniform time scaling stretches everything equally, so the
-        // fraction is invariant while the absolute time is not — computing
-        // it once and multiplying is correct on every pass, whereas
-        // recomputing an absolute time against a stale duration is not.
+        // Where the traced phase begins, as a FRACTION of the base trajectory.
+        // Each longer-duration attempt rescales waypoint times and validates
+        // the newly solved trajectory against the corresponding task window.
         const double task_start_fraction =
             assembled.waypoints[assembled.task_start_index].time_s /
             assembled.total_duration_s;
@@ -393,9 +390,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                 outcome.time_scaling_settled = false;
                 break;
             }
-            // Uniform scaling: same joint path, later. Velocities scale by
-            // 1/alpha because the same displacement now takes alpha times
-            // as long.
+            // Select a longer duration; the next loop iteration rebuilds the
+            // timed waypoints, initial values and optimizer result from scratch.
             duration_s *= alpha;
         }
 
