@@ -20,6 +20,7 @@
 #include "PlannerConfig.h"
 #include "PlannerModel.h"
 #include "PlanSolver.h"
+#include "SceneBlockerSummary.h"
 #include "StartState.h"
 #include "WorldTrajectoryProjection.h"
 #include "PathFrames.h"
@@ -174,6 +175,32 @@ void SummarizeGoalBlocked(SummaryWriter& summary, PlanStatus status,
             Fixed(validation.requested_terminal_orientation_error_rad *
                   180.0 / M_PI, 3) +
             " deg orientation");
+}
+
+// On a failed solve, name WHAT blocked it: one line per distinct
+// (object, sphere) scene violation across every candidate attempt, worst
+// first, with the sphere's exemption group and the clearance floor it
+// missed. Without this a scene_clearance failure reports only its stage
+// (2026-08-23: three identical circle goals, 18 attempts each, and no way
+// to see which sphere hit the torso, when, or by how much).
+void SummarizeSceneBlockersLines(SummaryWriter& summary,
+                                 const std::vector<CandidateEvidence>& attempts,
+                                 const std::vector<CollisionSphereGroup>& sphere_groups,
+                                 double minimum_clearance_m)
+{
+    const std::vector<SceneBlockerLine> blockers =
+        SummarizeSceneBlockers(attempts, sphere_groups);
+    for (const SceneBlockerLine& blocker : blockers) {
+        summary.Line(
+            "scene blocker",
+            blocker.object_id + " vs sphere " +
+                std::to_string(blocker.sphere_index) + " (" +
+                CollisionSphereGroupName(blocker.group) + "): clearance " +
+                Fixed(blocker.worst_clearance_m * 1e3) + " mm < floor " +
+                Fixed(minimum_clearance_m * 1e3) + " mm at t=" +
+                Fixed(blocker.worst_time_s, 2) + " s, blocked " +
+                std::to_string(blocker.attempts_blocked) + " attempt(s)");
+    }
 }
 
 // The IK walk's summary lines: solved count, the failed ranges with their
@@ -1017,6 +1044,9 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         if (!IsExecutable(plan.status) || !plan.trajectory) {
             summary.Line("result", FailedPlanStage(plan.failure_reason));
             summary.Line("error", plan.failure_reason);
+            SummarizeSceneBlockersLines(summary, plan.candidate_attempts,
+                                        model.sphere_groups,
+                                        planner_config.minimum_clearance_m);
         } else {
             summary.Line("result", std::string(PlanStatusName(plan.status)) + ", duration " +
                                        Fixed(plan.total_time_sec, 2) + " s");
@@ -1161,6 +1191,9 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         if (!IsExecutable(outcome.status) || !outcome.trajectory) {
             summary.Line("result", FailedPlanStage(outcome.failure_reason));
             summary.Line("error", outcome.failure_reason);
+            SummarizeSceneBlockersLines(summary, outcome.candidate_attempts,
+                                        model.sphere_groups,
+                                        planner_config.minimum_clearance_m);
         } else {
             summary.Line("result",
                          std::string(PlanStatusName(outcome.status)) + ", duration " + Fixed(outcome.total_time_sec, 2) +

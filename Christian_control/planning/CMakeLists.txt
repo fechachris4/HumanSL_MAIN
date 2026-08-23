@@ -102,6 +102,7 @@ target_sources(bridge_core PRIVATE
     src/WorldTrajectoryProjection.cpp
     src/PlannerConfig.cpp
     src/PlanSolver.cpp
+    src/SceneBlockerSummary.cpp
     src/PlanDebugDump.cpp
     src/StartState.cpp
     src/BridgeMain.cpp
@@ -190,6 +191,12 @@ target_include_directories(test_terminal_posture PRIVATE src)
 target_link_libraries(test_terminal_posture PRIVATE bridge_core)
 set_target_properties(test_terminal_posture PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME terminal_posture COMMAND test_terminal_posture)
+
+add_executable(test_scene_blocker_summary tests/test_scene_blocker_summary.cpp)
+target_include_directories(test_scene_blocker_summary PRIVATE src)
+target_link_libraries(test_scene_blocker_summary PRIVATE bridge_core)
+set_target_properties(test_scene_blocker_summary PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME scene_blocker_summary COMMAND test_scene_blocker_summary)
 
 add_executable(test_traced_circle tests/test_traced_circle.cpp src/PlannerPreview.cpp)
 target_include_directories(test_traced_circle PRIVATE src)
