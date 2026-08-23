@@ -30,3 +30,11 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
                                   const TrajectoryResult& trajectory,
                                   double duration_s,
                                   const PlanValidationInputs& inputs);
+
+// The same scene/self-clearance measurement as dense validation, without a
+// trajectory verdict.
+PlanValidationReport MeasureConfigurationClearance(
+    const PlannerModel& model,
+    const Eigen::Matrix<double, 7, 1>& q_rad,
+    const std::vector<NamedObstacleField>& obstacle_fields,
+    double minimum_clearance_m);

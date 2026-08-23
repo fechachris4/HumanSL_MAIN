@@ -42,12 +42,25 @@ enum class RouteHypothesis { kNormal, kPositiveBypass, kNegativeBypass };
 const char* RouteHypothesisName(RouteHypothesis route);
 
 struct CandidateEvidence {
+    std::string stage = "route";
     PlanStatus terminal_kind = PlanStatus::kFailed;
+    std::string target_source = "requested";
+    std::size_t target_ordinal = 0;
+    double target_fraction = 1.0;
+    Eigen::Vector3d target_position_mount_m = Eigen::Vector3d::Zero();
+    Eigen::Quaterniond target_orientation_mount = Eigen::Quaterniond::Identity();
+    std::string blocker_id;
     std::size_t terminal_branch = 0;
     std::uint64_t terminal_ik_stream_id = 0;
+    std::size_t terminal_ik_attempt_count = 0;
     std::size_t terminal_ik_attempt_index = 0;
     double terminal_ik_position_residual_m = 0.0;
     double terminal_ik_orientation_residual_rad = 0.0;
+    bool terminal_ik_legal = false;
+    bool terminal_ik_exact = false;
+    double requested_position_shortfall_m = 0.0;
+    double requested_orientation_shortfall_rad = 0.0;
+    int orientation_tier = 0;
     RouteHypothesis route = RouteHypothesis::kNormal;
     int duration_attempt = 0;
     double duration_s = 0.0;

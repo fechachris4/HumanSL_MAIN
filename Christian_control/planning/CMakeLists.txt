@@ -199,6 +199,13 @@ set_target_properties(test_planner_start_state PROPERTIES BUILD_RPATH "${TP_LIB}
 add_test(NAME planner_start_state COMMAND test_planner_start_state
          ${DH_PARAMS_TOOL_YAML} ${DH_PARAMS_FLANGE_YAML})
 
+add_executable(test_obstacle_aware_planner tests/test_obstacle_aware_planner.cpp)
+target_include_directories(test_obstacle_aware_planner PRIVATE src optimisation)
+target_link_libraries(test_obstacle_aware_planner PRIVATE bridge_core)
+set_target_properties(test_obstacle_aware_planner PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME obstacle_aware_planner COMMAND test_obstacle_aware_planner
+         ${DH_PARAMS_TOOL_YAML})
+
 # The joint-type contract: continuous joints 1/3/5/7 carry no position
 # limit anywhere in the planner, bounded joints 2/4/6 do. Checked against
 # the generated kBoundedMask, so the validator cannot drift from

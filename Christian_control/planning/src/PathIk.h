@@ -145,10 +145,16 @@ struct TerminalIkCandidate {
     std::size_t attempt_index = 0;
     double position_residual_m = 0.0;
     double orientation_residual_rad = 0.0;
+    bool planner_limit_legal = false;
+    bool exact = false;
 };
+
+inline constexpr std::size_t kTerminalIkSeedStreams = 10;
+inline constexpr std::size_t kTerminalIkAttemptsPerStream = 100;
 
 std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
     const PathIkArm& arm, const Eigen::Isometry3d& target,
     const Eigen::Matrix<double, 7, 1>& measured_q,
     const PathIkJointLimits& limits, std::uint64_t effective_seed,
-    std::size_t max_candidates = 3);
+    std::size_t max_candidates = 3,
+    std::vector<TerminalIkCandidate>* attempted_candidates = nullptr);

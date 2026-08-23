@@ -500,8 +500,6 @@ inline IKSolution AnalyticalIKSolver::solveDampedLeastSquares(const Eigen::Matri
             step_size = 0.01;
         }
         
-        // Store old joint angles for debugging
-        Eigen::Vector<double, 7> old_joints = solution.joint_angles;
         solution.joint_angles += step_size * delta_q;
         
         // Recompute error after joint update for accurate tracking
@@ -606,10 +604,9 @@ inline std::vector<IKSolution> AnalyticalIKSolver::solveIK(const Eigen::Matrix4d
                                                       tolerance);
         solution.attempt_index = attempt;
         
-        if (solution.is_valid || solution.quality_score < 10.0) { // Accept reasonable solutions
-            solution.quality_score = computeQualityScore(solution.joint_angles, seed_config);
-            all_solutions.push_back(solution);
-        }
+        // The terminal owner classifies exact and near-miss attempts.
+        solution.quality_score = computeQualityScore(solution.joint_angles, seed_config);
+        all_solutions.push_back(solution);
     }
 
     // Valid solutions first. Among VALID ones, prefer the one nearest the

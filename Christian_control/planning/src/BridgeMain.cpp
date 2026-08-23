@@ -141,11 +141,10 @@ std::string Fixed(double value, int decimals = 1) {
 
 std::string FailedPlanStage(const std::string& failure_reason)
 {
-    if (failure_reason.rfind("terminal IK", 0) == 0)
-        return "FAILED at terminal IK (before GPMP2 ran)";
-    if (failure_reason.rfind("path IK", 0) == 0)
-        return "FAILED at IK initialization (before GPMP2 ran)";
-    return "FAILED at GPMP2 solve/validation";
+    if (failure_reason.rfind("prohibited_start_", 0) == 0 ||
+        failure_reason == "start_velocity_over_effective_limit")
+        return "FAILED at measured-start preflight";
+    return "FAILED after bounded exact and shortened search";
 }
 
 // The high-priority result block every planning attempt ends its
@@ -161,6 +160,21 @@ struct SummaryWriter {
         extra.emplace_back(key, value);
     }
 };
+
+void SummarizeGoalBlocked(SummaryWriter& summary, PlanStatus status,
+                          const PlanValidationReport& validation)
+{
+    if (status != PlanStatus::kGoalBlocked)
+        return;
+    summary.Line("selection", "best_validated_bounded_candidate");
+    summary.Line(
+        "requested terminal shortfall",
+        Fixed(validation.requested_terminal_position_error_m * 1e3, 3) +
+            " mm position / " +
+            Fixed(validation.requested_terminal_orientation_error_rad *
+                  180.0 / M_PI, 3) +
+            " deg orientation");
+}
 
 // The IK walk's summary lines: solved count, the failed ranges with their
 // percent of the way along the path, the worst residual, the smallest
@@ -987,6 +1001,7 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         } else {
             summary.Line("result", std::string(PlanStatusName(plan.status)) + ", duration " +
                                        Fixed(plan.total_time_sec, 2) + " s");
+            SummarizeGoalBlocked(summary, plan.status, plan.validation);
             if (plan.selected_candidate_attempt) {
                 const CandidateEvidence& selected =
                     plan.candidate_attempts[*plan.selected_candidate_attempt];
@@ -1131,6 +1146,7 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
             summary.Line("result",
                          std::string(PlanStatusName(outcome.status)) + ", duration " + Fixed(outcome.total_time_sec, 2) +
                              " s");
+            SummarizeGoalBlocked(summary, outcome.status, outcome.validation);
             if (outcome.selected_candidate_attempt) {
                 const CandidateEvidence& selected =
                     outcome.candidate_attempts[
@@ -1142,8 +1158,9 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                                  ", duration attempt " +
                                  std::to_string(selected.duration_attempt));
             }
-            summary.Line("final goal error",
-                         Fixed(outcome.validation.terminal_position_error_m * 1e3, 3) + " mm");
+            summary.Line("final requested goal error",
+                         Fixed(outcome.validation.requested_terminal_position_error_m * 1e3, 3) +
+                             " mm");
             // Smallest distance any dense state comes to a bounded joint
             // limit — arithmetic over the trajectory the solver produced.
             double min_margin_rad = std::numeric_limits<double>::infinity();
@@ -1212,7 +1229,8 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
     diagnostics << "arm: " << (left_arm ? "left" : "right")
                 << ", trajectory points: " << result.trajectory->points.size()
                 << ", solve: " << outcome.trajectory->optimization_duration.count()
-                << " ms, final goal error: " << (outcome.validation.terminal_position_error_m * 1000.0)
+                << " ms, final requested goal error: "
+                << (outcome.validation.requested_terminal_position_error_m * 1000.0)
                 << " mm\n";
     result.exit_code = 0;
     result.status = outcome.status;

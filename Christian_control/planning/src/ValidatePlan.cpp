@@ -33,6 +33,99 @@ Sample At(const TrajectoryResult& result, double duration, double t) {
     return {h00*p0 + h10*base_dt*v0 + h01*p1 + h11*base_dt*v1,
             (d00*p0 + d01*p1) / base_dt + d10*v0 + d11*v1, t};
 }
+
+void UpdateConfigurationClearance(
+    const PlannerModel& model, const Eigen::Matrix<double, 7, 1>& q,
+    double time_s, const std::vector<NamedObstacleField>& obstacle_fields,
+    double minimum_clearance_m, PlanValidationReport& report)
+{
+    for (const auto& field : obstacle_fields) {
+        const auto centres =
+            field.participating_arm->sphereCentersMat(gtsam::Vector(q));
+        if (!field.participating_sphere_indices.empty())
+            report.has_scene_pairs = true;
+        for (int local = 0; local < centres.cols(); ++local) {
+            const Eigen::Vector3d centre(
+                centres(0, local), centres(1, local), centres(2, local));
+            const auto query = QueryStaticObstacle(
+                field.geometry, centre,
+                field.participating_arm->sphere_radius(
+                    static_cast<std::size_t>(local)));
+            if (query.clearance_m < report.minimum_scene_clearance_m) {
+                report.minimum_scene_clearance_m = query.clearance_m;
+                report.worst_scene_object_id = field.id;
+                report.worst_scene_sphere_index =
+                    field.participating_sphere_indices[local];
+                report.worst_scene_time_s = time_s;
+            }
+            if (query.clearance_m < minimum_clearance_m) {
+                report.scene_valid = false;
+                const bool already_recorded = std::any_of(
+                    report.first_scene_violations.begin(),
+                    report.first_scene_violations.end(),
+                    [&](const SceneViolationEvidence& violation) {
+                        return violation.object_id == field.id;
+                    });
+                if (!already_recorded) {
+                    SceneViolationEvidence violation;
+                    violation.object_id = field.id;
+                    violation.sphere_index =
+                        field.participating_sphere_indices[local];
+                    violation.time_s = time_s;
+                    violation.clearance_m = query.clearance_m;
+                    violation.outward_normal_mount = query.outward_normal_mount;
+                    violation.q = q;
+                    report.first_scene_violations.push_back(std::move(violation));
+                }
+            }
+        }
+    }
+
+    const auto centres = model.arm_model->sphereCentersMat(gtsam::Vector(q));
+    for (const auto& pair : kSelfCollisionPairs) {
+        const Eigen::Vector3d a(
+            centres(0, pair.first_sphere_index),
+            centres(1, pair.first_sphere_index),
+            centres(2, pair.first_sphere_index));
+        const Eigen::Vector3d b(
+            centres(0, pair.second_sphere_index),
+            centres(1, pair.second_sphere_index),
+            centres(2, pair.second_sphere_index));
+        const double clearance =
+            (a - b).norm() -
+            model.arm_model->sphere_radius(pair.first_sphere_index) -
+            model.arm_model->sphere_radius(pair.second_sphere_index);
+        if (clearance < report.minimum_self_clearance_m) {
+            report.minimum_self_clearance_m = clearance;
+            report.worst_self_first_sphere = pair.first_sphere_index;
+            report.worst_self_second_sphere = pair.second_sphere_index;
+            report.worst_self_time_s = time_s;
+        }
+        if (clearance < pair.minimum_surface_clearance_m)
+            report.self_collision_valid = false;
+    }
+}
+}
+
+PlanValidationReport MeasureConfigurationClearance(
+    const PlannerModel& model,
+    const Eigen::Matrix<double, 7, 1>& q_rad,
+    const std::vector<NamedObstacleField>& obstacle_fields,
+    double minimum_clearance_m)
+{
+    PlanValidationReport report;
+    report.scene_valid = true;
+    report.self_collision_valid = true;
+    report.has_self_pairs = !kSelfCollisionPairs.empty();
+    report.minimum_scene_clearance_m = std::numeric_limits<double>::infinity();
+    report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
+    UpdateConfigurationClearance(model, q_rad, 0.0, obstacle_fields,
+                                 minimum_clearance_m, report);
+    if (!std::isfinite(report.minimum_scene_clearance_m))
+        report.minimum_scene_clearance_m = 0.0;
+    if (!std::isfinite(report.minimum_self_clearance_m))
+        report.minimum_self_clearance_m = 0.0;
+    return report;
 }
 
 PlanValidationReport ValidatePlan(const PlannerModel& model,
@@ -94,53 +187,10 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
             if (dt > 0.0) max_qddot = max_qddot.cwiseMax(
                 ((s.qdot - samples[i - 1].qdot) / dt).cwiseAbs());
         }
-        if (inputs.obstacle_fields) {
-            for (const auto& field : *inputs.obstacle_fields) {
-                const auto centres = field.participating_arm->sphereCentersMat(gtsam::Vector(s.q));
-                if (!field.participating_sphere_indices.empty())
-                    report.has_scene_pairs = true;
-                for (int local = 0; local < centres.cols(); ++local) {
-                    const Eigen::Vector3d centre(centres(0, local), centres(1, local), centres(2, local));
-                    const auto query = QueryStaticObstacle(field.geometry, centre,
-                        field.participating_arm->sphere_radius(static_cast<std::size_t>(local)));
-                    if (query.clearance_m < report.minimum_scene_clearance_m) {
-                        report.minimum_scene_clearance_m = query.clearance_m;
-                        report.worst_scene_object_id = field.id;
-                        report.worst_scene_sphere_index = field.participating_sphere_indices[local];
-                        report.worst_scene_time_s = s.t;
-                    }
-                    if (query.clearance_m < inputs.minimum_clearance_m &&
-                        !report.has_first_scene_violation) {
-                        report.has_first_scene_violation = true;
-                        report.first_scene_violation_object_id = field.id;
-                        report.first_scene_violation_sphere_index =
-                            field.participating_sphere_indices[local];
-                        report.first_scene_violation_time_s = s.t;
-                        report.first_scene_violation_clearance_m = query.clearance_m;
-                        report.first_scene_violation_center_mount = centre;
-                        report.first_scene_violation_normal_mount =
-                            query.outward_normal_mount;
-                        report.first_scene_violation_q = s.q;
-                    }
-                }
-            }
-        }
-        const auto centres = model.arm_model->sphereCentersMat(gtsam::Vector(s.q));
-        for (const auto& pair : kSelfCollisionPairs) {
-            const Eigen::Vector3d a(centres(0, pair.first_sphere_index), centres(1, pair.first_sphere_index), centres(2, pair.first_sphere_index));
-            const Eigen::Vector3d b(centres(0, pair.second_sphere_index), centres(1, pair.second_sphere_index), centres(2, pair.second_sphere_index));
-            const double clearance = (a - b).norm() -
-                model.arm_model->sphere_radius(pair.first_sphere_index) -
-                model.arm_model->sphere_radius(pair.second_sphere_index);
-            if (clearance < report.minimum_self_clearance_m) {
-                report.minimum_self_clearance_m = clearance;
-                report.worst_self_first_sphere = pair.first_sphere_index;
-                report.worst_self_second_sphere = pair.second_sphere_index;
-                report.worst_self_time_s = s.t;
-            }
-            if (clearance < pair.minimum_surface_clearance_m)
-                report.self_collision_valid = false;
-        }
+        if (inputs.obstacle_fields)
+            UpdateConfigurationClearance(
+                model, s.q, s.t, *inputs.obstacle_fields,
+                inputs.minimum_clearance_m, report);
     }
     if (!std::isfinite(report.minimum_scene_clearance_m)) report.minimum_scene_clearance_m = 0.0;
     if (!std::isfinite(report.minimum_self_clearance_m)) report.minimum_self_clearance_m = 0.0;
@@ -160,8 +210,6 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     }
     report.max_velocity_ratio = (max_qdot.array() / inputs.effective_velocity_rad_s.array()).maxCoeff();
     report.max_acceleration_ratio = (max_qddot.array() / inputs.effective_acceleration_rad_s2.array()).maxCoeff();
-    report.scene_valid = !report.has_scene_pairs ||
-                         report.minimum_scene_clearance_m >= inputs.minimum_clearance_m;
     const gtsam::Pose3 final_pose = ToolPoseInMount(model, samples.back().q);
     report.requested_terminal_position_error_m =
         (final_pose.translation() - inputs.requested_terminal_mount.translation()).norm();
@@ -173,8 +221,6 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     report.terminal_position_error_m = (final_pose.translation() - target.translation()).norm();
     report.terminal_orientation_error_rad =
         gtsam::Rot3::Logmap(target.rotation().between(final_pose.rotation())).norm();
-    report.terminal_position_shortfall_m = report.requested_terminal_position_error_m;
-    report.terminal_orientation_shortfall_rad = report.requested_terminal_orientation_error_rad;
     if (inputs.desired_task_path && !inputs.desired_task_path->samples.empty()) {
         std::vector<double> position_errors;
         double position_error_sum = 0.0;

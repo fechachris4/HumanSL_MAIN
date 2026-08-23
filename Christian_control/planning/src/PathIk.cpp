@@ -272,7 +272,8 @@ std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
     const PathIkArm& arm, const Eigen::Isometry3d& target,
     const Eigen::Matrix<double, 7, 1>& measured_q,
     const PathIkJointLimits& limits, std::uint64_t effective_seed,
-    std::size_t max_candidates) {
+    std::size_t max_candidates,
+    std::vector<TerminalIkCandidate>* attempted_candidates) {
     std::vector<TerminalIkCandidate> candidates;
     if (max_candidates == 0) return candidates;
 
@@ -285,25 +286,37 @@ std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
     tolerance.accept_orientation_rad = 0.01;
 
     std::vector<TerminalIkCandidate> pool;
-    pool.reserve(10 * 100);
-    for (std::uint64_t stream = 0; stream < 10; ++stream) {
+    pool.reserve(kTerminalIkSeedStreams * kTerminalIkAttemptsPerStream);
+    if (attempted_candidates)
+        attempted_candidates->reserve(
+            attempted_candidates->size() +
+            kTerminalIkSeedStreams * kTerminalIkAttemptsPerStream);
+    for (std::uint64_t stream = 0; stream < kTerminalIkSeedStreams; ++stream) {
         const auto solutions = analytical_ik::AnalyticalIKSolver::solveIK(
-            target.matrix(), arm.base_transform, canonical_measured, 100,
+            target.matrix(), arm.base_transform, canonical_measured,
+            kTerminalIkAttemptsPerStream,
             arm.end_effector_frame, arm.left_arm, tolerance,
             analytical_ik::IKSeeding{effective_seed, stream});
         for (const auto& solution : solutions) {
-            if (!solution.attempted || !solution.is_valid ||
-                solution.position_error_m > 0.001 ||
-                solution.orientation_error_rad > 0.01)
+            if (!solution.attempted || !solution.joint_angles.allFinite() ||
+                !std::isfinite(solution.position_error_m) ||
+                !std::isfinite(solution.orientation_error_rad))
                 continue;
             const Eigen::Matrix<double, 7, 1> configuration =
                 canonical_measured +
                 JointDifference(canonical_measured, solution.joint_angles,
                                 limits);
-            if (!WithinLimits(configuration, limits)) continue;
-            pool.push_back({configuration, stream, solution.attempt_index,
-                            solution.position_error_m,
-                            solution.orientation_error_rad});
+            const bool legal = WithinLimits(configuration, limits);
+            const bool exact = legal && solution.position_error_m <= 0.001 &&
+                               solution.orientation_error_rad <= 0.01;
+            TerminalIkCandidate candidate{
+                configuration, stream, solution.attempt_index,
+                solution.position_error_m, solution.orientation_error_rad,
+                legal, exact};
+            if (attempted_candidates)
+                attempted_candidates->push_back(candidate);
+            if (exact)
+                pool.push_back(candidate);
         }
     }
 

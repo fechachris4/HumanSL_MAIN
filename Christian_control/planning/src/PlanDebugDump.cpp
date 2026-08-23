@@ -138,10 +138,18 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
     if (const auto error = OpenCsv(directory, "candidate_attempts.csv", file))
         return error;
 
-    file << "attempt_index,selected,actual_solve_attempts,"
-            "maximum_phase_solve_attempts,terminal_kind,terminal_branch,"
-            "terminal_ik_stream_id,terminal_ik_attempt_index,"
+    file << "attempt_index,selected,exact_actual_solve_attempts,"
+            "shortened_actual_solve_attempts,request_actual_solve_attempts,"
+            "exact_maximum_solve_attempts,shortened_maximum_solve_attempts,"
+            "request_maximum_solve_attempts,stage,terminal_kind,target_source,"
+            "target_ordinal,target_fraction,target_x_mount_m,target_y_mount_m,"
+            "target_z_mount_m,target_qx_mount,target_qy_mount,target_qz_mount,"
+            "target_qw_mount,blocker_id,terminal_branch,"
+            "terminal_ik_stream_id,terminal_ik_attempt_count,"
+            "terminal_ik_attempt_index,"
             "terminal_ik_position_residual_m,terminal_ik_orientation_residual_rad,"
+            "terminal_ik_legal,terminal_ik_exact,requested_position_shortfall_m,"
+            "requested_orientation_shortfall_rad,orientation_tier,"
             "route,duration_attempt,duration_s,scene_collision_sigma,solve_time_s,"
             "optimizer_converged,optimizer_termination,optimizer_iterations,"
             "optimizer_max_iterations,"
@@ -163,27 +171,50 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
             "terminal_position_error_m,terminal_orientation_error_rad,"
             "requested_terminal_position_error_m,"
             "requested_terminal_orientation_error_rad,"
-            "terminal_position_shortfall_m,terminal_orientation_shortfall_rad,"
             "trace_mean_position_m,trace_rms_position_m,trace_p95_position_m,"
             "trace_max_position_m,trace_worst_position_u,"
             "trace_max_orientation_rad,integrated_joint_travel_rad\n";
-    const std::size_t actual_solve_attempts = static_cast<std::size_t>(
-        std::count_if(attempts.begin(), attempts.end(), [](const CandidateEvidence& attempt) {
-            return attempt.duration_attempt > 0;
-        }));
-    constexpr std::size_t kMaximumPhaseSolveAttempts = 27;
+    const auto solve_count = [&](PlanStatus kind) {
+        return static_cast<std::size_t>(std::count_if(
+            attempts.begin(), attempts.end(), [&](const CandidateEvidence& attempt) {
+                return attempt.terminal_kind == kind &&
+                       attempt.duration_attempt > 0;
+            }));
+    };
+    const std::size_t exact_actual = solve_count(PlanStatus::kReached);
+    const std::size_t shortened_actual = solve_count(PlanStatus::kGoalBlocked);
     for (std::size_t index = 0; index < attempts.size(); ++index) {
         const CandidateEvidence& attempt = attempts[index];
         const PlanValidationReport& validation = attempt.validation;
         file << index << "," << (selected_index && *selected_index == index ? 1 : 0)
-             << "," << actual_solve_attempts
-             << "," << kMaximumPhaseSolveAttempts
+             << "," << exact_actual
+             << "," << shortened_actual
+             << "," << exact_actual + shortened_actual
+             << ",27,27,54"
+             << "," << CsvQuoted(attempt.stage)
              << "," << PlanStatusName(attempt.terminal_kind)
+             << "," << CsvQuoted(attempt.target_source)
+             << "," << attempt.target_ordinal
+             << "," << attempt.target_fraction
+             << "," << attempt.target_position_mount_m.x()
+             << "," << attempt.target_position_mount_m.y()
+             << "," << attempt.target_position_mount_m.z()
+             << "," << attempt.target_orientation_mount.x()
+             << "," << attempt.target_orientation_mount.y()
+             << "," << attempt.target_orientation_mount.z()
+             << "," << attempt.target_orientation_mount.w()
+             << "," << CsvQuoted(attempt.blocker_id)
              << "," << attempt.terminal_branch
              << "," << attempt.terminal_ik_stream_id
+             << "," << attempt.terminal_ik_attempt_count
              << "," << attempt.terminal_ik_attempt_index
              << "," << attempt.terminal_ik_position_residual_m
              << "," << attempt.terminal_ik_orientation_residual_rad
+             << "," << (attempt.terminal_ik_legal ? 1 : 0)
+             << "," << (attempt.terminal_ik_exact ? 1 : 0)
+             << "," << attempt.requested_position_shortfall_m
+             << "," << attempt.requested_orientation_shortfall_rad
+             << "," << attempt.orientation_tier
              << "," << RouteHypothesisName(attempt.route)
              << "," << attempt.duration_attempt
              << "," << attempt.duration_s
@@ -212,12 +243,16 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
             file << "," << validation.maximum_abs_joint_velocity_rad_s(joint);
         for (int joint = 0; joint < 7; ++joint)
             file << "," << validation.maximum_abs_joint_acceleration_rad_s2(joint);
+        const SceneViolationEvidence* first_violation =
+            validation.first_scene_violations.empty()
+                ? nullptr
+                : &validation.first_scene_violations.front();
         file << "," << validation.max_velocity_ratio
              << "," << validation.max_acceleration_ratio
-             << "," << CsvQuoted(validation.first_scene_violation_object_id)
-             << "," << validation.first_scene_violation_sphere_index
-             << "," << validation.first_scene_violation_time_s
-             << "," << validation.first_scene_violation_clearance_m
+             << "," << CsvQuoted(first_violation ? first_violation->object_id : "")
+             << "," << (first_violation ? first_violation->sphere_index : 0)
+             << "," << (first_violation ? first_violation->time_s : 0.0)
+             << "," << (first_violation ? first_violation->clearance_m : 0.0)
              << "," << CsvQuoted(validation.worst_scene_object_id)
              << "," << validation.worst_scene_sphere_index
              << "," << validation.worst_scene_time_s
@@ -230,8 +265,6 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
              << "," << validation.terminal_orientation_error_rad
              << "," << validation.requested_terminal_position_error_m
              << "," << validation.requested_terminal_orientation_error_rad
-             << "," << validation.terminal_position_shortfall_m
-             << "," << validation.terminal_orientation_shortfall_rad
              << "," << validation.trace_mean_position_m
              << "," << validation.trace_rms_position_m
              << "," << validation.trace_p95_position_m
