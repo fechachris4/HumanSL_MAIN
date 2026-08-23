@@ -195,6 +195,24 @@ PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
         PathIkSample& sample = result.samples[index];
         solve_anchor(path.samples[index].pose.matrix(), continuation, sample);
         if (sample.solved) {
+            // Angle continuity: a continuous joint's solution is equivalent
+            // under whole revolutions, and the solver reports whichever
+            // winding its internal range produced. Rewind each continuous
+            // joint to the revolution nearest the previous solved sample so
+            // the walk — and the optimiser's initial guess built from it —
+            // never carries a spurious ±360° step (measured 2026-08-23: a
+            // 351° joint-3 step between adjacent circle samples became the
+            // acceleration spike duration repair stretched tenfold).
+            // Bounded joints stay untouched: their accepted solutions are
+            // already inside the physical stops, and rewinding could not be.
+            for (int joint = 0; joint < 7; ++joint) {
+                if (!IsContinuous(limits, joint)) continue;
+                sample.configuration(joint) =
+                    continuation(joint) +
+                    std::remainder(
+                        sample.configuration(joint) - continuation(joint),
+                        2.0 * M_PI);
+            }
             solved_anchors.push_back(index);
             continuation = sample.configuration;
         } else {

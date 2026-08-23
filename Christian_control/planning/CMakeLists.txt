@@ -185,6 +185,12 @@ target_link_libraries(test_bridge_args PRIVATE bridge_core)
 set_target_properties(test_bridge_args PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME bridge_args COMMAND test_bridge_args)
 
+add_executable(test_traced_circle tests/test_traced_circle.cpp src/PlannerPreview.cpp)
+target_include_directories(test_traced_circle PRIVATE src)
+target_link_libraries(test_traced_circle PRIVATE bridge_core)
+set_target_properties(test_traced_circle PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME traced_circle COMMAND test_traced_circle ${DH_PARAMS_FLANGE_YAML})
+
 add_executable(test_projection_exit tests/test_projection_exit.cpp)
 target_include_directories(test_projection_exit PRIVATE src)
 target_link_libraries(test_projection_exit PRIVATE bridge_core)

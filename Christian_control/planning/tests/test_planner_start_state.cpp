@@ -132,10 +132,20 @@ int main(int argc, char** argv) {
               "traced graph contains velocity equality");
         Check(traced.terminal_candidate.has_value(),
               "traced records selected terminal IK candidate");
-        if (traced.terminal_candidate)
+        // A traced plan ends in the configuration its own IK walk reached;
+        // the independently solved terminal candidate stands in only when
+        // the walk's last sample was interpolated rather than solved
+        // (2026-08-23: pinning the candidate's solution family forced a
+        // joint-space bridge into the final samples).
+        if (traced.terminal_candidate && !traced.ik_walk.samples.empty()) {
+            const PathIkSample& walk_end = traced.ik_walk.samples.back();
+            const Eigen::Matrix<double, 7, 1>& expected_terminal =
+                walk_end.solved ? walk_end.configuration
+                                : traced.terminal_candidate->configuration;
             Check(MaxAbs(traced.trajectory->trajectory_pos.back() -
-                         traced.terminal_candidate->configuration) < 1e-12,
-                  "traced qN equals selected terminal configuration");
+                         expected_terminal) < 1e-12,
+                  "traced qN equals the walk's final configuration");
+        }
         Check(traced.trajectory->start_costs.count("TerminalPosEquality") == 1,
               "traced graph contains terminal equality");
     }

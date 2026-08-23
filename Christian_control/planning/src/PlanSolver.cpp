@@ -942,6 +942,24 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                 joint_velocity_limits, pacing, rotation_sigma, position_sigma);
             const auto solve_route = [&](RouteHypothesis route, const AssembledPath& assembled,
                                          const PathIkResult& seed_walk) {
+                // A traced plan ends in the configuration its own IK walk
+                // reached. The walk's final sample and the independently
+                // solved terminal candidate share the same tool pose but may
+                // sit in different joint solution families; pinning the
+                // candidate's family forces the optimiser to bridge them
+                // inside the final samples (run 2026-08-23: a 150.6 deg
+                // closure drift became a 0.8 m task-space excursion, and the
+                // duration repair stretched the whole 14.1 s plan to
+                // 100.1 s to make that bridge fit the joint limits). The
+                // candidate keeps its roles — reachability judgement and
+                // seed-path translation — and still stands in as terminal
+                // when the walk's last sample is interpolated rather than
+                // solved, because only a solved sample is an exact IK
+                // solution the equality may pin.
+                const PathIkSample& walk_end = seed_walk.samples.back();
+                const JointConfiguration& terminal_configuration =
+                    walk_end.solved ? walk_end.configuration
+                                    : terminal.ik.configuration;
                 const double scene_sigma = route == RouteHypothesis::kNormal
                                                ? config.optimizer.collision_sigma
                                                : 0.1 * config.optimizer.collision_sigma;
@@ -958,7 +976,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     const std::size_t states = attempt_waypoints.size();
                     for (std::size_t i = 0; i < states; ++i) {
                         const JointConfiguration& q = i + 1 == states
-                                                          ? terminal.ik.configuration
+                                                          ? terminal_configuration
                                                           : assembled.initial_configurations[i];
                         initial_values.insert(gtsam::Symbol('x', i), gtsam::Vector(q));
                         gtsam::Vector velocity = gtsam::Vector::Zero(7);
@@ -966,7 +984,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                             const double dt =
                                 attempt_waypoints[i + 1].time_s - attempt_waypoints[i].time_s;
                             const JointConfiguration& next_q =
-                                i + 2 == states ? terminal.ik.configuration
+                                i + 2 == states ? terminal_configuration
                                                 : assembled.initial_configurations[i + 1];
                             velocity = gtsam::Vector((next_q - q) / dt);
                         }
@@ -975,7 +993,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     return optimizer.optimizeTaskTrajectory(
                         *model.arm_model, obstacle_fields, initial_values, attempt_waypoints,
                         gtsam::Vector(q_start_rad), start_vel,
-                        gtsam::Vector(terminal.ik.configuration), assembled.zero_velocity_indices,
+                        gtsam::Vector(terminal_configuration), assembled.zero_velocity_indices,
                         pos_limits, vel_limits, duration_s, config.optimizer, scene_sigma,
                         config.optimizer.collision_sigma);
                 };
@@ -1053,9 +1071,15 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                             const double parameter_u = (first.time_s -
                                                         normal_task_start_time_s) /
                                                        task_span_s;
+                            // Half-width of the bypass bump in path
+                            // samples. Historically tied to the IK anchor
+                            // stride; kept at that width when the stride
+                            // dropped to 1, because a one-sample bump would
+                            // be a spike, not a detour.
+                            constexpr std::size_t kTraceBypassSampleRadius = 4;
                             const CartesianPath offset_path = TraceBypassSeed(
                                 seed_path, parameter_u, displacement,
-                                kPathIkAnchorStride);
+                                kTraceBypassSampleRadius);
                             bypass_walk =
                                 SolvePathIk(offset_path, arm, q_start_rad, ik_limits, tolerance,
                                             /*closed=*/terminal.kind == PlanStatus::kReached,

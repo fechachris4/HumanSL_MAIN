@@ -111,7 +111,13 @@ struct PathIkJointLimits {
 // perturbations, then random multi-start — stopping at the FIRST solution
 // inside tolerance and limits, or when the fixed attempt cap runs out. The
 // attempt cap bounds the work deterministically for a hard anchor.
-inline constexpr std::size_t kPathIkAnchorStride = 4;
+//
+// Stride 1: every sample is solved, chained from its neighbour, so the
+// whole walk stays in one joint solution family by construction — the
+// behaviour the pre-integration planner had. The analytical solver makes
+// the extra solves cheap (a circle has ~30 samples); interpolation remains
+// only as the bridge over an anchor whose bounded solve found nothing.
+inline constexpr std::size_t kPathIkAnchorStride = 1;
 inline constexpr int kPathIkAlternativeSeedCount = 4;
 inline constexpr int kMaxAnchorIkAttempts = 50;
 static_assert(kPathIkAlternativeSeedCount >= 3 &&

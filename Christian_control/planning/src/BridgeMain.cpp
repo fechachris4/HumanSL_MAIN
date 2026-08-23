@@ -613,15 +613,26 @@ ParsedArgs ParseArgs(const std::vector<std::string>& args) {
             const double z = ParseDouble(next());
             parsed.goal = Eigen::Vector3d(x, y, z);
         } else if (flag == "--goal-rpy-rad") {
-            parsed.goal_rpy_rad = Eigen::Vector3d(
-                ParseDouble(next()), ParseDouble(next()), ParseDouble(next()));
+            // Named locals, not Vector3d(ParseDouble(next()), ...): C++
+            // leaves function-argument evaluation order to the compiler,
+            // and GCC filled the vector back-to-front (run 2026-08-23:
+            // the circle was planned around a component-reversed centre
+            // with a reversed normal). Statements sequence the reads.
+            const double roll = ParseDouble(next());
+            const double pitch = ParseDouble(next());
+            const double yaw = ParseDouble(next());
+            parsed.goal_rpy_rad = Eigen::Vector3d(roll, pitch, yaw);
         } else if (flag == "--circle") {
             CircleSpec circle;
-            circle.centre_m = Eigen::Vector3d(
-                ParseDouble(next()), ParseDouble(next()), ParseDouble(next()));
+            const double centre_x = ParseDouble(next());
+            const double centre_y = ParseDouble(next());
+            const double centre_z = ParseDouble(next());
+            circle.centre_m = Eigen::Vector3d(centre_x, centre_y, centre_z);
             circle.radius_m = ParseDouble(next());
-            circle.normal = Eigen::Vector3d(
-                ParseDouble(next()), ParseDouble(next()), ParseDouble(next()));
+            const double normal_x = ParseDouble(next());
+            const double normal_y = ParseDouble(next());
+            const double normal_z = ParseDouble(next());
+            circle.normal = Eigen::Vector3d(normal_x, normal_y, normal_z);
             circle.duration_s = ParseDouble(next());
             circle.frame = config::ReferenceFrame::kMount;
             parsed.circle = circle;
@@ -918,7 +929,15 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
             result.exit_code = 1;
             return result;
         }
-        diagnostics << "path: circle, radius " << circle.radius_m << " m, "
+        // Centre and normal are echoed so a session log records the
+        // geometry the planner built, not just the shape's name — the
+        // 2026-08-23 reversed-parse run was undiagnosable from its own
+        // log because nothing printed them.
+        diagnostics << "path: circle, centre " << circle.centre_m.x() << " "
+                    << circle.centre_m.y() << " " << circle.centre_m.z()
+                    << " m, radius " << circle.radius_m << " m, normal "
+                    << circle.normal.x() << " " << circle.normal.y() << " "
+                    << circle.normal.z() << ", "
                     << circle.samples << " samples (chord error <= "
                     << planner_config.path_following.max_chord_error_m * 1000.0
                     << " mm), lap " << circle.duration_s << " s, declared in "
