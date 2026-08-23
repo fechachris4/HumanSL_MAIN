@@ -257,32 +257,23 @@ namespace
                                         .any());
     }
 
-    template <typename Outcome>
-    bool MeasuredStartCollision(
+    // The measured start is a fact, not a request. There is no prohibited
+    // start position: a start below the configured clearance floor relaxes
+    // the floor to its own clearance for the whole solve (2026-08-23: two
+    // sessions deadlocked on a start refusal until the arm was hand-moved),
+    // so the plan may leave the region but never come closer than it
+    // started, and a clean start keeps the configured floor unchanged.
+    double ClearanceFloorFromStart(
         const PlannerModel& model,
         const Eigen::Matrix<double, 7, 1>& q_start_rad,
         const std::vector<NamedObstacleField>& obstacle_fields,
-        double minimum_clearance_m, Outcome& outcome)
+        double minimum_clearance_m)
     {
-        outcome.validation = MeasureConfigurationClearance(
-            model, q_start_rad, obstacle_fields, minimum_clearance_m);
-        if (!outcome.validation.scene_valid) {
-            const SceneViolationEvidence& violation =
-                outcome.validation.first_scene_violations.front();
-            outcome.failure_reason =
-                "prohibited_start_collision object=" + violation.object_id +
-                " sphere=" + std::to_string(violation.sphere_index);
-            return true;
-        }
-        if (!outcome.validation.self_collision_valid) {
-            outcome.failure_reason =
-                "prohibited_start_self_collision spheres=" +
-                std::to_string(outcome.validation.worst_self_first_sphere) +
-                "/" +
-                std::to_string(outcome.validation.worst_self_second_sphere);
-            return true;
-        }
-        return false;
+        return std::min(minimum_clearance_m,
+                        MeasureConfigurationClearance(
+                            model, q_start_rad, obstacle_fields,
+                            minimum_clearance_m)
+                            .minimum_scene_clearance_m);
     }
 
     std::optional<JointConfiguration>
@@ -687,11 +678,9 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         ik_limits.upper_rad = pos_limits.upper;
         const auto obstacle_fields =
             MakeNamedObstacleFields(MountGridGeometry(), model, config.scene);
-        if (MeasuredStartCollision(
-                model, request.q_start_rad, obstacle_fields,
-                config.minimum_clearance_m, outcome)) {
-            return outcome;
-        }
+        const double clearance_floor_m = ClearanceFloorFromStart(
+            model, request.q_start_rad, obstacle_fields,
+            config.minimum_clearance_m);
         std::optional<gtsam::Vector> start_vel;
         if (request.qdot_start_rad_s)
             start_vel = gtsam::Vector(*request.qdot_start_rad_s);
@@ -735,7 +724,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
                 const auto validate = [&](const TrajectoryResult& trajectory, double duration_s) {
                     PlanValidationInputs inputs =
                         ValidationInputs(request.q_start_rad, request.qdot_start_rad_s, limits,
-                                         obstacle_fields, config.minimum_clearance_m, goal_pose,
+                                         obstacle_fields, clearance_floor_m, goal_pose,
                                          config.path_following.validation_dt_s);
                     inputs.candidate_terminal_mount = terminal.candidate_pose;
                     inputs.intended_status = terminal.kind;
@@ -808,7 +797,7 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
             const auto shortened_terminals = GenerateShortenedTerminals(
                 model, arm, ik_limits, request.q_start_rad, start_pose,
                 goal_pose, exact_blockers, obstacle_fields,
-                config.minimum_clearance_m,
+                clearance_floor_m,
                 config.effective_ik_seed, outcome.candidate_attempts);
             selected = search_phase(shortened_terminals,
                                     /*collect_blockers=*/false);
@@ -865,11 +854,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
 
         const auto obstacle_fields =
             MakeNamedObstacleFields(MountGridGeometry(), model, config.scene);
-        if (MeasuredStartCollision(
-                model, q_start_rad, obstacle_fields,
-                config.minimum_clearance_m, outcome)) {
-            return outcome;
-        }
+        const double clearance_floor_m = ClearanceFloorFromStart(
+            model, q_start_rad, obstacle_fields, config.minimum_clearance_m);
 
         std::vector<SceneViolationEvidence> exact_blockers;
         const auto exact_terminals = GenerateExactTerminals(
@@ -1001,7 +987,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     const double task_start_time_s = duration_s * task_start_fraction;
                     PlanValidationInputs inputs =
                         ValidationInputs(q_start_rad, qdot_start_rad_s, limits, obstacle_fields,
-                                         config.minimum_clearance_m, requested_terminal,
+                                         clearance_floor_m, requested_terminal,
                                          config.path_following.validation_dt_s);
                     inputs.candidate_terminal_mount = terminal.candidate_pose;
                     inputs.intended_status = terminal.kind;
@@ -1118,7 +1104,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
             const auto shortened_terminals = GenerateShortenedTerminals(
                 model, arm, ik_limits, q_start_rad, start_pose,
                 requested_terminal, exact_blockers, obstacle_fields,
-                config.minimum_clearance_m,
+                clearance_floor_m,
                 config.effective_ik_seed,
                 outcome.candidate_attempts);
             selected = search_phase(shortened_terminals,

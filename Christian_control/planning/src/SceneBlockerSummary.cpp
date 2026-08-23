@@ -20,9 +20,7 @@ SceneBlockerLine MakeLine(const SceneViolationEvidence& violation,
     SceneBlockerLine line;
     line.object_id = violation.object_id;
     line.sphere_index = violation.sphere_index;
-    line.group = violation.sphere_index < sphere_groups.size()
-                     ? sphere_groups[violation.sphere_index]
-                     : CollisionSphereGroup::kTool;
+    line.group = sphere_groups[violation.sphere_index];
     line.worst_clearance_m = violation.clearance_m;
     line.worst_time_s = violation.time_s;
     line.attempts_blocked = 1;

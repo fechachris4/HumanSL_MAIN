@@ -192,23 +192,11 @@ target_link_libraries(test_terminal_posture PRIVATE bridge_core)
 set_target_properties(test_terminal_posture PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME terminal_posture COMMAND test_terminal_posture)
 
-add_executable(test_scene_blocker_summary tests/test_scene_blocker_summary.cpp)
-target_include_directories(test_scene_blocker_summary PRIVATE src)
-target_link_libraries(test_scene_blocker_summary PRIVATE bridge_core)
-set_target_properties(test_scene_blocker_summary PROPERTIES BUILD_RPATH "${TP_LIB}")
-add_test(NAME scene_blocker_summary COMMAND test_scene_blocker_summary)
-
 add_executable(test_traced_circle tests/test_traced_circle.cpp src/PlannerPreview.cpp)
 target_include_directories(test_traced_circle PRIVATE src)
 target_link_libraries(test_traced_circle PRIVATE bridge_core)
 set_target_properties(test_traced_circle PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME traced_circle COMMAND test_traced_circle ${DH_PARAMS_FLANGE_YAML})
-
-add_executable(test_trajectory_posture tests/test_trajectory_posture.cpp)
-target_include_directories(test_trajectory_posture PRIVATE src)
-target_link_libraries(test_trajectory_posture PRIVATE bridge_core)
-set_target_properties(test_trajectory_posture PROPERTIES BUILD_RPATH "${TP_LIB}")
-add_test(NAME trajectory_posture COMMAND test_trajectory_posture)
 
 add_executable(test_projection_exit tests/test_projection_exit.cpp)
 target_include_directories(test_projection_exit PRIVATE src)

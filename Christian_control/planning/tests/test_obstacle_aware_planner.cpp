@@ -430,17 +430,32 @@ void FixturePointDetour(const PlannerModel& model, const std::string& limits)
                                      goal, *result.trajectory, result.status,
                                      "point detour");
 
-    PlannerConfig prohibited = TestConfig();
-    prohibited.scene.push_back(BoxAtSphere(
+    // There is no prohibited start position: a start already violating the
+    // scene relaxes the floor to its own clearance, so the plan escapes
+    // instead of deadlocking (2026-08-23) — and never comes closer than it
+    // started.
+    PlannerConfig relaxed = TestConfig();
+    relaxed.scene.push_back(BoxAtSphere(
         model, q_start, CollisionSphereGroup::kProximalArm,
-        Eigen::Vector3d::Constant(0.001), "prohibited_proximal_overlap"));
-    Check(IndependentMinimumClearance(model, prohibited.scene, q_start) <
-              prohibited.minimum_clearance_m,
-          "prohibited proximal-arm overlap is present");
-    const PlanOutcome rejected = SolveToPosition(model, request, limits, prohibited);
-    Check(rejected.status == PlanStatus::kFailed && !rejected.trajectory &&
-              rejected.candidate_attempts.empty(),
-          "prohibited proximal-arm overlap fails before candidate search");
+        Eigen::Vector3d::Constant(0.001), "start_overlap"));
+    const double start_clearance =
+        IndependentMinimumClearance(model, {relaxed.scene.back()}, q_start);
+    Check(start_clearance < relaxed.minimum_clearance_m,
+          "start overlap is present");
+    const PlanOutcome escaped = SolveToPosition(model, request, limits, relaxed);
+    Check(escaped.status == PlanStatus::kReached && bool(escaped.trajectory),
+          "a violating start plans an escape instead of refusing");
+    if (escaped.trajectory) {
+        double closest = std::numeric_limits<double>::infinity();
+        for (const auto& state : escaped.trajectory->trajectory_pos)
+            closest = std::min(
+                closest,
+                IndependentMinimumClearance(
+                    model, {relaxed.scene.back()},
+                    Eigen::Matrix<double, 7, 1>(state)));
+        Check(closest >= start_clearance - 1e-6,
+              "the escape never comes closer to the object than the start");
+    }
 }
 
 void FixtureTraceDetourAndRejoin(const PlannerModel& model, const std::string& limits)
