@@ -63,8 +63,8 @@ solver:
   # Levenberg-Marquardt iteration ceiling. Shapes convergence, not motion.
   max_iterations: 1000
 
-# Tracing a Cartesian path (a circle, a line). Ignored by point-to-point
-# plans, which use `goal:` above.
+# Tracing a Cartesian path (a circle, a line). These path-following weights
+# are ignored by point-to-point plans.
 #
 # TWO KINDS OF NUMBER LIVE HERE and must not be conflated. The *_sigma_*
 # values are optimiser WEIGHTS (gtsam sigmas: smaller is stiffer). The
