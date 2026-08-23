@@ -379,6 +379,31 @@ commit.
   (Prompts: raw-prompt-log 2026-08-17 20:44:40, 23:36:16; interactive
   answers recorded in docs/intent/predictions.md the same evening.)
 
+- The planner's approved answer is now motion-biased, obstacle-aware and
+  graded: search for a safe exact requested motion first, then return the
+  best validated shortened motion as `GOAL_BLOCKED` when the exact request
+  is obstructed or unreachable; return `FAILED` with no trajectory only
+  when the measured start/request is invalid or no executable route exists.
+  Obstacles shape route choice, while requested-versus-achieved shortfall
+  remains explicit. Candidate provenance and requested/planned/measured,
+  clearance, joint and velocity plots make both success and failure visible
+  from recorded planner evidence. The why is the earlier "answers, not
+  vetoes" goal plus Christian's request to diagnose a plan visually in
+  seconds rather than infer it from a terminal dump. Implemented and
+  benchmarked offline in `1bc957b5` and `86272b34`; this is software/model
+  evidence only, not physical collision or tracking proof. (Prompts:
+  raw-prompt-log 2026-08-20 19:04:51; 2026-08-21 01:25:33, 01:29:57,
+  01:30:29, 01:44:40. Approved design:
+  docs/superpowers/specs/2026-08-22-obstacle-aware-graded-planner-design.md.)
+- Planner work should leave a smaller, clearer conceptual surface and a
+  proportionate evidence surface: replace superseded paths, and keep tests
+  focused on distinct current behaviour rather than preserving or adding
+  duplicated microtests. The why is fast, understandable experimentation,
+  not a preference for weak verification: each architectural change still
+  needs the minimum independent evidence that can falsify it. (Prompts:
+  raw-prompt-log 2026-08-19 14:10:27, 14:23:40; 2026-08-20 16:18:05,
+  19:14:14; 2026-08-21 02:19:02.)
+
 - The repository's shape must be evidence of what the system does, not of
   how it came to be. Christian's outcome, in his words: the filesystem
   should reflect "the actual engineering architecture", each top-level
@@ -537,6 +562,20 @@ system's guardrails are what they are is never lost, only superseded.
 
 Unconfirmed whys and ambiguities, ranked by (chance I'm wrong) x (cost if
 wrong). Proceeding on anything listed here must be said out loud.
+
+- **What is the true torso-to-Mount interface and valid torso collision
+  geometry?** The torso cylinder that stopped both archived Task 6 replays at
+  measured-start preflight (`torso`, sphere 0) was temporary replay/test
+  geometry; the checked-in production scene is now empty until measured,
+  Christian-confirmed geometry exists. Those earlier replays do not
+  distinguish a real prohibited start from an inaccurate torso pose, mount
+  registration or sphere approximation, and the physical question "Does the
+  torso move relative to the Mount?" remains unanswered. Measure/calibrate
+  that interface before treating the archived collision result as physical
+  proof; do not remove the start gate to make a configured request move.
+  (Prompts:
+  raw-prompt-log 2026-08-17 00:54:47; 2026-08-21 11:10:15. Offline replay
+  evidence: Task 6 report, 2026-08-22.)
 
 - ~~**`min_duration_s` blocks the confirmed goal**~~ / ~~**Does Christian
   want the commanded clip raised now?**~~ / ~~**Should
