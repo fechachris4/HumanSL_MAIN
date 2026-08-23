@@ -76,6 +76,9 @@ ExecutionConfig ProductionExecutionConfig()
     production.arrival_position_tolerance_m = config::kArrivalToleranceM;
     production.arrival_orientation_tolerance_rad =
         config::kArrivalOrientationToleranceRad;
+    production.handover_position_tolerance_m = config::kHandoverToleranceM;
+    production.handover_orientation_tolerance_rad =
+        config::kHandoverOrientationToleranceRad;
     production.arrival_dwell_s = config::kArrivalDwellS;
     production.target_hold_s = config::kTargetHoldS;
 
@@ -147,6 +150,10 @@ void ValidateExecutionConfig(const ExecutionConfig& config)
                              "arrival_position_tolerance_m");
     RequireFiniteNonNegative(config.arrival_orientation_tolerance_rad,
                              "arrival_orientation_tolerance_rad");
+    RequireFiniteNonNegative(config.handover_position_tolerance_m,
+                             "handover_position_tolerance_m");
+    RequireFiniteNonNegative(config.handover_orientation_tolerance_rad,
+                             "handover_orientation_tolerance_rad");
     // Non-positive dwell/hold are the documented "disabled" values
     // (Arrival.h), so only finiteness is required of the dwell itself.
     RequireFinite(config.arrival_dwell_s, "arrival_dwell_s");

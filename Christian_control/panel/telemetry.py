@@ -67,6 +67,7 @@ EDGE_FLAGS = (
     # browser can step over the event at its ~20 Hz display rate.
     "cart_replan_requested",
     "cart_traj_activated",
+    "cart_traj_rejected",
 )
 
 
@@ -410,6 +411,7 @@ class Aggregator:
         }
         self._follow_err_joint: Optional[int] = None
         self._traj_start_error_deg: Optional[float] = None
+        self._cart_start_error_m: Optional[float] = None
         self._flags: dict[str, bool] = {name: False for name in EDGE_FLAGS}
         self._overruns = 0
         self._rows = 0
@@ -443,6 +445,9 @@ class Aggregator:
                 # plan's first point was from where the arm actually is.
                 if name == "traj_rejected":
                     self._traj_start_error_deg = _num(row, "traj_start_error_deg")
+                if name == "cart_traj_rejected":
+                    self._cart_start_error_m = _num(
+                        row, "cart_start_position_error_m")
 
         dt = _num(row, "dt_s")
         if dt is not None and dt > self.nominal_dt_s * self.overrun_factor:
@@ -457,6 +462,7 @@ class Aggregator:
             "follow_err_joint": self._follow_err_joint,
             "joint_follow_error_deg": self._max["joint_follow_error_deg"],
             "traj_start_error_deg": self._traj_start_error_deg,
+            "cart_start_position_error_m": self._cart_start_error_m,
             "overruns": self._overruns,
             "rows": self._rows,
             **{name: self._flags[name] for name in EDGE_FLAGS},

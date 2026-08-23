@@ -13,6 +13,9 @@ CartesianReferenceSource::CartesianReferenceSource(
       arrival_position_tolerance_m_(config.arrival_position_tolerance_m),
       arrival_orientation_tolerance_rad_(
           config.arrival_orientation_tolerance_rad),
+      handover_position_tolerance_m_(config.handover_position_tolerance_m),
+      handover_orientation_tolerance_rad_(
+          config.handover_orientation_tolerance_rad),
       world_prolonged_stale_s_(config.world_prolonged_stale_s)
 {
 }
@@ -137,8 +140,8 @@ bool CartesianReferenceSource::TryActivate(
     status.cartesian_traj_start_orientation_error_rad = orientation_error_rad;
 
     const bool continuous =
-        position_error_m <= arrival_position_tolerance_m_ &&
-        orientation_error_rad <= arrival_orientation_tolerance_rad_;
+        position_error_m <= handover_position_tolerance_m_ &&
+        orientation_error_rad <= handover_orientation_tolerance_rad_;
     if (!provenance_valid || !continuous) {
         status.cartesian_traj_rejected = true;
         mailbox_.Retire(std::move(incoming));

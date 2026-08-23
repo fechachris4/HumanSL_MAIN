@@ -1086,7 +1086,7 @@ function derivedState(row) {
   // and is read from its frames instead.
   if (!session.commanding && !state.replay) return 'IDLE';
   if (!session.commanding && !state.frame) return 'IDLE';
-  if (numOrNull(row.traj_rejected)) return 'READY';
+  if (numOrNull(row.cart_traj_rejected) || numOrNull(row.traj_rejected)) return 'READY';
   if (state.activation) return 'MOVING';
   if (numOrNull(row.traj_complete)) return 'HOLDING TARGET';
   if (session.commanding && !state.frame) return 'PLANNING';
@@ -1098,11 +1098,17 @@ function renderBanner() {
 
   // Rejection is one of the few things worth spelling out in full: the number
   // and the guard it failed are both on the wire, so the message can be exact.
+  // Two formats: the current world-Cartesian handover gate (metres), and the
+  // retired joint-space gate replays of old logs still carry (degrees).
+  const rejected = numOrNull(row.cart_traj_rejected) || numOrNull(row.traj_rejected);
   let detail = '';
-  if (numOrNull(row.traj_rejected)) {
+  if (numOrNull(row.cart_traj_rejected)) {
+    const started = numOrNull(row.cart_start_position_error_m);
+    const allowed = scalarOf(pick(state.config?.thresholds || {}, 'kHandoverToleranceM'));
+    detail = `the plan's first point was ${fmt(started * 1000, 1)} mm from the measured pose; the handover gate allows ${fmt(allowed * 1000, 1)} mm`;
+  } else if (numOrNull(row.traj_rejected)) {
     const started = numOrNull(row.traj_start_error_deg);
-    const allowed = scalarOf(pick(state.config?.thresholds || {}, 'kTrajStartToleranceDeg'));
-    detail = `the plan started ${fmt(started, 1)} deg from the measured pose on its worst joint; the guard allows ${fmt(allowed, 1)}`;
+    detail = `the plan started ${fmt(started, 1)} deg from the measured pose on its worst joint (retired joint-space gate)`;
   } else if (state.status?.session?.commanding) {
     detail = 'no trajectory is running; the arm holds where it was left';
   }
@@ -1111,7 +1117,7 @@ function renderBanner() {
   // controller states these in sentences, so quote it rather than paraphrase:
   // "Error: timeout detected: BaseClient::SetServoingMode" is the whole answer
   // to why a session produced no motion, and it belongs where it is read.
-  if (state.lastNotable && !numOrNull(row.traj_rejected)) {
+  if (state.lastNotable && !rejected) {
     detail = state.lastNotable.replace(/^\[\w+\]\s*/, '');
   }
 
@@ -1127,7 +1133,7 @@ function renderBanner() {
     remaining_s: null,
   });
   setNotice('run-message', detail,
-            (numOrNull(row.traj_rejected) || state.lastNotable) ? 'is-warn' : null);
+            (rejected || state.lastNotable) ? 'is-warn' : null);
 }
 
 /* ------------------------------------------------------------- config pane */

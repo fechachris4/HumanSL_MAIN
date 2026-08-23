@@ -56,6 +56,8 @@ private:
     // Immutable after construction (ExecutionConfig snapshot values).
     double arrival_position_tolerance_m_ = 0.0;
     double arrival_orientation_tolerance_rad_ = 0.0;
+    double handover_position_tolerance_m_ = 0.0;
+    double handover_orientation_tolerance_rad_ = 0.0;
     double world_prolonged_stale_s_ = 0.0;
     CartesianReferenceState state_ = CartesianReferenceState::kAwaitingWorld;
     std::unique_ptr<WorldCartesianTrajectory> active_;

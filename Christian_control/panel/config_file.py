@@ -93,6 +93,7 @@ KNOB_RE = r"(inline\s+constexpr\s+(?:double|bool|int)\s+{name}\s*=\s*)([^;]+)(;)
 # threshold that stops nothing must not read like a stop.
 THRESHOLDS: dict[str, tuple[str, str, str]] = {
     "kArrivalToleranceM": ("double", "m", "arrival"),
+    "kHandoverToleranceM": ("double", "m", "handover gate — a new plan is rejected beyond this start mismatch"),
     "kArrivalOrientationToleranceRad": ("double", "rad", "arrival only — nothing stops the arm on orientation error"),
     "kFollowingErrorLimitDeg": ("double", "deg", "stop — commanded minus measured, any joint"),
     "kControlDtS": ("double", "s", "control period"),

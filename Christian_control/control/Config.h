@@ -398,6 +398,19 @@ namespace config
 
     inline constexpr double kArrivalOrientationToleranceRad = 0.001;
 
+    // Handover continuity gate: how far an incoming trajectory's first point
+    // may sit from the MEASURED pose at activation. Deliberately its own
+    // pair, not the arrival-notice values above: the hold's steady servo
+    // offset alone is ~1.2 mm at gravity-loaded postures, and on 2026-08-23
+    // a whole session's plans were silently rejected at 1.28/1.16 mm against
+    // the 1 mm arrival value — a diagnostic threshold acting as a gate. The
+    // gate's real job is the gross case (a plan built from a world that no
+    // longer exists); the controller absorbs a few millimetres of reference
+    // step exactly as it absorbs any error, and the per-cycle command-lead
+    // clamp and speed clips bound what any accepted step can do.
+    inline constexpr double kHandoverToleranceM = 0.005;
+    inline constexpr double kHandoverOrientationToleranceRad = 0.02;
+
     // Stage 1.6 gate: while false, a 7-field target line (x y z qx qy qz qw)
     // is REJECTED loudly — orientation is never silently dropped. Enabling
     // consumption is a separate reviewed change, blocked on j6 health.

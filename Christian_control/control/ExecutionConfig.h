@@ -54,6 +54,11 @@ struct ExecutionConfig {
     double arrival_dwell_s = 0.0;
     double target_hold_s = 0.0;
 
+    // Handover continuity gate (Config.h kHandoverToleranceM): the largest
+    // start mismatch a new trajectory may activate with.
+    double handover_position_tolerance_m = 0.0;
+    double handover_orientation_tolerance_rad = 0.0;
+
     // Startup ramp of the null-space gain, s (non-positive = full gain
     // immediately, UnitRamp contract).
     double null_ramp_duration_s = 0.0;
