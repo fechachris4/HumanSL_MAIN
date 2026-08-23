@@ -16,8 +16,18 @@
 namespace
 {
 
-    constexpr int kMaximumDurationAttempts = 3;
-    constexpr double kDurationRepairTargetDynamicRatio = 0.999;
+    // Timing is never a reason for a plan to fail (2026-08-23 policy):
+    // stretching duration always brings velocity (1/s) and acceleration
+    // (1/s^2) ratios down, so a feasible duration exists for every
+    // geometrically valid plan — the repair just has to reach it. Each
+    // attempt re-solves rather than time-scales, and the fresh solve's
+    // peaks drift 10-20% off the scaling prediction, so aiming at 0.999
+    // crept (1.075 -> 1.017 -> 1.011, then the cap — a full session of
+    // "achievable" circles dying at ratio 1.01-1.12). Aim well under 1.0
+    // and the first or second attempt lands; the raised cap is a runaway
+    // backstop, not a budget the search is expected to spend.
+    constexpr int kMaximumDurationAttempts = 6;
+    constexpr double kDurationRepairTargetDynamicRatio = 0.8;
 
     struct TerminalTarget {
         gtsam::Pose3 pose;
