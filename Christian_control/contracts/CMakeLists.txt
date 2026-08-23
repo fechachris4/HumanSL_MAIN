@@ -1,9 +1,9 @@
 # humansl_contracts — the typed exchange between subsystems.
 #
 # Three value types and nothing else: the request the controller sends when it
-# wants a new plan, the world-Cartesian trajectory the planner returns, and the
-# text wire format for that trajectory. Eigen only — no Kortex, no Pinocchio,
-# no GTSAM/GPMP2, no Vicon SDK, no I/O beyond the wire parser's own strings.
+# wants a new plan, the world-Cartesian trajectory the planner returns, and its
+# offline text formatter. Eigen only — no Kortex, no Pinocchio, no GTSAM/GPMP2,
+# no Vicon SDK and no I/O.
 #
 # A file belongs here only if it names data that two subsystems must agree on.
 # Nothing that merely happens to be shared qualifies: mechanisms (the slots and

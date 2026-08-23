@@ -17,8 +17,6 @@ WorldCartesianTrajectory ProjectWorldTrajectory(
 {
     if (position_rad.size() < 2)
         throw std::invalid_argument("trajectory needs at least two states");
-    if (position_rad.size() > kMaxWorldCartesianTrajectoryPoints)
-        throw std::invalid_argument("trajectory exceeds Cartesian block cap");
     if (position_rad.size() != velocity_rad_s.size())
         throw std::invalid_argument("position/velocity state counts differ");
     if (!std::isfinite(total_time_s) || total_time_s <= 0.0)

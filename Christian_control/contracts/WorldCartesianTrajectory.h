@@ -6,7 +6,6 @@
 
 #pragma once
 
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -33,11 +32,6 @@ struct WorldCartesianTrajectory {
     // non-real-time planner thread without allocating or freeing memory.
     WorldCartesianTrajectory* reclamation_next = nullptr;
 };
-
-// A dense GPMP2 projection can exceed the old joint block's 1,000 samples.
-// This bound prevents an untrusted declaration from allocating without
-// limit while preserving every state of the expected trajectories.
-inline constexpr std::size_t kMaxWorldCartesianTrajectoryPoints = 20000;
 
 // nullopt means valid. The final point is the only arrival-eligible point
 // and must carry exactly a stationary reference (within numerical epsilon).

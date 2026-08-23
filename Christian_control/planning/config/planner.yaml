@@ -57,14 +57,7 @@ obstacles:
   collision_sigma: 0.0005
   # The one persistent mount-frame obstacle scene. Keep empty until a
   # measured, Christian-confirmed geometry is supplied.
-  scene:
-    torso:
-      enabled: true
-      shape: cylinder
-      center_mount_m: [0.0, 0.0, 0.0]
-      radius_m: 0.24
-      height_m: 1.4
-      permitted_sphere_groups: []
+  scene: {}
 
 # How far the plan may stray from constant velocity.
 smoothness:

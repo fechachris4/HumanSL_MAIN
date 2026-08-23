@@ -18,10 +18,6 @@ std::optional<std::string> ValidateWorldCartesianTrajectory(
 {
     if (trajectory.points.size() < 2)
         return "trajectory needs at least 2 points";
-    if (trajectory.points.size() > kMaxWorldCartesianTrajectoryPoints)
-        return "trajectory exceeds " +
-               std::to_string(kMaxWorldCartesianTrajectoryPoints) +
-               " points";
     if (std::abs(trajectory.points.front().t_from_start_s) >
         kStartTimeToleranceS)
         return "first point must be at t_from_start_s == 0";
