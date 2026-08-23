@@ -59,6 +59,7 @@ namespace
         evidence.optimizer_iterations = trajectory.optimizer_iterations;
         evidence.optimizer_max_iterations = trajectory.optimizer_max_iterations;
         evidence.optimizer_converged = trajectory.optimizer_converged;
+        evidence.optimizer_termination = trajectory.optimizer_termination;
         evidence.optimizer_start_total_cost = trajectory.start_error;
         evidence.optimizer_final_total_cost = trajectory.final_error;
         evidence.optimizer_final_factor_costs.insert(trajectory.final_costs.begin(),

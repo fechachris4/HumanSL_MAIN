@@ -1,9 +1,53 @@
 #include "TrajectoryOptimization.h"
 
+#include <cmath>
 #include <set>
 #include <stdexcept>
 
 #include <gtsam/nonlinear/NonlinearEquality.h>
+
+namespace
+{
+
+struct OptimizerTerminationState {
+    bool hook_ran = false;
+    double error_before = 0.0;
+    double error_after = 0.0;
+};
+
+std::string OptimizerTerminationReason(
+    const gtsam::NonlinearOptimizerParams& parameters, double initial_error,
+    std::size_t iterations, const OptimizerTerminationState& state)
+{
+    if (!state.hook_ran) {
+        if (!std::isfinite(initial_error)) return "non_finite_error";
+        if (initial_error <= parameters.getErrorTol()) return "error_threshold";
+        return "stopped_without_convergence";
+    }
+    if (iterations >= parameters.getMaxIterations()) return "iteration_limit";
+    if (!std::isfinite(state.error_before) || !std::isfinite(state.error_after))
+        return "non_finite_error";
+    if (state.error_after > state.error_before) return "error_increase";
+    if (state.error_after <= parameters.getErrorTol()) return "error_threshold";
+    if (gtsam::checkConvergence(parameters, state.error_before, state.error_after))
+        return "threshold_converged";
+    return "stopped_without_convergence";
+}
+
+void CopyOptimizerTerminationEvidence(
+    const gtsam::NonlinearOptimizerParams& parameters, double initial_error,
+    const gtsam::NonlinearOptimizer& optimizer,
+    const OptimizerTerminationState& state, TrajectoryResult& result)
+{
+    result.optimizer_iterations = optimizer.iterations();
+    result.optimizer_max_iterations = parameters.getMaxIterations();
+    result.optimizer_termination = OptimizerTerminationReason(
+        parameters, initial_error, optimizer.iterations(), state);
+    result.optimizer_converged = result.optimizer_termination == "error_threshold" ||
+                                 result.optimizer_termination == "threshold_converged";
+}
+
+} // namespace
 
 gtsam::SharedNoiseModel PoseNoiseModel(const Eigen::Vector3d& rotation_sigma_rad,
                                        const Eigen::Vector3d& translation_sigma_m) {
@@ -175,6 +219,11 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     parameters.setlambdaInitial(1e-5);
     parameters.setlambdaFactor(10.0);
     parameters.setlambdaUpperBound(1e6);
+    const double optimizer_initial_error = graph.error(initial_values);
+    OptimizerTerminationState termination_state;
+    parameters.iterationHook = [&](std::size_t, double error_before, double error_after) {
+        termination_state = {true, error_before, error_after};
+    };
     
     gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, parameters);
     
@@ -194,16 +243,15 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     TrajectoryResult trajectory_result;
 
     trajectory_result.dt = target_dt;
-    trajectory_result.start_error = graph.error(initial_values);
+    trajectory_result.start_error = optimizer_initial_error;
     trajectory_result.final_error = graph.error(result);
     trajectory_result.trajectory_pos = densified_pos;
     trajectory_result.trajectory_vel = densified_vel;
     trajectory_result.start_costs = init_factor_costs;
     trajectory_result.final_costs = final_factor_costs;
-    trajectory_result.optimizer_iterations = optimizer.iterations();
-    trajectory_result.optimizer_max_iterations = parameters.getMaxIterations();
-    trajectory_result.optimizer_converged =
-        optimizer.iterations() < parameters.getMaxIterations();
+    CopyOptimizerTerminationEvidence(parameters, optimizer_initial_error,
+                                     optimizer, termination_state,
+                                     trajectory_result);
 
     return trajectory_result;
 }
@@ -403,6 +451,11 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     parameters.setlambdaInitial(1e-5);
     parameters.setlambdaFactor(10.0);
     parameters.setlambdaUpperBound(1e6);
+    const double optimizer_initial_error = graph.error(initial_values);
+    OptimizerTerminationState termination_state;
+    parameters.iterationHook = [&](std::size_t, double error_before, double error_after) {
+        termination_state = {true, error_before, error_after};
+    };
     
     gtsam::LevenbergMarquardtOptimizer optimizer(graph, initial_values, parameters);
     
@@ -422,16 +475,15 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     TrajectoryResult trajectory_result;
 
     trajectory_result.dt = target_dt;
-    trajectory_result.start_error = graph.error(initial_values);
+    trajectory_result.start_error = optimizer_initial_error;
     trajectory_result.final_error = graph.error(result);
     trajectory_result.trajectory_pos = densified_pos;
     trajectory_result.trajectory_vel = densified_vel;
     trajectory_result.start_costs = init_factor_costs;
     trajectory_result.final_costs = final_factor_costs;
-    trajectory_result.optimizer_iterations = optimizer.iterations();
-    trajectory_result.optimizer_max_iterations = parameters.getMaxIterations();
-    trajectory_result.optimizer_converged =
-        optimizer.iterations() < parameters.getMaxIterations();
+    CopyOptimizerTerminationEvidence(parameters, optimizer_initial_error,
+                                     optimizer, termination_state,
+                                     trajectory_result);
 
     return trajectory_result;
 }

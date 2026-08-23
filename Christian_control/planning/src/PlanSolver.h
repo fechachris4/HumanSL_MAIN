@@ -56,6 +56,7 @@ struct CandidateEvidence {
     std::size_t optimizer_iterations = 0;
     std::size_t optimizer_max_iterations = 0;
     bool optimizer_converged = false;
+    std::string optimizer_termination = "stopped_without_convergence";
     double optimizer_start_total_cost = 0.0;
     double optimizer_final_total_cost = 0.0;
     std::map<std::string, double> optimizer_final_factor_costs;

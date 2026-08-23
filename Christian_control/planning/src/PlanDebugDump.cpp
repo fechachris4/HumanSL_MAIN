@@ -143,7 +143,8 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
             "terminal_ik_stream_id,terminal_ik_attempt_index,"
             "terminal_ik_position_residual_m,terminal_ik_orientation_residual_rad,"
             "route,duration_attempt,duration_s,scene_collision_sigma,solve_time_s,"
-            "optimizer_converged,optimizer_iterations,optimizer_max_iterations,"
+            "optimizer_converged,optimizer_termination,optimizer_iterations,"
+            "optimizer_max_iterations,"
             "optimizer_start_total_cost,optimizer_final_total_cost,"
             "optimizer_final_factor_costs,disposition,validation_failure,"
             "executable,finite,start_valid,scene_valid,self_collision_valid,"
@@ -189,6 +190,7 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
              << "," << attempt.scene_collision_sigma
              << "," << attempt.solve_time_s
              << "," << (attempt.optimizer_converged ? 1 : 0)
+             << "," << CsvQuoted(attempt.optimizer_termination)
              << "," << attempt.optimizer_iterations
              << "," << attempt.optimizer_max_iterations
              << "," << attempt.optimizer_start_total_cost

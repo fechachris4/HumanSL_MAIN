@@ -109,6 +109,7 @@ struct TrajectoryResult {
     std::size_t optimizer_iterations = 0;
     std::size_t optimizer_max_iterations = 0;
     bool optimizer_converged = false;
+    std::string optimizer_termination = "stopped_without_convergence";
 
     double dt;
 
