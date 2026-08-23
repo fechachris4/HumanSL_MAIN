@@ -213,14 +213,21 @@ namespace config
     // validated with, instead of leaving redundancy ungoverned between the
     // limit-avoidance zones (2026-08-23: two runs walked joint 6 to its
     // outward software boundary while the plan held a 20.7 deg margin).
-    // OFF until validated in the sim twin and one supervised session. The
-    // gain is deliberately far below kKpCartesian's authority and below
-    // kLimitAvoidGain: a 10 deg posture error asks for 5 deg/s before
-    // projection. Limit avoidance outranks posture per joint in the law
-    // itself, and the damped projector's task-space leak stays visible in
-    // the null_leak_mps telemetry (the 2026-08-05 stall watch).
-    inline constexpr bool kPostureTrackingEnabled = false;
-    inline constexpr double kPostureGain = 0.5; // 1/s on wrapped posture error
+    //
+    // ON since 2026-08-23, after hardware-free closed-loop validation
+    // (test_posture_closed_loop: full ArmExecutionCore against an ideal
+    // plant): task tracking is unchanged to micrometres at any gain tried
+    // (0.5-4.0), and the executed configuration ends 1.4 deg from the
+    // planned one at this gain against 9.2 deg with the term off. Gain
+    // 1.0 is a deliberate distance from BOTH failure modes on record:
+    // far under the 2026-08-05 stall regime (gain 23), and half of
+    // kLimitAvoidGain — though priority is structural, not gain-based
+    // (avoidance suppresses posture per joint in the law itself). The
+    // damped projector's task-space leak stays visible in null_leak_mps.
+    // First hardware run remains supervised evidence, not a formality:
+    // watch null_leak_mps and the joint-6 margin.
+    inline constexpr bool kPostureTrackingEnabled = true;
+    inline constexpr double kPostureGain = 1.0; // 1/s on wrapped posture error
 
     // Published Gen3 7-DoF position limits, degrees, in Kortex actuator
     // order — Kinova's User Guide Table 39. Derived, not authored: they come
