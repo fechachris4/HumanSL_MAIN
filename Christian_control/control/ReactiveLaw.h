@@ -42,11 +42,13 @@ struct ReactivePoseGains {
     double kd_position = 0.0;       // unitless on the linear-velocity error
     double kd_rotation = 0.0;       // unitless on the angular-velocity error
     double limit_avoid_gain_s_inv = 0.0; // 1/s on the zone excess
+    double posture_gain_s_inv = 0.0; // 1/s on the wrapped posture error
     double dls_lambda = 0.0;        // DLS damping λ (also damps the projector)
     bool position_enabled = true;
     bool orientation_enabled = true;
     bool velocity_enabled = false;
     bool null_space_enabled = false;
+    bool posture_enabled = false;   // planner-posture attraction (equation 5b)
 };
 
 // Startup multiplier for a secondary objective: the task-space law is
@@ -138,11 +140,10 @@ DampedLeastSquares(const Eigen::Matrix<double, 3, 7>& jacobian_position,
 // leaked it into task space (218 mm stall equilibrium) — see
 // docs/superpowers/specs/2026-08-05-null-space-limit-avoidance-design.md.
 inline Eigen::Matrix<double, 7, 1>
-LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
-                       const Eigen::Matrix<double, 7, 1>& q_rad,
-                       const Eigen::Matrix<double, 7, 1>& limit_rad,
-                       double zone_rad,
-                       const ReactivePoseGains& gains)
+LimitAvoidanceObjective(const Eigen::Matrix<double, 7, 1>& q_rad,
+                        const Eigen::Matrix<double, 7, 1>& limit_rad,
+                        double zone_rad,
+                        const ReactivePoseGains& gains)
 {
     // Equation 5: the deadband objective (wrapped to (−π, π] because
     // Kortex reports positions in [0, 360)).
@@ -158,14 +159,74 @@ LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
             objective[i] = -gains.limit_avoid_gain_s_inv * excess *
                            (signed_rad < 0.0 ? -1.0 : 1.0);
     }
+    return objective;
+}
 
-    // Equation 6: N = I₇ − Jᵀ(JJᵀ + λ²I₆)⁻¹J, the damped projector.
+// Equation 5b: attraction toward the planner's per-sample joint posture —
+// the redundancy decision the plan was validated with (clearance, limits,
+// self-collision), carried across the boundary as a PREFERENCE. Wrapped
+// per joint to (−π, π]: Kortex reports [0, 360), the planner uses a
+// continuous representation, and for the bounded joints (< ±180°) the
+// wrapped difference is exact. A joint whose limit-avoidance objective is
+// already active contributes NOTHING here — avoidance outranks preference
+// on that joint, so the posture pull can never hold a joint inside its
+// warning zone.
+//
+// Continuous joints (1/3/5/7) and winding: this term cannot express a
+// preference more than half a turn away, because the measured position is
+// itself wrapped — the controller has no unwrapped state to compare a
+// multi-turn plan against (2026-08-23 review). The planner's winding
+// decisions are nevertheless followed, by a different mechanism: tracking
+// is continuous, the attractor error stays far below 180 deg while a plan
+// executes, and within that band the short way IS the planned way. Only if
+// a continuous joint diverges from the plan by more than half a turn does
+// the attraction settle on a Cartesian-identical but differently-wound
+// branch — acceptable for a preference; do not "fix" it by unwrapping the
+// difference here, which is algebraically the same as this remainder.
+inline Eigen::Matrix<double, 7, 1>
+PostureObjective(const Eigen::Matrix<double, 7, 1>& q_rad,
+                 const Eigen::Matrix<double, 7, 1>& posture_rad,
+                 const Eigen::Matrix<double, 7, 1>& limit_objective,
+                 const ReactivePoseGains& gains)
+{
+    Eigen::Matrix<double, 7, 1> objective;
+    for (int i = 0; i < 7; ++i) {
+        if (limit_objective[i] != 0.0) {
+            objective[i] = 0.0; // avoidance owns this joint right now
+            continue;
+        }
+        objective[i] = gains.posture_gain_s_inv *
+                       std::remainder(posture_rad[i] - q_rad[i], 2.0 * M_PI);
+    }
+    return objective;
+}
+
+// Equation 6: N = I₇ − Jᵀ(JJᵀ + λ²I₆)⁻¹J, the damped projector.
+inline Eigen::Matrix<double, 7, 1>
+NullSpaceProject(const Eigen::Matrix<double, 6, 7>& jacobian,
+                 const Eigen::Matrix<double, 7, 1>& objective,
+                 double lambda)
+{
     Eigen::Matrix<double, 6, 6> jjt = jacobian * jacobian.transpose();
-    jjt.diagonal().array() += gains.dls_lambda * gains.dls_lambda;
+    jjt.diagonal().array() += lambda * lambda;
     const Eigen::Matrix<double, 7, 7> projector =
         Eigen::Matrix<double, 7, 7>::Identity() -
         jacobian.transpose() * jjt.ldlt().solve(jacobian);
     return projector * objective;
+}
+
+// Equations 5-6 composed (limit avoidance only), the historical entry
+// point — tools and the sim cross-validation call this shape.
+inline Eigen::Matrix<double, 7, 1>
+LimitAvoidanceVelocity(const Eigen::Matrix<double, 6, 7>& jacobian,
+                       const Eigen::Matrix<double, 7, 1>& q_rad,
+                       const Eigen::Matrix<double, 7, 1>& limit_rad,
+                       double zone_rad,
+                       const ReactivePoseGains& gains)
+{
+    return NullSpaceProject(
+        jacobian, LimitAvoidanceObjective(q_rad, limit_rad, zone_rad, gains),
+        gains.dls_lambda);
 }
 
 // The solved velocity split into its two objectives, plus the leak the
@@ -190,7 +251,9 @@ SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
                               const Eigen::Matrix<double, 7, 1>& q_rad,
                               const Eigen::Matrix<double, 7, 1>& limit_rad,
                               double zone_rad,
-                              const ReactivePoseGains& gains)
+                              const ReactivePoseGains& gains,
+                              bool has_posture,
+                              const Eigen::Matrix<double, 7, 1>& posture_rad)
 {
     const Eigen::Matrix<double, 6, 1> twist =
         TaskTwist(e_pos, e_rot, e_v, e_w, gains);
@@ -198,15 +261,34 @@ SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
     solution.qdot_task_rad_s =
         DampedLeastSquares6(jacobian, twist, gains.dls_lambda);
     if (gains.null_space_enabled) {
-        solution.qdot_null_rad_s = LimitAvoidanceVelocity(jacobian, q_rad,
-                                                          limit_rad, zone_rad,
-                                                          gains);
+        Eigen::Matrix<double, 7, 1> objective =
+            LimitAvoidanceObjective(q_rad, limit_rad, zone_rad, gains);
+        if (gains.posture_enabled && has_posture)
+            objective += PostureObjective(q_rad, posture_rad, objective, gains);
+        solution.qdot_null_rad_s =
+            NullSpaceProject(jacobian, objective, gains.dls_lambda);
         solution.leak_twist = jacobian * solution.qdot_null_rad_s;
     } else {
         solution.qdot_null_rad_s.setZero();
         solution.leak_twist.setZero();
     }
     return solution;
+}
+
+// The historical arity: no posture available this cycle. Delegates, so the
+// two entry points cannot drift apart.
+inline ReactiveSolution
+SolveReactiveVelocityDetailed(const Eigen::Matrix<double, 6, 7>& jacobian,
+                              const Eigen::Vector3d& e_pos, const Eigen::Vector3d& e_rot,
+                              const Eigen::Vector3d& e_v, const Eigen::Vector3d& e_w,
+                              const Eigen::Matrix<double, 7, 1>& q_rad,
+                              const Eigen::Matrix<double, 7, 1>& limit_rad,
+                              double zone_rad,
+                              const ReactivePoseGains& gains)
+{
+    return SolveReactiveVelocityDetailed(
+        jacobian, e_pos, e_rot, e_v, e_w, q_rad, limit_rad, zone_rad, gains,
+        /*has_posture=*/false, Eigen::Matrix<double, 7, 1>::Zero());
 }
 
 // Equations 3-6 composed: the requested joint velocity BEFORE any clamping

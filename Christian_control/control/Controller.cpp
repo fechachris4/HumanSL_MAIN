@@ -130,10 +130,16 @@ Eigen::Matrix<double, 7, 1> TrackingController::DesiredVelocity(
     ReactivePoseGains ramped_gains = gains_;
     ramped_gains.limit_avoid_gain_s_inv *=
         UnitRamp(state.t_s, null_ramp_duration_s_);
+    // The posture preference ramps in with the other secondary objective.
+    // It is additionally soft by construction: a plan starts at the
+    // measured configuration (start equality), so the attractor error is
+    // near zero at activation and grows only with actual divergence.
+    ramped_gains.posture_gain_s_inv *=
+        UnitRamp(state.t_s, null_ramp_duration_s_);
     const ReactiveSolution solution = SolveReactiveVelocityDetailed(
         measured.jacobian_world, e_pos, e_rot, e_twist.linear_m_s,
         e_twist.angular_rad_s, state.q_rad, limit_rad_, zone_rad_,
-        ramped_gains);
+        ramped_gains, reference.has_posture, reference.posture_rad);
     status.qdot_task_rad_s = solution.qdot_task_rad_s;
     status.qdot_null_rad_s = solution.qdot_null_rad_s;
     status.null_leak_m_s = solution.leak_twist.head<3>().norm();

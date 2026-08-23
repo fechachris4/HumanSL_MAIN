@@ -54,11 +54,13 @@ ExecutionConfig ProductionExecutionConfig()
     production.gains.kd_position = config::kKdPosition;
     production.gains.kd_rotation = config::kKdRotation;
     production.gains.limit_avoid_gain_s_inv = config::kLimitAvoidGain;
+    production.gains.posture_gain_s_inv = config::kPostureGain;
     production.gains.dls_lambda = config::kDlsLambda;
     production.gains.position_enabled = true;
     production.gains.orientation_enabled = config::kOrientationEnabled;
     production.gains.velocity_enabled = config::kVelocityTermEnabled;
     production.gains.null_space_enabled = config::kNullSpaceEnabled;
+    production.gains.posture_enabled = config::kPostureTrackingEnabled;
 
     production.velocity_limit_deg_s = config::kQdotLimitDegS;
     production.software_limit_deg = config::kJointSoftwareLimitDeg;

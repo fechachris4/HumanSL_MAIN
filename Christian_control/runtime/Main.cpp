@@ -103,6 +103,9 @@ void WriteConfigLines(const std::string& log_file, std::ostream& out, const char
     line("orientation_enabled", config::kOrientationEnabled ? "true" : "false");
     line("velocity_term_enabled", config::kVelocityTermEnabled ? "true" : "false");
     line("null_space_enabled", config::kNullSpaceEnabled ? "true" : "false");
+    line("posture_tracking_enabled",
+         config::kPostureTrackingEnabled ? "true" : "false");
+    line("posture_gain", FormatDouble(config::kPostureGain));
     line("reference_source", "world_cartesian_trajectory");
     line("startup_hold", "first_fresh_world_pose");
     line("target_hold_s", FormatDouble(config::kTargetHoldS));

@@ -208,6 +208,20 @@ namespace config
     inline constexpr bool kVelocityTermEnabled = true; // Kd term
     inline constexpr bool kNullSpaceEnabled = true;
 
+    // Null-space attraction toward the planner's per-sample joint posture
+    // (ReactiveLaw.h equation 5b) — the redundancy decision the plan was
+    // validated with, instead of leaving redundancy ungoverned between the
+    // limit-avoidance zones (2026-08-23: two runs walked joint 6 to its
+    // outward software boundary while the plan held a 20.7 deg margin).
+    // OFF until validated in the sim twin and one supervised session. The
+    // gain is deliberately far below kKpCartesian's authority and below
+    // kLimitAvoidGain: a 10 deg posture error asks for 5 deg/s before
+    // projection. Limit avoidance outranks posture per joint in the law
+    // itself, and the damped projector's task-space leak stays visible in
+    // the null_leak_mps telemetry (the 2026-08-05 stall watch).
+    inline constexpr bool kPostureTrackingEnabled = false;
+    inline constexpr double kPostureGain = 0.5; // 1/s on wrapped posture error
+
     // Published Gen3 7-DoF position limits, degrees, in Kortex actuator
     // order — Kinova's User Guide Table 39. Derived, not authored: they come
     // from planning/config/joint_limits.yaml through the generated

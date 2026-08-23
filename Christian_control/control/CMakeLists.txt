@@ -204,6 +204,15 @@ if (BUILD_TESTING)
     add_execution_core_to(test_runtime_tcp_telemetry)
     add_test(NAME runtime_tcp_telemetry COMMAND test_runtime_tcp_telemetry)
 
+    add_executable(test_posture_tracking tests/test_posture_tracking.cpp)
+    add_execution_core_to(test_posture_tracking)
+    add_test(NAME posture_tracking COMMAND test_posture_tracking)
+
+    add_executable(test_posture_hold_coherence
+            tests/test_posture_hold_coherence.cpp)
+    add_execution_core_to(test_posture_hold_coherence)
+    add_test(NAME posture_hold_coherence COMMAND test_posture_hold_coherence)
+
     add_executable(test_goal_preempt tests/test_goal_preempt.cpp)
     add_execution_core_to(test_goal_preempt)
     add_test(NAME goal_preempt COMMAND test_goal_preempt)

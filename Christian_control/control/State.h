@@ -157,8 +157,12 @@ struct MeasuredCartesianState {
 };
 
 // The controller's only reference: desired end-effector pose and twist in
-// Vicon world W. There is deliberately no frame selector, joint posture, or
-// optional orientation at this boundary.
+// Vicon world W. There is deliberately no frame selector or optional
+// orientation at this boundary. The posture below is the one exception,
+// revised 2026-08-23: it is the planner's validated redundancy decision,
+// carried as a null-space PREFERENCE — the Cartesian pose and twist remain
+// the only executable content, and the law suppresses the posture pull on
+// any joint whose limit avoidance is active.
 struct PoseReference {
     CartesianPose ee_pose_world;
     Twist ee_twist_world;
@@ -169,4 +173,11 @@ struct PoseReference {
     // advance the target state machine.  Only a stationary terminal sample
     // is eligible to generate the controller's arrival edge.
     bool arrival_eligible = true;
+    // Planner posture at this reference time (radians, actuator order,
+    // planner-continuous representation; consumers wrap differences).
+    // False whenever no plan is active — startup and goal-less holds have
+    // no posture opinion.
+    bool has_posture = false;
+    Eigen::Matrix<double, 7, 1> posture_rad =
+        Eigen::Matrix<double, 7, 1>::Zero();
 };

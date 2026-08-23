@@ -64,6 +64,14 @@ private:
     std::uint64_t hold_planner_vicon_sequence_ = 0;
     double hold_reference_time_s_ = 0.0;
     bool hold_arrival_eligible_ = false;
+    // Posture carried into a hold: true only when the hold pose came from a
+    // plan (completion hold keeps the terminal posture — the exact case
+    // where joint 6 drifted to its boundary on 2026-08-23; a stale-pause
+    // hold keeps the paused sample's posture). Measured-pose holds carry no
+    // posture opinion.
+    bool hold_has_posture_ = false;
+    Eigen::Matrix<double, 7, 1> hold_posture_rad_ =
+        Eigen::Matrix<double, 7, 1>::Zero();
     double trajectory_time_s_ = 0.0;
     bool complete_reported_ = false;
     bool previous_world_fresh_ = false;

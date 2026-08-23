@@ -32,6 +32,8 @@ PoseReference CartesianReferenceSource::HoldingReference() const
     reference.planner_vicon_sequence = hold_planner_vicon_sequence_;
     reference.t_from_start_s = hold_reference_time_s_;
     reference.arrival_eligible = hold_arrival_eligible_;
+    reference.has_posture = hold_has_posture_;
+    reference.posture_rad = hold_posture_rad_;
     return reference;
 }
 
@@ -53,6 +55,8 @@ PoseReference CartesianReferenceSource::TrackingReference(double time_s) const
             point.angular_velocity_world_rad_s;
         reference.t_from_start_s = point.t_from_start_s;
         reference.arrival_eligible = false;
+        reference.has_posture = point.has_posture;
+        reference.posture_rad = point.posture_rad;
         return reference;
     }
 
@@ -64,6 +68,8 @@ PoseReference CartesianReferenceSource::TrackingReference(double time_s) const
         reference.ee_twist_world = Twist{};
         reference.t_from_start_s = point.t_from_start_s;
         reference.arrival_eligible = true;
+        reference.has_posture = point.has_posture;
+        reference.posture_rad = point.posture_rad;
         return reference;
     }
 
@@ -94,6 +100,14 @@ PoseReference CartesianReferenceSource::TrackingReference(double time_s) const
         alpha * after.angular_velocity_world_rad_s;
     reference.t_from_start_s = time_s;
     reference.arrival_eligible = false;
+    // Posture presence is uniform across a trajectory (the contract
+    // validator enforces it), so `before` speaks for both. Linear blend is
+    // exact enough here: adjacent dense samples differ by well under a
+    // degree, and the planner's continuous representation has no wraps
+    // between neighbours.
+    reference.has_posture = before.has_posture;
+    reference.posture_rad =
+        (1.0 - alpha) * before.posture_rad + alpha * after.posture_rad;
     return reference;
 }
 
@@ -158,6 +172,7 @@ PoseReference CartesianReferenceSource::Get(
         hold_planner_vicon_sequence_ = 0;
         hold_reference_time_s_ = 0.0;
         hold_arrival_eligible_ = false;
+        hold_has_posture_ = false;
         minimum_trajectory_id_ = goal_preempt.minimum_trajectory_id;
         if (active_) {
             mailbox_.Retire(std::move(active_));
@@ -174,6 +189,8 @@ PoseReference CartesianReferenceSource::Get(
                 const PoseReference paused = TrackingReference(trajectory_time_s_);
                 hold_world_ = paused.ee_pose_world;
                 hold_reference_time_s_ = paused.t_from_start_s;
+                hold_has_posture_ = paused.has_posture;
+                hold_posture_rad_ = paused.posture_rad;
                 mailbox_.Retire(std::move(active_));
                 status.cartesian_traj_cancelled_edge = true;
             }
@@ -193,6 +210,7 @@ PoseReference CartesianReferenceSource::Get(
             hold_planner_vicon_sequence_ = 0;
             hold_reference_time_s_ = 0.0;
             hold_arrival_eligible_ = false;
+            hold_has_posture_ = false;
             state_ = CartesianReferenceState::kHolding;
             needs_replan_on_recovery_ = false;
             minimum_planner_vicon_sequence_ = state.world_sequence;
@@ -208,6 +226,7 @@ PoseReference CartesianReferenceSource::Get(
         hold_planner_vicon_sequence_ = 0;
         hold_reference_time_s_ = 0.0;
         hold_arrival_eligible_ = false;
+        hold_has_posture_ = false;
         if (state.world_fresh && state.world_sequence != 0) {
             state_ = CartesianReferenceState::kHolding;
             status.request_replan_edge = true;
@@ -233,6 +252,8 @@ PoseReference CartesianReferenceSource::Get(
             hold_planner_vicon_sequence_ = reference.planner_vicon_sequence;
             hold_reference_time_s_ = final_time;
             hold_arrival_eligible_ = true;
+            hold_has_posture_ = reference.has_posture;
+            hold_posture_rad_ = reference.posture_rad;
             state_ = CartesianReferenceState::kHolding;
             if (!complete_reported_) {
                 complete_reported_ = true;
