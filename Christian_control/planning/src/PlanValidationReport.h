@@ -3,6 +3,8 @@
 #include <string>
 #include <vector>
 
+#include <Eigen/Dense>
+
 enum class PlanStatus { kReached, kGoalBlocked, kFailed };
 enum class CandidateDisposition { kExecutable, kNeedsLongerDuration, kInvalid };
 
@@ -23,6 +25,15 @@ struct PlanValidationReport {
     double start_position_error_rad = 0.0;
     double start_velocity_error_rad_s = 0.0;
     double minimum_scene_clearance_m = 0.0;
+    bool has_first_scene_violation = false;
+    std::string first_scene_violation_object_id;
+    std::size_t first_scene_violation_sphere_index = 0;
+    double first_scene_violation_time_s = 0.0;
+    double first_scene_violation_clearance_m = 0.0;
+    Eigen::Vector3d first_scene_violation_center_mount = Eigen::Vector3d::Zero();
+    Eigen::Vector3d first_scene_violation_normal_mount = Eigen::Vector3d::UnitX();
+    Eigen::Matrix<double, 7, 1> first_scene_violation_q =
+        Eigen::Matrix<double, 7, 1>::Zero();
     std::string worst_scene_object_id;
     std::size_t worst_scene_sphere_index = 0;
     double worst_scene_time_s = 0.0;
@@ -42,4 +53,5 @@ struct PlanValidationReport {
     double trace_max_position_m = 0.0;
     double trace_p95_position_m = 0.0;
     double trace_max_orientation_rad = 0.0;
+    double integrated_joint_travel_rad = 0.0;
 };

@@ -44,6 +44,8 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     const size_t total_time_step,
     const double total_time_sec,
     const OptimizerTuning& tuning,
+    const double scene_collision_sigma,
+    const double self_collision_sigma,
     const double target_dt) {
 
     std::cout << "Creating arm trajectory..." << std::endl;
@@ -59,13 +61,11 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     // GP and optimization parameters
     gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7) * tuning.qc_scale;
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
-    double collision_sigma = tuning.collision_sigma;
-    double epsilon_dist = tuning.preferred_clearance_m;
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
     
     gtsam::Vector end_vel = gtsam::Vector::Zero(7);
 
-    const gtsam::Matrix self_collision_data = SelfCollisionData(collision_sigma);
+    const gtsam::Matrix self_collision_data = SelfCollisionData(self_collision_sigma);
     
     
     gtsam::NonlinearFactorGraph graph;
@@ -113,7 +113,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
         for (const auto& field : obstacle_fields) {
             graph.add(gpmp2::ObstacleSDFFactorArm(
                 key_pos, *field.participating_arm, field.sdf,
-                collision_sigma, tuning.preferred_clearance_m));
+                scene_collision_sigma, tuning.preferred_clearance_m));
             factor_keys.push_back("ObstacleFactor:" + field.id);
         }
 
@@ -127,7 +127,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
                 for (const auto& field : obstacle_fields) {
                     graph.add(gpmp2::ObstacleSDFFactorGPArm(
                         key_pos_prev, key_vel_prev, key_pos, key_vel,
-                        *field.participating_arm, field.sdf, collision_sigma,
+                        *field.participating_arm, field.sdf, scene_collision_sigma,
                         tuning.preferred_clearance_m, Qc_model, delta_t,
                         tau_check));
                     factor_keys.push_back("ObstacleFactorGP:" + field.id);
@@ -217,6 +217,8 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     const JointLimits& vel_limits,
     const double total_time_sec,
     const OptimizerTuning& tuning,
+    const double scene_collision_sigma,
+    const double self_collision_sigma,
     const double target_dt) {
 
     if (waypoints.size() < 2)
@@ -250,8 +252,6 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     // reproduces the previous behaviour.
     gtsam::Matrix Qc = gtsam::Matrix::Identity(7, 7) * tuning.qc_scale;
     auto Qc_model = gtsam::noiseModel::Gaussian::Covariance(Qc);
-    const double collision_sigma = tuning.collision_sigma;
-    const double epsilon_dist = tuning.preferred_clearance_m;
     auto vel_fix_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
 
     const gtsam::Vector rest_vel = gtsam::Vector::Zero(7);
@@ -269,7 +269,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     if (start_vel)
         initial_values.update(gtsam::Symbol('v', 0), *start_vel);
 
-    const gtsam::Matrix self_collision_data = SelfCollisionData(collision_sigma);
+    const gtsam::Matrix self_collision_data = SelfCollisionData(self_collision_sigma);
 
 
     gtsam::NonlinearFactorGraph graph;
@@ -312,7 +312,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
         for (const auto& field : obstacle_fields) {
             graph.add(gpmp2::ObstacleSDFFactorArm(
                 key_pos, *field.participating_arm, field.sdf,
-                collision_sigma, tuning.preferred_clearance_m));
+                scene_collision_sigma, tuning.preferred_clearance_m));
             factor_keys.push_back("ObstacleFactor:" + field.id);
         }
 
@@ -326,7 +326,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
                 for (const auto& field : obstacle_fields) {
                     graph.add(gpmp2::ObstacleSDFFactorGPArm(
                         key_pos_prev, key_vel_prev, key_pos, key_vel,
-                        *field.participating_arm, field.sdf, collision_sigma,
+                        *field.participating_arm, field.sdf, scene_collision_sigma,
                         tuning.preferred_clearance_m, Qc_model, delta_t,
                         tau_check));
                     factor_keys.push_back("ObstacleFactorGP:" + field.id);

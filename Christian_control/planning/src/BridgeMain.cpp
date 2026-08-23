@@ -108,7 +108,8 @@ constexpr char kUsageText[] =
     "                         prints the config path, digest and IK seed\n"
     "                         only — enough to reproduce, not to drown in.\n"
     "  --debug-dir PATH       Optional diagnostic dump directory. Writes\n"
-    "                         joints.csv, joint_limits.csv, meta.csv and,\n"
+    "                         joints.csv, joint_limits.csv, meta.csv,\n"
+    "                         candidate_attempts.csv and,\n"
     "                         for a traced path, path_ik.csv — the\n"
     "                         per-sample continuation walk, written even\n"
     "                         when the walk FAILED, which is the case worth\n"
@@ -271,6 +272,8 @@ void SummarizeWalk(SummaryWriter& out, const PathIkResult& walk,
 void DumpPlanDebug(const std::optional<std::string>& directory,
                    const PlanDebugMeta& meta, const TrajectoryResult* trajectory,
                    const PlanJointLimits& limits,
+                   const std::vector<CandidateEvidence>& candidate_attempts,
+                   const std::optional<std::size_t>& selected_candidate_attempt,
                    const CartesianPath* path_mount, const PathIkResult* walk,
                    std::ostream& diagnostics)
 {
@@ -282,6 +285,8 @@ void DumpPlanDebug(const std::optional<std::string>& directory,
     };
     report(WritePlanMetaCsv(*directory, meta));
     report(WriteJointLimitsCsv(*directory, limits));
+    report(WriteCandidateAttemptsCsv(*directory, candidate_attempts,
+                                     selected_candidate_attempt));
     if (trajectory != nullptr && !trajectory->trajectory_pos.empty())
         report(WriteJointTrajectoryCsv(*directory, *trajectory));
     if (path_mount != nullptr && walk != nullptr)
@@ -945,13 +950,16 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                             << " interpolated) — GPMP2 keeps the configured "
                                "pose priors and the final "
                                "validation judges the result\n";
-            if (plan.time_scaling_passes > 1)
-                diagnostics << "time scaling: " << plan.time_scaling_passes
-                            << " pass(es), final duration "
-                            << plan.total_time_sec << " s"
-                            << (plan.time_scaling_settled
-                                    ? "\n"
-                                    : " — DID NOT SETTLE within the pass limit\n");
+            if (plan.selected_candidate_attempt) {
+                const CandidateEvidence& selected =
+                    plan.candidate_attempts[*plan.selected_candidate_attempt];
+                diagnostics << "selected candidate: branch "
+                            << selected.terminal_branch << ", route "
+                            << RouteHypothesisName(selected.route)
+                            << ", duration attempt "
+                            << selected.duration_attempt << ", scene sigma "
+                            << selected.scene_collision_sigma << "\n";
+            }
             if (parsed.verbose)
                 diagnostics << "trace quality: max position "
                             << plan.validation.trace_max_position_m * 1000.0
@@ -975,6 +983,16 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         } else {
             summary.Line("result", std::string(PlanStatusName(plan.status)) + ", duration " +
                                        Fixed(plan.total_time_sec, 2) + " s");
+            if (plan.selected_candidate_attempt) {
+                const CandidateEvidence& selected =
+                    plan.candidate_attempts[*plan.selected_candidate_attempt];
+                summary.Line("selected candidate",
+                             "branch " +
+                                 std::to_string(selected.terminal_branch) +
+                                 ", " + RouteHypothesisName(selected.route) +
+                                 ", duration attempt " +
+                                 std::to_string(selected.duration_attempt));
+            }
             summary.Line("task fidelity (quality)",
                          "max " + Fixed(plan.validation.trace_max_position_m * 1e3, 2) +
                              " mm / p95 " +
@@ -1001,7 +1019,9 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                                     Fixed(plan.task_start_time_s, 6));
         DumpPlanDebug(parsed.debug_dir, meta,
                       plan.trajectory ? &*plan.trajectory : nullptr,
-                      plan.joint_limits, &task_path, &plan.ik_walk, diagnostics);
+                      plan.joint_limits, plan.candidate_attempts,
+                      plan.selected_candidate_attempt, &task_path,
+                      &plan.ik_walk, diagnostics);
         diagnostics << "----\n";
 
         if (!IsExecutable(plan.status) || !plan.trajectory) {
@@ -1107,6 +1127,17 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
             summary.Line("result",
                          std::string(PlanStatusName(outcome.status)) + ", duration " + Fixed(outcome.total_time_sec, 2) +
                              " s");
+            if (outcome.selected_candidate_attempt) {
+                const CandidateEvidence& selected =
+                    outcome.candidate_attempts[
+                        *outcome.selected_candidate_attempt];
+                summary.Line("selected candidate",
+                             "branch " +
+                                 std::to_string(selected.terminal_branch) +
+                                 ", " + RouteHypothesisName(selected.route) +
+                                 ", duration attempt " +
+                                 std::to_string(selected.duration_attempt));
+            }
             summary.Line("final goal error",
                          Fixed(outcome.validation.terminal_position_error_m * 1e3, 3) + " mm");
             // Smallest distance any dense state comes to a bounded joint
@@ -1148,7 +1179,9 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         }
         DumpPlanDebug(parsed.debug_dir, meta,
                       outcome.trajectory ? &*outcome.trajectory : nullptr,
-                      outcome.joint_limits, nullptr, nullptr, diagnostics);
+                      outcome.joint_limits, outcome.candidate_attempts,
+                      outcome.selected_candidate_attempt, nullptr, nullptr,
+                      diagnostics);
         diagnostics << "----\n";
     }
     if (!IsExecutable(outcome.status) || !outcome.trajectory) {

@@ -8,23 +8,6 @@ constexpr double kExactStartToleranceRad = 1e-12;
 
 struct Sample { Eigen::Matrix<double, 7, 1> q, qdot; double t; };
 
-Eigen::Isometry3d DesiredAt(const CartesianPath& path, double t) {
-    if (path.samples.empty()) return Eigen::Isometry3d::Identity();
-    if (t <= path.samples.front().t_s) return path.samples.front().pose;
-    if (t >= path.samples.back().t_s) return path.samples.back().pose;
-    std::size_t upper = 1;
-    while (upper < path.samples.size() && path.samples[upper].t_s < t) ++upper;
-    const PathSample& a = path.samples[upper - 1];
-    const PathSample& b = path.samples[upper];
-    const double u = (t - a.t_s) / (b.t_s - a.t_s);
-    Eigen::Isometry3d pose = Eigen::Isometry3d::Identity();
-    pose.translation() = (1.0 - u) * a.pose.translation() + u * b.pose.translation();
-    pose.linear() = Eigen::Quaterniond(a.pose.linear())
-                        .slerp(u, Eigen::Quaterniond(b.pose.linear()))
-                        .toRotationMatrix();
-    return pose;
-}
-
 double OrientationError(const Eigen::Matrix3d& desired,
                         const Eigen::Matrix3d& actual) {
     return Eigen::AngleAxisd(desired.transpose() * actual).angle();
@@ -92,6 +75,13 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
     Eigen::Matrix<double, 7, 1> max_qdot = Eigen::Matrix<double, 7, 1>::Zero();
     Eigen::Matrix<double, 7, 1> max_qddot = Eigen::Matrix<double, 7, 1>::Zero();
+    for (std::size_t i = 1; i < samples.size(); ++i) {
+        const double dt = samples[i].t - samples[i - 1].t;
+        if (dt > 0.0)
+            report.integrated_joint_travel_rad +=
+                0.5 * (samples[i - 1].qdot.cwiseAbs().sum() +
+                        samples[i].qdot.cwiseAbs().sum()) * dt;
+    }
     for (std::size_t i = 0; i < samples.size(); ++i) {
         const Sample& s = samples[i];
         if (!s.q.allFinite() || !s.qdot.allFinite()) { report.finite = false; continue; }
@@ -118,6 +108,19 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
                         report.worst_scene_object_id = field.id;
                         report.worst_scene_sphere_index = field.participating_sphere_indices[local];
                         report.worst_scene_time_s = s.t;
+                    }
+                    if (query.clearance_m < inputs.minimum_clearance_m &&
+                        !report.has_first_scene_violation) {
+                        report.has_first_scene_violation = true;
+                        report.first_scene_violation_object_id = field.id;
+                        report.first_scene_violation_sphere_index =
+                            field.participating_sphere_indices[local];
+                        report.first_scene_violation_time_s = s.t;
+                        report.first_scene_violation_clearance_m = query.clearance_m;
+                        report.first_scene_violation_center_mount = centre;
+                        report.first_scene_violation_normal_mount =
+                            query.outward_normal_mount;
+                        report.first_scene_violation_q = s.q;
                     }
                 }
             }
@@ -172,23 +175,31 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     report.terminal_orientation_shortfall_rad = report.requested_terminal_orientation_error_rad;
     if (inputs.desired_task_path && !inputs.desired_task_path->samples.empty()) {
         std::vector<double> position_errors;
-        for (const Sample& sample : samples) {
-            if (sample.t < inputs.task_start_time_s) continue;
-            const Eigen::Isometry3d desired = DesiredAt(
-                *inputs.desired_task_path,
-                sample.t - inputs.task_start_time_s);
+        const auto& requested_samples = inputs.desired_task_path->samples;
+        const double requested_start = requested_samples.front().t_s;
+        const double requested_end = requested_samples.back().t_s;
+        const double requested_span = requested_end - requested_start;
+        for (const PathSample& requested : requested_samples) {
+            const double u = requested_span > 0.0
+                                 ? (requested.t_s - requested_start) / requested_span
+                                 : 0.0;
+            const Sample sample = At(
+                trajectory, duration_s,
+                inputs.task_start_time_s +
+                    std::clamp(u, 0.0, 1.0) *
+                        (duration_s - inputs.task_start_time_s));
             const gtsam::Pose3 actual_pose = ToolPoseInMount(model, sample.q);
             Eigen::Isometry3d actual = Eigen::Isometry3d::Identity();
             actual.linear() = actual_pose.rotation().matrix();
             actual.translation() = actual_pose.translation();
             const double position_error =
-                (actual.translation() - desired.translation()).norm();
+                (actual.translation() - requested.pose.translation()).norm();
             position_errors.push_back(position_error);
             report.trace_max_position_m =
                 std::max(report.trace_max_position_m, position_error);
             report.trace_max_orientation_rad = std::max(
                 report.trace_max_orientation_rad,
-                OrientationError(desired.linear(), actual.linear()));
+                OrientationError(requested.pose.linear(), actual.linear()));
         }
         if (!position_errors.empty()) {
             std::sort(position_errors.begin(), position_errors.end());

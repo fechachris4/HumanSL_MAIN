@@ -100,6 +100,71 @@ std::optional<std::string> WriteJointLimitsCsv(const std::string& directory,
                 : std::optional<std::string>("failed writing joint_limits.csv");
 }
 
+std::optional<std::string> WriteCandidateAttemptsCsv(
+    const std::string& directory,
+    const std::vector<CandidateEvidence>& attempts,
+    const std::optional<std::size_t>& selected_index)
+{
+    std::ofstream file;
+    if (const auto error = OpenCsv(directory, "candidate_attempts.csv", file))
+        return error;
+
+    file << "attempt_index,selected,terminal_kind,terminal_branch,route,"
+            "duration_attempt,duration_s,scene_collision_sigma,solve_time_s,"
+            "disposition,validation_failure,executable,finite,start_valid,"
+            "scene_valid,self_collision_valid,joint_limits_valid,"
+            "start_position_error_rad,start_velocity_error_rad_s,"
+            "minimum_scene_clearance_m,worst_scene_object_id,"
+            "worst_scene_sphere_index,worst_scene_time_s,"
+            "minimum_self_clearance_m,max_velocity_ratio,"
+            "max_acceleration_ratio,terminal_position_error_m,"
+            "terminal_orientation_error_rad,requested_terminal_position_error_m,"
+            "requested_terminal_orientation_error_rad,trace_rms_position_m,"
+            "trace_max_position_m,trace_p95_position_m,"
+            "trace_max_orientation_rad,integrated_joint_travel_rad\n";
+    for (std::size_t index = 0; index < attempts.size(); ++index) {
+        const CandidateEvidence& attempt = attempts[index];
+        const PlanValidationReport& validation = attempt.validation;
+        file << index << "," << (selected_index && *selected_index == index ? 1 : 0)
+             << "," << PlanStatusName(attempt.terminal_kind)
+             << "," << attempt.terminal_branch
+             << "," << RouteHypothesisName(attempt.route)
+             << "," << attempt.duration_attempt
+             << "," << attempt.duration_s
+             << "," << attempt.scene_collision_sigma
+             << "," << attempt.solve_time_s
+             << ",\"" << attempt.disposition << "\""
+             << ",\"" << validation.failure_reason << "\""
+             << "," << (validation.executable ? 1 : 0)
+             << "," << (validation.finite ? 1 : 0)
+             << "," << (validation.start_valid ? 1 : 0)
+             << "," << (validation.scene_valid ? 1 : 0)
+             << "," << (validation.self_collision_valid ? 1 : 0)
+             << "," << (validation.joint_limits_valid ? 1 : 0)
+             << "," << validation.start_position_error_rad
+             << "," << validation.start_velocity_error_rad_s
+             << "," << validation.minimum_scene_clearance_m
+             << ",\"" << validation.worst_scene_object_id << "\""
+             << "," << validation.worst_scene_sphere_index
+             << "," << validation.worst_scene_time_s
+             << "," << validation.minimum_self_clearance_m
+             << "," << validation.max_velocity_ratio
+             << "," << validation.max_acceleration_ratio
+             << "," << validation.terminal_position_error_m
+             << "," << validation.terminal_orientation_error_rad
+             << "," << validation.requested_terminal_position_error_m
+             << "," << validation.requested_terminal_orientation_error_rad
+             << "," << validation.trace_rms_position_m
+             << "," << validation.trace_max_position_m
+             << "," << validation.trace_p95_position_m
+             << "," << validation.trace_max_orientation_rad
+             << "," << validation.integrated_joint_travel_rad << "\n";
+    }
+    return file ? std::nullopt
+                : std::optional<std::string>(
+                      "failed writing candidate_attempts.csv");
+}
+
 namespace {
 
 const char* StatusText(const PathIkSample& sample)

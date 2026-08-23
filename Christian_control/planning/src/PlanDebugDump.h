@@ -40,6 +40,14 @@ std::optional<std::string> WriteJointTrajectoryCsv(
 std::optional<std::string> WriteJointLimitsCsv(const std::string& directory,
                                                const PlanJointLimits& limits);
 
+// One row for every entered route/duration attempt. `selected_index` is an
+// index into `attempts`; failures have no selected row. This table is the
+// sole attempt/route evidence artifact for one request.
+std::optional<std::string> WriteCandidateAttemptsCsv(
+    const std::string& directory,
+    const std::vector<CandidateEvidence>& attempts,
+    const std::optional<std::size_t>& selected_index);
+
 // One row per path sample: where on the path it is (index, time and percent
 // of the way round), the tool position asked for, the sample's status
 // (solved / interpolated seed / no IK convergence / converged only outside

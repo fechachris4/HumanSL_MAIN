@@ -1,6 +1,7 @@
 #pragma once
 #include <optional>
 #include <string>
+#include <vector>
 #include "PlannerConfig.h"
 #include "PlannerModel.h"
 #include "CartesianPath.h"
@@ -35,6 +36,22 @@ struct PlanRequest {
     std::optional<Eigen::Matrix3d> goal_rotation;
 };
 
+enum class RouteHypothesis { kNormal, kPositiveBypass, kNegativeBypass };
+
+const char* RouteHypothesisName(RouteHypothesis route);
+
+struct CandidateEvidence {
+    PlanStatus terminal_kind = PlanStatus::kFailed;
+    std::size_t terminal_branch = 0;
+    RouteHypothesis route = RouteHypothesis::kNormal;
+    int duration_attempt = 0;
+    double duration_s = 0.0;
+    double scene_collision_sigma = 0.0;
+    double solve_time_s = 0.0;
+    PlanValidationReport validation;
+    std::string disposition;
+};
+
 struct PlanOutcome {
     PlanStatus status = PlanStatus::kFailed;
     std::string failure_reason;
@@ -43,6 +60,8 @@ struct PlanOutcome {
     double final_goal_error_m = 0.0;   // FK(last waypoint) vs requested goal
     double total_time_sec = 0.0;       // planned duration the states span
     std::optional<TerminalIkCandidate> terminal_candidate;
+    std::optional<std::size_t> selected_candidate_attempt;
+    std::vector<CandidateEvidence> candidate_attempts;
     PlanJointLimits joint_limits;
 };
 
@@ -70,9 +89,9 @@ struct PathPlanOutcome {
     std::optional<TrajectoryResult> trajectory;
     PlanValidationReport validation;
     std::optional<TerminalIkCandidate> terminal_candidate;
+    std::optional<std::size_t> selected_candidate_attempt;
+    std::vector<CandidateEvidence> candidate_attempts;
     double total_time_sec = 0.0;
-    int time_scaling_passes = 0;  // how many alpha iterations were needed
-    bool time_scaling_settled = true;
     // Continuation-IK diagnostics for the traced path. Short unresolved gaps
     // use interpolated initial guesses; every path pose prior keeps its full
     // configured strength and the final validator judges the result.

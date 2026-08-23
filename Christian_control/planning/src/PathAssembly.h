@@ -28,7 +28,9 @@
 #pragma once
 
 #include <cstddef>
+#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <Eigen/Dense>
@@ -38,6 +40,19 @@
 
 // Per-joint velocity limits, radians/second, used to pace the approach.
 using JointVelocityLimits = Eigen::Matrix<double, 7, 1>;
+using JointConfiguration = Eigen::Matrix<double, 7, 1>;
+
+Eigen::Vector3d DeterministicTangent(const Eigen::Vector3d& normal);
+
+std::vector<JointConfiguration> PointBypassSeed(
+    const JointConfiguration& start, const JointConfiguration& terminal,
+    std::size_t support_count,
+    const std::optional<std::pair<double, JointConfiguration>>& midpoint =
+        std::nullopt);
+
+CartesianPath TraceBypassSeed(const CartesianPath& path, double parameter_u,
+                              const Eigen::Vector3d& displacement,
+                              std::size_t sample_radius);
 
 struct ApproachPacing {
     // Fraction of each joint's velocity limit the approach is paced at.

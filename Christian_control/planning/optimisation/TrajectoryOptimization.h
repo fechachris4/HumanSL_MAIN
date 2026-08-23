@@ -56,7 +56,8 @@ gtsam::SharedNoiseModel PoseNoiseModel(const Eigen::Vector3d& rotation_sigma_rad
 struct OptimizerTuning {
     // Metres from an obstacle surface at which its cost switches on.
     double preferred_clearance_m = 0.10;
-    // Obstacle-avoidance weight; also weights the self-collision checks.
+    // Base collision sigma retained in planner config; callers pass it
+    // explicitly to the separate scene/self collision channels.
     double collision_sigma = 0.0005;
     // Scales the GP prior covariance Qc — the smoothness knob. Larger is
     // freer to deviate from constant velocity.
@@ -86,7 +87,9 @@ public:
         const JointLimits& vel_limits,
         const size_t total_time_step,
         const double total_time_sec,
-        const OptimizerTuning& tuning = OptimizerTuning{},
+        const OptimizerTuning& tuning,
+        const double scene_collision_sigma,
+        const double self_collision_sigma,
         const double target_dt = 0.001
     );
 
@@ -120,7 +123,9 @@ public:
         const JointLimits& pos_limits,
         const JointLimits& vel_limits,
         const double total_time_sec,
-        const OptimizerTuning& tuning = OptimizerTuning{},
+        const OptimizerTuning& tuning,
+        const double scene_collision_sigma,
+        const double self_collision_sigma,
         const double target_dt = 0.001
     );
 
