@@ -255,7 +255,7 @@ PlannerSolveResult SolveBaselineBridgeForRequest(
     result.status = PlanStatus::kFailed;
     result.failure_reason =
         "legacy baseline adaptation is preview-only under typed validation";
-    result.exit_code = 0;
+    result.exit_code = 3;
 
     diagnostics << "baseline block adapted: " << samples.size()
                 << " joint samples (deg wire), duration " << total_time_s
@@ -268,7 +268,7 @@ PlannerSolveResult SolveBaselineBridgeForRequest(
                 << ", vicon sequence " << request.vicon_sequence << "\n"
                 << "  frame note: the baseline resolved mount-frame goals "
                    "against its OWN 2026-08-07 URDF (base spacing 0.113 m); "
-                   "projection and execution use the CURRENT model. The "
-                   "joint trajectory passes through 1:1.\n";
+                   "projection uses the CURRENT model for preview only; no "
+                   "trajectory is eligible for execution.\n";
     return result;
 }

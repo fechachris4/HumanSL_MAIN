@@ -1,5 +1,6 @@
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <sstream>
 #include <string>
 
@@ -79,9 +80,9 @@ int main(int argc, char** argv) {
     offline_point.qdot_start_rad_s.reset();
     const PlanOutcome offline =
         SolveToPosition(model, offline_point, joint_limits, config);
-    Check(offline.validation.start_valid,
-          "offline point validation preserves measured position start");
-    if (offline.trajectory) {
+    Check(IsExecutable(offline.status) && offline.trajectory,
+          "offline point plan is executable");
+    if (IsExecutable(offline.status) && offline.trajectory) {
         Check(offline.trajectory->start_costs.count("StartVelEquality") == 0,
               "offline point has no start velocity equality");
         Check(offline.trajectory->start_costs.count("StartVelPrior") == 0,
@@ -117,9 +118,9 @@ int main(int argc, char** argv) {
 
     const PathPlanOutcome offline_path = SolveAlongPath(
         model, path, q_plan, std::nullopt, joint_limits, config);
-    Check(offline_path.validation.start_valid,
-          "offline traced validation preserves measured position start");
-    if (offline_path.trajectory) {
+    Check(IsExecutable(offline_path.status) && offline_path.trajectory,
+          "offline traced plan is executable");
+    if (IsExecutable(offline_path.status) && offline_path.trajectory) {
         Check(offline_path.trajectory->start_costs.count("StartVelEquality") == 0,
               "offline traced path has no start velocity equality");
         Check(offline_path.trajectory->start_costs.count("StartVelPrior") == 0,
@@ -146,11 +147,24 @@ int main(int argc, char** argv) {
     runtime.right_dh_file = argv[1];
     runtime.left_dh_file = argv[2];
     runtime.runs_root = ".";
+    const std::string transport_config = "/tmp/planner_start_state_no_scene.yaml";
+    {
+        std::ifstream source("../config/planner.yaml");
+        std::ofstream destination(transport_config);
+        std::string line;
+        while (std::getline(source, line)) {
+            if (line.find("enabled: true") != std::string::npos)
+                line.replace(line.find("true"), 4, "false");
+            destination << line << '\n';
+        }
+    }
+    runtime.planner_config_file = transport_config;
     std::ostringstream diagnostics;
     const PlannerSolveResult transported =
         SolvePlanForRequest(live, runtime, diagnostics);
-    Check(!transported.trajectory || IsExecutable(transported.status),
-          "typed transport never exposes a failed trajectory");
+    Check(IsExecutable(transported.status) && transported.trajectory,
+          "known-good typed transport is executable");
+    std::remove(transport_config.c_str());
 
     if (failures == 0)
         std::puts("test_planner_start_state: all assertions passed");
