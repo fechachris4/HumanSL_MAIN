@@ -314,6 +314,16 @@ time-dependent effective velocity or acceleration violation.
 - Maximum three total duration attempts for that candidate.
 - Exact `q(0)` and supplied `qdot(0)` are re-applied on every attempt.
 - No post-hoc velocity scaling.
+- Each longer-duration proposal targets a dynamic ratio of `0.999`:
+
+  ```text
+  duration_scale = max(max_velocity_ratio / 0.999,
+                       sqrt(max_acceleration_ratio / 0.999))
+  ```
+
+  This margin applies only to the next fresh solve. Dense validation retains
+  the hard executable boundary `max_velocity_ratio <= 1` and
+  `max_acceleration_ratio <= 1`.
 - Collision, joint-position, terminal, IK, non-finite or optimizer failure does
   not trigger a duration attempt; the bounded candidate search continues where
   another candidate remains.

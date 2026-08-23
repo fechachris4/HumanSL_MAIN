@@ -17,6 +17,7 @@ namespace
 {
 
     constexpr int kMaximumDurationAttempts = 3;
+    constexpr double kDurationRepairTargetDynamicRatio = 0.999;
 
     struct TerminalTarget {
         gtsam::Pose3 pose;
@@ -189,11 +190,12 @@ namespace
                 failure_reason = "dynamic_attempts_exhausted";
                 return result;
             }
-            const double alpha = std::max(result.last_validation.max_velocity_ratio,
-                                          std::sqrt(result.last_validation.max_acceleration_ratio));
-            if (!(alpha > 1.0))
-                return result;
-            duration_s *= alpha;
+            const double duration_scale = std::max(
+                result.last_validation.max_velocity_ratio /
+                    kDurationRepairTargetDynamicRatio,
+                std::sqrt(result.last_validation.max_acceleration_ratio /
+                          kDurationRepairTargetDynamicRatio));
+            duration_s *= duration_scale;
         }
         return result;
     }

@@ -44,7 +44,10 @@ authored hardware value from the effective value the planner validates:
 and velocity constraints. The one executable boundary, `ValidatePlan`, checks
 the dense result against each joint's effective velocity and acceleration. If
 dynamics alone fail, `PlanSolver` computes the required duration increase and
-re-solves from scratch, for at most three duration attempts. It never makes a
+re-solves from scratch, for at most three duration attempts. The proposal uses
+`max(max_velocity_ratio / 0.999, sqrt(max_acceleration_ratio / 0.999))` so the
+fresh solve targets a small numerical margin. The dense validator still
+requires both measured ratios to be at most `1.0`; the planner never makes a
 failed result look valid by scaling sampled qdot after the solve.
 
 The acceleration table remains an interim planning bound: Kinova Table 43 is
