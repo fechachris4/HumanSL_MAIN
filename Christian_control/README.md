@@ -58,8 +58,9 @@ control/ExecutionCore.cpp            raises request_replan
   → planning/src/PlanSolver.cpp
         PathAssembly.cpp                  approach + task phases on one time grid
         planning/optimisation/*           GPMP2: arm model, initialisation, optimisation
-        WorldSdf.cpp                      signed-distance field for collision
-        ValidatePlan.cpp / PlanValidationReport.cpp
+        StaticScene.h / MountSdf.cpp       authored primitives and analytic clearance
+        ValidatePlan.cpp                  the one dense executable-plan validator
+        PlanValidationReport.cpp          its evidence record
   → planning/src/WorldTrajectoryProjection.cpp   joints → world Cartesian
   → contracts/WorldCartesianTrajectory.h
   → control/CartesianTrajectoryMailbox.cpp       typed ownership handoff
@@ -81,6 +82,12 @@ The layout is not a filing convention; each line below is checked by a test.
 - **GPMP2 stays outside the 500 Hz loop.** `runtime/tests/check_controller_planner_linkage.cmake`
   checks the controller's planner linkage; planning runs on the worker thread
   in `runtime/InProcessPlanner.cpp`, never in `Runner.cpp`'s cycle.
+- **The planner has one executable boundary.** `ValidatePlan` checks exact
+  start state, finite state, componentwise joint velocity/acceleration, joint
+  position, authored-scene clearance, self clearance, and terminal equality.
+  `REACHED` owns a trajectory to the requested terminal; `GOAL_BLOCKED` owns a
+  trajectory to an explicitly shortened terminal; `FAILED` owns no trajectory.
+  Only the first two cross the runtime mailbox boundary.
 - **One URDF, one FK implementation.** `model/GEN3_dual_mounted.urdf` is parsed
   through `control/RobotModel.cpp` by every project. `control/tests/test_dual_arm_mounting.cpp`
   holds the URDF's mounting block to `model/dual_arm_mounting.yaml`, and

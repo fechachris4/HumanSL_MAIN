@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Plot a plan: what the planner produced, and where it failed.
+"""Plot one recorded planner request and its available controller telemetry.
 
-    scripts/plot_plan.py DEBUG_DIR [CART_TRAJ_FILE] [-o OUTDIR]
+    scripts/plot_plan.py DEBUG_DIR [CART_TRAJ_FILE] [-o OUTDIR] [options]
 
 DEBUG_DIR is a directory written by `planner_bridge --debug-dir`. It holds
 plain CSVs (PlanDebugDump.h is the schema authority):
@@ -15,21 +15,25 @@ plain CSVs (PlanDebugDump.h is the schema authority):
                       progress, requested position, status (solved /
                       interpolated seed / no convergence / joint limits),
                       residuals, limit margin and configuration
+    candidate_attempts.csv
+                      bounded terminal-IK summaries and GPMP2 route attempts,
+                      including serialized validation and selection evidence
 
-CART_TRAJ_FILE is optional: the world-frame block the planner prints on
-stdout, saved to a file. Give it and the Cartesian figure is drawn from
-what the controller would actually receive; leave it out and the figure
-falls back to the target positions in path_ik.csv.
+CART_TRAJ_FILE is optional; cart_traj.txt in DEBUG_DIR is used by default.
+With --controller-log, measured TCP, q and qdot are read only from recorded
+telemetry columns. Mount-frame requests and obstacle geometry are overlaid on
+world-frame trajectories only when the recorded transform is explicitly
+identity.
 
-Output: individual PNGs plus one plan_report.html tying them together with
-the summary and a per-sample table around the failed or worst region. One
-path per line on stdout, the panel's discovery convention.
+Output: individual PNGs plus one plan_report.html. One path per line on stdout
+remains the panel's discovery convention.
 
 Everything drawn is a value the planner itself produced; this script
 arranges, it does not recompute planning decisions.
 """
 
 import argparse
+import collections
 import csv
 import html
 import math
@@ -39,6 +43,8 @@ from pathlib import Path
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import numpy as np
+import yaml
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 — registers "3d"
 
 NUM_JOINTS = 7
@@ -48,6 +54,28 @@ NUM_JOINTS = 7
 # drawing them as failures would make every healthy plan look broken.
 FAILED_STATUSES = ("no_convergence", "joint_limits", "failed")
 EXECUTABLE_PLAN_STATUSES = ("REACHED", "GOAL_BLOCKED")
+
+C_PLANNED = "#0072B2"
+C_MEASURED = "#E69F00"
+C_REQUESTED = "#6b6b6b"
+C_INVALID = "#D55E00"
+C_HARD = "#9b2226"
+C_PREFERRED = "#6c757d"
+C_SELECTED = "#009E73"
+C_GRID = "#d8d8d4"
+C_SURFACE = "#fcfcfb"
+
+plt.rcParams.update({
+    "figure.facecolor": C_SURFACE,
+    "axes.facecolor": C_SURFACE,
+    "axes.edgecolor": C_GRID,
+    "axes.grid": True,
+    "grid.color": C_GRID,
+    "grid.linewidth": 0.6,
+    "axes.spines.top": False,
+    "axes.spines.right": False,
+    "legend.frameon": False,
+})
 
 
 def plan_is_executable(status):
@@ -64,7 +92,8 @@ def read_csv(path):
     if not path.exists():
         return None
     with path.open(newline="") as handle:
-        return list(csv.DictReader(handle))
+        rows = list(csv.DictReader(handle))
+    return rows or None
 
 
 def read_meta(path):
@@ -110,6 +139,125 @@ def read_cart_traj(path):
     return t, x, y, z, speed
 
 
+def read_controller_log(path):
+    """Read only recorded telemetry. No FK or derived robot state is
+    constructed here: measured TCP, q and qdot come from named CSV columns."""
+    if path is None or not path.exists():
+        return None
+    with path.open(newline="") as handle:
+        rows = list(csv.DictReader(line for line in handle
+                                   if not line.startswith("#")))
+    if not rows:
+        return None
+    required = ["time_s", "cart_replan_requested", "world_fresh"]
+    required += [f"meas_j{joint}" for joint in range(1, NUM_JOINTS + 1)]
+    required += [f"vel_j{joint}" for joint in range(1, NUM_JOINTS + 1)]
+    required += ["cart_meas_x_world_m", "cart_meas_y_world_m",
+                 "cart_meas_z_world_m", "cart_meas_vx_world_mps",
+                 "cart_meas_vy_world_mps", "cart_meas_vz_world_mps"]
+    missing = [name for name in required if name not in rows[0]]
+    if missing:
+        raise SystemExit(f"{path}: controller log lacks {', '.join(missing)}")
+    absolute_time = col(rows, "time_s")
+    edges = [index for index, row in enumerate(rows)
+             if row.get("cart_replan_requested", "0") == "1"]
+    origin = absolute_time[edges[-1]] if edges else absolute_time[0]
+    relative_time = [value - origin for value in absolute_time]
+    return {"path": path, "rows": rows, "time_s": relative_time,
+            "has_replan_edge": bool(edges)}
+
+
+def finite_number(text, default=float("nan")):
+    try:
+        value = float(text)
+    except (TypeError, ValueError):
+        return default
+    return value if math.isfinite(value) else default
+
+
+def fresh_world_value(row, name):
+    return (finite_number(row.get(name)) if row.get("world_fresh") == "1"
+            else float("nan"))
+
+
+def read_plot_config(path):
+    if path is None or not path.exists():
+        return {"minimum_clearance_m": None,
+                "preferred_clearance_m": None,
+                "maximum_planning_error_m": None,
+                "maximum_orientation_error_rad": None, "scene": []}
+    try:
+        document = yaml.safe_load(path.read_text()) or {}
+        obstacles = document.get("obstacles", {})
+        scene = []
+        for object_id, item in (obstacles.get("scene", {}) or {}).items():
+            if not item.get("enabled", False):
+                continue
+            shape = item.get("shape")
+            if shape not in ("box", "cylinder"):
+                continue
+            scene.append({"id": object_id, **item})
+        return {
+            "minimum_clearance_m": finite_number(
+                obstacles.get("minimum_clearance_m"), None),
+            "preferred_clearance_m": finite_number(
+                obstacles.get("preferred_clearance_m"), None),
+            "maximum_planning_error_m": finite_number(
+                (document.get("path_following", {}) or {}).get(
+                    "maximum_planning_error_m"), None),
+            "maximum_orientation_error_rad": finite_number(
+                (document.get("path_following", {}) or {}).get(
+                    "maximum_orientation_error_rad"), None),
+            "scene": scene,
+        }
+    except (OSError, yaml.YAMLError, TypeError, ValueError) as error:
+        raise SystemExit(f"{path}: cannot read planner display geometry: {error}")
+
+
+def controller_window(controller, planned_end_s=None):
+    if controller is None:
+        return [], []
+    times = controller["time_s"]
+    if planned_end_s is None:
+        lower, upper = -0.5, 2.0
+    else:
+        lower, upper = -0.5, planned_end_s + 0.5
+    picked = [index for index, value in enumerate(times)
+              if lower <= value <= upper]
+    if not picked:
+        picked = list(range(len(times)))
+    return picked, [times[index] for index in picked]
+
+
+def draw_scene(axis, scene):
+    """Display authored primitives only. This is geometry rendering, not a
+    distance query and not a second collision calculation."""
+    for item in scene:
+        centre = np.asarray(item.get("center_mount_m", [0.0, 0.0, 0.0]),
+                            dtype=float)
+        if item["shape"] == "box":
+            half_extent = np.asarray(
+                item.get("half_extent_m", [0.0, 0.0, 0.0]), dtype=float)
+            size = 2.0 * half_extent
+            lower = centre - half_extent
+            axis.bar3d(lower[0], lower[1], lower[2], size[0], size[1], size[2],
+                       color=C_INVALID, alpha=0.16, edgecolor=C_INVALID,
+                       linewidth=0.5, shade=False)
+        else:
+            radius = float(item.get("radius_m", 0.0))
+            height = float(item.get("height_m", 0.0))
+            theta = np.linspace(0.0, 2.0 * math.pi, 36)
+            z = np.linspace(centre[2] - 0.5 * height,
+                            centre[2] + 0.5 * height, 2)
+            theta_grid, z_grid = np.meshgrid(theta, z)
+            x_grid = centre[0] + radius * np.cos(theta_grid)
+            y_grid = centre[1] + radius * np.sin(theta_grid)
+            axis.plot_surface(x_grid, y_grid, z_grid, color=C_INVALID,
+                              alpha=0.13, linewidth=0, shade=False)
+        axis.text(centre[0], centre[1], centre[2], item["id"],
+                  color=C_INVALID, fontsize=7)
+
+
 def title_for(meta, what):
     arm = meta.get("arm", "?")
     kind = meta.get("plan_kind", "?")
@@ -121,139 +269,319 @@ def title_for(meta, what):
     return head
 
 
-def plot_cartesian(meta, cart, path_ik, outpath):
-    """Where the tool goes, and how fast. Drawn from the emitted block when
-    there is one, and from the path's TARGET positions when the plan failed
-    before emitting anything — in the second case the figure says so, since
-    a target is a request, not an achievement."""
-    from_targets = cart is None
-    if from_targets:
-        if path_ik is None:
-            return None
-        t = col(path_ik, "t_s")
-        x = col(path_ik, "target_x_m")
-        y = col(path_ik, "target_y_m")
-        z = col(path_ik, "target_z_m")
-        speed = None
-    else:
-        t, x, y, z, speed = cart
-    if not t:
+def plot_cartesian(meta, cart, path_ik, controller, scene, requested_point,
+                   frames_coincident, outpath):
+    """Requested, planned and measured TCP evidence.
+
+    The planner wire is world-frame; requested path and scene geometry are
+    Mount-frame. They are overlaid only when the recorded transform is
+    explicitly identity. Measured TCP is read directly from telemetry."""
+    requested = None
+    if path_ik:
+        requested = (col(path_ik, "t_s"), col(path_ik, "target_x_m"),
+                     col(path_ik, "target_y_m"), col(path_ik, "target_z_m"))
+    elif requested_point is not None:
+        requested = ([0.0], [requested_point[0]], [requested_point[1]],
+                     [requested_point[2]])
+
+    measured = None
+    if controller is not None:
+        planned_end = cart[0][-1] if cart is not None and cart[0] else None
+        picked, measured_t = controller_window(controller, planned_end)
+        rows = controller["rows"]
+        measured = (
+            measured_t,
+            [fresh_world_value(rows[index], "cart_meas_x_world_m")
+             for index in picked],
+            [fresh_world_value(rows[index], "cart_meas_y_world_m")
+             for index in picked],
+            [fresh_world_value(rows[index], "cart_meas_z_world_m")
+             for index in picked],
+        )
+
+    if cart is None and requested is None and measured is None:
         return None
 
-    figure = plt.figure(figsize=(13, 5.5))
+    figure = plt.figure(figsize=(13, 5.8))
     axis3d = figure.add_subplot(1, 3, 1, projection="3d")
-    axis3d.plot(x, y, z, color="tab:blue", linewidth=1.2,
-                label="planned TCP" if not from_targets else "requested path")
-    # The requested path overlaid on the achieved one, when both exist —
-    # the gap between them IS the planning error, made visible.
-    if not from_targets and path_ik is not None:
-        axis3d.plot(col(path_ik, "target_x_m"), col(path_ik, "target_y_m"),
-                    col(path_ik, "target_z_m"), color="tab:orange",
-                    linewidth=1.0, linestyle="--", label="requested path")
-    if path_ik is not None:
+    if frames_coincident and requested is not None:
+        _, req_x, req_y, req_z = requested
+        if len(req_x) == 1:
+            axis3d.scatter(req_x, req_y, req_z, color=C_REQUESTED, marker="x",
+                           s=55, label="requested terminal")
+        else:
+            axis3d.plot(req_x, req_y, req_z, color=C_REQUESTED, linewidth=1.2,
+                        linestyle="--", label="requested TCP")
+    if cart is not None:
+        _, plan_x, plan_y, plan_z, _ = cart
+        axis3d.plot(plan_x, plan_y, plan_z, color=C_PLANNED, linewidth=1.5,
+                    label="planned TCP")
+    if measured is not None:
+        _, meas_x, meas_y, meas_z = measured
+        axis3d.plot(meas_x, meas_y, meas_z, color=C_MEASURED, linewidth=1.2,
+                    linestyle=(0, (2, 2)),
+                    label="measured TCP telemetry")
+    if frames_coincident:
+        draw_scene(axis3d, scene)
+    if path_ik:
         bad = [i for i, row in enumerate(path_ik) if is_failed(row)]
         if bad:
             axis3d.scatter([col(path_ik, "target_x_m")[i] for i in bad],
                            [col(path_ik, "target_y_m")[i] for i in bad],
                            [col(path_ik, "target_z_m")[i] for i in bad],
-                           color="tab:red", s=44, label="IK failed samples")
-    axis3d.scatter([x[0]], [y[0]], [z[0]], color="tab:green", s=40, label="start")
-    axis3d.scatter([x[-1]], [y[-1]], [z[-1]], color="black", s=40, label="end")
+                           color=C_INVALID, marker="x", s=44,
+                           label="IK failed samples")
     axis3d.set_xlabel("x [m]")
     axis3d.set_ylabel("y [m]")
     axis3d.set_zlabel("z [m]")
-    axis3d.set_title("tool path" + (" (requested only)" if from_targets else ""))
+    axis3d.set_title("TCP path and authored obstacle geometry")
     axis3d.legend(loc="upper left", fontsize=7)
 
     axis_pos = figure.add_subplot(1, 3, 2)
-    for values, name in ((x, "x"), (y, "y"), (z, "z")):
-        axis_pos.plot(t, values, linewidth=1.0, label=name)
-    axis_pos.set_xlabel("time [s]")
+    if cart is not None:
+        plan_t, plan_x, plan_y, plan_z, _ = cart
+        for values, name in ((plan_x, "x"), (plan_y, "y"), (plan_z, "z")):
+            axis_pos.plot(plan_t, values, linewidth=1.2, label=f"planned {name}")
+    if measured is not None:
+        meas_t, meas_x, meas_y, meas_z = measured
+        for values, name in ((meas_x, "x"), (meas_y, "y"), (meas_z, "z")):
+            axis_pos.plot(meas_t, values, linewidth=0.9,
+                          linestyle=(0, (2, 2)), label=f"measured {name}")
+    if cart is None:
+        axis_pos.text(0.5, 0.92, "planned series unavailable: no emitted trajectory",
+                      transform=axis_pos.transAxes, ha="center", va="top",
+                      fontsize=8, color=C_INVALID)
+    if measured is None:
+        axis_pos.text(0.5, 0.82, "measured series unavailable: no controller log",
+                      transform=axis_pos.transAxes, ha="center", va="top",
+                      fontsize=8, color=C_REQUESTED)
+    axis_pos.set_xlabel("time from planning request [s]")
     axis_pos.set_ylabel("position [m]")
-    axis_pos.set_title("position vs time")
-    axis_pos.grid(alpha=0.3)
-    axis_pos.legend(fontsize=8)
+    axis_pos.set_title("world TCP position vs time")
+    if axis_pos.get_legend_handles_labels()[0]:
+        axis_pos.legend(fontsize=6, ncol=2)
 
     axis_speed = figure.add_subplot(1, 3, 3)
-    if speed is None:
-        axis_speed.text(0.5, 0.5, "no emitted trajectory\n(plan did not reach output)",
-                        ha="center", va="center", transform=axis_speed.transAxes,
-                        fontsize=9, color="tab:red")
-        axis_speed.set_axis_off()
-    else:
-        axis_speed.plot(t, speed, color="tab:purple", linewidth=1.0)
-        axis_speed.set_xlabel("time [s]")
-        axis_speed.set_ylabel("speed [m/s]")
-        axis_speed.set_title("tool speed vs time")
-        axis_speed.grid(alpha=0.3)
+    if cart is not None:
+        plan_t, _, _, _, plan_speed = cart
+        axis_speed.plot(plan_t, plan_speed, color=C_PLANNED, linewidth=1.2,
+                        label="planned")
+    if controller is not None:
+        planned_end = cart[0][-1] if cart is not None and cart[0] else None
+        picked, measured_t = controller_window(controller, planned_end)
+        rows = controller["rows"]
+        speed = []
+        for index in picked:
+            components = [fresh_world_value(rows[index], name) for name in
+                          ("cart_meas_vx_world_mps", "cart_meas_vy_world_mps",
+                           "cart_meas_vz_world_mps")]
+            speed.append(math.sqrt(sum(value * value for value in components)))
+        axis_speed.plot(measured_t, speed, color=C_MEASURED, linewidth=1.0,
+                        linestyle=(0, (2, 2)), label="measured TCP telemetry")
+    if cart is None and controller is None:
+        axis_speed.text(0.5, 0.5, "no planned or measured speed series",
+                        ha="center", va="center", transform=axis_speed.transAxes)
+    axis_speed.set_xlabel("time from planning request [s]")
+    axis_speed.set_ylabel("speed [m/s]")
+    axis_speed.set_title("world TCP speed")
+    if axis_speed.get_legend_handles_labels()[0]:
+        axis_speed.legend(fontsize=7)
 
+    if not frames_coincident and (requested is not None or scene):
+        figure.text(0.5, 0.01,
+                    "Mount-frame request/scene not overlaid on world data: "
+                    "world_T_mount was not recorded as identity.",
+                    ha="center", fontsize=8, color=C_INVALID)
     figure.suptitle(title_for(meta, "Cartesian"), fontsize=10)
-    figure.tight_layout(rect=(0, 0, 1, 0.90))
+    figure.tight_layout(rect=(0, 0.04, 1, 0.90))
     figure.savefig(outpath, dpi=130)
     plt.close(figure)
     return outpath
 
 
-def plot_joints(meta, joints, limits, path_ik, outpath):
-    """Each joint against the band it was solved against. A trajectory that
-    rides a limit is the usual reason a plan is strained even when it
-    succeeds, and it is invisible in any Cartesian view. The task phase and
-    any failed path samples are shaded so joint-space and path-space line
-    up on the same time axis."""
-    if joints is None:
-        return None
-    t = col(joints, "t_s")
-    if not t:
+def plot_joints(meta, joints, limits, controller, outpath):
+    """Planned and measured q/qdot, aligned to the recorded replan edge."""
+    if joints is None and controller is None:
         return None
 
-    task_start = None
-    try:
-        task_start = float(meta["task_start_time_s"])
-    except (KeyError, ValueError):
-        pass
-    failed_times = []
-    if task_start is not None and path_ik is not None:
-        failed_times = [task_start + float(row["t_s"])
-                        for row in path_ik
-                        if is_failed(row) and row.get("t_s")]
-
-    figure, axes = plt.subplots(4, 2, figsize=(12, 10), sharex=True)
-    flat = axes.flatten()
+    planned_t = col(joints, "t_s") if joints else []
+    planned_end = planned_t[-1] if planned_t else None
+    picked, measured_t = controller_window(controller, planned_end)
+    measured_rows = controller["rows"] if controller else []
+    figure, axes = plt.subplots(NUM_JOINTS, 2, figsize=(14, 15), sharex=True)
+    position_mismatch, velocity_mismatch = [], []
     for index in range(NUM_JOINTS):
-        axis = flat[index]
-        if task_start is not None:
-            axis.axvspan(task_start, t[-1], color="tab:blue", alpha=0.05)
-        for failed_time in failed_times:
-            axis.axvline(failed_time, color="tab:red", alpha=0.3, linewidth=2.0)
-        axis.plot(t, col(joints, f"q{index + 1}_deg"), color="tab:blue",
-                  linewidth=1.0)
+        position_axis, velocity_axis = axes[index]
+        joint = index + 1
+        if joints:
+            planned_q = col(joints, f"q{joint}_deg")
+            planned_qdot = col(joints, f"qd{joint}_deg_s")
+            position_axis.plot(planned_t, planned_q, color=C_PLANNED,
+                               linewidth=1.2, label="planned")
+            velocity_axis.plot(planned_t, planned_qdot, color=C_PLANNED,
+                               linewidth=1.2, label="planned")
+        if controller:
+            measured_q = [finite_number(measured_rows[row][f"meas_j{joint}"])
+                          for row in picked]
+            measured_qdot = [finite_number(measured_rows[row][f"vel_j{joint}"])
+                             for row in picked]
+            position_axis.plot(measured_t, measured_q, color=C_MEASURED,
+                               linewidth=1.0, linestyle=(0, (2, 2)),
+                               label="measured")
+            velocity_axis.plot(measured_t, measured_qdot, color=C_MEASURED,
+                               linewidth=1.0, linestyle=(0, (2, 2)),
+                               label="measured")
+            if joints and measured_t:
+                start_row = min(range(len(measured_t)),
+                                key=lambda row: abs(measured_t[row]))
+                position_mismatch.append(abs(planned_q[0] - measured_q[start_row]))
+                velocity_mismatch.append(abs(planned_qdot[0] -
+                                             measured_qdot[start_row]))
         if limits is not None:
             lower = float(limits[index]["lower_deg"])
             upper = float(limits[index]["upper_deg"])
-            # A continuous joint carries a +/-1e20 sentinel; drawing that
-            # would flatten every real curve to a horizontal line.
             if abs(lower) < 1e6 and abs(upper) < 1e6:
-                axis.axhspan(lower, upper, color="tab:green", alpha=0.08)
-                axis.axhline(lower, color="tab:red", linewidth=0.8, linestyle="--")
-                axis.axhline(upper, color="tab:red", linewidth=0.8, linestyle="--")
-            else:
-                axis.text(0.02, 0.90, "continuous joint (no position limit)",
-                          transform=axis.transAxes, fontsize=7, color="grey")
-        axis.set_ylabel(f"q{index + 1} [deg]")
-        axis.grid(alpha=0.3)
-    flat[NUM_JOINTS].set_axis_off()
-    note = []
-    if task_start is not None:
-        note.append("blue shading = constrained task phase")
-    if failed_times:
-        note.append("red lines = IK-failed path samples")
-    if note:
-        flat[NUM_JOINTS].text(0.05, 0.6, "\n".join(note), fontsize=8)
-    for axis in (flat[5], flat[6]):
-        axis.set_xlabel("time [s]")
+                position_axis.axhline(lower, color=C_HARD, linewidth=0.7,
+                                     linestyle="--")
+                position_axis.axhline(upper, color=C_HARD, linewidth=0.7,
+                                     linestyle="--")
+        position_axis.set_ylabel(f"q{joint} [deg]")
+        velocity_axis.set_ylabel(f"qdot{joint} [deg/s]")
+    axes[0][0].set_title("joint position")
+    axes[0][1].set_title("joint velocity")
+    axes[0][0].legend(fontsize=7, loc="best")
+    axes[0][1].legend(fontsize=7, loc="best")
+    axes[-1][0].set_xlabel("time from planning request [s]")
+    axes[-1][1].set_xlabel("time from planning request [s]")
 
-    figure.suptitle(title_for(meta, "joint trajectory vs limits"), fontsize=10)
-    figure.tight_layout(rect=(0, 0, 1, 0.93))
+    notes = []
+    if joints is None:
+        notes.append("planned series unavailable: no executable trajectory")
+    if controller is None:
+        notes.append("measured series unavailable: no controller log")
+    if position_mismatch:
+        notes.append(
+            f"start max |planned-measured|: {max(position_mismatch):.4f} deg; "
+            f"qdot: {max(velocity_mismatch):.4f} deg/s")
+    if controller is not None and not controller["has_replan_edge"]:
+        notes.append("controller time aligned to first row: no replan edge recorded")
+    subtitle = title_for(meta, "planned/measured joint state")
+    if notes:
+        subtitle += "\n" + " | ".join(notes)
+    figure.suptitle(subtitle, fontsize=10)
+    figure.tight_layout(rect=(0, 0, 1, 0.94))
+    figure.savefig(outpath, dpi=130)
+    plt.close(figure)
+    return outpath
+
+
+def route_attempts(candidates):
+    if not candidates:
+        return []
+    return [row for row in candidates
+            if int(finite_number(row.get("duration_attempt"), 0)) > 0]
+
+
+def plot_clearance(meta, candidates, minimum_clearance_m,
+                   preferred_clearance_m, outpath):
+    attempts = route_attempts(candidates)
+    applicable = [row for row in attempts
+                  if row.get("worst_scene_object_id") or
+                  row.get("first_scene_violation_object_id")]
+    figure, axis = plt.subplots(figsize=(11, 4.8))
+    if applicable:
+        for ordinal, row in enumerate(applicable):
+            value = finite_number(row.get("minimum_scene_clearance_m"))
+            terminal = row.get("terminal_kind")
+            marker = "o" if terminal == "REACHED" else "s"
+            selected = row.get("selected") == "1"
+            executable = row.get("executable") == "1"
+            axis.scatter(ordinal, value * 1000.0, marker=marker,
+                         s=65 if selected else 35,
+                         facecolors=C_SELECTED if selected else
+                                    (C_PLANNED if executable else "none"),
+                         edgecolors=C_SELECTED if selected else
+                                    (C_PLANNED if executable else C_INVALID),
+                         linewidth=1.2)
+        axis.set_xticks(range(len(applicable)))
+        axis.set_xticklabels(
+            [f"{row.get('terminal_kind', '?').replace('GOAL_BLOCKED', 'short')} "
+             f"b{row.get('terminal_branch', '?')}/"
+             f"{row.get('route', '?')}/d{row.get('duration_attempt', '?')}"
+             for row in applicable], rotation=45, ha="right", fontsize=7)
+    else:
+        reason = meta.get("failure_reason", "")
+        axis.text(0.5, 0.55,
+                  "No entered GPMP2 candidate carries scene-clearance evidence.\n"
+                  + (f"Request outcome: {reason}" if reason else
+                     "The fixture has no prohibited scene pair."),
+                  ha="center", va="center", transform=axis.transAxes,
+                  color=C_INVALID if reason else C_REQUESTED)
+        axis.set_xticks([])
+    if minimum_clearance_m is not None:
+        axis.axhline(minimum_clearance_m * 1000.0, color=C_HARD,
+                    linestyle="--", linewidth=1.2,
+                    label=f"hard minimum {minimum_clearance_m * 1000.0:g} mm")
+    if preferred_clearance_m is not None:
+        axis.axhline(preferred_clearance_m * 1000.0, color=C_PREFERRED,
+                    linestyle=(0, (2, 2)), linewidth=1.2,
+                    label=f"preferred cap {preferred_clearance_m * 1000.0:g} mm")
+    axis.set_ylabel("minimum prohibited-pair clearance [mm]")
+    axis.set_xlabel("entered route candidate")
+    axis.set_title("Candidate minimum clearance against configured boundaries")
+    if minimum_clearance_m is not None or preferred_clearance_m is not None:
+        axis.legend(fontsize=8)
+    figure.suptitle(title_for(meta, "modelled clearance"), fontsize=10)
+    figure.tight_layout(rect=(0, 0, 1, 0.91))
+    figure.savefig(outpath, dpi=130)
+    plt.close(figure)
+    return outpath
+
+
+def plot_candidates(meta, candidates, outpath):
+    attempts = route_attempts(candidates)
+    figure, axes = plt.subplots(1, 2, figsize=(13, 5.2))
+    latency, disposition = axes
+    if attempts:
+        labels = []
+        for ordinal, row in enumerate(attempts):
+            solve_ms = finite_number(row.get("solve_time_s"), 0.0) * 1000.0
+            selected = row.get("selected") == "1"
+            executable = row.get("executable") == "1"
+            colour = C_SELECTED if selected else (C_PLANNED if executable
+                                                   else C_INVALID)
+            latency.barh(ordinal, solve_ms, color=colour, alpha=0.85)
+            labels.append(
+                f"{row.get('terminal_kind', '?').replace('GOAL_BLOCKED', 'short')} "
+                f"b{row.get('terminal_branch', '?')}/"
+                f"{row.get('route', '?')}/d{row.get('duration_attempt', '?')}")
+        latency.set_yticks(range(len(labels)))
+        latency.set_yticklabels(labels, fontsize=7)
+        latency.invert_yaxis()
+        counts = collections.Counter(
+            "selected" if row.get("selected") == "1" else
+            ("validated" if row.get("executable") == "1" else "invalid")
+            for row in attempts)
+        names = ["selected", "validated", "invalid"]
+        disposition.bar(names, [counts[name] for name in names],
+                        color=[C_SELECTED, C_PLANNED, C_INVALID])
+        for index, name in enumerate(names):
+            disposition.text(index, counts[name], str(counts[name]),
+                             ha="center", va="bottom", fontsize=8)
+    else:
+        latency.text(0.5, 0.5, "No GPMP2 route candidate entered",
+                     transform=latency.transAxes, ha="center", va="center",
+                     color=C_INVALID)
+        disposition.text(0.5, 0.5, "0 route attempts",
+                         transform=disposition.transAxes, ha="center",
+                         va="center")
+    latency.set_xlabel("recorded GPMP2 solve time [ms]")
+    latency.set_ylabel("candidate")
+    latency.set_title("Candidate latency")
+    disposition.set_ylabel("candidate count")
+    disposition.set_title("Candidate dispositions")
+    figure.suptitle(title_for(meta, "bounded candidate search"), fontsize=10)
+    figure.tight_layout(rect=(0, 0, 1, 0.92))
     figure.savefig(outpath, dpi=130)
     plt.close(figure)
     return outpath
@@ -305,7 +633,8 @@ def plot_path_ik(meta, path_ik, accept_m, accept_rad, outpath):
     axis3d.set_ylabel("y [m]")
     axis3d.set_zlabel("z [m]")
     axis3d.set_title("anchor outcomes along the path")
-    axis3d.legend(loc="upper left", fontsize=8)
+    if axis3d.get_legend_handles_labels()[0]:
+        axis3d.legend(loc="upper left", fontsize=8)
 
     axis_res = figure.add_subplot(2, 2, 2)
     axis_res.plot(progress, residual_mm, color="tab:blue", linewidth=1.0,
@@ -370,7 +699,7 @@ def plot_path_ik(meta, path_ik, accept_m, accept_rad, outpath):
     return outpath
 
 
-def table_window(path_ik, accept_m):
+def table_window(path_ik):
     """The rows worth reading closely: every failed sample plus 3 solved
     neighbours each side, or the 7 rows around the worst residual when
     everything solved. Returns (rows, note)."""
@@ -391,14 +720,14 @@ def table_window(path_ik, accept_m):
     return [path_ik[i] for i in sorted(picked)], note
 
 
-def write_report(meta, outdir, figures, path_ik, accept_m):
+def write_report(meta, outdir, figures, path_ik):
     """One page holding the summary, the figures and the per-sample table —
     the single thing to open after a planner run."""
     failed = not plan_is_executable(meta.get("status", "?"))
     colour = "#c0392b" if failed else "#1e8449"
     state = "FAILED" if failed else meta.get("status", "?")
 
-    rows, note = table_window(path_ik, accept_m)
+    rows, note = table_window(path_ik)
     table_columns = ["sample", "progress_pct", "status", "position_residual_m",
                      "orientation_residual_rad", "limit_margin_deg"] + \
                     [f"q{j}_deg" for j in range(1, NUM_JOINTS + 1)]
@@ -462,19 +791,27 @@ def write_report(meta, outdir, figures, path_ik, accept_m):
     return outpath
 
 
-def read_planner_yaml_value(planner_config, key):
-    """One scalar from planner.yaml, by simple key match rather than a YAML
-    parser — the file is the planner's, and this script must not become a
-    second opinion on how to read it."""
-    if planner_config is None or not planner_config.exists():
+def requested_point_from_candidates(candidates):
+    """Recover the authored point target from recorded evidence, if present."""
+    if not candidates:
         return None
-    for line in planner_config.read_text().splitlines():
-        stripped = line.strip()
-        if stripped.startswith(key + ":"):
-            try:
-                return float(stripped.split(":", 1)[1].split("#")[0].strip())
-            except ValueError:
-                return None
+    requested = [row for row in candidates
+                 if row.get("target_source") == "requested" and
+                 abs(finite_number(row.get("target_fraction"), 0.0) - 1.0) < 1e-12]
+    if not requested:
+        return None
+    row = requested[0]
+    values = [finite_number(row.get(name)) for name in
+              ("target_x_mount_m", "target_y_mount_m", "target_z_mount_m")]
+    return None if any(math.isnan(value) for value in values) else values
+
+
+def find_planner_config(debug_dir):
+    for candidate in (debug_dir / "planner.yaml",
+                      debug_dir.parent / "planner.yaml",
+                      debug_dir.parent / "config" / "planner.yaml"):
+        if candidate.exists():
+            return candidate
     return None
 
 
@@ -482,14 +819,26 @@ def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("debug_dir", help="directory written by --debug-dir")
+    parser.add_argument("debug_dir", nargs="?",
+                        help="directory written by --debug-dir")
     parser.add_argument("cart_traj", nargs="?", default=None,
                         help="saved planner stdout holding the CART_TRAJ block")
     parser.add_argument("-o", "--outdir", default=None,
                         help="directory for the outputs (default: the debug dir)")
     parser.add_argument("--planner-config", default=None,
-                        help="planner.yaml, for the acceptance tolerance lines")
+                        help="planner.yaml, for display geometry and thresholds")
+    parser.add_argument("--controller-log", default=None,
+                        help="recorded controller CSV with measured TCP/q/qdot")
+    parser.add_argument("--requested-path-ik", default=None,
+                        help="recorded requested path_ik.csv when replay failed preflight")
+    parser.add_argument("--requested-point-m", nargs=3, type=float, default=None,
+                        metavar=("X", "Y", "Z"),
+                        help="Mount-frame requested point when evidence has no candidate row")
+    parser.add_argument("--world-mount-identity", action="store_true",
+                        help="confirm world_T_mount is identity for request/scene overlay")
     args = parser.parse_args()
+    if args.debug_dir is None:
+        parser.error("DEBUG_DIR is required")
 
     debug_dir = Path(args.debug_dir)
     if not debug_dir.is_dir():
@@ -499,10 +848,17 @@ def main():
     if not meta:
         raise SystemExit(f"{debug_dir}: no meta.csv — not a --debug-dir dump")
 
-    # Say what this plan DID before saying anything about figures. A failed
-    # plan emits no trajectory, so half the panels are empty and the fallback
-    # notes below read as tooling breakage unless the failure is stated first
-    # and stated loudly.
+    joints = read_csv(debug_dir / "joints.csv")
+    limits = read_csv(debug_dir / "joint_limits.csv")
+    path_ik = read_csv(debug_dir / "path_ik.csv")
+    candidates = read_csv(debug_dir / "candidate_attempts.csv")
+    requested_path = (read_csv(Path(args.requested_path_ik))
+                      if args.requested_path_ik else path_ik)
+    requested_point = (args.requested_point_m or
+                       requested_point_from_candidates(candidates))
+
+    # Say what this plan DID before saying anything about figures. Missing
+    # trajectory/path artifacts are normal for preflight and point failures.
     status = meta.get("status", "?")
     if not plan_is_executable(status):
         print(f"PLAN FAILED ({meta.get('arm', '?')} arm, "
@@ -510,47 +866,59 @@ def main():
               f"{meta.get('failure_reason', '')}", file=sys.stderr)
         print("  No trajectory was emitted, so there is nothing to draw for "
               "the planned motion.", file=sys.stderr)
-        print("  The figures below show the REQUESTED path and the IK walk "
-              "that failed on it.", file=sys.stderr)
+        if path_ik:
+            print("  The figures below show the requested path and its "
+                  "recorded IK walk.", file=sys.stderr)
+        elif requested_path:
+            print("  The figures below show the requested path and available "
+                  "telemetry; this replay recorded no IK walk.", file=sys.stderr)
+        else:
+            print("  The figures below show available request, candidate, and "
+                  "telemetry evidence; no path IK walk was recorded.",
+                  file=sys.stderr)
     else:
         print(f"plan {status} ({meta.get('arm', '?')} arm, "
               f"{meta.get('plan_kind', '?')} plan)", file=sys.stderr)
-
-    joints = read_csv(debug_dir / "joints.csv")
-    limits = read_csv(debug_dir / "joint_limits.csv")
-    path_ik = read_csv(debug_dir / "path_ik.csv")
-    cart = read_cart_traj(Path(args.cart_traj)) if args.cart_traj else None
+    cart_path = Path(args.cart_traj) if args.cart_traj else debug_dir / "cart_traj.txt"
+    cart = read_cart_traj(cart_path) if cart_path.exists() else None
     if cart is not None and not cart[0]:
         reason = ("because the plan failed before emitting one"
                   if not plan_is_executable(status)
                   else "— is this the planner's saved stdout?")
-        print(f"  {args.cart_traj} holds no CART_TRAJ block {reason}.",
+        print(f"  {cart_path} holds no CART_TRAJ block {reason}.",
               file=sys.stderr)
         cart = None
 
     config_path = (Path(args.planner_config) if args.planner_config
-                   else debug_dir.parent / "config" / "planner.yaml")
-    accept_m = read_planner_yaml_value(config_path, "maximum_planning_error_m")
-    accept_rad = read_planner_yaml_value(config_path,
-                                         "maximum_orientation_error_rad")
+                   else find_planner_config(debug_dir))
+    plot_config = read_plot_config(config_path)
+    accept_m = plot_config["maximum_planning_error_m"]
+    accept_rad = plot_config["maximum_orientation_error_rad"]
 
     outdir = Path(args.outdir) if args.outdir else debug_dir
     outdir.mkdir(parents=True, exist_ok=True)
+    controller = read_controller_log(
+        Path(args.controller_log) if args.controller_log else None)
+    frames_coincident = (args.world_mount_identity or
+                         meta.get("world_T_mount") == "identity")
 
     written = [
-        plot_cartesian(meta, cart, path_ik, outdir / "plan_cartesian.png"),
-        plot_joints(meta, joints, limits, path_ik, outdir / "plan_joints.png"),
+        plot_cartesian(meta, cart, requested_path, controller,
+                       plot_config["scene"], requested_point,
+                       frames_coincident, outdir / "plan_cartesian.png"),
+        plot_joints(meta, joints, limits, controller,
+                    outdir / "plan_joints.png"),
+        plot_clearance(meta, candidates, plot_config["minimum_clearance_m"],
+                       plot_config["preferred_clearance_m"],
+                       outdir / "plan_clearance.png"),
+        plot_candidates(meta, candidates, outdir / "plan_candidates.png"),
         plot_path_ik(meta, path_ik, accept_m, accept_rad,
                      outdir / "plan_path_ik.png"),
     ]
-    if joints is None:
-        print("  (no joints figure: joints.csv is absent, which is expected "
-              "when the plan failed before a trajectory existed)",
-              file=sys.stderr)
     produced = [p for p in written if p is not None]
     if not produced:
         raise SystemExit(f"{debug_dir}: nothing to plot")
-    report = write_report(meta, outdir, produced, path_ik, accept_m)
+    report = write_report(meta, outdir, produced, path_ik)
     for path in produced:
         print(path)
     print(report)

@@ -27,6 +27,33 @@ Terms used below, defined once:
   and where it actually is. Grows when the command demands more
   acceleration or torque than the motor can deliver.
 
+## Current implemented planner limits (2026-08-23)
+
+The numbered survey below preserves the pre-change evidence and reasoning. The
+active source is now `planning/config/joint_limits.yaml`; it separates each
+authored hardware value from the effective value the planner validates:
+
+| Quantity | Authored hardware value | Planner fraction | Effective planner value |
+|---|---:|---:|---:|
+| Velocity, joints 1–4 | 1.3963 rad/s (80.0021 deg/s) | 0.95 | 1.326485 rad/s (76.002 deg/s) |
+| Velocity, joints 5–7 | 1.2218 rad/s (70.004 deg/s) | 0.95 | 1.16071 rad/s (66.504 deg/s) |
+| Acceleration, joints 1–4 | 5.2 rad/s² (297.94 deg/s²) | 1.0 | 5.2 rad/s² |
+| Acceleration, joints 5–7 | 10.0 rad/s² (572.96 deg/s²) | 1.0 | 10.0 rad/s² |
+
+`createJointLimits` derives both sets once. GPMP2 receives effective position
+and velocity constraints. The one executable boundary, `ValidatePlan`, checks
+the dense result against each joint's effective velocity and acceleration. If
+dynamics alone fail, `PlanSolver` computes the required duration increase and
+re-solves from scratch, for at most three duration attempts. It never makes a
+failed result look valid by scaling sampled qdot after the solve.
+
+The acceleration table remains an interim planning bound: Kinova Table 43 is
+stated for angular-joystick and joint-trajectory modes, not this low-level
+position stream. Therefore passing the offline acceleration check is not proof
+of low-level torque/following-error margin. Exact completion remains a
+Christian-authorized supervised hardware observation; no planner status alone
+establishes physical completion or human-safe clearance.
+
 ## 1. Limits the robot itself enforces
 
 These can fault the arm. Everything else in this document is software we
@@ -154,7 +181,8 @@ surveyed:
 - Planner `joint_limits.yaml` velocity table: same 76/66.5 (in rad/s),
   replacing Table 41's 50.
 - §3's max-vs-max validator bug fixed: per-joint comparison
-  (`DynamicLimitsValid`, `PathValidationReport.h`) with a regression test.
+  (now the componentwise dynamic checks in `ValidatePlan`) with a regression
+  test.
 - `nominal_speed_mps` rail 0.25 → 2.0; Christian set the value to 0.25
   and `min_duration_s` to 1.0, `approach_velocity_fraction` 0.9,
   `approach_min_duration_s` 0.1 (his live edits, kept).

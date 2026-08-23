@@ -1,21 +1,29 @@
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <optional>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "CartesianPath.h"
 #include "MountSdf.h"
 #include "PathAssembly.h"
 #include "PinocchioKinematicsAdapter.h"
+#include "PlanDebugDump.h"
 #include "PlanSolver.h"
 #include "PlannerConfig.h"
 #include "PlannerModel.h"
+#include "WorldCartesianTrajectoryWire.h"
+#include "WorldTrajectoryProjection.h"
 
 namespace {
 
 int failures = 0;
+std::optional<std::filesystem::path> artifact_root;
 
 void Check(bool condition, const std::string& message)
 {
@@ -23,6 +31,196 @@ void Check(bool condition, const std::string& message)
         std::printf("FAIL: %s\n", message.c_str());
         ++failures;
     }
+}
+
+void CheckArtifactWrite(const std::optional<std::string>& error,
+                        const std::string& request_id)
+{
+    Check(!error, request_id + ": " + error.value_or(""));
+}
+
+const char* SphereGroupName(CollisionSphereGroup group)
+{
+    switch (group) {
+    case CollisionSphereGroup::kMountInterface: return "mount_interface";
+    case CollisionSphereGroup::kProximalArm: return "proximal_arm";
+    case CollisionSphereGroup::kUpperArm: return "upper_arm";
+    case CollisionSphereGroup::kForearm: return "forearm";
+    case CollisionSphereGroup::kTool: return "tool";
+    }
+    return "unknown";
+}
+
+void WriteFixturePlannerYaml(const std::filesystem::path& path,
+                             const PlannerConfig& config,
+                             const std::string& request_id)
+{
+    std::ofstream file(path);
+    file << std::setprecision(17)
+         << "# Display-only snapshot of the exact in-process fixture scene.\n"
+         << "# It is not a complete planner configuration.\n"
+         << "path_following:\n"
+         << "  maximum_planning_error_m: "
+         << config.path_following.maximum_planning_error_m << "\n"
+         << "  maximum_orientation_error_rad: "
+         << config.path_following.maximum_orientation_error_rad << "\n"
+         << "obstacles:\n"
+         << "  minimum_clearance_m: " << config.minimum_clearance_m << "\n"
+         << "  preferred_clearance_m: "
+         << config.optimizer.preferred_clearance_m << "\n"
+         << "  scene:\n";
+    for (const NamedStaticObstacle& obstacle : config.scene) {
+        file << "    " << obstacle.id << ":\n"
+             << "      enabled: " << (obstacle.enabled ? "true" : "false")
+             << "\n"
+             << "      shape: " << StaticObstacleShapeName(obstacle.geometry)
+             << "\n";
+        std::visit(
+            [&](const auto& primitive) {
+                using Primitive = std::decay_t<decltype(primitive)>;
+                const Eigen::Vector3d center = [&]() {
+                    if constexpr (std::is_same_v<Primitive, AxisAlignedBox>)
+                        return primitive.center;
+                    else
+                        return primitive.center_mount_m;
+                }();
+                file << "      center_mount_m: [" << center.x() << ", "
+                     << center.y() << ", " << center.z() << "]\n";
+                if constexpr (std::is_same_v<Primitive, AxisAlignedBox>) {
+                    file << "      half_extent_m: ["
+                         << primitive.half_extent.x() << ", "
+                         << primitive.half_extent.y() << ", "
+                         << primitive.half_extent.z() << "]\n";
+                } else {
+                    file << "      radius_m: " << primitive.radius_m << "\n"
+                         << "      height_m: " << primitive.height_m << "\n";
+                }
+            },
+            obstacle.geometry);
+        file << "      permitted_sphere_groups: [";
+        for (std::size_t index = 0;
+             index < obstacle.permitted_sphere_groups.size(); ++index) {
+            if (index > 0)
+                file << ", ";
+            file << SphereGroupName(obstacle.permitted_sphere_groups[index]);
+        }
+        file << "]\n";
+    }
+    Check(static_cast<bool>(file), request_id + ": failed writing planner.yaml");
+}
+
+void WriteCommonArtifacts(const std::string& request_id,
+                          const std::string& plan_kind,
+                          PlanStatus expected_status,
+                          bool motion_capable,
+                          const PlannerConfig& config,
+                          const PlannerModel& model,
+                          PlanStatus status,
+                          const std::string& failure_reason,
+                          const std::optional<TrajectoryResult>& trajectory,
+                          const PlanValidationReport& validation,
+                          double final_goal_error_m,
+                          double total_time_s,
+                          const PlanJointLimits& limits,
+                          const std::vector<CandidateEvidence>& attempts,
+                          const std::optional<std::size_t>& selected_attempt,
+                          const CartesianPath* path,
+                          const PathIkResult* walk)
+{
+    if (!artifact_root)
+        return;
+
+    const std::filesystem::path directory = *artifact_root / request_id;
+    std::error_code directory_error;
+    std::filesystem::create_directories(directory, directory_error);
+    Check(!directory_error,
+          request_id + ": cannot create artifact directory: " +
+              directory_error.message());
+    if (directory_error)
+        return;
+
+    PlanDebugMeta meta;
+    meta.arm = "right";
+    meta.plan_kind = plan_kind;
+    meta.status = status;
+    meta.failure_reason = failure_reason;
+    meta.final_goal_error_m = final_goal_error_m;
+    meta.total_time_s = total_time_s;
+    meta.extra = {
+        {"request_id", request_id},
+        {"evidence_level", "unit test"},
+        {"scenario_class", motion_capable ? "motion_capable" :
+                                             "deliberate_negative"},
+        {"expected_status", PlanStatusName(expected_status)},
+        {"minimum_clearance_m", std::to_string(config.minimum_clearance_m)},
+        {"preferred_clearance_m",
+         std::to_string(config.optimizer.preferred_clearance_m)},
+        {"world_T_mount", "identity"},
+    };
+    if (status != PlanStatus::kFailed) {
+        meta.extra.emplace_back(
+            "requested_terminal_position_error_m",
+            std::to_string(validation.requested_terminal_position_error_m));
+        meta.extra.emplace_back(
+            "requested_terminal_orientation_error_rad",
+            std::to_string(validation.requested_terminal_orientation_error_rad));
+    }
+
+    const std::string output = directory.string();
+    WriteFixturePlannerYaml(directory / "planner.yaml", config, request_id);
+    CheckArtifactWrite(WritePlanMetaCsv(output, meta), request_id);
+    CheckArtifactWrite(WriteJointLimitsCsv(output, limits), request_id);
+    CheckArtifactWrite(
+        WriteCandidateAttemptsCsv(output, attempts, selected_attempt), request_id);
+    if (trajectory && !trajectory->trajectory_pos.empty()) {
+        CheckArtifactWrite(WriteJointTrajectoryCsv(output, *trajectory), request_id);
+        try {
+            const WorldCartesianTrajectory projected = ProjectWorldTrajectory(
+                model, Eigen::Isometry3d::Identity(),
+                trajectory->trajectory_pos, trajectory->trajectory_vel,
+                total_time_s, 1, 1);
+            std::ofstream cart(directory / "cart_traj.txt");
+            cart << FormatWorldCartesianTrajectoryBlock(projected);
+            Check(static_cast<bool>(cart),
+                  request_id + ": failed writing cart_traj.txt");
+        } catch (const std::exception& error) {
+            Check(false, request_id + ": Cartesian projection failed: " +
+                             error.what());
+        }
+    }
+    if (path != nullptr && walk != nullptr)
+        CheckArtifactWrite(WritePathIkCsv(output, *path, *walk, limits),
+                           request_id);
+}
+
+void WritePointArtifacts(const std::string& request_id,
+                         PlanStatus expected_status,
+                         bool motion_capable,
+                         const PlannerConfig& config,
+                         const PlannerModel& model,
+                         const PlanOutcome& result)
+{
+    WriteCommonArtifacts(
+        request_id, "point", expected_status, motion_capable, config, model,
+        result.status, result.failure_reason, result.trajectory, result.validation,
+        result.final_goal_error_m, result.total_time_sec, result.joint_limits,
+        result.candidate_attempts, result.selected_candidate_attempt, nullptr,
+        nullptr);
+}
+
+void WritePathArtifacts(const std::string& request_id,
+                        PlanStatus expected_status,
+                        const PlannerConfig& config,
+                        const PlannerModel& model,
+                        const CartesianPath& path,
+                        const PathPlanOutcome& result)
+{
+    WriteCommonArtifacts(
+        request_id, "path", expected_status, true, config, model, result.status,
+        result.failure_reason, result.trajectory, result.validation,
+        result.validation.requested_terminal_position_error_m,
+        result.total_time_sec, result.joint_limits, result.candidate_attempts,
+        result.selected_candidate_attempt, &path, &result.ik_walk);
 }
 
 Eigen::Matrix<double, 7, 1> StartQ()
@@ -223,6 +421,8 @@ void FixturePointDetour(const PlannerModel& model, const std::string& limits)
     const gtsam::Pose3 goal = PoseFromQ(model, q_goal);
     PlanRequest request{q_start, std::nullopt, goal.translation(), goal.rotation().matrix()};
     const PlanOutcome result = SolveToPosition(model, request, limits, config);
+    WritePointArtifacts("synthetic_point_detour", PlanStatus::kReached, true,
+                        config, model, result);
     Check(result.status == PlanStatus::kReached && result.trajectory,
           "point detour reaches exact terminal");
     if (result.trajectory)
@@ -285,6 +485,8 @@ void FixtureTraceDetourAndRejoin(const PlannerModel& model, const std::string& l
           "requested trace crosses prohibited geometry");
     const PathPlanOutcome result =
         SolveAlongPath(model, path, q_start, std::nullopt, limits, config);
+    WritePathArtifacts("synthetic_trace_detour_rejoin", PlanStatus::kReached,
+                       config, model, path, result);
     Check(result.status == PlanStatus::kReached && result.trajectory,
           "trace detour rejoins exact terminal");
     if (result.trajectory) {
@@ -327,6 +529,8 @@ void FixtureExactRoutesExhaustThenShorten(const PlannerModel& model,
         AllGroupsExcept(CollisionSphereGroup::kTool)});
     PlanRequest request{q_start, std::nullopt, goal.translation(), goal.rotation().matrix()};
     const PlanOutcome result = SolveToPosition(model, request, limits, config);
+    WritePointArtifacts("synthetic_exact_exhausted_shortened",
+                        PlanStatus::kGoalBlocked, true, config, model, result);
     Check(result.status == PlanStatus::kGoalBlocked && result.trajectory,
           "exhausted exact routes enter shortened search");
     Check(result.selected_candidate_attempt.has_value(),
@@ -367,6 +571,8 @@ void FixtureNoShortenedRoute(const PlannerModel& model, const std::string& limit
     const gtsam::Pose3 goal = PoseFromQ(model, q_goal);
     PlanRequest request{q_start, qdot_start, goal.translation(), goal.rotation().matrix()};
     const PlanOutcome result = SolveToPosition(model, request, limits, config);
+    WritePointArtifacts("synthetic_no_shortened_route", PlanStatus::kFailed,
+                        false, config, model, result);
     Check(result.status == PlanStatus::kFailed && !result.trajectory,
           "exhausted shortened search returns FAILED without trajectory");
     Check(!result.terminal_candidate && !result.selected_candidate_attempt,
@@ -394,6 +600,8 @@ void FixtureMovingStartDurationRepair(const PlannerModel& model,
     const gtsam::Pose3 goal = PoseFromQ(model, q_goal);
     PlanRequest request{q_start, qdot_start, goal.translation(), goal.rotation().matrix()};
     const PlanOutcome result = SolveToPosition(model, request, limits, config);
+    WritePointArtifacts("synthetic_moving_start_duration_repair",
+                        PlanStatus::kReached, true, config, model, result);
     Check(result.status == PlanStatus::kReached && result.trajectory,
           "moving-start plan reaches exact terminal");
     if (!result.trajectory)
@@ -414,9 +622,12 @@ void FixtureMovingStartDurationRepair(const PlannerModel& model,
 
 int main(int argc, char** argv)
 {
-    Check(argc == 2, "usage: test_obstacle_aware_planner dh_tool.yaml");
-    if (argc != 2)
+    Check(argc == 2 || argc == 3,
+          "usage: test_obstacle_aware_planner dh_tool.yaml [artifact_root]");
+    if (argc != 2 && argc != 3)
         return 1;
+    if (argc == 3)
+        artifact_root = std::filesystem::path(argv[2]);
     const PlannerModel model = LoadPlannerModel(argv[1], /*has_tool=*/true);
     const std::string limits = "../config/joint_limits.yaml";
     FixturePointDetour(model, limits);
