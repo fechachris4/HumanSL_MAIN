@@ -206,12 +206,11 @@ std::optional<std::string> WritePlanMetaCsv(const std::string& directory,
     if (const auto error = OpenCsv(directory, "meta.csv", file))
         return error;
 
-    // Quoted values: the status field carries a solver error message, which
-    // contains commas.
     file << "key,value\n"
          << "arm,\"" << meta.arm << "\"\n"
          << "plan_kind,\"" << meta.plan_kind << "\"\n"
-         << "status,\"" << meta.status << "\"\n"
+         << "status,\"" << PlanStatusName(meta.status) << "\"\n"
+         << "failure_reason,\"" << meta.failure_reason << "\"\n"
          << "final_goal_error_m," << meta.final_goal_error_m << "\n"
          << "total_time_s," << meta.total_time_s << "\n";
     for (const auto& [key, value] : meta.extra)

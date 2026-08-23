@@ -69,14 +69,12 @@ double JointLimitMarginRad(const Eigen::Matrix<double, 7, 1>& q_rad,
 struct PlanDebugMeta {
     std::string arm;
     std::string plan_kind;  // "point" or "path"
-    std::string status;     // "ok", or the error text when the plan failed
+    PlanStatus status = PlanStatus::kFailed;
+    std::string failure_reason;
     double final_goal_error_m = 0.0;
     double total_time_s = 0.0;
     // Site-specific summary numbers, written as additional key,value rows in
-    // the order given. The two solve sites have genuinely different evidence
-    // (a point plan has no validation report; a failed path plan has no
-    // trajectory), so a fixed field list would be mostly empty at one site
-    // or the other.
+    // the order given.
     std::vector<std::pair<std::string, std::string>> extra;
 };
 

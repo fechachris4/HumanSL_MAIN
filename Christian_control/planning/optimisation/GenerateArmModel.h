@@ -2,6 +2,19 @@
 
 #include "utils.h"
 #include "../src/StaticScene.h"
+#include <array>
+
+struct SelfCollisionPair {
+    std::size_t first_sphere_index;
+    std::size_t second_sphere_index;
+    double minimum_surface_clearance_m;
+};
+
+inline constexpr std::array<SelfCollisionPair, 3> kSelfCollisionPairs{{
+    {0, 4, 0.03},
+    {0, 6, 0.03},
+    {2, 6, 0.03},
+}};
 #include <gpmp2/kinematics/Arm.h>
 #include <gpmp2/kinematics/ArmModel.h>
 #include <gpmp2/kinematics/RobotModel.h>

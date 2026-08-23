@@ -7,7 +7,7 @@
 #include "PathAssembly.h"
 #include "PathIk.h"
 #include "TrajectoryOptimization.h"
-#include "ValidatePath.h"
+#include "ValidatePlan.h"
 #include "TrajectoryInitiation.h"
 
 PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& request,
@@ -66,24 +66,42 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
         std::optional<gtsam::Vector> start_vel;
         if (request.qdot_start_rad_s)
             start_vel = gtsam::Vector(*request.qdot_start_rad_s);
-        outcome.result = optimizeJointTrajectory(
+        TrajectoryResult solved = optimizeJointTrajectory(
             *model.arm_model, obstacle_fields, init.values, goal_pose,
             gtsam::Vector(request.q_start_rad), start_vel,
             pos_limits, vel_limits,
             total_time_step, total_time_sec, config.optimizer);
-        if (outcome.result.trajectory_pos.empty())
+        if (solved.trajectory_pos.empty())
         {
-            outcome.error = "optimizer returned an empty trajectory";
+            outcome.failure_reason = "optimizer returned an empty trajectory";
             return outcome;
         }
-        Eigen::Matrix<double, 7, 1> q_final(outcome.result.trajectory_pos.back());
+        PlanValidationInputs inputs;
+        inputs.measured_q_rad = request.q_start_rad;
+        inputs.measured_qdot_rad_s = request.qdot_start_rad_s;
+        inputs.position_lower_rad = limits.position_rad.lower;
+        inputs.position_upper_rad = limits.position_rad.upper;
+        inputs.effective_velocity_rad_s = limits.effective_velocity_rad_s.upper;
+        inputs.effective_acceleration_rad_s2 = limits.effective_acceleration_rad_s2.upper;
+        inputs.obstacle_fields = &obstacle_fields;
+        inputs.minimum_clearance_m = config.minimum_clearance_m;
+        inputs.requested_terminal_mount = goal_pose;
+        inputs.candidate_terminal_mount = goal_pose;
+        inputs.intended_status = PlanStatus::kReached;
+        inputs.validation_dt_s = config.path_following.validation_dt_s;
+        outcome.validation = ValidatePlan(model, solved, total_time_sec, inputs);
         outcome.final_goal_error_m =
-            (ToolPositionInMount(model, q_final) - request.goal_position_m).norm();
-        outcome.ok = true;
+            outcome.validation.requested_terminal_position_error_m;
+        if (outcome.validation.executable) {
+            outcome.status = PlanStatus::kReached;
+            outcome.trajectory = std::move(solved);
+        } else {
+            outcome.failure_reason = outcome.validation.failure_reason;
+        }
     }
     catch (const std::exception& exception)
     {
-        outcome.error = exception.what();
+        outcome.failure_reason = exception.what();
     }
     return outcome;
 }
@@ -92,121 +110,13 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
 // Cartesian path following
 // ---------------------------------------------------------------
 
-namespace {
-
-// Duration multiplier for a fresh solve when the validated trajectory exceeds
-// a dynamic limit. The waypoint geometry is retained, but the optimizer is
-// rerun at the longer duration rather than modifying solved samples.
-//
-//   alpha = max(1, max|qdot|/qdot_max, sqrt(max|qddot|/qddot_max))
-//
-// The multiplier uses the same velocity/acceleration scaling law to select
-// the next duration; the fresh solve determines its own resulting samples.
-double TimeScalingFactor(const PathValidationReport& report) {
-    double alpha = 1.0;
-    alpha = std::max(alpha, report.max_velocity_limit_ratio);
-    alpha = std::max(alpha, std::sqrt(report.max_acceleration_limit_ratio));
-    return alpha;
-}
-
-// Plain-Eigen view of the exact final dense GPMP2 artefact. The old path
-// converted it through a 1,000-row joint wire block before validation,
-// which necessarily discarded most states of a multi-second dense solve.
-TimedJointTrajectory DenseValidationTrajectory(
-    const TrajectoryResult& result, double duration_s)
-{
-    TimedJointTrajectory dense;
-    if (result.trajectory_pos.size() < 2 ||
-        result.trajectory_pos.size() != result.trajectory_vel.size() ||
-        !(duration_s > 0.0)) {
-        dense.error = "invalid dense trajectory dimensions or duration";
-        return dense;
-    }
-    dense.valid = true;
-    dense.duration_s = duration_s;
-    dense.samples.reserve(result.trajectory_pos.size());
-    const double dt_s =
-        duration_s / static_cast<double>(result.trajectory_pos.size() - 1);
-    for (std::size_t index = 0; index < result.trajectory_pos.size(); ++index) {
-        if (result.trajectory_pos[index].size() != 7 ||
-            result.trajectory_vel[index].size() != 7) {
-            dense = TimedJointTrajectory{};
-            dense.error = "dense trajectory contains a non-seven-dimensional state";
-            return dense;
-        }
-        TimedJointSample sample;
-        sample.t_s = static_cast<double>(index) * dt_s;
-        sample.q_rad = result.trajectory_pos[index];
-        sample.qdot_rad_s = result.trajectory_vel[index];
-        dense.samples.push_back(sample);
-    }
-    return dense;
-}
-
-// Hermite sampler over the dense result. ValidatePlannedPath asks for this
-// only at the dense timestamps when attributing transport loss, but keeping
-// arbitrary-time semantics makes the boundary explicit and testable.
-TimedJointSampler MakeDenseSampler(
-    const TrajectoryResult& result, double duration_s)
-{
-    return [&result, duration_s](double t_s) {
-        TimedJointSample sample;
-        sample.t_s = t_s;
-        const std::size_t count = result.trajectory_pos.size();
-        if (count < 2 || result.trajectory_vel.size() != count ||
-            !(duration_s > 0.0))
-            return sample;
-        if (!(t_s > 0.0)) {
-            sample.q_rad = result.trajectory_pos.front();
-            sample.qdot_rad_s = result.trajectory_vel.front();
-            return sample;
-        }
-        if (t_s >= duration_s) {
-            sample.q_rad = result.trajectory_pos.back();
-            sample.qdot_rad_s = result.trajectory_vel.back();
-            return sample;
-        }
-
-        const double dt_s = duration_s / static_cast<double>(count - 1);
-        const std::size_t lower = std::min(
-            count - 2, static_cast<std::size_t>(std::floor(t_s / dt_s)));
-        const std::size_t upper = lower + 1;
-        const double u = (t_s - static_cast<double>(lower) * dt_s) / dt_s;
-        const double u2 = u * u;
-        const double u3 = u2 * u;
-        const double h00 = 2.0 * u3 - 3.0 * u2 + 1.0;
-        const double h10 = u3 - 2.0 * u2 + u;
-        const double h01 = -2.0 * u3 + 3.0 * u2;
-        const double h11 = u3 - u2;
-        const double d00 = 6.0 * u2 - 6.0 * u;
-        const double d10 = 3.0 * u2 - 4.0 * u + 1.0;
-        const double d01 = -6.0 * u2 + 6.0 * u;
-        const double d11 = 3.0 * u2 - 2.0 * u;
-        sample.q_rad =
-            h00 * result.trajectory_pos[lower] +
-            h10 * dt_s * result.trajectory_vel[lower] +
-            h01 * result.trajectory_pos[upper] +
-            h11 * dt_s * result.trajectory_vel[upper];
-        sample.qdot_rad_s =
-            (d00 * result.trajectory_pos[lower] +
-             d01 * result.trajectory_pos[upper]) /
-                dt_s +
-            d10 * result.trajectory_vel[lower] +
-            d11 * result.trajectory_vel[upper];
-        return sample;
-    };
-}
-
-}  // namespace
-
 PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const CartesianPath& task_path,
                                const Eigen::Matrix<double, 7, 1>& q_start_rad,
                                const std::optional<Eigen::Matrix<double, 7, 1>>&
                                    qdot_start_rad_s,
                                const std::string& joint_limits_yaml,
-                               const PlannerConfig& config,
-                               const ValidationInputs& validation_template) {
+                               const PlannerConfig& config) {
     PathPlanOutcome outcome;
     try {
         const PlannerJointLimits limits = createJointLimits(joint_limits_yaml);
@@ -257,7 +167,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             // The one initialization failure left: the path's entry pose.
             // Failed intermediate anchors are dropped and interpolated over;
             // nothing can interpolate toward an unknown entry.
-            outcome.error =
+            outcome.failure_reason =
                 "path IK initialization failed: the path entry pose could "
                 "not be solved from the measured start configuration within "
                 "the bounded search";
@@ -291,27 +201,12 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         std::optional<gtsam::Vector> start_vel;
         if (qdot_start_rad_s)
             start_vel = gtsam::Vector(*qdot_start_rad_s);
-        const std::string sdf_contents = DescribeStaticScene(config.scene, grid);
-
         // ---- 3. solve and validate, rebuilding every duration attempt ---
         // Time scaling changes qdot and timestamps, so the dense view is
         // rebuilt and re-measured on every pass. No wire decimation sits
         // between the final GPMP2 artefact and this validation.
         constexpr int kMaxScalingPasses = 3;
         const double base_duration_s = assembled.total_duration_s;
-        ValidationInputs inputs = validation_template;
-        inputs.desired_task_path = &task_path;
-        inputs.measured_start = q_start_rad;
-        inputs.validation_dt_s = config.path_following.validation_dt_s;
-        inputs.maximum_planning_error_m = config.path_following.maximum_planning_error_m;
-        inputs.maximum_orientation_error_rad =
-            config.path_following.maximum_orientation_error_rad;
-        for (int j = 0; j < 7; ++j) {
-            inputs.joint_velocity_limits_rad_s(j) = vel_limits.upper(j);
-            inputs.joint_acceleration_limits_rad_s2(j) =
-                limits.effective_acceleration_rad_s2.upper(j);
-        }
-
         // Where the traced phase begins, as a FRACTION of the base trajectory.
         // Each longer-duration attempt rescales waypoint times and validates
         // the newly solved trajectory against the corresponding task window.
@@ -322,8 +217,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         double duration_s = base_duration_s;
         for (int pass = 0; pass < kMaxScalingPasses; ++pass) {
             outcome.time_scaling_passes = pass + 1;
-            inputs.task_start_time_s = duration_s * task_start_fraction;
-            outcome.task_start_time_s = inputs.task_start_time_s;
+            const double task_start_time_s = duration_s * task_start_fraction;
+            outcome.task_start_time_s = task_start_time_s;
 
             const double time_scale = duration_s / base_duration_s;
             std::vector<OptimisationWaypoint> attempt_waypoints =
@@ -354,45 +249,57 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                 assembled.zero_velocity_indices, pos_limits, vel_limits,
                 duration_s, config.optimizer);
             if (solved.trajectory_pos.empty()) {
-                outcome.error = "optimizer returned an empty trajectory";
+                outcome.failure_reason = "optimizer returned an empty trajectory";
                 return outcome;
             }
 
-            const TimedJointTrajectory reconstructed =
-                DenseValidationTrajectory(solved, duration_s);
-            if (!reconstructed.valid) {
-                outcome.error = "dense trajectory is invalid: " +
-                                reconstructed.error;
-                return outcome;
-            }
-            inputs.validation_dt_s =
-                duration_s /
-                static_cast<double>(solved.trajectory_pos.size() - 1);
-            const auto sample_at = MakeDenseSampler(solved, duration_s);
-            const PathValidationReport report = ValidatePlannedPath(
-                model, reconstructed, solved.trajectory_pos, duration_s, sample_at,
-                obstacle_fields, sdf_contents, inputs, /*optimiser_converged=*/true);
+            PlanValidationInputs plan_inputs;
+            plan_inputs.measured_q_rad = q_start_rad;
+            plan_inputs.measured_qdot_rad_s = qdot_start_rad_s;
+            plan_inputs.position_lower_rad = limits.position_rad.lower;
+            plan_inputs.position_upper_rad = limits.position_rad.upper;
+            plan_inputs.effective_velocity_rad_s = limits.effective_velocity_rad_s.upper;
+            plan_inputs.effective_acceleration_rad_s2 = limits.effective_acceleration_rad_s2.upper;
+            plan_inputs.obstacle_fields = &obstacle_fields;
+            plan_inputs.minimum_clearance_m = config.minimum_clearance_m;
+            plan_inputs.requested_terminal_mount =
+                gtsam::Pose3(gtsam::Rot3(task_path.samples.back().pose.linear()),
+                             gtsam::Point3(task_path.samples.back().pose.translation()));
+            plan_inputs.candidate_terminal_mount = plan_inputs.requested_terminal_mount;
+            plan_inputs.intended_status = PlanStatus::kReached;
+            plan_inputs.desired_task_path = &task_path;
+            plan_inputs.task_start_time_s = task_start_time_s;
+            plan_inputs.validation_dt_s = config.path_following.validation_dt_s;
+            const PlanValidationReport report =
+                ValidatePlan(model, solved, duration_s, plan_inputs);
 
-            outcome.result = solved;
-            outcome.report = report;
+            outcome.validation = report;
             outcome.total_time_sec = duration_s;
 
             // Fully inside both dynamic limits: nothing left to repair.
             // (An unset velocity limit reads as an infinite ratio and an
             // unconfigured acceleration table as 0, so this keeps the old
             // pass/skip semantics.)
-            if (report.max_velocity_limit_ratio <= 1.0 &&
-                report.max_acceleration_limit_ratio <= 1.0)
+            if (report.disposition == CandidateDisposition::kExecutable) {
+                outcome.status = PlanStatus::kReached;
+                outcome.trajectory = std::move(solved);
                 break;
+            }
+            if (report.disposition != CandidateDisposition::kNeedsLongerDuration) {
+                outcome.failure_reason = report.failure_reason;
+                break;
+            }
 
             // ONLY dynamic failures are retried. Slowing down cannot fix a
             // trajectory that traces the wrong shape or clips an obstacle,
             // and pretending otherwise would burn solves while the report
             // said the same thing each time.
-            const double alpha = TimeScalingFactor(report);
+            const double alpha = std::max(report.max_velocity_ratio,
+                                         std::sqrt(report.max_acceleration_ratio));
             if (!(alpha > 1.0)) break;  // limits failed for another reason
             if (pass + 1 == kMaxScalingPasses) {
                 outcome.time_scaling_settled = false;
+                outcome.failure_reason = report.failure_reason;
                 break;
             }
             // Select a longer duration; the next loop iteration rebuilds the
@@ -400,9 +307,10 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             duration_s *= alpha;
         }
 
-        outcome.ok = true;
+        if (outcome.status == PlanStatus::kFailed && outcome.failure_reason.empty())
+            outcome.failure_reason = "no executable traced trajectory";
     } catch (const std::exception& exception) {
-        outcome.error = exception.what();
+        outcome.failure_reason = exception.what();
     }
     return outcome;
 }

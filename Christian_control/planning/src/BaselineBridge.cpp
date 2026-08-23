@@ -240,11 +240,18 @@ PlannerSolveResult SolveBaselineBridgeForRequest(
     PlannerModel model = LoadPlannerModel(
         left ? config.left_dh_file : config.right_dh_file,
         /*has_tool=*/!left);
-    result.trajectory =
-        std::make_unique<WorldCartesianTrajectory>(ProjectWorldTrajectory(
-            model, request.world_T_mount, position_rad, velocity_rad_s,
-            total_time_s,
-            request.request_id, request.vicon_sequence));
+    try {
+        result.trajectory =
+            std::make_unique<WorldCartesianTrajectory>(ProjectWorldTrajectory(
+                model, request.world_T_mount, position_rad, velocity_rad_s,
+                total_time_s,
+                request.request_id, request.vicon_sequence));
+    } catch (const std::exception& error) {
+        result.failure_reason = error.what();
+        diagnostics << "baseline block projection failed: " << error.what() << "\n";
+        return result;
+    }
+    result.status = PlanStatus::kReached;
     result.exit_code = 0;
 
     diagnostics << "baseline block adapted: " << samples.size()

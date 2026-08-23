@@ -47,6 +47,11 @@ NUM_JOINTS = 7
 # samples are the walk's normal state (anchor initialization, 2026-08-21) —
 # drawing them as failures would make every healthy plan look broken.
 FAILED_STATUSES = ("no_convergence", "joint_limits", "failed")
+EXECUTABLE_PLAN_STATUSES = ("REACHED", "GOAL_BLOCKED")
+
+
+def plan_is_executable(status):
+    return status in EXECUTABLE_PLAN_STATUSES
 
 
 def is_failed(row):
@@ -109,9 +114,9 @@ def title_for(meta, what):
     arm = meta.get("arm", "?")
     kind = meta.get("plan_kind", "?")
     status = meta.get("status", "?")
-    state = "FAILED" if status != "ok" else "ok"
+    state = "FAILED" if not plan_is_executable(status) else status
     head = f"{what} — {arm} arm, {kind} plan, {state}"
-    if status != "ok":
+    if not plan_is_executable(status):
         head += f"\n{status}"
     return head
 
@@ -389,9 +394,9 @@ def table_window(path_ik, accept_m):
 def write_report(meta, outdir, figures, path_ik, accept_m):
     """One page holding the summary, the figures and the per-sample table —
     the single thing to open after a planner run."""
-    failed = meta.get("status", "?") != "ok"
+    failed = not plan_is_executable(meta.get("status", "?"))
     colour = "#c0392b" if failed else "#1e8449"
-    state = "FAILED" if failed else "OK"
+    state = "FAILED" if failed else meta.get("status", "?")
 
     rows, note = table_window(path_ik, accept_m)
     table_columns = ["sample", "progress_pct", "status", "position_residual_m",
@@ -499,7 +504,7 @@ def main():
     # notes below read as tooling breakage unless the failure is stated first
     # and stated loudly.
     status = meta.get("status", "?")
-    if status != "ok":
+    if not plan_is_executable(status):
         print(f"PLAN FAILED ({meta.get('arm', '?')} arm, "
               f"{meta.get('plan_kind', '?')} plan): {status}", file=sys.stderr)
         print("  No trajectory was emitted, so there is nothing to draw for "
@@ -516,7 +521,7 @@ def main():
     cart = read_cart_traj(Path(args.cart_traj)) if args.cart_traj else None
     if cart is not None and not cart[0]:
         reason = ("because the plan failed before emitting one"
-                  if status != "ok"
+                  if not plan_is_executable(status)
                   else "— is this the planner's saved stdout?")
         print(f"  {args.cart_traj} holds no CART_TRAJ block {reason}.",
               file=sys.stderr)

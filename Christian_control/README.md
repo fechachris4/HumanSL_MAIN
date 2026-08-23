@@ -59,7 +59,7 @@ control/ExecutionCore.cpp            raises request_replan
         PathAssembly.cpp                  approach + task phases on one time grid
         planning/optimisation/*           GPMP2: arm model, initialisation, optimisation
         WorldSdf.cpp                      signed-distance field for collision
-        ValidatePath.cpp / PathValidationReport.cpp
+        ValidatePlan.cpp / PlanValidationReport.cpp
   → planning/src/WorldTrajectoryProjection.cpp   joints → world Cartesian
   → contracts/WorldCartesianTrajectory.h
   → control/CartesianTrajectoryMailbox.cpp       typed ownership handoff

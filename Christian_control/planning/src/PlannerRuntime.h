@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "PlanningRequest.h"
+#include "PlanValidationReport.h"
 #include "WorldCartesianTrajectory.h"
 
 struct PlannerRuntimeConfig {
@@ -28,6 +29,8 @@ struct PlannerRuntimeConfig {
 
 struct PlannerSolveResult {
     int exit_code = 1;
+    PlanStatus status = PlanStatus::kFailed;
+    std::string failure_reason;
     std::unique_ptr<WorldCartesianTrajectory> trajectory;
 };
 

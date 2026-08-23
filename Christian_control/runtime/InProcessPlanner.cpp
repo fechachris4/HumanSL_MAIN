@@ -43,7 +43,7 @@ void RunInProcessPlanner(
 
         if (stop.load(std::memory_order_relaxed))
             return;
-        if (result.exit_code == 0 && result.trajectory)
+        if (IsExecutable(result.status) && result.trajectory)
             trajectories.Publish(std::move(result.trajectory));
     }
 }

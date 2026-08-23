@@ -18,6 +18,18 @@ gtsam::SharedNoiseModel PoseNoiseModel(const Eigen::Vector3d& rotation_sigma_rad
     return gtsam::noiseModel::Diagonal::Sigmas(sigmas);
 }
 
+gtsam::Matrix SelfCollisionData(double collision_sigma) {
+    gtsam::Matrix data(kSelfCollisionPairs.size(), 4);
+    for (std::size_t row = 0; row < kSelfCollisionPairs.size(); ++row) {
+        const SelfCollisionPair& pair = kSelfCollisionPairs[row];
+        data(row, 0) = static_cast<double>(pair.first_sphere_index);
+        data(row, 1) = static_cast<double>(pair.second_sphere_index);
+        data(row, 2) = pair.minimum_surface_clearance_m;
+        data(row, 3) = collision_sigma;
+    }
+    return data;
+}
+
 OptimizeTrajectory::OptimizeTrajectory() {}
 
 TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
@@ -53,11 +65,7 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     
     gtsam::Vector end_vel = gtsam::Vector::Zero(7);
 
-    gtsam::Matrix self_collision_data(3, 4);  // 3 checks, 4 columns each
-    self_collision_data << 
-        0, 4, 0.03, collision_sigma,  // sphere 0 vs sphere 4
-        0, 6, 0.03, collision_sigma,  // sphere 0 vs sphere 6  
-        2, 6, 0.03, collision_sigma;  // sphere 2 vs sphere 6
+    const gtsam::Matrix self_collision_data = SelfCollisionData(collision_sigma);
     
     
     gtsam::NonlinearFactorGraph graph;
@@ -259,11 +267,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     if (start_vel)
         initial_values.update(gtsam::Symbol('v', 0), *start_vel);
 
-    gtsam::Matrix self_collision_data(3, 4);  // 3 checks, 4 columns each
-    self_collision_data <<
-        0, 4, 0.03, collision_sigma,  // sphere 0 vs sphere 4
-        0, 6, 0.03, collision_sigma,  // sphere 0 vs sphere 6
-        2, 6, 0.03, collision_sigma;  // sphere 2 vs sphere 6
+    const gtsam::Matrix self_collision_data = SelfCollisionData(collision_sigma);
 
 
     gtsam::NonlinearFactorGraph graph;

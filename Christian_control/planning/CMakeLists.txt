@@ -98,12 +98,11 @@ target_sources(bridge_core PRIVATE
     src/PathIk.cpp
     src/InterArmDistance.cpp
     src/PathAssembly.cpp
-    src/PathValidationReport.cpp
-    src/ValidatePath.cpp
+    src/PlanValidationReport.cpp
+    src/ValidatePlan.cpp
     src/WorldTrajectoryProjection.cpp
     src/PlannerConfig.cpp
     src/PlanSolver.cpp
-    src/PathValidation.cpp
     src/PlanDebugDump.cpp
     src/StartState.cpp
     src/BridgeMain.cpp
@@ -193,12 +192,6 @@ target_link_libraries(test_projection_exit PRIVATE bridge_core)
 set_target_properties(test_projection_exit PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME projection_exit COMMAND test_projection_exit
          ${DH_PARAMS_TOOL_YAML} ${DH_PARAMS_FLANGE_YAML})
-
-add_executable(test_plan_verdict tests/test_plan_verdict.cpp)
-target_include_directories(test_plan_verdict PRIVATE src)
-target_link_libraries(test_plan_verdict PRIVATE bridge_core)
-set_target_properties(test_plan_verdict PROPERTIES BUILD_RPATH "${TP_LIB}")
-add_test(NAME plan_verdict COMMAND test_plan_verdict)
 
 add_executable(test_planner_start_state tests/test_planner_start_state.cpp)
 target_include_directories(test_planner_start_state PRIVATE src)

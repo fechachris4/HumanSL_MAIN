@@ -5,12 +5,12 @@
 #include "PlannerModel.h"
 #include "CartesianPath.h"
 #include "PathIk.h"
-#include "PathValidationReport.h"
+#include "PlanValidationReport.h"
+#include "ValidatePlan.h"
 #include "TrajectoryInitiation.h"  // InitSource
 
-// The operating limits the plan was actually solved against: the table
-    // Physical and effective values carried with the outcome so artifacts
-    // state both the Kinova table and the planner-enforced operating band.
+// The physical and effective operating limits the plan was actually solved
+// against, carried with the outcome so artifacts state both bands.
 struct PlanJointLimits {
     Eigen::Matrix<double, 7, 1> lower_rad = Eigen::Matrix<double, 7, 1>::Zero();
     Eigen::Matrix<double, 7, 1> upper_rad = Eigen::Matrix<double, 7, 1>::Zero();
@@ -37,9 +37,10 @@ struct PlanRequest {
 };
 
 struct PlanOutcome {
-    bool ok = false;
-    std::string error;                 // set when !ok
-    TrajectoryResult result;           // trajectory_pos: radians, Kortex order
+    PlanStatus status = PlanStatus::kFailed;
+    std::string failure_reason;
+    std::optional<TrajectoryResult> trajectory;
+    PlanValidationReport validation;
     double final_goal_error_m = 0.0;   // FK(last waypoint) vs requested goal
     double total_time_sec = 0.0;       // planned duration the states span
     // How the optimiser's starting sketch was built, and how far the IK
@@ -74,10 +75,10 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
 // path plan answers a different question: not "how close to the goal" but
 // "how faithfully was the shape traced", and by what margin it may be run.
 struct PathPlanOutcome {
-    bool ok = false;
-    std::string error;            // set when !ok
-    TrajectoryResult result;      // FINAL dense q/qdot, already time-scaled
-    PathValidationReport report;  // measured on the final dense internal path
+    PlanStatus status = PlanStatus::kFailed;
+    std::string failure_reason;
+    std::optional<TrajectoryResult> trajectory;
+    PlanValidationReport validation;
     double total_time_sec = 0.0;
     int time_scaling_passes = 0;  // how many alpha iterations were needed
     bool time_scaling_settled = true;
@@ -99,13 +100,13 @@ struct PathPlanOutcome {
     PathIkResult ik_walk;
 };
 
-// Plans a trajectory that traces `task_path`, then emits, reconstructs and
-// validates it.
+// Plans a trajectory that traces `task_path`, then densely validates the
+// fresh optimizer result.
 //
-// The loop is: solve -> emit -> reconstruct -> validate. If the DYNAMIC
-// limits fail, the trajectory is uniformly time-scaled and re-emitted, and
-// the whole measurement repeats on the new block, so the validated artefact
-// is always the one that would be sent. Bounded to a few passes.
+// If dynamic limits fail, a bounded duration re-solve rebuilds timed
+// waypoints, initial values and the optimizer result from scratch, then
+// validates that new result. The validated artifact is therefore the fresh
+// solve that would be sent.
 //
 // Time scaling is applied ONLY for dynamic-limit failures. A geometric,
 // collision or fidelity failure is not something slowing down can fix, and
@@ -116,5 +117,4 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const std::optional<Eigen::Matrix<double, 7, 1>>&
                                    qdot_start_rad_s,
                                const std::string& joint_limits_yaml,
-                               const PlannerConfig& config,
-                               const ValidationInputs& validation_template);
+                               const PlannerConfig& config);

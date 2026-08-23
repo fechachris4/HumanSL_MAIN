@@ -61,15 +61,16 @@ int main(int argc, char** argv) {
     point_request.goal_rotation = start_pose.rotation().matrix();
     const PlanOutcome point =
         SolveToPosition(model, point_request, joint_limits, config);
-    Check(point.ok, "point plan solves");
-    if (point.ok) {
-        Check(MaxAbs(point.result.trajectory_pos.front() - q_plan) < 1e-12,
+    Check(point.validation.start_valid,
+          "point validation preserves exact measured start state");
+    if (point.trajectory) {
+        Check(MaxAbs(point.trajectory->trajectory_pos.front() - q_plan) < 1e-12,
               "point q0 equals canonical measured q");
-        Check(MaxAbs(point.result.trajectory_vel.front() - qdot_meas) < 1e-12,
+        Check(MaxAbs(point.trajectory->trajectory_vel.front() - qdot_meas) < 1e-12,
               "point qdot0 equals measured qdot");
-        Check(point.result.start_costs.count("StartPosEquality") == 1,
+        Check(point.trajectory->start_costs.count("StartPosEquality") == 1,
               "point graph contains position equality");
-        Check(point.result.start_costs.count("StartVelEquality") == 1,
+        Check(point.trajectory->start_costs.count("StartVelEquality") == 1,
               "point graph contains velocity equality");
     }
 
@@ -77,11 +78,12 @@ int main(int argc, char** argv) {
     offline_point.qdot_start_rad_s.reset();
     const PlanOutcome offline =
         SolveToPosition(model, offline_point, joint_limits, config);
-    Check(offline.ok, "offline point plan solves");
-    if (offline.ok) {
-        Check(offline.result.start_costs.count("StartVelEquality") == 0,
+    Check(offline.validation.start_valid,
+          "offline point validation preserves measured position start");
+    if (offline.trajectory) {
+        Check(offline.trajectory->start_costs.count("StartVelEquality") == 0,
               "offline point has no start velocity equality");
-        Check(offline.result.start_costs.count("StartVelPrior") == 0,
+        Check(offline.trajectory->start_costs.count("StartVelPrior") == 0,
               "offline point has no zero start prior");
     }
 
@@ -95,34 +97,31 @@ int main(int argc, char** argv) {
     const Eigen::Vector3d zyx = start_pose.rotation().matrix().eulerAngles(2, 1, 0);
     circle.fixed_rpy_rad = Eigen::Vector3d(zyx.z(), zyx.y(), zyx.x());
     const CartesianPath path = GenerateCircle(circle);
-    ValidationInputs validation;
-    validation.circle_applicable = true;
-    validation.circle_centre = circle.centre_m;
-    validation.circle_normal = circle.normal;
-    validation.circle_radius_m = circle.radius_m;
     const Eigen::Matrix<double, 7, 1> path_qdot = qdot_meas;
 
     const PathPlanOutcome traced = SolveAlongPath(
-        model, path, q_plan, path_qdot, joint_limits, config, validation);
-    Check(traced.ok, "traced plan solves");
-    if (traced.ok) {
-        Check(MaxAbs(traced.result.trajectory_pos.front() - q_plan) < 1e-12,
+        model, path, q_plan, path_qdot, joint_limits, config);
+    Check(traced.validation.start_valid,
+          "traced validation preserves exact measured start state");
+    if (traced.trajectory) {
+        Check(MaxAbs(traced.trajectory->trajectory_pos.front() - q_plan) < 1e-12,
               "traced q0 equals canonical measured q");
-        Check(MaxAbs(traced.result.trajectory_vel.front() - path_qdot) < 1e-12,
+        Check(MaxAbs(traced.trajectory->trajectory_vel.front() - path_qdot) < 1e-12,
               "traced qdot0 equals measured qdot");
-        Check(traced.result.start_costs.count("StartPosEquality") == 1,
+        Check(traced.trajectory->start_costs.count("StartPosEquality") == 1,
               "traced graph contains position equality");
-        Check(traced.result.start_costs.count("StartVelEquality") == 1,
+        Check(traced.trajectory->start_costs.count("StartVelEquality") == 1,
               "traced graph contains velocity equality");
     }
 
     const PathPlanOutcome offline_path = SolveAlongPath(
-        model, path, q_plan, std::nullopt, joint_limits, config, validation);
-    Check(offline_path.ok, "offline traced plan solves");
-    if (offline_path.ok) {
-        Check(offline_path.result.start_costs.count("StartVelEquality") == 0,
+        model, path, q_plan, std::nullopt, joint_limits, config);
+    Check(offline_path.validation.start_valid,
+          "offline traced validation preserves measured position start");
+    if (offline_path.trajectory) {
+        Check(offline_path.trajectory->start_costs.count("StartVelEquality") == 0,
               "offline traced path has no start velocity equality");
-        Check(offline_path.result.start_costs.count("StartVelPrior") == 0,
+        Check(offline_path.trajectory->start_costs.count("StartVelPrior") == 0,
               "offline traced path has no zero start prior");
     }
 
@@ -149,8 +148,8 @@ int main(int argc, char** argv) {
     std::ostringstream diagnostics;
     const PlannerSolveResult transported =
         SolvePlanForRequest(live, runtime, diagnostics);
-    Check(transported.exit_code == 0,
-          "live request solves through typed transport");
+    Check(!transported.trajectory || IsExecutable(transported.status),
+          "typed transport never exposes a failed trajectory");
 
     if (failures == 0)
         std::puts("test_planner_start_state: all assertions passed");

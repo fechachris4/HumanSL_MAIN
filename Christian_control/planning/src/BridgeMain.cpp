@@ -23,7 +23,6 @@
 #include "StartState.h"
 #include "WorldTrajectoryProjection.h"
 #include "PathFrames.h"
-#include "PathValidation.h"
 #include "PlanDebugDump.h"
 #include "PinocchioKinematicsAdapter.h"
 #include "Config.h"   // control — config::kReferenceFrame
@@ -270,7 +269,7 @@ void SummarizeWalk(SummaryWriter& out, const PathIkResult& walk,
 // statement about the plan, not about whether a debug file could be
 // written. A failure to write is reported and the run carries on.
 void DumpPlanDebug(const std::optional<std::string>& directory,
-                   const PlanDebugMeta& meta, const TrajectoryResult& trajectory,
+                   const PlanDebugMeta& meta, const TrajectoryResult* trajectory,
                    const PlanJointLimits& limits,
                    const CartesianPath* path_mount, const PathIkResult* walk,
                    std::ostream& diagnostics)
@@ -283,9 +282,9 @@ void DumpPlanDebug(const std::optional<std::string>& directory,
     };
     report(WritePlanMetaCsv(*directory, meta));
     report(WriteJointLimitsCsv(*directory, limits));
-    if (!trajectory.trajectory_pos.empty())
-        report(WriteJointTrajectoryCsv(*directory, trajectory));
-    if (path_mount != nullptr && walk != nullptr && !walk->samples.empty())
+    if (trajectory != nullptr && !trajectory->trajectory_pos.empty())
+        report(WriteJointTrajectoryCsv(*directory, *trajectory));
+    if (path_mount != nullptr && walk != nullptr)
         report(WritePathIkCsv(*directory, *path_mount, *walk, limits));
     diagnostics << "debug dump written to " << *directory << "\n";
 }
@@ -898,16 +897,6 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                     << FrameName(declared_frame) << " -> "
                     << FrameName(config::ReferenceFrame::kMount) << "\n";
 
-        ValidationInputs validation;
-        validation.circle_applicable = true;
-        validation.circle_centre =
-            PointToMount(circle.centre_m, declared_frame, world_T_mount);
-        validation.circle_normal =
-            RotationToMount(Eigen::Matrix3d::Identity(), declared_frame,
-                            world_T_mount) *
-            circle.normal.normalized();
-        validation.circle_radius_m = circle.radius_m;
-
         // The legacy optimiser prints progress straight to std::cout, and in
         // the standalone binary's stdout is the preview stream. Guarding the
         // solve is not optional:
@@ -925,17 +914,19 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
             }
             plan = SolveAlongPath(model, task_path, q_start_rad,
                                   qdot_start_rad_s,
-                                  parsed.joint_limits_path, planner_config,
-                                  validation);
+                                  parsed.joint_limits_path, planner_config);
         }
+        result.status = plan.status;
+        result.failure_reason = plan.failure_reason;
         // ---- the high-priority summary, printed on every attempt ------
         PlanDebugMeta meta;
         meta.arm = *parsed.left_arm ? "left" : "right";
         meta.plan_kind = "path";
-        meta.status = plan.ok ? "ok" : plan.error;
+        meta.status = plan.status;
+        meta.failure_reason = plan.failure_reason;
         meta.total_time_s = plan.total_time_sec;
 
-        if (plan.ok) {
+        if (IsExecutable(plan.status) && plan.trajectory) {
             diagnostics << "continuation IK: largest joint step "
                         << plan.maximum_joint_step_rad * 180.0 / M_PI
                         << " deg, closure drift "
@@ -956,49 +947,42 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                                     ? "\n"
                                     : " — DID NOT SETTLE within the pass limit\n");
             if (parsed.verbose)
-                diagnostics << plan.report.Summary();
+                diagnostics << "trace quality: max position "
+                            << plan.validation.trace_max_position_m * 1000.0
+                            << " mm, RMS " << plan.validation.trace_rms_position_m * 1000.0
+                            << " mm, p95 " << plan.validation.trace_p95_position_m * 1000.0
+                            << " mm, max orientation "
+                            << plan.validation.trace_max_orientation_rad * 180.0 / M_PI
+                            << " deg\n";
         }
         diagnostics << "---- PLAN SUMMARY (" << meta.arm
                     << " arm, traced path) ----\n";
         SummaryWriter summary{diagnostics, meta.extra};
-        if (!plan.ok) {
-            const bool ik_stage = plan.error.rfind("path IK", 0) == 0;
+        if (!IsExecutable(plan.status) || !plan.trajectory) {
+            const bool ik_stage = plan.failure_reason.rfind("path IK", 0) == 0;
             summary.Line("result", "FAILED at " +
                                        std::string(ik_stage
                                                        ? "IK initialization "
                                                          "(before GPMP2 ran)"
                                                        : "GPMP2 solve/validation"));
-            summary.Line("error", plan.error);
+            summary.Line("error", plan.failure_reason);
         } else {
-            const char* verdict =
-                plan.report.verdict == PlanVerdict::kAccept ? "ACCEPT"
-                : plan.report.verdict == PlanVerdict::kWarning ? "WARNING"
-                                                               : "REJECT";
-            summary.Line("result", std::string(verdict) + ", duration " +
+            summary.Line("result", std::string(PlanStatusName(plan.status)) + ", duration " +
                                        Fixed(plan.total_time_sec, 2) + " s");
-            for (const std::string& warning : plan.report.warnings)
-                summary.Line("warning", warning);
-            const FidelityError& fidelity = plan.report.command;
-            summary.Line("task fidelity (gated)",
-                         "max " + Fixed(fidelity.max_position_m * 1e3, 2) +
+            summary.Line("task fidelity (quality)",
+                         "max " + Fixed(plan.validation.trace_max_position_m * 1e3, 2) +
                              " mm / p95 " +
-                             Fixed(fidelity.p95_position_m * 1e3, 2) +
+                             Fixed(plan.validation.trace_p95_position_m * 1e3, 2) +
                              " mm position, max " +
-                             Fixed(fidelity.max_orientation_rad * 180.0 / M_PI) +
+                             Fixed(plan.validation.trace_max_orientation_rad * 180.0 / M_PI) +
                              " deg orientation");
-            summary.Line("worst point",
-                         "t=" + Fixed(fidelity.worst_time_s, 2) + " s, " +
-                             Fixed(fidelity.worst_path_parameter * 100.0, 0) +
-                             "% along the path");
             summary.Line("min modelled clearance",
-                         Fixed(plan.report.minimum_clearance_m * 1e3) +
+                         Fixed(plan.validation.minimum_scene_clearance_m * 1e3) +
                              " mm at t=" +
-                             Fixed(plan.report.minimum_clearance_time_s, 2) +
-                             " s (SDF models the persistent static scene only)");
-            summary.Line("min joint-limit margin (trajectory)",
-                         Fixed(plan.report.minimum_joint_limit_margin_rad *
-                               180.0 / M_PI) +
-                             " deg");
+                             Fixed(plan.validation.worst_scene_time_s, 2) + " s");
+            summary.Line("self collision", plan.validation.self_collision_valid ? "valid" : "invalid");
+            summary.Line("dynamic ratios", "velocity " + Fixed(plan.validation.max_velocity_ratio) +
+                         ", acceleration " + Fixed(plan.validation.max_acceleration_ratio));
         }
         SummarizeWalk(summary, plan.ik_walk, plan.joint_limits,
                       planner_config.path_following.maximum_planning_error_m);
@@ -1006,44 +990,31 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         // trajectory time, so plot_plan.py can shade it and place each path
         // sample on the joint-trajectory time axis. Not printed as a
         // summary line — it is a coordinate, not a finding.
-        if (plan.ok)
+        if (IsExecutable(plan.status) && plan.trajectory)
             meta.extra.emplace_back("task_start_time_s",
                                     Fixed(plan.task_start_time_s, 6));
-        DumpPlanDebug(parsed.debug_dir, meta, plan.result, plan.joint_limits,
-                      &task_path, &plan.ik_walk, diagnostics);
+        DumpPlanDebug(parsed.debug_dir, meta,
+                      plan.trajectory ? &*plan.trajectory : nullptr,
+                      plan.joint_limits, &task_path, &plan.ik_walk, diagnostics);
         diagnostics << "----\n";
 
-        if (!plan.ok) {
-            diagnostics << "error: solve failed: " << plan.error << "\n";
+        if (!IsExecutable(plan.status) || !plan.trajectory) {
+            diagnostics << "error: solve failed: " << plan.failure_reason << "\n";
             result.exit_code = 3;
             return result;
         }
-
-        if (plan.report.verdict == PlanVerdict::kReject) {
-            // Not emitted. REJECT means unsafe or clearly failing the
-            // requested task: non-finite states, a real joint-limit
-            // violation, a splice jump, or velocity still over after time
-            // scaling. Modelled obstacle clearance and task fidelity are
-            // reported as warnings; they do not veto emission.
-            diagnostics << "error: plan rejected — an unsafe or clearly "
-                           "invalid condition (see the verdict in the report "
-                           "above). Nothing was emitted.\n";
-            result.exit_code = 4;
-            return result;
-        }
-        if (plan.report.verdict == PlanVerdict::kWarning)
-            diagnostics << "plan accepted WITH WARNINGS — usable but "
-                           "imperfect; the warnings above say how.\n";
         try {
             WorldCartesianTrajectory projected = ProjectWorldTrajectory(
                 model, world_T_mount,
-                plan.result.trajectory_pos, plan.result.trajectory_vel,
+                plan.trajectory->trajectory_pos, plan.trajectory->trajectory_vel,
                 plan.total_time_sec, *parsed.trajectory_id,
                 *parsed.vicon_sequence);
             result.trajectory =
                 std::make_unique<WorldCartesianTrajectory>(std::move(projected));
         } catch (const std::exception& error) {
             diagnostics << "error: plan rejected: " << error.what() << "\n";
+            result.status = PlanStatus::kFailed;
+            result.failure_reason = error.what();
             result.exit_code = 4;
             return result;
         }
@@ -1052,6 +1023,8 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                     << result.trajectory->points.size() << ", duration "
                     << plan.total_time_sec << " s\n";
         result.exit_code = 0;
+        result.status = plan.status;
+        result.failure_reason.clear();
         return result;
     }
 
@@ -1100,16 +1073,18 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         outcome = SolveToPosition(model, request, parsed.joint_limits_path,
                                   planner_config);
     }
+    result.status = outcome.status;
+    result.failure_reason = outcome.failure_reason;
 
     {
         PlanDebugMeta meta;
         meta.arm = *parsed.left_arm ? "left" : "right";
         meta.plan_kind = "point";
-        meta.status = outcome.ok ? "ok" : outcome.error;
+        meta.status = outcome.status;
+        meta.failure_reason = outcome.failure_reason;
         meta.final_goal_error_m = outcome.final_goal_error_m;
         meta.total_time_s = outcome.total_time_sec;
 
-        if (outcome.ok) {
         // How the optimiser's starting sketch was built. Reported HERE, before
         // validation and emission, because a degraded initialisation is most
         // worth knowing about on the runs that go on to fail — printing it only
@@ -1142,35 +1117,34 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                            "plan actually goes.\n";
             break;
         }
-        }
 
         diagnostics << "---- PLAN SUMMARY (" << meta.arm
                     << " arm, point goal) ----\n";
         SummaryWriter summary{diagnostics, meta.extra};
-        if (!outcome.ok) {
+        if (!IsExecutable(outcome.status) || !outcome.trajectory) {
             summary.Line("result", "FAILED at GPMP2 solve");
-            summary.Line("error", outcome.error);
+            summary.Line("error", outcome.failure_reason);
         } else {
             summary.Line("result",
-                         "ok, duration " + Fixed(outcome.total_time_sec, 2) +
+                         std::string(PlanStatusName(outcome.status)) + ", duration " + Fixed(outcome.total_time_sec, 2) +
                              " s");
             summary.Line("final goal error",
-                         Fixed(outcome.final_goal_error_m * 1e3, 3) + " mm");
+                         Fixed(outcome.validation.terminal_position_error_m * 1e3, 3) + " mm");
             // Smallest distance any dense state comes to a bounded joint
             // limit — arithmetic over the trajectory the solver produced.
             double min_margin_rad = std::numeric_limits<double>::infinity();
             double min_margin_time_s = 0.0;
             for (std::size_t state = 0;
-                 state < outcome.result.trajectory_pos.size(); ++state) {
+                 state < outcome.trajectory->trajectory_pos.size(); ++state) {
                 Eigen::Matrix<double, 7, 1> q;
                 for (int joint = 0; joint < 7; ++joint)
-                    q(joint) = outcome.result.trajectory_pos[state](joint);
+                    q(joint) = outcome.trajectory->trajectory_pos[state](joint);
                 const double margin =
                     JointLimitMarginRad(q, outcome.joint_limits);
                 if (margin < min_margin_rad) {
                     min_margin_rad = margin;
                     min_margin_time_s =
-                        static_cast<double>(state) * outcome.result.dt;
+                        static_cast<double>(state) * outcome.trajectory->dt;
                 }
             }
             if (std::isfinite(min_margin_rad))
@@ -1178,46 +1152,54 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                              Fixed(min_margin_rad * 180.0 / M_PI) +
                                  " deg at t=" + Fixed(min_margin_time_s, 2) +
                                  " s");
-            summary.Line("collision clearance",
-                         "not computed for point-goal plans (path validation "
-                         "runs on traced paths only)");
+            if (outcome.validation.has_scene_pairs)
+                summary.Line("min modelled clearance",
+                             Fixed(outcome.validation.minimum_scene_clearance_m * 1e3) +
+                                 " mm at t=" +
+                                 Fixed(outcome.validation.worst_scene_time_s, 2) + " s");
+            else
+                summary.Line("min modelled clearance", "not applicable (no scene pairs)");
+            if (outcome.validation.has_self_pairs)
+                summary.Line("self collision clearance",
+                             Fixed(outcome.validation.minimum_self_clearance_m * 1e3) +
+                                 " mm at t=" +
+                                 Fixed(outcome.validation.worst_self_time_s, 2) + " s");
+            else
+                summary.Line("self collision clearance", "not applicable (no self pairs)");
         }
-        DumpPlanDebug(parsed.debug_dir, meta, outcome.result,
+        DumpPlanDebug(parsed.debug_dir, meta,
+                      outcome.trajectory ? &*outcome.trajectory : nullptr,
                       outcome.joint_limits, nullptr, nullptr, diagnostics);
         diagnostics << "----\n";
     }
-    if (!outcome.ok) {
-        diagnostics << "error: solve failed: " << outcome.error << "\n";
+    if (!IsExecutable(outcome.status) || !outcome.trajectory) {
+        diagnostics << "error: solve failed: " << outcome.failure_reason << "\n";
         result.exit_code = 3;
-        return result;
-    }
-
-    const std::optional<std::string> validation_error =
-        ValidateJointPath(outcome.result.trajectory_pos);
-    if (validation_error) {
-        diagnostics << "error: plan rejected: " << *validation_error << "\n";
-        result.exit_code = 4;
         return result;
     }
 
     try {
         WorldCartesianTrajectory projected = ProjectWorldTrajectory(
-            model, world_T_mount, outcome.result.trajectory_pos,
-            outcome.result.trajectory_vel, outcome.total_time_sec,
+            model, world_T_mount, outcome.trajectory->trajectory_pos,
+            outcome.trajectory->trajectory_vel, outcome.total_time_sec,
             *parsed.trajectory_id, *parsed.vicon_sequence);
         result.trajectory =
             std::make_unique<WorldCartesianTrajectory>(std::move(projected));
     } catch (const std::exception& error) {
         diagnostics << "error: plan rejected: " << error.what() << "\n";
+        result.status = PlanStatus::kFailed;
+        result.failure_reason = error.what();
         result.exit_code = 4;
         return result;
     }
 
     diagnostics << "arm: " << (left_arm ? "left" : "right")
                 << ", trajectory points: " << result.trajectory->points.size()
-                << ", solve: " << outcome.result.optimization_duration.count()
-                << " ms, final goal error: " << (outcome.final_goal_error_m * 1000.0)
+                << ", solve: " << outcome.trajectory->optimization_duration.count()
+                << " ms, final goal error: " << (outcome.validation.terminal_position_error_m * 1000.0)
                 << " mm\n";
     result.exit_code = 0;
+    result.status = outcome.status;
+    result.failure_reason.clear();
     return result;
 }
