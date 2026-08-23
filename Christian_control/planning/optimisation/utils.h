@@ -106,6 +106,10 @@ struct TrajectoryResult {
     double start_error;
     double final_error;
 
+    std::size_t optimizer_iterations = 0;
+    std::size_t optimizer_max_iterations = 0;
+    bool optimizer_converged = false;
+
     double dt;
 
     TrajectoryResult() : dt(1e-3) {}

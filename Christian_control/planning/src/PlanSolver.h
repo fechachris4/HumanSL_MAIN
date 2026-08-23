@@ -1,4 +1,5 @@
 #pragma once
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
@@ -43,11 +44,22 @@ const char* RouteHypothesisName(RouteHypothesis route);
 struct CandidateEvidence {
     PlanStatus terminal_kind = PlanStatus::kFailed;
     std::size_t terminal_branch = 0;
+    std::uint64_t terminal_ik_stream_id = 0;
+    std::size_t terminal_ik_attempt_index = 0;
+    double terminal_ik_position_residual_m = 0.0;
+    double terminal_ik_orientation_residual_rad = 0.0;
     RouteHypothesis route = RouteHypothesis::kNormal;
     int duration_attempt = 0;
     double duration_s = 0.0;
     double scene_collision_sigma = 0.0;
     double solve_time_s = 0.0;
+    std::size_t optimizer_iterations = 0;
+    std::size_t optimizer_max_iterations = 0;
+    bool optimizer_converged = false;
+    double optimizer_start_total_cost = 0.0;
+    double optimizer_final_total_cost = 0.0;
+    std::map<std::string, double> optimizer_final_factor_costs;
+    double capped_clearance_m = 0.0;
     PlanValidationReport validation;
     std::string disposition;
 };

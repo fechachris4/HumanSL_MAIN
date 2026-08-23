@@ -200,6 +200,10 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     trajectory_result.trajectory_vel = densified_vel;
     trajectory_result.start_costs = init_factor_costs;
     trajectory_result.final_costs = final_factor_costs;
+    trajectory_result.optimizer_iterations = optimizer.iterations();
+    trajectory_result.optimizer_max_iterations = parameters.getMaxIterations();
+    trajectory_result.optimizer_converged =
+        optimizer.iterations() < parameters.getMaxIterations();
 
     return trajectory_result;
 }
@@ -424,6 +428,10 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     trajectory_result.trajectory_vel = densified_vel;
     trajectory_result.start_costs = init_factor_costs;
     trajectory_result.final_costs = final_factor_costs;
+    trajectory_result.optimizer_iterations = optimizer.iterations();
+    trajectory_result.optimizer_max_iterations = parameters.getMaxIterations();
+    trajectory_result.optimizer_converged =
+        optimizer.iterations() < parameters.getMaxIterations();
 
     return trajectory_result;
 }

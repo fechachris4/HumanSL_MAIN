@@ -34,12 +34,43 @@ namespace
         double last_duration_s = 0.0;
     };
 
+    CandidateEvidence MakeEvidence(const TerminalIkCandidate& terminal,
+                                   std::size_t terminal_branch,
+                                   RouteHypothesis route, int duration_attempt,
+                                   double duration_s, double scene_sigma)
+    {
+        CandidateEvidence evidence;
+        evidence.terminal_kind = PlanStatus::kReached;
+        evidence.terminal_branch = terminal_branch;
+        evidence.terminal_ik_stream_id = terminal.stream_id;
+        evidence.terminal_ik_attempt_index = terminal.attempt_index;
+        evidence.terminal_ik_position_residual_m = terminal.position_residual_m;
+        evidence.terminal_ik_orientation_residual_rad = terminal.orientation_residual_rad;
+        evidence.route = route;
+        evidence.duration_attempt = duration_attempt;
+        evidence.duration_s = duration_s;
+        evidence.scene_collision_sigma = scene_sigma;
+        return evidence;
+    }
+
+    void CopyOptimizerEvidence(const TrajectoryResult& trajectory,
+                               CandidateEvidence& evidence)
+    {
+        evidence.optimizer_iterations = trajectory.optimizer_iterations;
+        evidence.optimizer_max_iterations = trajectory.optimizer_max_iterations;
+        evidence.optimizer_converged = trajectory.optimizer_converged;
+        evidence.optimizer_start_total_cost = trajectory.start_error;
+        evidence.optimizer_final_total_cost = trajectory.final_error;
+        evidence.optimizer_final_factor_costs.insert(trajectory.final_costs.begin(),
+                                                     trajectory.final_costs.end());
+    }
+
     template <typename Solve, typename Validate>
     DurationSearchResult
     SolveDurationCandidate(const TerminalIkCandidate& terminal, std::size_t terminal_branch,
                            RouteHypothesis route, double base_duration_s, double scene_sigma,
-                           Solve solve, Validate validate, std::vector<CandidateEvidence>& attempts,
-                           std::string& failure_reason)
+                           double preferred_clearance_m, Solve solve, Validate validate,
+                           std::vector<CandidateEvidence>& attempts, std::string& failure_reason)
     {
         DurationSearchResult result;
         double duration_s = base_duration_s;
@@ -50,13 +81,8 @@ namespace
             try {
                 trajectory = solve(duration_s);
             } catch (const std::exception& exception) {
-                CandidateEvidence evidence;
-                evidence.terminal_kind = PlanStatus::kReached;
-                evidence.terminal_branch = terminal_branch;
-                evidence.route = route;
-                evidence.duration_attempt = attempt;
-                evidence.duration_s = duration_s;
-                evidence.scene_collision_sigma = scene_sigma;
+                CandidateEvidence evidence = MakeEvidence(
+                    terminal, terminal_branch, route, attempt, duration_s, scene_sigma);
                 evidence.solve_time_s =
                     std::chrono::duration<double>(std::chrono::steady_clock::now() - solve_start)
                         .count();
@@ -69,13 +95,8 @@ namespace
             trajectory.optimization_duration =
                 std::chrono::duration_cast<std::chrono::milliseconds>(solve_end - solve_start);
 
-            CandidateEvidence evidence;
-            evidence.terminal_kind = PlanStatus::kReached;
-            evidence.terminal_branch = terminal_branch;
-            evidence.route = route;
-            evidence.duration_attempt = attempt;
-            evidence.duration_s = duration_s;
-            evidence.scene_collision_sigma = scene_sigma;
+            CandidateEvidence evidence = MakeEvidence(
+                terminal, terminal_branch, route, attempt, duration_s, scene_sigma);
             evidence.solve_time_s = std::chrono::duration<double>(solve_end - solve_start).count();
             if (trajectory.trajectory_pos.empty()) {
                 evidence.disposition = "empty_trajectory";
@@ -83,9 +104,13 @@ namespace
                 failure_reason = "optimizer returned an empty trajectory";
                 return result;
             }
+            CopyOptimizerEvidence(trajectory, evidence);
 
             result.last_validation = validate(trajectory, duration_s);
             evidence.validation = result.last_validation;
+            evidence.capped_clearance_m =
+                std::min(result.last_validation.minimum_scene_clearance_m,
+                         preferred_clearance_m);
             evidence.disposition = result.last_validation.executable
                                        ? "executable"
                                        : result.last_validation.failure_reason;
@@ -123,15 +148,12 @@ namespace
         return result;
     }
 
-    void RecordSeedFailure(std::size_t terminal_branch, RouteHypothesis route, double scene_sigma,
+    void RecordSeedFailure(const TerminalIkCandidate& terminal, std::size_t terminal_branch,
+                           RouteHypothesis route, double scene_sigma,
                            std::vector<CandidateEvidence>& attempts, std::string& failure_reason)
     {
-        CandidateEvidence evidence;
-        evidence.terminal_kind = PlanStatus::kReached;
-        evidence.terminal_branch = terminal_branch;
-        evidence.route = route;
-        evidence.duration_attempt = 0;
-        evidence.scene_collision_sigma = scene_sigma;
+        CandidateEvidence evidence =
+            MakeEvidence(terminal, terminal_branch, route, 0, 0.0, scene_sigma);
         evidence.disposition = "route_seed_ik_failure";
         attempts.push_back(std::move(evidence));
         failure_reason = "route_seed_ik_failure";
@@ -182,45 +204,23 @@ namespace
                                         .any());
     }
 
-    bool WithinPlannerLimits(const Eigen::Matrix<double, 7, 1>& q, const PathIkJointLimits& limits)
-    {
-        if (!q.allFinite())
-            return false;
-        for (int joint = 0; joint < 7; ++joint) {
-            const bool continuous =
-                limits.lower_rad(joint) < -1e10 || limits.upper_rad(joint) > 1e10;
-            if (!continuous &&
-                (q(joint) < limits.lower_rad(joint) || q(joint) > limits.upper_rad(joint)))
-                return false;
-        }
-        return true;
-    }
-
     std::optional<JointConfiguration>
     SolveBypassMidpointIk(const PathIkArm& arm, const PathIkJointLimits& limits,
                           const PlannerModel& model, const PlanValidationReport& collision,
-                          const Eigen::Vector3d& displacement_mount)
+                          const Eigen::Vector3d& displacement_mount,
+                          std::uint64_t effective_ik_seed)
     {
         const gtsam::Pose3 collision_pose =
             ToolPoseInMount(model, collision.first_scene_violation_q);
         Eigen::Isometry3d target(collision_pose.matrix());
         target.translation() += displacement_mount;
 
-        analytical_ik::IKTolerance tolerance;
-        tolerance.converge_position_m = 0.001;
-        tolerance.accept_position_m = 0.001;
-        tolerance.converge_orientation_rad = 0.01;
-        tolerance.accept_orientation_rad = 0.01;
-        JointConfiguration seed = collision.first_scene_violation_q;
-        const auto result = analytical_ik::AnalyticalIKSolver::solveBestIK(
-            target.matrix(), arm.base_transform, seed, 1, arm.end_effector_frame, arm.left_arm,
-            tolerance);
-        if (!result.attempted || !result.is_valid ||
-            result.position_error_m > tolerance.accept_position_m ||
-            result.orientation_error_rad > tolerance.accept_orientation_rad ||
-            !WithinPlannerLimits(result.joint_angles, limits))
+        const auto candidates = SolveTerminalIkCandidates(
+            arm, target, collision.first_scene_violation_q, limits,
+            effective_ik_seed, 1);
+        if (candidates.empty())
             return std::nullopt;
-        return result.joint_angles;
+        return candidates.front().configuration;
     }
 
     double CappedClearance(const PlanValidationReport& validation, double preferred_clearance_m)
@@ -366,9 +366,10 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
                                          config.path_following.validation_dt_s);
                     return ValidatePlan(model, trajectory, duration_s, inputs);
                 };
-                return SolveDurationCandidate(terminal, branch, route, base_duration_s, scene_sigma,
-                                              solve, validate, outcome.candidate_attempts,
-                                              outcome.failure_reason);
+                return SolveDurationCandidate(
+                    terminal, branch, route, base_duration_s, scene_sigma,
+                    config.optimizer.preferred_clearance_m, solve, validate,
+                    outcome.candidate_attempts, outcome.failure_reason);
             };
 
             const auto normal_seed =
@@ -391,10 +392,13 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
                         const auto midpoint = SolveBypassMidpointIk(
                             arm, ik_limits, model, normal_report,
                             BypassDisplacement(normal_report,
-                                               config.optimizer.preferred_clearance_m, route));
+                                               config.optimizer.preferred_clearance_m, route),
+                            config.effective_ik_seed);
                         if (!midpoint) {
-                            RecordSeedFailure(branch, route, 0.1 * config.optimizer.collision_sigma,
-                                              outcome.candidate_attempts, outcome.failure_reason);
+                            RecordSeedFailure(
+                                terminal, branch, route,
+                                0.1 * config.optimizer.collision_sigma,
+                                outcome.candidate_attempts, outcome.failure_reason);
                             continue;
                         }
                         const auto bypass_seed = PointBypassSeed(
@@ -476,16 +480,6 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                         /*closed=*/true, config.effective_ik_seed);
         outcome.ik_walk = normal_walk;
         if (!normal_walk.success) {
-            for (std::size_t branch = 0; branch < terminal_candidates.size(); ++branch) {
-                CandidateEvidence evidence;
-                evidence.terminal_kind = PlanStatus::kReached;
-                evidence.terminal_branch = branch;
-                evidence.route = RouteHypothesis::kNormal;
-                evidence.duration_attempt = 0;
-                evidence.scene_collision_sigma = config.optimizer.collision_sigma;
-                evidence.disposition = "route_seed_ik_failure";
-                outcome.candidate_attempts.push_back(std::move(evidence));
-            }
             outcome.failure_reason = "path IK initialization failed: the path entry pose could "
                                      "not be solved from the measured start configuration within "
                                      "the bounded search";
@@ -585,7 +579,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     return ValidatePlan(model, trajectory, duration_s, inputs);
                 };
                 auto result = SolveDurationCandidate(
-                    terminal, branch, route, base_duration_s, scene_sigma, solve, validate,
+                    terminal, branch, route, base_duration_s, scene_sigma,
+                    config.optimizer.preferred_clearance_m, solve, validate,
                     outcome.candidate_attempts, outcome.failure_reason);
                 if (result.executable) {
                     result.executable->ik_walk = seed_walk;
@@ -619,10 +614,12 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                         PathIkResult bypass_walk = normal_walk;
                         if (normal_report.first_scene_violation_time_s < normal_task_start_time_s) {
                             const auto midpoint = SolveBypassMidpointIk(
-                                arm, ik_limits, model, normal_report, displacement);
+                                arm, ik_limits, model, normal_report, displacement,
+                                config.effective_ik_seed);
                             if (!midpoint) {
                                 RecordSeedFailure(
-                                    branch, route, 0.1 * config.optimizer.collision_sigma,
+                                    terminal, branch, route,
+                                    0.1 * config.optimizer.collision_sigma,
                                     outcome.candidate_attempts, outcome.failure_reason);
                                 continue;
                             }
@@ -649,7 +646,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                                             /*closed=*/true, config.effective_ik_seed);
                             if (!bypass_walk.success) {
                                 RecordSeedFailure(
-                                    branch, route, 0.1 * config.optimizer.collision_sigma,
+                                    terminal, branch, route,
+                                    0.1 * config.optimizer.collision_sigma,
                                     outcome.candidate_attempts, outcome.failure_reason);
                                 continue;
                             }

@@ -139,6 +139,15 @@ std::string Fixed(double value, int decimals = 1) {
     return text.str();
 }
 
+std::string FailedPlanStage(const std::string& failure_reason)
+{
+    if (failure_reason.rfind("terminal IK", 0) == 0)
+        return "FAILED at terminal IK (before GPMP2 ran)";
+    if (failure_reason.rfind("path IK", 0) == 0)
+        return "FAILED at IK initialization (before GPMP2 ran)";
+    return "FAILED at GPMP2 solve/validation";
+}
+
 // The high-priority result block every planning attempt ends its
 // diagnostics with. Everything here is a value the planner already
 // produced; the block only arranges it so the answer to "what happened and
@@ -973,12 +982,7 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                     << " arm, traced path) ----\n";
         SummaryWriter summary{diagnostics, meta.extra};
         if (!IsExecutable(plan.status) || !plan.trajectory) {
-            const bool ik_stage = plan.failure_reason.rfind("path IK", 0) == 0;
-            summary.Line("result", "FAILED at " +
-                                       std::string(ik_stage
-                                                       ? "IK initialization "
-                                                         "(before GPMP2 ran)"
-                                                       : "GPMP2 solve/validation"));
+            summary.Line("result", FailedPlanStage(plan.failure_reason));
             summary.Line("error", plan.failure_reason);
         } else {
             summary.Line("result", std::string(PlanStatusName(plan.status)) + ", duration " +
@@ -1121,7 +1125,7 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                     << " arm, point goal) ----\n";
         SummaryWriter summary{diagnostics, meta.extra};
         if (!IsExecutable(outcome.status) || !outcome.trajectory) {
-            summary.Line("result", "FAILED at GPMP2 solve");
+            summary.Line("result", FailedPlanStage(outcome.failure_reason));
             summary.Line("error", outcome.failure_reason);
         } else {
             summary.Line("result",

@@ -144,6 +144,8 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     }
     if (!std::isfinite(report.minimum_scene_clearance_m)) report.minimum_scene_clearance_m = 0.0;
     if (!std::isfinite(report.minimum_self_clearance_m)) report.minimum_self_clearance_m = 0.0;
+    report.maximum_abs_joint_velocity_rad_s = max_qdot;
+    report.maximum_abs_joint_acceleration_rad_s2 = max_qddot;
     report.start_position_error_rad = (samples.front().q - inputs.measured_q_rad).cwiseAbs().maxCoeff();
     report.start_valid = report.start_position_error_rad <= kExactStartToleranceRad;
     if (inputs.measured_qdot_rad_s) {
@@ -175,6 +177,7 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     report.terminal_orientation_shortfall_rad = report.requested_terminal_orientation_error_rad;
     if (inputs.desired_task_path && !inputs.desired_task_path->samples.empty()) {
         std::vector<double> position_errors;
+        double position_error_sum = 0.0;
         const auto& requested_samples = inputs.desired_task_path->samples;
         const double requested_start = requested_samples.front().t_s;
         const double requested_end = requested_samples.back().t_s;
@@ -195,13 +198,18 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
             const double position_error =
                 (actual.translation() - requested.pose.translation()).norm();
             position_errors.push_back(position_error);
-            report.trace_max_position_m =
-                std::max(report.trace_max_position_m, position_error);
+            position_error_sum += position_error;
+            if (position_error > report.trace_max_position_m) {
+                report.trace_max_position_m = position_error;
+                report.trace_worst_position_u = u;
+            }
             report.trace_max_orientation_rad = std::max(
                 report.trace_max_orientation_rad,
                 OrientationError(requested.pose.linear(), actual.linear()));
         }
         if (!position_errors.empty()) {
+            report.trace_mean_position_m =
+                position_error_sum / static_cast<double>(position_errors.size());
             std::sort(position_errors.begin(), position_errors.end());
             double sum_sq = 0.0;
             for (double error : position_errors) sum_sq += error * error;

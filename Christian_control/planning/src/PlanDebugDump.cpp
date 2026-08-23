@@ -1,5 +1,6 @@
 #include "PlanDebugDump.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -38,6 +39,34 @@ std::optional<std::string> OpenCsv(const std::string& directory,
         return "cannot write '" + path + "'";
     file << std::setprecision(17);
     return std::nullopt;
+}
+
+std::string CsvQuoted(const std::string& value)
+{
+    std::string escaped;
+    escaped.reserve(value.size() + 2);
+    escaped.push_back('"');
+    for (const char character : value) {
+        if (character == '"')
+            escaped.push_back('"');
+        escaped.push_back(character);
+    }
+    escaped.push_back('"');
+    return escaped;
+}
+
+std::string SerializeFactorCosts(const std::map<std::string, double>& costs)
+{
+    std::ostringstream serialized;
+    serialized << std::setprecision(17);
+    bool first = true;
+    for (const auto& [key, cost] : costs) {
+        if (!first)
+            serialized << ";";
+        first = false;
+        serialized << key << "=" << cost;
+    }
+    return serialized.str();
 }
 
 }  // namespace
@@ -109,32 +138,65 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
     if (const auto error = OpenCsv(directory, "candidate_attempts.csv", file))
         return error;
 
-    file << "attempt_index,selected,terminal_kind,terminal_branch,route,"
-            "duration_attempt,duration_s,scene_collision_sigma,solve_time_s,"
-            "disposition,validation_failure,executable,finite,start_valid,"
-            "scene_valid,self_collision_valid,joint_limits_valid,"
-            "start_position_error_rad,start_velocity_error_rad_s,"
-            "minimum_scene_clearance_m,worst_scene_object_id,"
-            "worst_scene_sphere_index,worst_scene_time_s,"
-            "minimum_self_clearance_m,max_velocity_ratio,"
-            "max_acceleration_ratio,terminal_position_error_m,"
-            "terminal_orientation_error_rad,requested_terminal_position_error_m,"
-            "requested_terminal_orientation_error_rad,trace_rms_position_m,"
-            "trace_max_position_m,trace_p95_position_m,"
+    file << "attempt_index,selected,actual_solve_attempts,"
+            "maximum_phase_solve_attempts,terminal_kind,terminal_branch,"
+            "terminal_ik_stream_id,terminal_ik_attempt_index,"
+            "terminal_ik_position_residual_m,terminal_ik_orientation_residual_rad,"
+            "route,duration_attempt,duration_s,scene_collision_sigma,solve_time_s,"
+            "optimizer_converged,optimizer_iterations,optimizer_max_iterations,"
+            "optimizer_start_total_cost,optimizer_final_total_cost,"
+            "optimizer_final_factor_costs,disposition,validation_failure,"
+            "executable,finite,start_valid,scene_valid,self_collision_valid,"
+            "joint_limits_valid,start_position_error_rad,start_velocity_error_rad_s,"
+            "capped_clearance_m";
+    for (int joint = 1; joint <= 7; ++joint)
+        file << ",maximum_abs_qdot_j" << joint << "_rad_s";
+    for (int joint = 1; joint <= 7; ++joint)
+        file << ",maximum_abs_qddot_j" << joint << "_rad_s2";
+    file << ",max_velocity_ratio,max_acceleration_ratio,"
+            "first_scene_violation_object_id,first_scene_violation_sphere_index,"
+            "first_scene_violation_time_s,first_scene_violation_clearance_m,"
+            "worst_scene_object_id,worst_scene_sphere_index,worst_scene_time_s,"
+            "minimum_scene_clearance_m,worst_self_first_sphere,"
+            "worst_self_second_sphere,worst_self_time_s,minimum_self_clearance_m,"
+            "terminal_position_error_m,terminal_orientation_error_rad,"
+            "requested_terminal_position_error_m,"
+            "requested_terminal_orientation_error_rad,"
+            "terminal_position_shortfall_m,terminal_orientation_shortfall_rad,"
+            "trace_mean_position_m,trace_rms_position_m,trace_p95_position_m,"
+            "trace_max_position_m,trace_worst_position_u,"
             "trace_max_orientation_rad,integrated_joint_travel_rad\n";
+    const std::size_t actual_solve_attempts = static_cast<std::size_t>(
+        std::count_if(attempts.begin(), attempts.end(), [](const CandidateEvidence& attempt) {
+            return attempt.duration_attempt > 0;
+        }));
+    constexpr std::size_t kMaximumPhaseSolveAttempts = 27;
     for (std::size_t index = 0; index < attempts.size(); ++index) {
         const CandidateEvidence& attempt = attempts[index];
         const PlanValidationReport& validation = attempt.validation;
         file << index << "," << (selected_index && *selected_index == index ? 1 : 0)
+             << "," << actual_solve_attempts
+             << "," << kMaximumPhaseSolveAttempts
              << "," << PlanStatusName(attempt.terminal_kind)
              << "," << attempt.terminal_branch
+             << "," << attempt.terminal_ik_stream_id
+             << "," << attempt.terminal_ik_attempt_index
+             << "," << attempt.terminal_ik_position_residual_m
+             << "," << attempt.terminal_ik_orientation_residual_rad
              << "," << RouteHypothesisName(attempt.route)
              << "," << attempt.duration_attempt
              << "," << attempt.duration_s
              << "," << attempt.scene_collision_sigma
              << "," << attempt.solve_time_s
-             << ",\"" << attempt.disposition << "\""
-             << ",\"" << validation.failure_reason << "\""
+             << "," << (attempt.optimizer_converged ? 1 : 0)
+             << "," << attempt.optimizer_iterations
+             << "," << attempt.optimizer_max_iterations
+             << "," << attempt.optimizer_start_total_cost
+             << "," << attempt.optimizer_final_total_cost
+             << "," << CsvQuoted(SerializeFactorCosts(
+                            attempt.optimizer_final_factor_costs))
+             << "," << CsvQuoted(attempt.disposition)
+             << "," << CsvQuoted(validation.failure_reason)
              << "," << (validation.executable ? 1 : 0)
              << "," << (validation.finite ? 1 : 0)
              << "," << (validation.start_valid ? 1 : 0)
@@ -143,20 +205,36 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
              << "," << (validation.joint_limits_valid ? 1 : 0)
              << "," << validation.start_position_error_rad
              << "," << validation.start_velocity_error_rad_s
-             << "," << validation.minimum_scene_clearance_m
-             << ",\"" << validation.worst_scene_object_id << "\""
+             << "," << attempt.capped_clearance_m;
+        for (int joint = 0; joint < 7; ++joint)
+            file << "," << validation.maximum_abs_joint_velocity_rad_s(joint);
+        for (int joint = 0; joint < 7; ++joint)
+            file << "," << validation.maximum_abs_joint_acceleration_rad_s2(joint);
+        file << "," << validation.max_velocity_ratio
+             << "," << validation.max_acceleration_ratio
+             << "," << CsvQuoted(validation.first_scene_violation_object_id)
+             << "," << validation.first_scene_violation_sphere_index
+             << "," << validation.first_scene_violation_time_s
+             << "," << validation.first_scene_violation_clearance_m
+             << "," << CsvQuoted(validation.worst_scene_object_id)
              << "," << validation.worst_scene_sphere_index
              << "," << validation.worst_scene_time_s
+             << "," << validation.minimum_scene_clearance_m
+             << "," << validation.worst_self_first_sphere
+             << "," << validation.worst_self_second_sphere
+             << "," << validation.worst_self_time_s
              << "," << validation.minimum_self_clearance_m
-             << "," << validation.max_velocity_ratio
-             << "," << validation.max_acceleration_ratio
              << "," << validation.terminal_position_error_m
              << "," << validation.terminal_orientation_error_rad
              << "," << validation.requested_terminal_position_error_m
              << "," << validation.requested_terminal_orientation_error_rad
+             << "," << validation.terminal_position_shortfall_m
+             << "," << validation.terminal_orientation_shortfall_rad
+             << "," << validation.trace_mean_position_m
              << "," << validation.trace_rms_position_m
-             << "," << validation.trace_max_position_m
              << "," << validation.trace_p95_position_m
+             << "," << validation.trace_max_position_m
+             << "," << validation.trace_worst_position_u
              << "," << validation.trace_max_orientation_rad
              << "," << validation.integrated_joint_travel_rad << "\n";
     }

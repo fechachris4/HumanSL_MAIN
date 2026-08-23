@@ -41,6 +41,10 @@ struct PlanValidationReport {
     std::size_t worst_self_first_sphere = 0;
     std::size_t worst_self_second_sphere = 0;
     double worst_self_time_s = 0.0;
+    Eigen::Matrix<double, 7, 1> maximum_abs_joint_velocity_rad_s =
+        Eigen::Matrix<double, 7, 1>::Zero();
+    Eigen::Matrix<double, 7, 1> maximum_abs_joint_acceleration_rad_s2 =
+        Eigen::Matrix<double, 7, 1>::Zero();
     double max_velocity_ratio = 0.0;
     double max_acceleration_ratio = 0.0;
     double terminal_position_error_m = 0.0;
@@ -49,9 +53,11 @@ struct PlanValidationReport {
     double terminal_orientation_shortfall_rad = 0.0;
     double requested_terminal_position_error_m = 0.0;
     double requested_terminal_orientation_error_rad = 0.0;
+    double trace_mean_position_m = 0.0;
     double trace_rms_position_m = 0.0;
     double trace_max_position_m = 0.0;
     double trace_p95_position_m = 0.0;
+    double trace_worst_position_u = 0.0;
     double trace_max_orientation_rad = 0.0;
     double integrated_joint_travel_rad = 0.0;
 };
