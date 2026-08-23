@@ -1,14 +1,13 @@
 #include "PlanSolver.h"
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
-#include "GenerateTrajectory.h"
 #include "MountSdf.h"
 #include "PathAssembly.h"
 #include "PathIk.h"
 #include "TrajectoryOptimization.h"
 #include "ValidatePlan.h"
-#include "TrajectoryInitiation.h"
 
 PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& request,
                             const std::string& joint_limits_yaml,
@@ -49,53 +48,83 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
             config.motion.min_duration_s, distance_m / config.motion.nominal_speed_mps);
         outcome.total_time_sec = total_time_sec;
 
-        // The initializer's IK must target the same arm/frame this model's
-        // DH table was generated for — defaulting it to the right arm here
-        // is what produced the constant 120 mm (tool-vs-flange) goal error
-        // on the first left-arm runs (2026-08-06).
-        InitializeTrajectory initializer(model.dh, model.end_effector_frame,
-                                         model.left_arm);
-        const TrajectoryInit init = initializer.initJointTrajectoryFromTarget(
-            gtsam::Vector(request.q_start_rad), goal_pose, model.base_pose,
-            total_time_step);
-        outcome.init_source = init.source;
-        outcome.init_position_error_m = init.position_error_m;
-        outcome.init_orientation_error_rad = init.orientation_error_rad;
+        PathIkArm terminal_arm;
+        terminal_arm.base_transform = model.base_pose.matrix();
+        terminal_arm.end_effector_frame = model.end_effector_frame;
+        terminal_arm.left_arm = model.left_arm;
+        PathIkJointLimits terminal_limits;
+        terminal_limits.lower_rad = pos_limits.lower;
+        terminal_limits.upper_rad = pos_limits.upper;
+        const auto terminal_candidates = SolveTerminalIkCandidates(
+            terminal_arm, Eigen::Isometry3d(goal_pose.matrix()),
+            request.q_start_rad, terminal_limits, config.effective_ik_seed);
+        if (terminal_candidates.empty()) {
+            outcome.failure_reason = "terminal IK produced no legal candidate";
+            return outcome;
+        }
         const auto obstacle_fields = MakeNamedObstacleFields(
             MountGridGeometry(), model, config.scene);
         std::optional<gtsam::Vector> start_vel;
         if (request.qdot_start_rad_s)
             start_vel = gtsam::Vector(*request.qdot_start_rad_s);
-        TrajectoryResult solved = optimizeJointTrajectory(
-            *model.arm_model, obstacle_fields, init.values, goal_pose,
-            gtsam::Vector(request.q_start_rad), start_vel,
-            pos_limits, vel_limits,
-            total_time_step, total_time_sec, config.optimizer);
-        if (solved.trajectory_pos.empty())
-        {
-            outcome.failure_reason = "optimizer returned an empty trajectory";
-            return outcome;
-        }
-        PlanValidationInputs inputs;
-        inputs.measured_q_rad = request.q_start_rad;
-        inputs.measured_qdot_rad_s = request.qdot_start_rad_s;
-        inputs.position_lower_rad = limits.position_rad.lower;
-        inputs.position_upper_rad = limits.position_rad.upper;
-        inputs.effective_velocity_rad_s = limits.effective_velocity_rad_s.upper;
-        inputs.effective_acceleration_rad_s2 = limits.effective_acceleration_rad_s2.upper;
-        inputs.obstacle_fields = &obstacle_fields;
-        inputs.minimum_clearance_m = config.minimum_clearance_m;
-        inputs.requested_terminal_mount = goal_pose;
-        inputs.candidate_terminal_mount = goal_pose;
-        inputs.intended_status = PlanStatus::kReached;
-        inputs.validation_dt_s = config.path_following.validation_dt_s;
-        outcome.validation = ValidatePlan(model, solved, total_time_sec, inputs);
-        outcome.final_goal_error_m =
-            outcome.validation.requested_terminal_position_error_m;
-        if (outcome.validation.executable) {
-            outcome.status = PlanStatus::kReached;
-            outcome.trajectory = std::move(solved);
-        } else {
+        OptimizeTrajectory optimizer;
+        for (const TerminalIkCandidate& candidate : terminal_candidates) {
+            gtsam::Values init_values;
+            for (std::size_t i = 0; i <= total_time_step; ++i) {
+                const double fraction = static_cast<double>(i) /
+                                        static_cast<double>(total_time_step);
+                init_values.insert(
+                    gtsam::Symbol('x', i),
+                    gtsam::Vector(request.q_start_rad +
+                                  fraction * (candidate.configuration -
+                                              request.q_start_rad)));
+                init_values.insert(
+                    gtsam::Symbol('v', i),
+                    gtsam::Vector((candidate.configuration - request.q_start_rad) /
+                                  total_time_sec));
+            }
+            const auto solve_start = std::chrono::steady_clock::now();
+            TrajectoryResult solved;
+            try {
+                solved = optimizer.optimizeJointTrajectory(
+                    *model.arm_model, obstacle_fields, init_values,
+                    gtsam::Vector(request.q_start_rad), start_vel,
+                    gtsam::Vector(candidate.configuration), pos_limits, vel_limits,
+                    total_time_step, total_time_sec, config.optimizer);
+            } catch (const std::exception& exception) {
+                outcome.failure_reason = exception.what();
+                continue;
+            }
+            solved.optimization_duration =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - solve_start);
+            if (solved.trajectory_pos.empty()) {
+                outcome.failure_reason = "optimizer returned an empty trajectory";
+                continue;
+            }
+            PlanValidationInputs inputs;
+            inputs.measured_q_rad = request.q_start_rad;
+            inputs.measured_qdot_rad_s = request.qdot_start_rad_s;
+            inputs.position_lower_rad = limits.position_rad.lower;
+            inputs.position_upper_rad = limits.position_rad.upper;
+            inputs.effective_velocity_rad_s = limits.effective_velocity_rad_s.upper;
+            inputs.effective_acceleration_rad_s2 = limits.effective_acceleration_rad_s2.upper;
+            inputs.obstacle_fields = &obstacle_fields;
+            inputs.minimum_clearance_m = config.minimum_clearance_m;
+            inputs.requested_terminal_mount = goal_pose;
+            inputs.candidate_terminal_mount = goal_pose;
+            inputs.intended_status = PlanStatus::kReached;
+            inputs.validation_dt_s = config.path_following.validation_dt_s;
+            outcome.validation = ValidatePlan(model, solved, total_time_sec, inputs);
+            outcome.final_goal_error_m =
+                outcome.validation.requested_terminal_position_error_m;
+            if (outcome.validation.executable) {
+                outcome.status = PlanStatus::kReached;
+                outcome.trajectory = std::move(solved);
+                outcome.terminal_candidate = candidate;
+                outcome.failure_reason.clear();
+                break;
+            }
             outcome.failure_reason = outcome.validation.failure_reason;
         }
     }
@@ -201,6 +230,16 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
         std::optional<gtsam::Vector> start_vel;
         if (qdot_start_rad_s)
             start_vel = gtsam::Vector(*qdot_start_rad_s);
+        PathIkJointLimits terminal_limits;
+        terminal_limits.lower_rad = pos_limits.lower;
+        terminal_limits.upper_rad = pos_limits.upper;
+        const auto terminal_candidates = SolveTerminalIkCandidates(
+            arm, Eigen::Isometry3d(task_path.samples.back().pose.matrix()),
+            q_start_rad, terminal_limits, config.effective_ik_seed);
+        if (terminal_candidates.empty()) {
+            outcome.failure_reason = "terminal IK produced no legal candidate";
+            return outcome;
+        }
         // ---- 3. solve and validate, rebuilding every duration attempt ---
         // Time scaling changes qdot and timestamps, so the dense view is
         // rebuilt and re-measured on every pass. No wire decimation sits
@@ -215,96 +254,114 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model,
             assembled.total_duration_s;
 
         double duration_s = base_duration_s;
-        for (int pass = 0; pass < kMaxScalingPasses; ++pass) {
-            outcome.time_scaling_passes = pass + 1;
-            const double task_start_time_s = duration_s * task_start_fraction;
-            outcome.task_start_time_s = task_start_time_s;
+        for (const TerminalIkCandidate& terminal_candidate : terminal_candidates) {
+            duration_s = base_duration_s;
+            outcome.time_scaling_settled = true;
+            for (int pass = 0; pass < kMaxScalingPasses; ++pass) {
+                outcome.time_scaling_passes = pass + 1;
+                const double task_start_time_s = duration_s * task_start_fraction;
+                outcome.task_start_time_s = task_start_time_s;
 
-            const double time_scale = duration_s / base_duration_s;
-            std::vector<OptimisationWaypoint> attempt_waypoints =
-                assembled.waypoints;
-            for (OptimisationWaypoint& waypoint : attempt_waypoints)
-                waypoint.time_s *= time_scale;
-            gtsam::Values init_values;
-            for (std::size_t i = 0; i < states; ++i) {
-                init_values.insert(
-                    gtsam::Symbol('x', i),
-                    gtsam::Vector(assembled.initial_configurations[i]));
-                gtsam::Vector velocity = gtsam::Vector::Zero(7);
-                if (i + 1 < states) {
-                    const double dt = attempt_waypoints[i + 1].time_s -
-                                      attempt_waypoints[i].time_s;
-                    if (dt > 0.0)
-                        velocity = gtsam::Vector(
-                            (assembled.initial_configurations[i + 1] -
-                             assembled.initial_configurations[i]) /
-                            dt);
+                const double time_scale = duration_s / base_duration_s;
+                std::vector<OptimisationWaypoint> attempt_waypoints = assembled.waypoints;
+                for (OptimisationWaypoint& waypoint : attempt_waypoints)
+                    waypoint.time_s *= time_scale;
+                gtsam::Values init_values;
+                for (std::size_t i = 0; i < states; ++i) {
+                    const auto& initial_configuration = i + 1 == states
+                                                            ? terminal_candidate.configuration
+                                                            : assembled.initial_configurations[i];
+                    init_values.insert(gtsam::Symbol('x', i), gtsam::Vector(initial_configuration));
+                    gtsam::Vector velocity = gtsam::Vector::Zero(7);
+                    if (i + 1 < states) {
+                        const double dt =
+                            attempt_waypoints[i + 1].time_s - attempt_waypoints[i].time_s;
+                        if (dt > 0.0)
+                            velocity = gtsam::Vector(
+                                ((i + 2 == states ? terminal_candidate.configuration
+                                                  : assembled.initial_configurations[i + 1]) -
+                                 initial_configuration) /
+                                dt);
+                    }
+                    init_values.insert(gtsam::Symbol('v', i), velocity);
                 }
-                init_values.insert(gtsam::Symbol('v', i), velocity);
+                OptimizeTrajectory optimizer;
+                TrajectoryResult solved;
+                try {
+                    solved = optimizer.optimizeTaskTrajectory(
+                        *model.arm_model, obstacle_fields, init_values, attempt_waypoints,
+                        gtsam::Vector(q_start_rad), start_vel,
+                        gtsam::Vector(terminal_candidate.configuration),
+                        assembled.zero_velocity_indices, pos_limits, vel_limits, duration_s,
+                        config.optimizer);
+                } catch (const std::exception& exception) {
+                    outcome.failure_reason = exception.what();
+                    break;
+                }
+                if (solved.trajectory_pos.empty()) {
+                    outcome.failure_reason = "optimizer returned an empty trajectory";
+                    break;
+                }
+
+                PlanValidationInputs plan_inputs;
+                plan_inputs.measured_q_rad = q_start_rad;
+                plan_inputs.measured_qdot_rad_s = qdot_start_rad_s;
+                plan_inputs.position_lower_rad = limits.position_rad.lower;
+                plan_inputs.position_upper_rad = limits.position_rad.upper;
+                plan_inputs.effective_velocity_rad_s = limits.effective_velocity_rad_s.upper;
+                plan_inputs.effective_acceleration_rad_s2 =
+                    limits.effective_acceleration_rad_s2.upper;
+                plan_inputs.obstacle_fields = &obstacle_fields;
+                plan_inputs.minimum_clearance_m = config.minimum_clearance_m;
+                plan_inputs.requested_terminal_mount =
+                    gtsam::Pose3(gtsam::Rot3(task_path.samples.back().pose.linear()),
+                                 gtsam::Point3(task_path.samples.back().pose.translation()));
+                plan_inputs.candidate_terminal_mount = plan_inputs.requested_terminal_mount;
+                plan_inputs.intended_status = PlanStatus::kReached;
+                plan_inputs.desired_task_path = &task_path;
+                plan_inputs.task_start_time_s = task_start_time_s;
+                plan_inputs.validation_dt_s = config.path_following.validation_dt_s;
+                const PlanValidationReport report =
+                    ValidatePlan(model, solved, duration_s, plan_inputs);
+
+                outcome.validation = report;
+                outcome.total_time_sec = duration_s;
+
+                // Fully inside both dynamic limits: nothing left to repair.
+                // (An unset velocity limit reads as an infinite ratio and an
+                // unconfigured acceleration table as 0, so this keeps the old
+                // pass/skip semantics.)
+                if (report.disposition == CandidateDisposition::kExecutable) {
+                    outcome.status = PlanStatus::kReached;
+                    outcome.trajectory = std::move(solved);
+                    outcome.terminal_candidate = terminal_candidate;
+                    outcome.failure_reason.clear();
+                    break;
+                }
+                if (report.disposition != CandidateDisposition::kNeedsLongerDuration) {
+                    outcome.failure_reason = report.failure_reason;
+                    break;
+                }
+
+                // ONLY dynamic failures are retried. Slowing down cannot fix a
+                // trajectory that traces the wrong shape or clips an obstacle,
+                // and pretending otherwise would burn solves while the report
+                // said the same thing each time.
+                const double alpha =
+                    std::max(report.max_velocity_ratio, std::sqrt(report.max_acceleration_ratio));
+                if (!(alpha > 1.0))
+                    break; // limits failed for another reason
+                if (pass + 1 == kMaxScalingPasses) {
+                    outcome.time_scaling_settled = false;
+                    outcome.failure_reason = report.failure_reason;
+                    break;
+                }
+                // Select a longer duration; the next loop iteration rebuilds the
+                // timed waypoints, initial values and optimizer result from scratch.
+                duration_s *= alpha;
             }
-            OptimizeTrajectory optimizer;
-            TrajectoryResult solved = optimizer.optimizeTaskTrajectory(
-                *model.arm_model, obstacle_fields, init_values, attempt_waypoints,
-                gtsam::Vector(q_start_rad), start_vel,
-                assembled.zero_velocity_indices, pos_limits, vel_limits,
-                duration_s, config.optimizer);
-            if (solved.trajectory_pos.empty()) {
-                outcome.failure_reason = "optimizer returned an empty trajectory";
-                return outcome;
-            }
-
-            PlanValidationInputs plan_inputs;
-            plan_inputs.measured_q_rad = q_start_rad;
-            plan_inputs.measured_qdot_rad_s = qdot_start_rad_s;
-            plan_inputs.position_lower_rad = limits.position_rad.lower;
-            plan_inputs.position_upper_rad = limits.position_rad.upper;
-            plan_inputs.effective_velocity_rad_s = limits.effective_velocity_rad_s.upper;
-            plan_inputs.effective_acceleration_rad_s2 = limits.effective_acceleration_rad_s2.upper;
-            plan_inputs.obstacle_fields = &obstacle_fields;
-            plan_inputs.minimum_clearance_m = config.minimum_clearance_m;
-            plan_inputs.requested_terminal_mount =
-                gtsam::Pose3(gtsam::Rot3(task_path.samples.back().pose.linear()),
-                             gtsam::Point3(task_path.samples.back().pose.translation()));
-            plan_inputs.candidate_terminal_mount = plan_inputs.requested_terminal_mount;
-            plan_inputs.intended_status = PlanStatus::kReached;
-            plan_inputs.desired_task_path = &task_path;
-            plan_inputs.task_start_time_s = task_start_time_s;
-            plan_inputs.validation_dt_s = config.path_following.validation_dt_s;
-            const PlanValidationReport report =
-                ValidatePlan(model, solved, duration_s, plan_inputs);
-
-            outcome.validation = report;
-            outcome.total_time_sec = duration_s;
-
-            // Fully inside both dynamic limits: nothing left to repair.
-            // (An unset velocity limit reads as an infinite ratio and an
-            // unconfigured acceleration table as 0, so this keeps the old
-            // pass/skip semantics.)
-            if (report.disposition == CandidateDisposition::kExecutable) {
-                outcome.status = PlanStatus::kReached;
-                outcome.trajectory = std::move(solved);
+            if (IsExecutable(outcome.status) && outcome.trajectory)
                 break;
-            }
-            if (report.disposition != CandidateDisposition::kNeedsLongerDuration) {
-                outcome.failure_reason = report.failure_reason;
-                break;
-            }
-
-            // ONLY dynamic failures are retried. Slowing down cannot fix a
-            // trajectory that traces the wrong shape or clips an obstacle,
-            // and pretending otherwise would burn solves while the report
-            // said the same thing each time.
-            const double alpha = std::max(report.max_velocity_ratio,
-                                         std::sqrt(report.max_acceleration_ratio));
-            if (!(alpha > 1.0)) break;  // limits failed for another reason
-            if (pass + 1 == kMaxScalingPasses) {
-                outcome.time_scaling_settled = false;
-                outcome.failure_reason = report.failure_reason;
-                break;
-            }
-            // Select a longer duration; the next loop iteration rebuilds the
-            // timed waypoints, initial values and optimizer result from scratch.
-            duration_s *= alpha;
         }
 
         if (outcome.status == PlanStatus::kFailed && outcome.failure_reason.empty())

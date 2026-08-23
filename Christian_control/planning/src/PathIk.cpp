@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <limits>
 #include <random>
 #include <cmath>
@@ -128,8 +127,6 @@ PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
     const auto solve_anchor = [&](const Eigen::Matrix4d& target,
                                   const Eigen::Matrix<double, 7, 1>& walk_seed,
                                   PathIkSample& sample) {
-        const auto deadline = std::chrono::steady_clock::now() +
-                              std::chrono::duration<double>(kAnchorIkTimeBudgetS);
         bool converged_outside_limits = false;
         int attempts = 0;
         double best_failed_residual_m = std::numeric_limits<double>::infinity();
@@ -162,8 +159,7 @@ PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
             return true;
         };
         const auto budget_left = [&] {
-            return attempts < kMaxAnchorIkAttempts &&
-                   std::chrono::steady_clock::now() < deadline;
+            return attempts < kMaxAnchorIkAttempts;
         };
 
         if (attempt(walk_seed)) return;
@@ -270,4 +266,73 @@ PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
                 .cwiseAbs()
                 .maxCoeff();
     return result;
+}
+
+std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
+    const PathIkArm& arm, const Eigen::Isometry3d& target,
+    const Eigen::Matrix<double, 7, 1>& measured_q,
+    const PathIkJointLimits& limits, std::uint64_t effective_seed,
+    std::size_t max_candidates) {
+    std::vector<TerminalIkCandidate> candidates;
+    if (max_candidates == 0) return candidates;
+
+    const Eigen::Matrix<double, 7, 1> canonical_measured =
+        CanonicalSeed(measured_q, limits);
+    analytical_ik::IKTolerance tolerance;
+    tolerance.converge_position_m = 0.001;
+    tolerance.accept_position_m = 0.001;
+    tolerance.converge_orientation_rad = 0.01;
+    tolerance.accept_orientation_rad = 0.01;
+
+    std::vector<TerminalIkCandidate> pool;
+    pool.reserve(10 * 100);
+    for (std::uint64_t stream = 0; stream < 10; ++stream) {
+        const auto solutions = analytical_ik::AnalyticalIKSolver::solveIK(
+            target.matrix(), arm.base_transform, canonical_measured, 100,
+            arm.end_effector_frame, arm.left_arm, tolerance,
+            analytical_ik::IKSeeding{effective_seed, stream});
+        for (const auto& solution : solutions) {
+            if (!solution.attempted || !solution.is_valid ||
+                solution.position_error_m > 0.001 ||
+                solution.orientation_error_rad > 0.01)
+                continue;
+            const Eigen::Matrix<double, 7, 1> configuration =
+                canonical_measured +
+                JointDifference(canonical_measured, solution.joint_angles,
+                                limits);
+            if (!WithinLimits(configuration, limits)) continue;
+            pool.push_back({configuration, stream, solution.attempt_index,
+                            solution.position_error_m,
+                            solution.orientation_error_rad});
+        }
+    }
+
+    const auto displacement = [&](const TerminalIkCandidate& candidate) {
+        return JointDifference(canonical_measured, candidate.configuration,
+                               limits)
+            .norm();
+    };
+    std::sort(pool.begin(), pool.end(), [&](const auto& first, const auto& second) {
+        const double first_distance = displacement(first);
+        const double second_distance = displacement(second);
+        if (first_distance != second_distance)
+            return first_distance < second_distance;
+        if (first.stream_id != second.stream_id)
+            return first.stream_id < second.stream_id;
+        return first.attempt_index < second.attempt_index;
+    });
+
+    for (const auto& candidate : pool) {
+        const bool duplicate = std::any_of(
+            candidates.begin(), candidates.end(), [&](const auto& retained) {
+                return JointDifference(retained.configuration,
+                                       candidate.configuration, limits)
+                           .cwiseAbs()
+                           .maxCoeff() <= 1e-3;
+            });
+        if (duplicate) continue;
+        candidates.push_back(candidate);
+        if (candidates.size() == max_candidates) break;
+    }
+    return candidates;
 }

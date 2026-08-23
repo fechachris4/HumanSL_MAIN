@@ -7,7 +7,6 @@
 #include "PathIk.h"
 #include "PlanValidationReport.h"
 #include "ValidatePlan.h"
-#include "TrajectoryInitiation.h"  // InitSource
 
 // The physical and effective operating limits the plan was actually solved
 // against, carried with the outcome so artifacts state both bands.
@@ -43,16 +42,7 @@ struct PlanOutcome {
     PlanValidationReport validation;
     double final_goal_error_m = 0.0;   // FK(last waypoint) vs requested goal
     double total_time_sec = 0.0;       // planned duration the states span
-    // How the optimiser's starting sketch was built, and how far the IK
-    // that built it landed from the requested pose. A plan is NOT refused
-    // for a poor initialisation — the optimiser has its own goal term and
-    // final_goal_error_m above says what it actually achieved — but the
-    // operator is told, because a kNearMiss or kHeldStart plan deserves
-    // more scrutiny than a kSolvedIk one. The two errors also say WHICH
-    // half of the pose the IK could not reach: position or orientation.
-    InitSource init_source = InitSource::kSolvedIk;
-    double init_position_error_m = 0.0;
-    double init_orientation_error_rad = 0.0;
+    std::optional<TerminalIkCandidate> terminal_candidate;
     PlanJointLimits joint_limits;
 };
 
@@ -61,8 +51,8 @@ struct PlanOutcome {
 // pacing and every factor-graph weight (PlannerConfig.h). It is a parameter
 // rather than part of PlanRequest because it is ambient policy for the run,
 // not part of the question "where should the arm go".
-// Goal orientation = tool orientation at q_start (the controller is
-// position-only and preserves takeover orientation; the pose prior is soft).
+// Goal orientation = tool orientation at q_start when the request omits one;
+// the selected terminal IK candidate is enforced by an exact joint equality.
 PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& request,
                             const std::string& joint_limits_yaml,
                             const PlannerConfig& config);
@@ -79,6 +69,7 @@ struct PathPlanOutcome {
     std::string failure_reason;
     std::optional<TrajectoryResult> trajectory;
     PlanValidationReport validation;
+    std::optional<TerminalIkCandidate> terminal_candidate;
     double total_time_sec = 0.0;
     int time_scaling_passes = 0;  // how many alpha iterations were needed
     bool time_scaling_settled = true;

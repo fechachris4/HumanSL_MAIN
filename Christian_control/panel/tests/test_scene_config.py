@@ -24,9 +24,6 @@ obstacles:
   scene: {}
 smoothness:
   qc_scale: 1.0
-goal:
-  position_sigma_xyz: [0.001, 0.01, 0.001]
-  rotation_sigma_rpy: [0.01, 0.01, 0.01]
 solver:
   max_iterations: 1000
 path_following:

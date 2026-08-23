@@ -36,9 +36,9 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     const gpmp2::ArmModel& arm_model,
     const std::vector<NamedObstacleField>& obstacle_fields,
     const gtsam::Values& init_values,
-    const gtsam::Pose3& target_pose,
     const gtsam::Vector& start_config,
     const std::optional<gtsam::Vector>& start_vel,
+    const std::optional<gtsam::Vector>& terminal_config,
     const JointLimits& pos_limits,
     const JointLimits& vel_limits,
     const size_t total_time_step,
@@ -71,6 +71,9 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
     gtsam::NonlinearFactorGraph graph;
     gtsam::Values initial_values = init_values;
     initial_values.update(gtsam::Symbol('x', 0), start_config);
+    if (terminal_config)
+        initial_values.update(gtsam::Symbol('x', total_time_step),
+                             *terminal_config);
     if (start_vel)
         initial_values.update(gtsam::Symbol('v', 0), *start_vel);
     
@@ -149,17 +152,12 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
         }
     }
 
-    // Add workspace constraints for final waypoint if specified
     gtsam::Symbol final_key('x', total_time_step);
-    
-    // Via PoseNoiseModel, so the [rotation; translation] ordering has one
-    // home shared with the path-following overload rather than two.
-    auto workspace_model = PoseNoiseModel(tuning.goal_rotation_sigma_rpy,
-                                          tuning.goal_position_sigma_xyz);
-
-    graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
-        final_key, arm_model, 6, target_pose, workspace_model));
-    factor_keys.push_back("PoseFactor");
+    if (terminal_config) {
+        graph.add(gtsam::NonlinearEquality<gtsam::Vector>(
+            final_key, *terminal_config));
+        factor_keys.push_back("TerminalPosEquality");
+    }
 
     for (size_t i = 0; i < graph.size(); ++i) {
 
@@ -213,6 +211,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     const std::vector<OptimisationWaypoint>& waypoints,
     const gtsam::Vector& start_config,
     const std::optional<gtsam::Vector>& start_vel,
+    const std::optional<gtsam::Vector>& terminal_config,
     const std::vector<size_t>& zero_velocity_indices,
     const JointLimits& pos_limits,
     const JointLimits& vel_limits,
@@ -264,6 +263,9 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     rest_indices.insert(total_time_step);
     gtsam::Values initial_values = init_values;
     initial_values.update(gtsam::Symbol('x', 0), start_config);
+    if (terminal_config)
+        initial_values.update(gtsam::Symbol('x', total_time_step),
+                             *terminal_config);
     if (start_vel)
         initial_values.update(gtsam::Symbol('v', 0), *start_vel);
 
@@ -361,7 +363,7 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
     size_t constrained_count = 0;
     for (size_t i = 0; i <= total_time_step; i++) {
         const auto& prior = waypoints[i].pose_prior;
-        if (!prior) continue;
+        if (!prior || (terminal_config && i == total_time_step)) continue;
         graph.add(gpmp2::GaussianPriorWorkspacePoseArm(
             gtsam::Symbol('x', i), arm_model, 6,
             gtsam::Pose3(gtsam::Rot3(prior->target.linear()),
@@ -369,6 +371,11 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
             PoseNoiseModel(prior->rotation_sigma_rad, prior->translation_sigma_m)));
         factor_keys.push_back("PoseFactor");
         ++constrained_count;
+    }
+    if (terminal_config) {
+        graph.add(gtsam::NonlinearEquality<gtsam::Vector>(
+            gtsam::Symbol('x', total_time_step), *terminal_config));
+        factor_keys.push_back("TerminalPosEquality");
     }
     if (constrained_count == 0)
         throw std::invalid_argument(

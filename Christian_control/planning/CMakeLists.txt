@@ -52,7 +52,6 @@ set(OPTIMISATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/optimisation/TrajectoryOptimization.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/optimisation/OptimisationWaypoint.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/optimisation/PinocchioKinematicsAdapter.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/optimisation/GenerateTrajectory.cpp
 )
 
 # The planner's joint-limits table, also this project's own copy (the root

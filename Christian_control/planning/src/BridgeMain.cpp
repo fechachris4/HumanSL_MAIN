@@ -925,6 +925,12 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         meta.status = plan.status;
         meta.failure_reason = plan.failure_reason;
         meta.total_time_s = plan.total_time_sec;
+        if (plan.terminal_candidate)
+            diagnostics << "terminal IK: stream " << plan.terminal_candidate->stream_id
+                        << ", attempt " << plan.terminal_candidate->attempt_index
+                        << ", residual " << plan.terminal_candidate->position_residual_m * 1000.0
+                        << " mm / " << plan.terminal_candidate->orientation_residual_rad * 180.0 / M_PI
+                        << " deg\n";
 
         if (IsExecutable(plan.status) && plan.trajectory) {
             diagnostics << "continuation IK: largest joint step "
@@ -1084,39 +1090,12 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
         meta.failure_reason = outcome.failure_reason;
         meta.final_goal_error_m = outcome.final_goal_error_m;
         meta.total_time_s = outcome.total_time_sec;
-
-        // How the optimiser's starting sketch was built. Reported HERE, before
-        // validation and emission, because a degraded initialisation is most
-        // worth knowing about on the runs that go on to fail — printing it only
-        // on success would hide it exactly when it explains something. A
-        // solved pose says so in one word; the degraded cases give how far the
-        // IK landed from the requested pose, split into position and
-        // orientation, because that split identifies WHICH half was
-        // unreachable. This is a description, not a verdict: the plan is not
-        // refused for a poor initialisation, and the achieved goal error
-        // reported after emission is what the optimiser actually managed.
-        diagnostics << "plan initialisation: ";
-        switch (outcome.init_source) {
-        case InitSource::kSolvedIk:
-            diagnostics << "solved IK pose\n";
-            break;
-        case InitSource::kNearMiss:
-            diagnostics << "NEAR MISS — no IK pose passed; seeded from the closest "
-                           "one reached, "
-                        << (outcome.init_position_error_m * 1000.0) << " mm and "
-                        << (outcome.init_orientation_error_rad * 180.0 / M_PI)
-                        << " deg from the requested pose. The requested position "
-                           "may be reachable only with a different tool "
-                           "orientation; check the achieved goal error below.\n";
-            break;
-        case InitSource::kHeldStart:
-            diagnostics << "HELD START — IK produced no usable pose at all; every "
-                           "waypoint seeded at the start configuration and the "
-                           "optimiser pulled from there alone. Treat the achieved "
-                           "goal error below as the only statement of where this "
-                           "plan actually goes.\n";
-            break;
-        }
+        if (outcome.terminal_candidate)
+            diagnostics << "terminal IK: stream " << outcome.terminal_candidate->stream_id
+                        << ", attempt " << outcome.terminal_candidate->attempt_index
+                        << ", residual " << outcome.terminal_candidate->position_residual_m * 1000.0
+                        << " mm / " << outcome.terminal_candidate->orientation_residual_rad * 180.0 / M_PI
+                        << " deg\n";
 
         diagnostics << "---- PLAN SUMMARY (" << meta.arm
                     << " arm, point goal) ----\n";

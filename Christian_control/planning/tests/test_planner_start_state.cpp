@@ -55,12 +55,15 @@ int main(int argc, char** argv) {
     const Eigen::Matrix<double, 7, 1> qdot_meas = MeasuredQdot();
     const Eigen::Vector3d start_position = ToolPositionInMount(model, q_plan);
     const gtsam::Pose3 start_pose = ToolPoseInMount(model, q_plan);
+    Eigen::Matrix<double, 7, 1> q_goal = q_plan;
+    q_goal(0) += 0.05;
+    const gtsam::Pose3 goal_pose = ToolPoseInMount(model, q_goal);
 
     PlanRequest point_request;
     point_request.q_start_rad = q_plan;
     point_request.qdot_start_rad_s = qdot_meas;
-    point_request.goal_position_m = start_position;
-    point_request.goal_rotation = start_pose.rotation().matrix();
+    point_request.goal_position_m = goal_pose.translation();
+    point_request.goal_rotation = goal_pose.rotation().matrix();
     const PlanOutcome point =
         SolveToPosition(model, point_request, joint_limits, config);
     Check(IsExecutable(point.status) && point.trajectory,
@@ -70,10 +73,23 @@ int main(int argc, char** argv) {
               "point q0 equals canonical measured q");
         Check(MaxAbs(point.trajectory->trajectory_vel.front() - qdot_meas) < 1e-12,
               "point qdot0 equals measured qdot");
+        Check(point.terminal_candidate.has_value(),
+              "point records selected terminal IK candidate");
+        if (point.terminal_candidate) {
+            Check(MaxAbs(point.trajectory->trajectory_pos.back() -
+                         point.terminal_candidate->configuration) < 1e-12,
+                  "point qN equals selected terminal configuration");
+            Check(MaxAbs(point.terminal_candidate->configuration - q_plan) > 1e-3,
+                  "point terminal differs from measured start");
+        }
         Check(point.trajectory->start_costs.count("StartPosEquality") == 1,
               "point graph contains position equality");
         Check(point.trajectory->start_costs.count("StartVelEquality") == 1,
               "point graph contains velocity equality");
+        Check(point.trajectory->start_costs.count("TerminalPosEquality") == 1,
+              "point graph contains terminal equality");
+        Check(point.trajectory->start_costs.count("PoseFactor") == 0,
+              "point graph has no terminal workspace pose factor");
     }
 
     PlanRequest offline_point = point_request;
@@ -114,6 +130,14 @@ int main(int argc, char** argv) {
               "traced graph contains position equality");
         Check(traced.trajectory->start_costs.count("StartVelEquality") == 1,
               "traced graph contains velocity equality");
+        Check(traced.terminal_candidate.has_value(),
+              "traced records selected terminal IK candidate");
+        if (traced.terminal_candidate)
+            Check(MaxAbs(traced.trajectory->trajectory_pos.back() -
+                         traced.terminal_candidate->configuration) < 1e-12,
+                  "traced qN equals selected terminal configuration");
+        Check(traced.trajectory->start_costs.count("TerminalPosEquality") == 1,
+              "traced graph contains terminal equality");
     }
 
     const PathPlanOutcome offline_path = SolveAlongPath(

@@ -59,19 +59,6 @@ smoothness:
   # stiffer.
   qc_scale: 1.0
 
-# How tightly the final waypoint is held to the goal. gtsam sigmas again:
-# SMALLER is stiffer.
-goal:
-  # x, y, z. Note y is deliberately ten times looser than x and z. That is
-  # inherited from an earlier task, and it is why a plan can drift in y
-  # while landing accurately in x and z. Exposed at its historical value on
-  # purpose: making it uniform is a behaviour change on the motion path and
-  # deserves its own verification, not a config edit folded into a refactor.
-  position_sigma_xyz: [0.01, 0.1, 0.01]
-  # roll, pitch, yaw. The goal currently carries the tool orientation the
-  # arm held at takeover, so these do bind.
-  rotation_sigma_rpy: [0.01, 0.01, 0.01]
-
 solver:
   # Levenberg-Marquardt iteration ceiling. Shapes convergence, not motion.
   max_iterations: 1000

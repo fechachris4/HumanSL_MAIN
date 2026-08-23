@@ -12,10 +12,10 @@
 // previous solution, keeping the walk on one branch of the redundant arm's
 // solution family). Every sample between anchors is interpolated.
 //
-// Anchor solves are robust but time-bounded: the continuation seed first,
+// Anchor solves are robust and attempt-bounded: the continuation seed first,
 // then a small structured set of null-space perturbations, then a bounded
 // random multi-start — stopping at the first solution inside tolerance and
-// limits, or at the attempt/wall-clock cap. A failed OPTIONAL anchor is
+// limits, or at the fixed attempt cap. A failed OPTIONAL anchor is
 // dropped and its span interpolated between its solved neighbours; only the
 // path ENTRY anchor can make initialization fail, because nothing can
 // interpolate toward an unknown entry configuration.
@@ -109,14 +109,11 @@ struct PathIkJointLimits {
 // an open path's final sample too). Each anchor gets the continuation
 // seed, then kPathIkAlternativeSeedCount structured null-space
 // perturbations, then random multi-start — stopping at the FIRST solution
-// inside tolerance and limits, or when either the attempt or wall-clock
-// budget runs out. Both caps exist so a hard anchor cannot make a normal
-// plan slow: the time cap bounds expensive solves, the attempt cap bounds
-// cheap ones.
+// inside tolerance and limits, or when the fixed attempt cap runs out. The
+// attempt cap bounds the work deterministically for a hard anchor.
 inline constexpr std::size_t kPathIkAnchorStride = 4;
 inline constexpr int kPathIkAlternativeSeedCount = 4;
 inline constexpr int kMaxAnchorIkAttempts = 50;
-inline constexpr double kAnchorIkTimeBudgetS = 0.010;
 static_assert(kPathIkAlternativeSeedCount >= 3 &&
               kPathIkAlternativeSeedCount <= 5);
 
@@ -140,3 +137,18 @@ PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
                          const analytical_ik::IKTolerance& tolerance,
                          bool closed = false,
                          std::uint64_t random_seed = 20260807u);
+
+struct TerminalIkCandidate {
+    Eigen::Matrix<double, 7, 1> configuration =
+        Eigen::Matrix<double, 7, 1>::Zero();
+    std::uint64_t stream_id = 0;
+    std::size_t attempt_index = 0;
+    double position_residual_m = 0.0;
+    double orientation_residual_rad = 0.0;
+};
+
+std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
+    const PathIkArm& arm, const Eigen::Isometry3d& target,
+    const Eigen::Matrix<double, 7, 1>& measured_q,
+    const PathIkJointLimits& limits, std::uint64_t effective_seed,
+    std::size_t max_candidates = 3);

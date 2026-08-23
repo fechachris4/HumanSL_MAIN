@@ -197,7 +197,7 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     } catch (const YAML::Exception& error) {
         Fail("cannot parse " + path + ": " + error.what());
     }
-    RequireExactKeys(root, {"motion", "obstacles", "smoothness", "goal", "solver",
+    RequireExactKeys(root, {"motion", "obstacles", "smoothness", "solver",
                             "path_following", "seeding"},
                      "root");
 
@@ -289,13 +289,6 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     RequireExactKeys(smoothness, {"qc_scale"}, "smoothness");
     config.optimizer.qc_scale = Number(smoothness, "qc_scale", "smoothness", 1e-6, 1e6);
 
-    const YAML::Node goal = root["goal"];
-    RequireExactKeys(goal, {"position_sigma_xyz", "rotation_sigma_rpy"}, "goal");
-    config.optimizer.goal_position_sigma_xyz =
-        ReadVector3(goal,"position_sigma_xyz", "goal", 1e-6, 1e3);
-    config.optimizer.goal_rotation_sigma_rpy =
-        ReadVector3(goal,"rotation_sigma_rpy", "goal", 1e-6, 1e3);
-
     const YAML::Node path_following = root["path_following"];
     RequireExactKeys(path_following,
                      {"position_prior_sigma_m", "rotation_prior_sigma_rad",
@@ -350,8 +343,6 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
 }
 
 std::string EffectiveConfigText(const PlannerConfig& config) {
-    const Eigen::Vector3d& position = config.optimizer.goal_position_sigma_xyz;
-    const Eigen::Vector3d& rotation = config.optimizer.goal_rotation_sigma_rpy;
     std::ostringstream text;
     text << std::setprecision(10);
     text << "planner config: " << config.source_path << "\n";
@@ -383,10 +374,6 @@ std::string EffectiveConfigText(const PlannerConfig& config) {
         text << "\n";
     }
     text << "  smoothness.qc_scale      = " << config.optimizer.qc_scale << "\n";
-    text << "  goal.position_sigma_xyz  = [" << position.x() << ", " << position.y()
-         << ", " << position.z() << "]\n";
-    text << "  goal.rotation_sigma_rpy  = [" << rotation.x() << ", " << rotation.y()
-         << ", " << rotation.z() << "]\n";
     text << "  solver.max_iterations    = " << config.optimizer.max_iterations << "\n";
     const PathFollowingConfig& pf = config.path_following;
     text << "  path_following.position_prior_sigma_m     = " << pf.position_prior_sigma_m << "\n";

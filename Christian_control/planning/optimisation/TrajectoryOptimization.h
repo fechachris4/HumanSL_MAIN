@@ -61,15 +61,6 @@ struct OptimizerTuning {
     // Scales the GP prior covariance Qc — the smoothness knob. Larger is
     // freer to deviate from constant velocity.
     double qc_scale = 1.0;
-    // Final-waypoint goal weights. gpmp2's workspace pose error is ordered
-    // [rotation; translation], which is why these are two separate vectors
-    // rather than one six-vector: naming them keeps that order explicit.
-    // Position tightened x10 on 2026-08-13 (keeping the historical 10x
-    // y-looseness ratio): at the faster 1.0 s pacing the smoothness prior
-    // otherwise outweighs this anchor and the canonical 0.2 m test move
-    // missed its goal by 82 mm; at these sigmas it lands within 3.2 mm.
-    Eigen::Vector3d goal_rotation_sigma_rpy = Eigen::Vector3d(0.01, 0.01, 0.01);
-    Eigen::Vector3d goal_position_sigma_xyz = Eigen::Vector3d(0.001, 0.01, 0.001);
     // Levenberg-Marquardt iteration ceiling.
     int max_iterations = 1000;
 };
@@ -88,9 +79,9 @@ public:
         const gpmp2::ArmModel& arm_model,
         const std::vector<NamedObstacleField>& obstacle_fields,
         const gtsam::Values& init_values,
-        const gtsam::Pose3& target_pose,
         const gtsam::Vector& start_config,
         const std::optional<gtsam::Vector>& start_vel,
+        const std::optional<gtsam::Vector>& terminal_config,
         const JointLimits& pos_limits,
         const JointLimits& vel_limits,
         const size_t total_time_step,
@@ -124,6 +115,7 @@ public:
         const std::vector<OptimisationWaypoint>& waypoints,
         const gtsam::Vector& start_config,
         const std::optional<gtsam::Vector>& start_vel,
+        const std::optional<gtsam::Vector>& terminal_config,
         const std::vector<size_t>& zero_velocity_indices,
         const JointLimits& pos_limits,
         const JointLimits& vel_limits,

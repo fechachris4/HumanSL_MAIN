@@ -131,12 +131,14 @@ struct IKSolution {
     double position_error_m;
     double orientation_error_rad;
     bool attempted;
+    std::size_t attempt_index;
 
     IKSolution() : quality_score(std::numeric_limits<double>::max()), is_valid(false),
                    iterations_used(0),
                    position_error_m(std::numeric_limits<double>::infinity()),
                    orientation_error_rad(std::numeric_limits<double>::infinity()),
-                   attempted(false) {
+                   attempted(false),
+                   attempt_index(0) {
         joint_angles.setZero();
     }
 };
@@ -597,10 +599,12 @@ inline std::vector<IKSolution> AnalyticalIKSolver::solveIK(const Eigen::Matrix4d
     auto seeds = generateRandomSeeds(seed_config, num_attempts, seeding);
 
     // Try each seed
-    for (const auto& seed : seeds) {
+    for (std::size_t attempt = 0; attempt < seeds.size(); ++attempt) {
+        const auto& seed = seeds[attempt];
         IKSolution solution = solveDampedLeastSquares(target_pose, base_transform, seed,
                                                       end_effector_frame, left_arm,
                                                       tolerance);
+        solution.attempt_index = attempt;
         
         if (solution.is_valid || solution.quality_score < 10.0) { // Accept reasonable solutions
             solution.quality_score = computeQualityScore(solution.joint_angles, seed_config);

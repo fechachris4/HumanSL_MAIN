@@ -2,7 +2,6 @@
 #include <cmath>
 #include <random>
 #include "quik_solveIK.h"
-#include "analytical_ik.h"
 
 
 InitializeTrajectory::InitializeTrajectory(DHParameters dh_params,
@@ -13,47 +12,6 @@ InitializeTrajectory::InitializeTrajectory(DHParameters dh_params,
       left_arm_(left_arm)
 {}
 
-
-IKAttempt InitializeTrajectory::solveIK(const gtsam::Pose3& target_pose,
-                    const gtsam::Pose3& base_pose,
-                    const gtsam::Vector& seed_config,
-                    int max_attempts,
-                    double guess_range) {
-    (void)guess_range;  // the solver draws its own seed spread internally
-
-    // === DAMPED LEAST SQUARES IK SOLVER ===
-    // Convert gtsam types to Eigen for DLS solver
-    Eigen::Matrix4d target_transform = target_pose.matrix();
-    Eigen::Matrix4d base_transform = base_pose.matrix();
-
-    Eigen::Vector<double, 7> seed_eigen;
-    for(int i = 0; i < 7; i++) {
-        seed_eigen(i) = seed_config(i);
-    }
-
-    // Use Damped Least Squares IK solver with multiple random seeds,
-    // targeting THIS model's arm/frame (end_effector_frame_/left_arm_).
-    auto solution = analytical_ik::AnalyticalIKSolver::solveBestIK(
-        target_transform, base_transform, seed_eigen, max_attempts,
-        end_effector_frame_, left_arm_);
-
-    // Report what the solver reached either way. A rejected candidate still
-    // carries a real configuration and real errors; only a solver that
-    // produced nothing at all (attempted == false) has zeroed angles that
-    // must not be read.
-    IKAttempt attempt;
-    attempt.solved = solution.is_valid;
-    attempt.attempted = solution.attempted;
-    if(solution.attempted) {
-        attempt.config = gtsam::Vector(7);
-        for(int i = 0; i < 7; i++) {
-            attempt.config(i) = solution.joint_angles(i);
-        }
-        attempt.position_error_m = solution.position_error_m;
-        attempt.orientation_error_rad = solution.orientation_error_rad;
-    }
-    return attempt;
-}
 
 bool InitializeTrajectory::solveQuik(const gtsam::Pose3& target_pose, 
                     const gtsam::Pose3& base_pose,
@@ -187,115 +145,6 @@ void InitializeTrajectory::wrapAngles(Eigen::Vector<double,7>& angles, const Eig
         diff = std::remainder(diff, 2*M_PI);
         angles(i) = wrapped_ref + diff;
     }
-}
-
-
-TrajectoryInit InitializeTrajectory::initJointTrajectoryFromTarget(
-                                const gtsam::Vector& start_conf,
-                                const gtsam::Pose3& end_pose,
-                                const gtsam::Pose3& base_pose,
-                                const size_t total_time_step) {
-
-    // Ten independent runs of the solver, each drawing its own spread of
-    // random seeds internally. Two bests are tracked, because a solved pose
-    // and a near miss are chosen on different criteria:
-    //   solved     -> least joint motion from the start (they all reach the
-    //                 pose, so the tie-break that matters is excursion);
-    //   near miss  -> closest approach to the pose (none of them reach it,
-    //                 so the tie-break that matters is how close it got).
-    bool have_solved = false;
-    gtsam::Vector best_solved;
-    double best_solved_motion = std::numeric_limits<double>::infinity();
-    double best_solved_pos_err = 0.0, best_solved_rot_err = 0.0;
-
-    bool have_near_miss = false;
-    gtsam::Vector best_near_miss;
-    double best_near_miss_error = std::numeric_limits<double>::infinity();
-    double best_near_miss_pos_err = 0.0, best_near_miss_rot_err = 0.0;
-
-    for(int i = 0; i < 10; i++){
-        const IKAttempt attempt = solveIK(end_pose, base_pose, start_conf, 100, 0.25);
-        if(!attempt.attempted)
-            continue;  // nothing was produced; its config is meaningless
-
-
-        gtsam::Vector end_conf = attempt.config;
-        wrapAngles(end_conf, start_conf);
-
-        if(attempt.solved){
-            have_solved = true;
-            const double motion = (end_conf - start_conf).norm();
-            if(motion < best_solved_motion){
-                best_solved_motion = motion;
-                best_solved = end_conf;
-                best_solved_pos_err = attempt.position_error_m;
-                best_solved_rot_err = attempt.orientation_error_rad;
-            }
-        } else if(!have_solved){
-            // Only worth keeping while nothing has succeeded.
-            const double approach =
-                attempt.position_error_m + attempt.orientation_error_rad;
-            if(std::isfinite(approach) && approach < best_near_miss_error){
-                have_near_miss = true;
-                best_near_miss_error = approach;
-                best_near_miss = end_conf;
-                best_near_miss_pos_err = attempt.position_error_m;
-                best_near_miss_rot_err = attempt.orientation_error_rad;
-            }
-        }
-    }
-
-    // Choose the end configuration the sketch runs toward, and record where
-    // it came from. NOTHING here throws: IK builds the optimiser's starting
-    // guess, and the optimiser has its own goal term, so a failed IK costs
-    // guess quality rather than making the plan impossible. Refusing to plan
-    // would produce no motion, no information, and no progress toward the
-    // requested point — see CLAUDE.md, graceful degradation over refusal.
-    TrajectoryInit init;
-    gtsam::Vector end_conf;
-    if(have_solved){
-        init.source = InitSource::kSolvedIk;
-        end_conf = best_solved;
-        init.position_error_m = best_solved_pos_err;
-        init.orientation_error_rad = best_solved_rot_err;
-    } else if(have_near_miss){
-        init.source = InitSource::kNearMiss;
-        end_conf = best_near_miss;
-        init.position_error_m = best_near_miss_pos_err;
-        init.orientation_error_rad = best_near_miss_rot_err;
-    } else {
-        // No candidate at all. Hold the start configuration everywhere: a
-        // stationary sketch with zero velocity, from which the optimiser's
-        // goal term is the only thing pulling the trajectory outward.
-        init.source = InitSource::kHeldStart;
-        end_conf = start_conf;
-        init.position_error_m = 0.0;
-        init.orientation_error_rad = 0.0;
-    }
-
-    // Straight line in joint space from start to the chosen end, with the
-    // matching constant velocity — unchanged from the original success path.
-    for (size_t i = 0; i <= total_time_step; i++) {
-        gtsam::Vector conf;
-        if (i == 0)
-            conf = start_conf;
-        else if (i == total_time_step)
-            conf = end_conf;
-        else
-            conf =
-                static_cast<double>(i) / static_cast<double>(total_time_step) * end_conf +
-                (1.0 - static_cast<double>(i) / static_cast<double>(total_time_step)) *
-                    start_conf;
-
-        init.values.insert(gtsam::Symbol('x', i), conf);
-    }
-    const gtsam::Vector avg_vel =
-        (end_conf - start_conf) / static_cast<double>(total_time_step);
-    for (size_t i = 0; i <= total_time_step; i++)
-        init.values.insert(gtsam::Symbol('v', i), avg_vel);
-
-    return init;
-
 }
 
 
@@ -765,4 +614,3 @@ InitializeTrajectory::initTaskSpaceTrajectory(const gtsam::Pose3& start_pose,
     
     }
 }
-
