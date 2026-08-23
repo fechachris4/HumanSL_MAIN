@@ -257,6 +257,15 @@ if (BUILD_TESTING)
             ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
     add_test(NAME log_schema COMMAND test_log_schema)
 
+    add_executable(test_cyclic_retry tests/test_cyclic_retry.cpp Hardware.cpp)
+    target_include_directories(test_cyclic_retry PRIVATE
+            ${CMAKE_CURRENT_SOURCE_DIR} ${CONTROL_SOURCE_DIR}
+            ${CONTROL_GENERATED_DIR})
+    add_bundled_eigen_to(test_cyclic_retry)
+    target_link_libraries(test_cyclic_retry
+            ${KORTEX_DIR}/lib/release/libKortexApiCpp.a pthread)
+    add_test(NAME cyclic_retry COMMAND test_cyclic_retry)
+
     add_executable(test_goal_socket tests/test_goal_socket.cpp GoalSocket.cpp)
     target_include_directories(test_goal_socket PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR})

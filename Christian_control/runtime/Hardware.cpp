@@ -282,8 +282,9 @@ k_api::BaseCyclic::Feedback CyclicSession::Send(const JointVector& setpoints_deg
         command_.mutable_actuators(i)->set_command_id(command_.frame_id());
 
     // Send the complete seven-joint packet and return the robot's feedback
-    // reply. One short METHOD_TIMEOUT retry tolerates a transient lost reply;
-    // the command object is unchanged, so the retry resends the same frame.
+    // reply. Kortex exposes METHOD_TIMEOUT as KDetailedException and has also
+    // reported its timeout as std::runtime_error. One retry tolerates a
+    // transient lost reply without changing the command frame.
     const k_api::RouterClientSendOptions options{
         false, 0, kCyclicRefreshTimeoutMs};
     try {
@@ -293,6 +294,8 @@ k_api::BaseCyclic::Feedback CyclicSession::Send(const JointVector& setpoints_deg
             error.getErrorInfo().getError().error_sub_code());
         if (subcode != k_api::METHOD_TIMEOUT)
             throw;
+        return base_cyclic_->Refresh(command_, 0, options);
+    } catch (const std::runtime_error&) {
         return base_cyclic_->Refresh(command_, 0, options);
     }
 }

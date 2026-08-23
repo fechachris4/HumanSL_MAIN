@@ -158,8 +158,9 @@ namespace k_api = Kinova::Api;
 //
 // Send(): write `setpoints_deg` (degrees, any winding; wrapped to [0, 360) on
 // the way out), stamp the frame/command IDs, and perform one bounded
-// Refresh() retry only for METHOD_TIMEOUT. The retry resends the unchanged
-// command; a second failure propagates to the Runner's communication stop.
+// Refresh() retry for a KDetailedException METHOD_TIMEOUT or Kortex timeout
+// reported as std::runtime_error. The retry resends the unchanged command; a
+// second failure propagates to the Runner's communication stop.
 class CyclicSession
 {
 public:

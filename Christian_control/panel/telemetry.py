@@ -157,7 +157,7 @@ class LineTail:
     Genuinely stateful, hence a class. It does nothing else.
     """
 
-    def __init__(self, path: Optional[Path] = None) -> None:
+    def __init__(self, path: Optional[Path] = None, at_end: bool = False) -> None:
         self.path: Optional[Path] = None
         # True when the last poll found the file shorter than it had already
         # read and started again from the top. The caller has to know,
@@ -166,15 +166,27 @@ class LineTail:
         self.rewound = False
         self._offset = 0
         self._partial = ""
+        self._discard_until_newline = False
         if path is not None:
-            self.open(path)
+            self.open(path, at_end=at_end)
 
-    def open(self, path: Path) -> None:
-        """Follow a different file from its beginning."""
+    def open(self, path: Path, at_end: bool = False) -> None:
+        """Follow a different file from its beginning or its current end."""
         self.path = Path(path)
         self.rewound = False
         self._offset = 0
         self._partial = ""
+        self._discard_until_newline = False
+        if at_end:
+            try:
+                size = self.path.stat().st_size
+                self._offset = size
+                if size:
+                    with open(self.path, "rb") as handle:
+                        handle.seek(size - 1)
+                        self._discard_until_newline = handle.read(1) != b"\n"
+            except OSError:
+                pass
 
     def poll(self) -> list[str]:
         """Complete lines appended since the last call, without newlines.
@@ -195,6 +207,7 @@ class LineTail:
             self.rewound = True
             self._offset = 0
             self._partial = ""
+            self._discard_until_newline = False
         if size == self._offset:
             return []
         try:
@@ -205,6 +218,12 @@ class LineTail:
             return []
         self._offset += len(chunk)
         text = self._partial + chunk.decode("utf-8", errors="replace")
+        if self._discard_until_newline:
+            newline = text.find("\n")
+            if newline == -1:
+                return []
+            text = text[newline + 1:]
+            self._discard_until_newline = False
         parts = text.split("\n")
         self._partial = parts.pop()
         return [part.rstrip("\r") for part in parts]
@@ -227,13 +246,25 @@ class CsvTail:
         if path is not None:
             self.open(path)
 
-    def open(self, path: Path) -> None:
-        """Start reading a file from its beginning, forgetting the last."""
+    def open(self, path: Path, at_end: bool = False) -> None:
+        """Start reading a file, keeping only its metadata when at its end."""
         self.path = Path(path)
         self.header = None
         self.preamble = {}
         self.rows_seen = 0
-        self._lines = LineTail(self.path)
+        if at_end:
+            try:
+                with open(self.path, "r", encoding="utf-8", errors="replace") as handle:
+                    for line in handle:
+                        if line.startswith("#"):
+                            self.preamble.update(parse_preamble([line]))
+                            continue
+                        if line.strip():
+                            self.header = [name.strip() for name in line.split(",")]
+                            break
+            except OSError:
+                pass
+        self._lines = LineTail(self.path, at_end=at_end)
 
     def poll(self) -> list[dict]:
         """Rows appended since the last call, parsed by column name.
@@ -685,7 +716,7 @@ class Source:
             if self.tail.path is None:
                 found = self.path or find_latest_csv(self.arm)
                 if found is not None:
-                    self.tail.open(found)
+                    self.tail.open(found, at_end=True)
             if self.tail.path is None:
                 yield self._heartbeat("no file yet")
             else:
@@ -720,7 +751,7 @@ class Source:
             return
         newest = find_latest_csv(self.arm)
         if newest is not None and newest != self.tail.path:
-            self.tail.open(newest)
+            self.tail.open(newest, at_end=True)
             self._prev_row = None
 
     # -- replay -------------------------------------------------------
