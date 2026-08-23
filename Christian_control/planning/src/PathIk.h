@@ -158,6 +158,37 @@ struct TerminalIkCandidate {
 inline constexpr std::size_t kTerminalIkSeedStreams = 10;
 inline constexpr std::size_t kTerminalIkAttemptsPerStream = 100;
 
+// Posture-quality score for ranking exact terminal candidates: SMALLER is
+// better. Every pooled candidate already meets the exact pose tolerance, so
+// the pose residual does not discriminate; what separates candidates on a
+// physical robot is how much joint headroom the arm keeps at the goal.
+// Selecting by displacement alone chose a terminal 0.4 deg from joint 2's
+// stop on 2026-08-23 — legal, and unexecutable: the Cartesian controller
+// re-inverts the reference, its tracking wanders more than the 1 deg
+// planner/controller separation, and the software stop ended the run 27 mm
+// short of the goal.
+//
+// The worst bounded-joint margin enters as a BAND (kTerminalMarginBandDeg
+// wide, capped at kTerminalMarginBandCount bands): a band difference always
+// dominates, while candidates inside the same band are posture-equivalent
+// and keep the legacy closest-candidate order (normalised joint
+// displacement |dq| / (sqrt(7) pi) from the measured configuration). The
+// ranking therefore reorders candidates ONLY when the headroom difference
+// is material — goal 8's 0.4 deg vs a 35 deg alternative is three bands —
+// and is otherwise behaviour-preserving. Interior posture shaping is
+// deliberately NOT part of this score; that is the optimiser's centering
+// prior's job (OptimizerTuning::centering_sigma). Continuous joints carry
+// the +-1e20 sentinel, so they contribute through the displacement term
+// only, wrapped to the nearest revolution. Ties fall back to
+// stream/attempt order in the caller, so ranking stays deterministic.
+inline constexpr double kTerminalMarginBandDeg = 10.0;
+inline constexpr int kTerminalMarginBandCount = 3;
+inline constexpr double kTerminalMarginWeight = 1.0;
+
+double TerminalPostureScore(const Eigen::Matrix<double, 7, 1>& configuration,
+                            const Eigen::Matrix<double, 7, 1>& measured_q,
+                            const PathIkJointLimits& limits);
+
 std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
     const PathIkArm& arm, const Eigen::Isometry3d& target,
     const Eigen::Matrix<double, 7, 1>& measured_q,

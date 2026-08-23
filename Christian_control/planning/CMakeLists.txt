@@ -185,6 +185,12 @@ target_link_libraries(test_bridge_args PRIVATE bridge_core)
 set_target_properties(test_bridge_args PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME bridge_args COMMAND test_bridge_args)
 
+add_executable(test_terminal_posture tests/test_terminal_posture.cpp)
+target_include_directories(test_terminal_posture PRIVATE src)
+target_link_libraries(test_terminal_posture PRIVATE bridge_core)
+set_target_properties(test_terminal_posture PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME terminal_posture COMMAND test_terminal_posture)
+
 add_executable(test_traced_circle tests/test_traced_circle.cpp src/PlannerPreview.cpp)
 target_include_directories(test_traced_circle PRIVATE src)
 target_link_libraries(test_traced_circle PRIVATE bridge_core)

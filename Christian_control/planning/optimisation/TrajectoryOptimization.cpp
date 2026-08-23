@@ -139,12 +139,36 @@ TrajectoryResult OptimizeTrajectory::optimizeJointTrajectory(
                     factor_keys.push_back("EndVelPrior");
         }           
         
-        // Joint limits
+        // Joint limits: hinge cost switching on within the configured
+        // distance of a bounded joint's planner limit (tuning, default the
+        // controller's 20 deg avoidance-zone width).
         auto pos_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.2);
+        gtsam::Vector limit_thresh =
+            gtsam::Vector::Constant(7, tuning.position_limit_threshold_rad);
         graph.add(gpmp2::JointLimitFactorVector(
             key_pos, pos_limit_model, pos_limits.lower, pos_limits.upper, limit_thresh));
         factor_keys.push_back("JointPosLimits");
+
+        // Joint centering: a weak preference toward each bounded joint's
+        // mid-range, sigma = half-range x tuning.centering_sigma, so the
+        // whitened cost is the normalised excursion over centering_sigma,
+        // squared. Redundancy resolution, not a constraint: continuous
+        // joints' sentinel half-ranges make their rows inert.
+        {
+            gtsam::Vector centering_mid(7);
+            gtsam::Vector centering_sigmas(7);
+            for (int joint = 0; joint < 7; ++joint) {
+                centering_mid(joint) =
+                    0.5 * (pos_limits.lower(joint) + pos_limits.upper(joint));
+                centering_sigmas(joint) =
+                    0.5 * (pos_limits.upper(joint) - pos_limits.lower(joint)) *
+                    tuning.centering_sigma;
+            }
+            graph.add(gtsam::PriorFactor<gtsam::Vector>(
+                key_pos, centering_mid,
+                gtsam::noiseModel::Diagonal::Sigmas(centering_sigmas)));
+            factor_keys.push_back("JointCenteringPrior");
+        }
 
         // Velocity limits
         auto vel_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
@@ -346,12 +370,36 @@ TrajectoryResult OptimizeTrajectory::optimizeTaskTrajectory(
                     factor_keys.push_back("RestVelPrior");
         }
 
-        // Joint limits
+        // Joint limits: hinge cost switching on within the configured
+        // distance of a bounded joint's planner limit (tuning, default the
+        // controller's 20 deg avoidance-zone width).
         auto pos_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);
-        gtsam::Vector limit_thresh = gtsam::Vector::Constant(7, 0.2);
+        gtsam::Vector limit_thresh =
+            gtsam::Vector::Constant(7, tuning.position_limit_threshold_rad);
         graph.add(gpmp2::JointLimitFactorVector(
             key_pos, pos_limit_model, pos_limits.lower, pos_limits.upper, limit_thresh));
         factor_keys.push_back("JointPosLimits");
+
+        // Joint centering: a weak preference toward each bounded joint's
+        // mid-range, sigma = half-range x tuning.centering_sigma, so the
+        // whitened cost is the normalised excursion over centering_sigma,
+        // squared. Redundancy resolution, not a constraint: continuous
+        // joints' sentinel half-ranges make their rows inert.
+        {
+            gtsam::Vector centering_mid(7);
+            gtsam::Vector centering_sigmas(7);
+            for (int joint = 0; joint < 7; ++joint) {
+                centering_mid(joint) =
+                    0.5 * (pos_limits.lower(joint) + pos_limits.upper(joint));
+                centering_sigmas(joint) =
+                    0.5 * (pos_limits.upper(joint) - pos_limits.lower(joint)) *
+                    tuning.centering_sigma;
+            }
+            graph.add(gtsam::PriorFactor<gtsam::Vector>(
+                key_pos, centering_mid,
+                gtsam::noiseModel::Diagonal::Sigmas(centering_sigmas)));
+            factor_keys.push_back("JointCenteringPrior");
+        }
 
         // Velocity limits
         auto vel_limit_model = gtsam::noiseModel::Isotropic::Sigma(7, 0.001);

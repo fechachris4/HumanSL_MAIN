@@ -66,6 +66,21 @@ smoothness:
   # stiffer.
   qc_scale: 1.0
 
+# Redundancy resolution: among configurations that achieve the task, prefer
+# the one that keeps bounded joints away from their stops. Preferences, not
+# constraints — the hard limit stays with validation and the controller.
+posture:
+  # Weak prior toward each bounded joint's mid-range at every support
+  # state; sigma = half-range x this value (unitless, LARGER is gentler).
+  # Continuous joints 1/3/5/7 are automatically unaffected.
+  centering_sigma: 2.0
+  # Degrees from a bounded joint's planner limit at which the optimiser's
+  # hinge cost switches on. Matches the controller's 20 deg limit-avoidance
+  # zone so the planner prices the region the controller will fight over
+  # (2026-08-23: a terminal planned 0.4 deg from joint 2's stop stalled the
+  # arm on its software boundary 27 mm short of the goal).
+  limit_threshold_deg: 20.0
+
 solver:
   # Levenberg-Marquardt iteration ceiling. Shapes convergence, not motion.
   max_iterations: 1000

@@ -64,6 +64,21 @@ struct OptimizerTuning {
     double qc_scale = 1.0;
     // Levenberg-Marquardt iteration ceiling.
     int max_iterations = 1000;
+    // Soft joint-centering preference (redundancy resolution): each support
+    // state carries a weak prior toward every bounded joint's mid-range,
+    // whitened by half-range x this sigma, so the cost is (u/sigma)^2 with
+    // u the normalised excursion in [-1,1]. Larger is gentler. Continuous
+    // joints inherit the +-1e20 sentinel half-range and are automatically
+    // inert — no fake position limit is ever introduced. This is an
+    // optimisation preference, never a constraint: among trajectories that
+    // accomplish the task, prefer the one with more joint headroom.
+    double centering_sigma = 2.0;
+    // Where GPMP2's position-limit hinge cost switches on, radians from a
+    // bounded joint's planner limit. Default 20 deg: the same width as the
+    // controller's limit-avoidance zone, so the region the controller will
+    // fight over is priced by the planner too (it was a hardcoded 11.5 deg,
+    // narrower than the controller's zone — measured 2026-08-23).
+    double position_limit_threshold_rad = 20.0 * M_PI / 180.0;
 };
 
 class OptimizeTrajectory {

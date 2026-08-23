@@ -197,8 +197,8 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     } catch (const YAML::Exception& error) {
         Fail("cannot parse " + path + ": " + error.what());
     }
-    RequireExactKeys(root, {"motion", "obstacles", "smoothness", "solver",
-                            "path_following", "seeding"},
+    RequireExactKeys(root, {"motion", "obstacles", "smoothness", "posture",
+                            "solver", "path_following", "seeding"},
                      "root");
 
     PlannerConfig config;
@@ -288,6 +288,15 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     const YAML::Node smoothness = root["smoothness"];
     RequireExactKeys(smoothness, {"qc_scale"}, "smoothness");
     config.optimizer.qc_scale = Number(smoothness, "qc_scale", "smoothness", 1e-6, 1e6);
+
+    const YAML::Node posture = root["posture"];
+    RequireExactKeys(posture, {"centering_sigma", "limit_threshold_deg"},
+                     "posture");
+    config.optimizer.centering_sigma =
+        Number(posture, "centering_sigma", "posture", 0.1, 1e3);
+    config.optimizer.position_limit_threshold_rad =
+        Number(posture, "limit_threshold_deg", "posture", 0.0, 45.0) *
+        (M_PI / 180.0);
 
     const YAML::Node path_following = root["path_following"];
     RequireExactKeys(path_following,

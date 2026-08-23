@@ -33,6 +33,15 @@ PLANNER_KNOBS: dict[str, tuple[str, str, str]] = {
         "Obstacle weight (gtsam sigma: SMALLER avoids harder)"),
     "smoothness.qc_scale": ("double", "positive",
         "GP prior scale: larger wanders freer off a straight line"),
+    "posture.centering_sigma": ("double", "positive",
+        "Joint-centering gentleness (sigma x half-range: LARGER is gentler)"),
+    "posture.limit_threshold_deg": ("double", "nonnegative",
+        "Degrees from a joint stop where planner hinge cost switches on"),
+    # goal.position_sigma_xyz / goal.rotation_sigma_rpy were removed with
+    # the soft final-waypoint goal weights: the selected terminal is now an
+    # exact joint equality, so planner.yaml no longer carries them. Their
+    # stale whitelist entries blocked every scene save on 2026-08-23
+    # ("planner configuration is missing: goal.position_sigma_xyz, ...").
     "solver.max_iterations": ("int", "min1",
         "Levenberg-Marquardt iteration ceiling — convergence, not motion"),
     "path_following.position_prior_sigma_m": ("double", "positive",

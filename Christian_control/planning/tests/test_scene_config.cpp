@@ -57,6 +57,9 @@ obstacles:
     file << Indent(scene_yaml, "  ") << R"(
 smoothness:
   qc_scale: 1.0
+posture:
+  centering_sigma: 2.0
+  limit_threshold_deg: 20.0
 solver:
   max_iterations: 1000
 path_following:

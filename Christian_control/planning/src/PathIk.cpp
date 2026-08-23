@@ -286,6 +286,51 @@ PathIkResult SolvePathIk(const CartesianPath& path, const PathIkArm& arm,
     return result;
 }
 
+double TerminalPostureScore(const Eigen::Matrix<double, 7, 1>& configuration,
+                            const Eigen::Matrix<double, 7, 1>& measured_q,
+                            const PathIkJointLimits& limits) {
+    double worst_margin_rad = std::numeric_limits<double>::infinity();
+    double centering_sum = 0.0;
+    int bounded_count = 0;
+    for (int joint = 0; joint < 7; ++joint) {
+        if (IsContinuous(limits, joint)) continue;
+        const double lower = limits.lower_rad(joint);
+        const double upper = limits.upper_rad(joint);
+        const double half_range = 0.5 * (upper - lower);
+        const double mid = 0.5 * (upper + lower);
+        const double margin =
+            std::min(configuration(joint) - lower, upper - configuration(joint));
+        worst_margin_rad = std::min(worst_margin_rad, margin);
+        const double excursion = (configuration(joint) - mid) / half_range;
+        centering_sum += excursion * excursion;
+        ++bounded_count;
+    }
+    // Margin enters as a BAND, not a continuum: candidates whose worst
+    // margins fall in the same band are posture-equivalent and keep the
+    // legacy preference (secondary terms), so the ranking reshuffles
+    // candidates only when the headroom difference is material. Above the
+    // top band a stop is far enough away that more margin buys nothing.
+    double band_deficit = 0.0;
+    if (bounded_count > 0) {
+        const double margin_deg = worst_margin_rad * 180.0 / M_PI;
+        const double band =
+            std::min(std::floor(margin_deg / kTerminalMarginBandDeg),
+                     static_cast<double>(kTerminalMarginBandCount));
+        band_deficit = static_cast<double>(kTerminalMarginBandCount) - band;
+    }
+    (void)centering_sum;
+    const double displacement =
+        JointDifference(measured_q, configuration, limits).norm() /
+        (std::sqrt(7.0) * M_PI);
+    // Within a band the ordering is the legacy closest-candidate
+    // preference, exactly: the terminal ranking's one job is refusing to
+    // park materially close to a stop; interior posture shaping belongs to
+    // the optimiser's centering prior. The band term is scaled so one band
+    // always outweighs the displacement term (bounded by ~1 for any
+    // reachable move).
+    return 10.0 * kTerminalMarginWeight * band_deficit + displacement;
+}
+
 std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
     const PathIkArm& arm, const Eigen::Isometry3d& target,
     const Eigen::Matrix<double, 7, 1>& measured_q,
@@ -338,16 +383,18 @@ std::vector<TerminalIkCandidate> SolveTerminalIkCandidates(
         }
     }
 
-    const auto displacement = [&](const TerminalIkCandidate& candidate) {
-        return JointDifference(canonical_measured, candidate.configuration,
-                               limits)
-            .norm();
-    };
+    // Rank the exact pool by posture quality (margin-dominant; see
+    // TerminalPostureScore in PathIk.h), not by displacement alone —
+    // displacement-only ordering selected a terminal 0.4 deg from joint 2's
+    // stop on 2026-08-23. Stream/attempt tie-breaks keep the order
+    // deterministic.
     std::sort(pool.begin(), pool.end(), [&](const auto& first, const auto& second) {
-        const double first_distance = displacement(first);
-        const double second_distance = displacement(second);
-        if (first_distance != second_distance)
-            return first_distance < second_distance;
+        const double first_score = TerminalPostureScore(
+            first.configuration, canonical_measured, limits);
+        const double second_score = TerminalPostureScore(
+            second.configuration, canonical_measured, limits);
+        if (first_score != second_score)
+            return first_score < second_score;
         if (first.stream_id != second.stream_id)
             return first.stream_id < second.stream_id;
         return first.attempt_index < second.attempt_index;
