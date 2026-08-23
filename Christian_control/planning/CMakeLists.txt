@@ -204,6 +204,12 @@ target_link_libraries(test_traced_circle PRIVATE bridge_core)
 set_target_properties(test_traced_circle PROPERTIES BUILD_RPATH "${TP_LIB}")
 add_test(NAME traced_circle COMMAND test_traced_circle ${DH_PARAMS_FLANGE_YAML})
 
+add_executable(test_trajectory_posture tests/test_trajectory_posture.cpp)
+target_include_directories(test_trajectory_posture PRIVATE src)
+target_link_libraries(test_trajectory_posture PRIVATE bridge_core)
+set_target_properties(test_trajectory_posture PROPERTIES BUILD_RPATH "${TP_LIB}")
+add_test(NAME trajectory_posture COMMAND test_trajectory_posture)
+
 add_executable(test_projection_exit tests/test_projection_exit.cpp)
 target_include_directories(test_projection_exit PRIVATE src)
 target_link_libraries(test_projection_exit PRIVATE bridge_core)

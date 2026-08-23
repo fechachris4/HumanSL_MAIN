@@ -55,6 +55,8 @@ WorldCartesianTrajectory ProjectWorldTrajectory(
 
         WorldCartesianTrajectoryPoint point;
         point.t_from_start_s = static_cast<double>(index) * dt_s;
+        point.has_posture = true;
+        point.posture_rad = q;
         point.position_world_m = world_T_base * base.position;
         point.orientation_world =
             Eigen::Quaterniond(world_T_base.linear() * base.rotation).normalized();

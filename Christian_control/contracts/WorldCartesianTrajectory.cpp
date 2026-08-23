@@ -22,6 +22,7 @@ std::optional<std::string> ValidateWorldCartesianTrajectory(
         kStartTimeToleranceS)
         return "first point must be at t_from_start_s == 0";
 
+    const bool posture_expected = trajectory.points.front().has_posture;
     for (std::size_t index = 0; index < trajectory.points.size(); ++index) {
         const WorldCartesianTrajectoryPoint& point = trajectory.points[index];
         if (!std::isfinite(point.t_from_start_s) ||
@@ -30,6 +31,11 @@ std::optional<std::string> ValidateWorldCartesianTrajectory(
             !point.linear_velocity_world_m_s.allFinite() ||
             !point.angular_velocity_world_rad_s.allFinite())
             return PointName(index) + " has non-finite values";
+        if (point.has_posture != posture_expected)
+            return PointName(index) +
+                   " posture presence differs from the first point";
+        if (point.has_posture && !point.posture_rad.allFinite())
+            return PointName(index) + " has non-finite posture";
         if (index > 0 &&
             point.t_from_start_s <=
                 trajectory.points[index - 1].t_from_start_s)

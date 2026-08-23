@@ -78,6 +78,18 @@ int main(int argc, char** argv) {
         assert(projected.points.back()
                    .linear_velocity_world_m_s.cwiseAbs()
                    .maxCoeff() == 0.0);
+
+        // The planner's redundancy decision crosses the boundary as a
+        // posture preference: every projected point carries the exact joint
+        // state it was computed from, regardless of world_T_mount.
+        for (std::size_t i = 0; i < projected.points.size(); ++i) {
+            assert(projected.points[i].has_posture);
+            assert(in_mount.points[i].has_posture);
+            assert((projected.points[i].posture_rad -
+                    Eigen::Matrix<double, 7, 1>(positions[i]))
+                       .cwiseAbs()
+                       .maxCoeff() == 0.0);
+        }
     }
 
     std::puts("test_projection_exit: all assertions passed");

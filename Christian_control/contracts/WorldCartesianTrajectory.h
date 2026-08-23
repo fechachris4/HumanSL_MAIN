@@ -20,6 +20,20 @@ struct WorldCartesianTrajectoryPoint {
     Eigen::Vector3d linear_velocity_world_m_s = Eigen::Vector3d::Zero();
     Eigen::Vector3d angular_velocity_world_rad_s = Eigen::Vector3d::Zero();
     bool arrival_eligible = false;
+
+    // The planner's redundancy decision at this sample: the validated joint
+    // configuration the pose above was computed from. Radians, Kortex
+    // actuator order 1-7, in the planner's continuous-joint representation
+    // (values may lie outside [-pi, pi]; consumers must take per-joint
+    // WRAPPED differences). A PREFERENCE, never a command: the executable
+    // content of this contract remains the Cartesian pose and twist, and a
+    // consumer may use posture only as a null-space attractor — the pose
+    // error keeps sole authority over the task space. Present on every
+    // point or on none (the validator enforces this), so the attractor
+    // cannot appear or vanish between cycles.
+    bool has_posture = false;
+    Eigen::Matrix<double, 7, 1> posture_rad =
+        Eigen::Matrix<double, 7, 1>::Zero();
 };
 
 struct WorldCartesianTrajectory {
