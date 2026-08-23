@@ -47,7 +47,8 @@ int main(int argc, char** argv) {
     if (argc != 3) return 1;
 
     const PlannerModel model = LoadPlannerModel(argv[1], /*has_tool=*/true);
-    const PlannerConfig config = LoadPlannerConfig("../config/planner.yaml");
+    PlannerConfig config = LoadPlannerConfig("../config/planner.yaml");
+    config.scene.clear();  // keep this start-state characterization collision-free
     const std::string joint_limits = "../config/joint_limits.yaml";
     const Eigen::Matrix<double, 7, 1> q_plan = MeasuredQ();
     const Eigen::Matrix<double, 7, 1> qdot_meas = MeasuredQdot();
@@ -61,9 +62,9 @@ int main(int argc, char** argv) {
     point_request.goal_rotation = start_pose.rotation().matrix();
     const PlanOutcome point =
         SolveToPosition(model, point_request, joint_limits, config);
-    Check(point.validation.start_valid,
-          "point validation preserves exact measured start state");
-    if (point.trajectory) {
+    Check(IsExecutable(point.status) && point.trajectory,
+          "point plan is executable");
+    if (IsExecutable(point.status) && point.trajectory) {
         Check(MaxAbs(point.trajectory->trajectory_pos.front() - q_plan) < 1e-12,
               "point q0 equals canonical measured q");
         Check(MaxAbs(point.trajectory->trajectory_vel.front() - qdot_meas) < 1e-12,
@@ -101,9 +102,9 @@ int main(int argc, char** argv) {
 
     const PathPlanOutcome traced = SolveAlongPath(
         model, path, q_plan, path_qdot, joint_limits, config);
-    Check(traced.validation.start_valid,
-          "traced validation preserves exact measured start state");
-    if (traced.trajectory) {
+    Check(IsExecutable(traced.status) && traced.trajectory,
+          "traced plan is executable");
+    if (IsExecutable(traced.status) && traced.trajectory) {
         Check(MaxAbs(traced.trajectory->trajectory_pos.front() - q_plan) < 1e-12,
               "traced q0 equals canonical measured q");
         Check(MaxAbs(traced.trajectory->trajectory_vel.front() - path_qdot) < 1e-12,

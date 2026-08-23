@@ -99,19 +99,15 @@ solver:
 #
 # TWO KINDS OF NUMBER LIVE HERE and must not be conflated. The *_sigma_*
 # values are optimiser WEIGHTS (gtsam sigmas: smaller is stiffer). The
-# maximum_*_error values are the pass/fail REQUIREMENT the finished
-# trajectory is measured against, on the reconstruction the controller will
-# actually execute. Tightening a weight does not tighten the requirement,
-# and no weight guarantees the requirement is met — that is why it is
-# measured after the solve rather than assumed from the sigma.
+# maximum_*_error values are quality-report thresholds measured on the
+# finished trajectory reconstruction. Tightening a weight does not tighten
+# the reported threshold, and no weight guarantees it is met.
 path_following:
   # Weights on each traced waypoint's pose prior.
   position_prior_sigma_m: 0.0012
   rotation_prior_sigma_rad: 0.01
-  # THE GATE. A plan whose reconstructed trace deviates further than this
-  # is reported as failing task fidelity and is not cleared for hardware.
-  # 5 mm chosen as a starting point to be measured, not asserted: the
-  # sensitivity sweep (1/2/5/10 mm) is what should set it.
+  # Trace deviation is quality evidence reported with the plan, not a whole-
+  # request rejection gate. 5 mm is the configured reporting threshold.
   maximum_planning_error_m: 0.005
   maximum_orientation_error_rad: 0.1
   # Dense validation rate. 0.002 s = 500 Hz, the controller's own loop rate,

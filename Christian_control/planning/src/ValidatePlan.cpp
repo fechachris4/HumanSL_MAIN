@@ -86,7 +86,7 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     report.scene_valid = true;
     report.self_collision_valid = true;
     report.has_self_pairs = !kSelfCollisionPairs.empty();
-    report.has_scene_pairs = inputs.obstacle_fields && !inputs.obstacle_fields->empty();
+    report.has_scene_pairs = false;
     report.joint_limits_valid = true;
     report.minimum_scene_clearance_m = std::numeric_limits<double>::infinity();
     report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
@@ -107,6 +107,8 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
         if (inputs.obstacle_fields) {
             for (const auto& field : *inputs.obstacle_fields) {
                 const auto centres = field.participating_arm->sphereCentersMat(gtsam::Vector(s.q));
+                if (!field.participating_sphere_indices.empty())
+                    report.has_scene_pairs = true;
                 for (int local = 0; local < centres.cols(); ++local) {
                     const Eigen::Vector3d centre(centres(0, local), centres(1, local), centres(2, local));
                     const auto query = QueryStaticObstacle(field.geometry, centre,
@@ -153,7 +155,7 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
     }
     report.max_velocity_ratio = (max_qdot.array() / inputs.effective_velocity_rad_s.array()).maxCoeff();
     report.max_acceleration_ratio = (max_qddot.array() / inputs.effective_acceleration_rad_s2.array()).maxCoeff();
-    report.scene_valid = !inputs.obstacle_fields || inputs.obstacle_fields->empty() ||
+    report.scene_valid = !report.has_scene_pairs ||
                          report.minimum_scene_clearance_m >= inputs.minimum_clearance_m;
     const gtsam::Pose3 final_pose = ToolPoseInMount(model, samples.back().q);
     report.requested_terminal_position_error_m =

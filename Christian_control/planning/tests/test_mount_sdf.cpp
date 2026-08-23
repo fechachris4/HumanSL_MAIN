@@ -56,14 +56,24 @@ int main(int argc, char** argv) {
     filtered.enabled = true;
     filtered.geometry = cylinder;
     filtered.permitted_sphere_groups = {CollisionSphereGroup::kMountInterface};
-    const auto fields = MakeNamedObstacleFields(grid, model, {filtered});
-    assert(fields.size() == 1);
+    NamedStaticObstacle all_permitted = filtered;
+    all_permitted.id = "z_all_permitted";
+    all_permitted.permitted_sphere_groups = {
+        CollisionSphereGroup::kMountInterface,
+        CollisionSphereGroup::kProximalArm,
+        CollisionSphereGroup::kUpperArm,
+        CollisionSphereGroup::kForearm,
+        CollisionSphereGroup::kTool};
+    const auto fields = MakeNamedObstacleFields(grid, model,
+                                                {filtered, all_permitted});
+    assert(fields.size() == 2);
     assert(std::find(fields[0].participating_sphere_indices.begin(),
                      fields[0].participating_sphere_indices.end(), 0) ==
            fields[0].participating_sphere_indices.end());
     assert(std::find(fields[0].participating_sphere_indices.begin(),
                      fields[0].participating_sphere_indices.end(), 1) !=
            fields[0].participating_sphere_indices.end());
+    assert(fields[1].participating_sphere_indices.empty());
     std::puts("test_mount_sdf: all assertions passed");
     return 0;
 }

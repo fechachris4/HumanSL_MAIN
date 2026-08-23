@@ -117,7 +117,7 @@ def title_for(meta, what):
     state = "FAILED" if not plan_is_executable(status) else status
     head = f"{what} — {arm} arm, {kind} plan, {state}"
     if not plan_is_executable(status):
-        head += f"\n{status}"
+        head += f"\n{status}: {meta.get('failure_reason', '')}"
     return head
 
 
@@ -506,13 +506,14 @@ def main():
     status = meta.get("status", "?")
     if not plan_is_executable(status):
         print(f"PLAN FAILED ({meta.get('arm', '?')} arm, "
-              f"{meta.get('plan_kind', '?')} plan): {status}", file=sys.stderr)
+              f"{meta.get('plan_kind', '?')} plan): {status} — "
+              f"{meta.get('failure_reason', '')}", file=sys.stderr)
         print("  No trajectory was emitted, so there is nothing to draw for "
               "the planned motion.", file=sys.stderr)
         print("  The figures below show the REQUESTED path and the IK walk "
               "that failed on it.", file=sys.stderr)
     else:
-        print(f"plan ok ({meta.get('arm', '?')} arm, "
+        print(f"plan {status} ({meta.get('arm', '?')} arm, "
               f"{meta.get('plan_kind', '?')} plan)", file=sys.stderr)
 
     joints = read_csv(debug_dir / "joints.csv")

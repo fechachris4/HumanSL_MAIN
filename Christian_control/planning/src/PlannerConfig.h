@@ -34,16 +34,15 @@ struct MotionConfig {
 
 // Path following. Two DIFFERENT kinds of number live here and must never
 // be conflated: the sigmas are optimiser WEIGHTS (gtsam sigmas — smaller is
-// stiffer), while maximum_planning_error_m is the pass/fail REQUIREMENT the
-// finished trajectory is measured against. Tightening a weight does not
-// tighten the requirement, and meeting the requirement is not guaranteed by
-// any weight.
+// stiffer), while maximum_planning_error_m is a quality-report threshold for
+// the finished trajectory. Tightening a weight does not tighten that
+// threshold, and meeting it is not guaranteed by any weight.
 struct PathFollowingConfig {
     // Weights on each traced waypoint's pose prior.
     double position_prior_sigma_m = 0.005;
     double rotation_prior_sigma_rad = 0.01;
-    // The GATE, applied to the reconstructed trajectory the controller will
-    // actually execute (not to the optimiser's own cost).
+    // Quality-report threshold for the reconstructed trajectory; this is not
+    // a whole-request rejection gate.
     double maximum_planning_error_m = 0.005;
     double maximum_orientation_error_rad = 0.1;
     // Dense validation rate. 0.002 s = 500 Hz, the controller's own rate.

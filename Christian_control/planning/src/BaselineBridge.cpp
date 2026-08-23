@@ -251,15 +251,17 @@ PlannerSolveResult SolveBaselineBridgeForRequest(
         diagnostics << "baseline block projection failed: " << error.what() << "\n";
         return result;
     }
-    result.status = PlanStatus::kReached;
+    result.trajectory.reset();
+    result.status = PlanStatus::kFailed;
+    result.failure_reason =
+        "legacy baseline adaptation is preview-only under typed validation";
     result.exit_code = 0;
 
     diagnostics << "baseline block adapted: " << samples.size()
                 << " joint samples (deg wire), duration " << total_time_s
                 << " s, dt "
                 << total_time_s / static_cast<double>(samples.size() - 1)
-                << " s -> " << result.trajectory->points.size()
-                << " world-Cartesian points via the CURRENT model's FK ("
+                << " s -> preview-only world-Cartesian adaptation via the CURRENT model's FK ("
                 << model.end_effector_frame << ", "
                 << (left ? "left" : "right")
                 << " chain), trajectory id " << request.request_id
