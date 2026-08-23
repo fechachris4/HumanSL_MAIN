@@ -6,7 +6,16 @@
 #include <Eigen/Dense>
 
 enum class PlanStatus { kReached, kGoalBlocked, kFailed };
-enum class CandidateDisposition { kExecutable, kNeedsLongerDuration, kInvalid };
+// kInvalid            unsafe / malformed / impossible to execute
+// kNeedsLongerDuration geometry is safe, timing exceeds robot limits
+// kExecutable          send it
+// Task quality (terminal error, path deviation) is measured and reported
+// but never a disposition: the validator gates safety, not perfection.
+enum class CandidateDisposition {
+    kInvalid,
+    kNeedsLongerDuration,
+    kExecutable
+};
 
 const char* PlanStatusName(PlanStatus status);
 bool IsExecutable(PlanStatus status);
@@ -58,5 +67,18 @@ struct PlanValidationReport {
     double trace_p95_position_m = 0.0;
     double trace_worst_position_u = 0.0;
     double trace_max_orientation_rad = 0.0;
+    // Dense executed-path fidelity: FK of EVERY validation sample in the
+    // task phase against the requested path (piecewise-linear between its
+    // samples). The anchor metrics above sample only where the pose priors
+    // act and are DIAGNOSTIC; the dense figure is authoritative — a planned
+    // Cartesian path means the continuously executed FK trajectory stays
+    // within tolerance of that path, not merely intersects it at waypoints
+    // (2026-08-23: 0.15 mm certified at anchors, 91.5 mm executed between).
+    double trace_dense_max_position_m = 0.0;
+    double trace_dense_worst_time_s = 0.0;
+    // Quality flag, REPORT-ONLY (never gates execution): terminal pose
+    // within tolerance and, for a traced path, the dense executed path
+    // within tolerance of the requested path.
+    bool task_valid = false;
     double integrated_joint_travel_rad = 0.0;
 };

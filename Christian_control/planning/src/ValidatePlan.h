@@ -24,6 +24,24 @@ struct PlanValidationInputs {
     const CartesianPath* desired_task_path = nullptr;
     double task_start_time_s = 0.0;
     double validation_dt_s = 0.002;
+    // Task acceptance tolerances. Validation criteria, not physical
+    // constraints: a caller with a looser task (or a tighter one) sets them
+    // here instead of editing validator code.
+    double terminal_position_tolerance_m = 0.001;
+    double terminal_orientation_tolerance_rad = 0.01;
+    // Absolute bound on the dense executed-path deviation (metres). Zero
+    // disables the path gate; traced-path solves pass their acceptance
+    // tolerance here. A fidelity failure is a SHAPE defect — it asks for
+    // geometric repair and is never fixed by stretching time (shape and
+    // timing are decoupled).
+    double path_position_tolerance_m = 0.0;
+    // Numerical consistency tolerance between the trajectory's first state
+    // and the measured start the plan was requested from. The planner
+    // CONSTRUCTS the trajectory to start at the measured state; validation
+    // only cross-checks that invariant, so this is a floating-point
+    // consistency bound, not a physical requirement.
+    double start_position_tolerance_rad = 1e-8;
+    double start_velocity_tolerance_rad_s = 1e-8;
 };
 
 PlanValidationReport ValidatePlan(const PlannerModel& model,

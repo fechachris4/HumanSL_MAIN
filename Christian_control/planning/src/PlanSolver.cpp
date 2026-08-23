@@ -286,6 +286,58 @@ namespace
                             .minimum_scene_clearance_m);
     }
 
+    // Support resolution is independent of duration (2026-08-23): the task
+    // is real only where pose priors act, and stretching a plan in time must
+    // never widen the gaps between them — that is how a 0.13 s grid became
+    // 1.3 s holes whose joint-space GP bridges bowed 91.5 mm off a circle
+    // the anchors held to 0.15 mm. Splitting every interval into `factor`
+    // uniform parts keeps the grid uniform (densifyTrajectory's contract),
+    // lands every original state — and its prior — exactly on the new grid,
+    // and gives each inserted TASK state an interpolated pose prior of its
+    // own, so the requested geometry constrains the trajectory at least as
+    // often as the authored sampling. Approach intervals gain free states
+    // only: there is no requested geometry there to be faithful to.
+    AssembledPath SubdivideAssembly(const AssembledPath& base, std::size_t factor)
+    {
+        if (factor <= 1) return base;
+        AssembledPath fine;
+        fine.total_duration_s = base.total_duration_s;
+        fine.task_start_index = base.task_start_index * factor;
+        for (const std::size_t index : base.zero_velocity_indices)
+            fine.zero_velocity_indices.push_back(index * factor);
+        const std::size_t intervals = base.waypoints.size() - 1;
+        for (std::size_t i = 0; i < intervals; ++i) {
+            const auto& a = base.waypoints[i];
+            const auto& b = base.waypoints[i + 1];
+            const JointConfiguration& qa = base.initial_configurations[i];
+            const JointConfiguration& qb = base.initial_configurations[i + 1];
+            for (std::size_t j = 0; j < factor; ++j) {
+                const double w = static_cast<double>(j) / static_cast<double>(factor);
+                OptimisationWaypoint waypoint;
+                waypoint.time_s = (1.0 - w) * a.time_s + w * b.time_s;
+                if (j == 0) {
+                    waypoint.pose_prior = a.pose_prior;
+                } else if (a.pose_prior && b.pose_prior) {
+                    PosePrior prior;
+                    prior.target.translation() =
+                        (1.0 - w) * a.pose_prior->target.translation() +
+                        w * b.pose_prior->target.translation();
+                    const Eigen::Quaterniond qra(a.pose_prior->target.linear());
+                    Eigen::Quaterniond qrb(b.pose_prior->target.linear());
+                    prior.target.linear() = qra.slerp(w, qrb).toRotationMatrix();
+                    prior.rotation_sigma_rad = a.pose_prior->rotation_sigma_rad;
+                    prior.translation_sigma_m = a.pose_prior->translation_sigma_m;
+                    waypoint.pose_prior = prior;
+                }
+                fine.waypoints.push_back(std::move(waypoint));
+                fine.initial_configurations.push_back(qa + w * (qb - qa));
+            }
+        }
+        fine.waypoints.push_back(base.waypoints.back());
+        fine.initial_configurations.push_back(base.initial_configurations.back());
+        return fine;
+    }
+
     std::optional<JointConfiguration>
     SolveBypassMidpointIk(const PathIkArm& arm, const PathIkJointLimits& limits,
                           const PlannerModel& model, const SceneViolationEvidence& collision,
@@ -964,7 +1016,15 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     assembled.waypoints[assembled.task_start_index].time_s / base_duration_s;
                 const auto solve = [&](double duration_s) {
                     const double time_scale = duration_s / base_duration_s;
-                    std::vector<OptimisationWaypoint> attempt_waypoints = assembled.waypoints;
+                    // Support spacing stays bounded by the authored task
+                    // interval: a duration stretched x N gets x N the
+                    // states, each inserted task state carrying its own
+                    // interpolated pose prior (SubdivideAssembly above).
+                    const std::size_t subdivision =
+                        static_cast<std::size_t>(std::ceil(time_scale - 1e-9));
+                    const AssembledPath fine =
+                        SubdivideAssembly(assembled, subdivision);
+                    std::vector<OptimisationWaypoint> attempt_waypoints = fine.waypoints;
                     for (OptimisationWaypoint& waypoint : attempt_waypoints)
                         waypoint.time_s *= time_scale;
 
@@ -973,7 +1033,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     for (std::size_t i = 0; i < states; ++i) {
                         const JointConfiguration& q = i + 1 == states
                                                           ? terminal_configuration
-                                                          : assembled.initial_configurations[i];
+                                                          : fine.initial_configurations[i];
                         initial_values.insert(gtsam::Symbol('x', i), gtsam::Vector(q));
                         gtsam::Vector velocity = gtsam::Vector::Zero(7);
                         if (i + 1 < states) {
@@ -981,7 +1041,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                                 attempt_waypoints[i + 1].time_s - attempt_waypoints[i].time_s;
                             const JointConfiguration& next_q =
                                 i + 2 == states ? terminal_configuration
-                                                : assembled.initial_configurations[i + 1];
+                                                : fine.initial_configurations[i + 1];
                             velocity = gtsam::Vector((next_q - q) / dt);
                         }
                         initial_values.insert(gtsam::Symbol('v', i), velocity);
@@ -989,7 +1049,7 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     return optimizer.optimizeTaskTrajectory(
                         *model.arm_model, obstacle_fields, initial_values, attempt_waypoints,
                         gtsam::Vector(q_start_rad), start_vel,
-                        gtsam::Vector(terminal_configuration), assembled.zero_velocity_indices,
+                        gtsam::Vector(terminal_configuration), fine.zero_velocity_indices,
                         pos_limits, vel_limits, duration_s, config.optimizer, scene_sigma,
                         config.optimizer.collision_sigma);
                 };
@@ -1003,6 +1063,8 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
                     inputs.intended_status = terminal.kind;
                     inputs.desired_task_path = &task_path;
                     inputs.task_start_time_s = task_start_time_s;
+                    inputs.path_position_tolerance_m =
+                        config.path_following.maximum_planning_error_m;
                     return ValidatePlan(model, trajectory, duration_s, inputs);
                 };
                 auto result = SolveDurationCandidate(

@@ -4,7 +4,6 @@
 #include <limits>
 
 namespace {
-constexpr double kExactStartToleranceRad = 1e-12;
 
 struct Sample { Eigen::Matrix<double, 7, 1> q, qdot; double t; };
 
@@ -105,123 +104,219 @@ void UpdateConfigurationClearance(
             report.self_collision_valid = false;
     }
 }
+
+// No checked pair means "nothing was measured", which is infinite clearance,
+// not zero clearance.
+void FinalizeClearance(PlanValidationReport& report) {
+    if (!report.has_scene_pairs)
+        report.minimum_scene_clearance_m = std::numeric_limits<double>::infinity();
+    if (!report.has_self_pairs)
+        report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
 }
 
-PlanValidationReport MeasureConfigurationClearance(
-    const PlannerModel& model,
-    const Eigen::Matrix<double, 7, 1>& q_rad,
-    const std::vector<NamedObstacleField>& obstacle_fields,
-    double minimum_clearance_m)
+// ---- 1. Basic trajectory sanity ------------------------------------------
+
+bool ValidTrajectoryShape(const TrajectoryResult& trajectory, double duration_s,
+                          const PlanValidationInputs& inputs)
 {
-    PlanValidationReport report;
-    report.scene_valid = true;
-    report.self_collision_valid = true;
-    report.has_self_pairs = !kSelfCollisionPairs.empty();
-    report.minimum_scene_clearance_m = std::numeric_limits<double>::infinity();
-    report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
-    UpdateConfigurationClearance(model, q_rad, 0.0, obstacle_fields,
-                                 minimum_clearance_m, report);
-    if (!std::isfinite(report.minimum_scene_clearance_m))
-        report.minimum_scene_clearance_m = 0.0;
-    if (!std::isfinite(report.minimum_self_clearance_m))
-        report.minimum_self_clearance_m = 0.0;
-    return report;
-}
-
-PlanValidationReport ValidatePlan(const PlannerModel& model,
-                                  const TrajectoryResult& trajectory,
-                                  double duration_s,
-                                  const PlanValidationInputs& inputs) {
-    PlanValidationReport report;
     if (trajectory.trajectory_pos.size() < 2 ||
         trajectory.trajectory_pos.size() != trajectory.trajectory_vel.size() ||
-        !(duration_s > 0.0)) {
-        report.failure_reason = "invalid trajectory dimensions or duration";
-        return report;
-    }
+        !(duration_s > 0.0))
+        return false;
     if (!(inputs.validation_dt_s > 0.0) ||
         inputs.effective_velocity_rad_s.minCoeff() <= 0.0 ||
-        inputs.effective_acceleration_rad_s2.minCoeff() <= 0.0) {
-        report.failure_reason = "invalid validation step or dynamic limits";
-        return report;
-    }
+        inputs.effective_acceleration_rad_s2.minCoeff() <= 0.0)
+        return false;
     for (std::size_t i = 0; i < trajectory.trajectory_pos.size(); ++i) {
         if (trajectory.trajectory_pos[i].size() != 7 ||
-            trajectory.trajectory_vel[i].size() != 7) {
-            report.failure_reason = "trajectory state is not seven-dimensional";
-            return report;
-        }
+            trajectory.trajectory_vel[i].size() != 7)
+            return false;
     }
-    const std::size_t count = static_cast<std::size_t>(duration_s / inputs.validation_dt_s);
+    return true;
+}
+
+std::vector<Sample> SampleTrajectory(const TrajectoryResult& trajectory,
+                                     double duration_s, double dt_s)
+{
+    const std::size_t count = static_cast<std::size_t>(duration_s / dt_s);
     std::vector<Sample> samples;
+    samples.reserve(count + 2);
     for (std::size_t i = 0; i <= count; ++i)
         samples.push_back(At(trajectory, duration_s,
-                             std::min(duration_s, i * inputs.validation_dt_s)));
-    if (samples.back().t < duration_s) samples.push_back(At(trajectory, duration_s, duration_s));
+                             std::min(duration_s, i * dt_s)));
+    if (samples.back().t < duration_s)
+        samples.push_back(At(trajectory, duration_s, duration_s));
+    return samples;
+}
+
+// ---- 2. Measurements. Each fills its slice of the report; none decides. --
+
+void MeasureStartState(const std::vector<Sample>& samples,
+                       const PlanValidationInputs& inputs,
+                       PlanValidationReport& report)
+{
+    report.start_position_error_rad =
+        (samples.front().q - inputs.measured_q_rad).cwiseAbs().maxCoeff();
+    report.start_valid =
+        report.start_position_error_rad <= inputs.start_position_tolerance_rad;
+    if (inputs.measured_qdot_rad_s) {
+        report.start_velocity_error_rad_s =
+            (samples.front().qdot - *inputs.measured_qdot_rad_s)
+                .cwiseAbs().maxCoeff();
+        report.start_valid =
+            report.start_valid &&
+            report.start_velocity_error_rad_s <=
+                inputs.start_velocity_tolerance_rad_s;
+    }
+}
+
+void MeasureJointLimits(const std::vector<Sample>& samples,
+                        const PlanValidationInputs& inputs,
+                        PlanValidationReport& report)
+{
     report.finite = true;
-    report.scene_valid = true;
-    report.self_collision_valid = true;
-    report.has_self_pairs = !kSelfCollisionPairs.empty();
-    report.has_scene_pairs = false;
     report.joint_limits_valid = true;
-    report.minimum_scene_clearance_m = std::numeric_limits<double>::infinity();
-    report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
+    for (const Sample& s : samples) {
+        if (!s.q.allFinite() || !s.qdot.allFinite()) {
+            report.finite = false;
+            continue;
+        }
+        if (((s.q.array() < inputs.position_lower_rad.array()) ||
+             (s.q.array() > inputs.position_upper_rad.array())).any())
+            report.joint_limits_valid = false;
+    }
+}
+
+void MeasureDynamics(const std::vector<Sample>& samples,
+                     const PlanValidationInputs& inputs,
+                     PlanValidationReport& report)
+{
     Eigen::Matrix<double, 7, 1> max_qdot = Eigen::Matrix<double, 7, 1>::Zero();
     Eigen::Matrix<double, 7, 1> max_qddot = Eigen::Matrix<double, 7, 1>::Zero();
+    for (std::size_t i = 0; i < samples.size(); ++i) {
+        const Sample& s = samples[i];
+        if (!s.q.allFinite() || !s.qdot.allFinite()) continue;
+        max_qdot = max_qdot.cwiseMax(s.qdot.cwiseAbs());
+        if (i > 0) {
+            const double dt = s.t - samples[i - 1].t;
+            if (dt > 0.0)
+                max_qddot = max_qddot.cwiseMax(
+                    ((s.qdot - samples[i - 1].qdot) / dt).cwiseAbs());
+        }
+    }
     for (std::size_t i = 1; i < samples.size(); ++i) {
         const double dt = samples[i].t - samples[i - 1].t;
         if (dt > 0.0)
             report.integrated_joint_travel_rad +=
                 0.5 * (samples[i - 1].qdot.cwiseAbs().sum() +
-                        samples[i].qdot.cwiseAbs().sum()) * dt;
+                       samples[i].qdot.cwiseAbs().sum()) * dt;
     }
-    for (std::size_t i = 0; i < samples.size(); ++i) {
-        const Sample& s = samples[i];
-        if (!s.q.allFinite() || !s.qdot.allFinite()) { report.finite = false; continue; }
-        if (((s.q.array() < inputs.position_lower_rad.array()) ||
-             (s.q.array() > inputs.position_upper_rad.array())).any())
-            report.joint_limits_valid = false;
-        max_qdot = max_qdot.cwiseMax(s.qdot.cwiseAbs());
-        if (i > 0) {
-            const double dt = s.t - samples[i - 1].t;
-            if (dt > 0.0) max_qddot = max_qddot.cwiseMax(
-                ((s.qdot - samples[i - 1].qdot) / dt).cwiseAbs());
-        }
-        if (inputs.obstacle_fields)
-            UpdateConfigurationClearance(
-                model, s.q, s.t, *inputs.obstacle_fields,
-                inputs.minimum_clearance_m, report);
-    }
-    if (!std::isfinite(report.minimum_scene_clearance_m)) report.minimum_scene_clearance_m = 0.0;
-    if (!std::isfinite(report.minimum_self_clearance_m)) report.minimum_self_clearance_m = 0.0;
     report.maximum_abs_joint_velocity_rad_s = max_qdot;
     report.maximum_abs_joint_acceleration_rad_s2 = max_qddot;
-    report.start_position_error_rad = (samples.front().q - inputs.measured_q_rad).cwiseAbs().maxCoeff();
-    report.start_valid = report.start_position_error_rad <= kExactStartToleranceRad;
-    if (inputs.measured_qdot_rad_s) {
-        report.start_velocity_error_rad_s = (samples.front().qdot - *inputs.measured_qdot_rad_s).cwiseAbs().maxCoeff();
-        report.start_valid = report.start_valid && report.start_velocity_error_rad_s <= kExactStartToleranceRad;
-        if (((*inputs.measured_qdot_rad_s).cwiseAbs().array() >
-             inputs.effective_velocity_rad_s.array()).any()) {
-            report.failure_reason = "start_velocity_over_effective_limit";
-            report.disposition = CandidateDisposition::kInvalid;
-            return report;
+    report.max_velocity_ratio =
+        (max_qdot.array() / inputs.effective_velocity_rad_s.array()).maxCoeff();
+    report.max_acceleration_ratio =
+        (max_qddot.array() / inputs.effective_acceleration_rad_s2.array())
+            .maxCoeff();
+}
+
+void MeasureClearance(const PlannerModel& model,
+                      const std::vector<Sample>& samples,
+                      const PlanValidationInputs& inputs,
+                      PlanValidationReport& report)
+{
+    report.scene_valid = true;
+    report.self_collision_valid = true;
+    report.has_self_pairs = !kSelfCollisionPairs.empty();
+    report.has_scene_pairs = false;
+    report.minimum_scene_clearance_m = std::numeric_limits<double>::infinity();
+    report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
+    if (inputs.obstacle_fields) {
+        for (const Sample& s : samples) {
+            if (!s.q.allFinite()) continue;
+            UpdateConfigurationClearance(model, s.q, s.t,
+                                         *inputs.obstacle_fields,
+                                         inputs.minimum_clearance_m, report);
         }
     }
-    report.max_velocity_ratio = (max_qdot.array() / inputs.effective_velocity_rad_s.array()).maxCoeff();
-    report.max_acceleration_ratio = (max_qddot.array() / inputs.effective_acceleration_rad_s2.array()).maxCoeff();
-    const gtsam::Pose3 final_pose = ToolPoseInMount(model, samples.back().q);
+    FinalizeClearance(report);
+}
+
+void MeasureTerminalError(const PlannerModel& model, const Sample& final_sample,
+                          const PlanValidationInputs& inputs,
+                          PlanValidationReport& report)
+{
+    const gtsam::Pose3 final_pose = ToolPoseInMount(model, final_sample.q);
     report.requested_terminal_position_error_m =
-        (final_pose.translation() - inputs.requested_terminal_mount.translation()).norm();
+        (final_pose.translation() -
+         inputs.requested_terminal_mount.translation()).norm();
     report.requested_terminal_orientation_error_rad =
-        gtsam::Rot3::Logmap(inputs.requested_terminal_mount.rotation().between(final_pose.rotation())).norm();
+        gtsam::Rot3::Logmap(inputs.requested_terminal_mount.rotation().between(
+                                final_pose.rotation())).norm();
     const gtsam::Pose3& target = inputs.intended_status == PlanStatus::kGoalBlocked
                                      ? inputs.candidate_terminal_mount
                                      : inputs.requested_terminal_mount;
-    report.terminal_position_error_m = (final_pose.translation() - target.translation()).norm();
+    report.terminal_position_error_m =
+        (final_pose.translation() - target.translation()).norm();
     report.terminal_orientation_error_rad =
-        gtsam::Rot3::Logmap(target.rotation().between(final_pose.rotation())).norm();
-    if (inputs.desired_task_path && !inputs.desired_task_path->samples.empty()) {
+        gtsam::Rot3::Logmap(target.rotation().between(final_pose.rotation()))
+            .norm();
+}
+
+// Task quality against the requested Cartesian path. The dense sweep runs FK
+// on EVERY task-phase validation sample against the requested path
+// (piecewise-linear between its samples; their chord error is bounded at
+// authoring, <= 1 mm for circles) and is authoritative. The per-anchor
+// statistics sample only where the pose priors act and stay diagnostic.
+void MeasureTaskQuality(const PlannerModel& model,
+                        const TrajectoryResult& trajectory, double duration_s,
+                        const std::vector<Sample>& samples,
+                        const PlanValidationInputs& inputs,
+                        PlanValidationReport& report)
+{
+    report.task_valid =
+        report.terminal_position_error_m <=
+            inputs.terminal_position_tolerance_m &&
+        report.terminal_orientation_error_rad <=
+            inputs.terminal_orientation_tolerance_rad;
+    if (!inputs.desired_task_path) return;
+
+    if (inputs.desired_task_path->samples.size() > 1) {
+        const auto& requested = inputs.desired_task_path->samples;
+        const double requested_start = requested.front().t_s;
+        const double requested_span = requested.back().t_s - requested_start;
+        const double task_span = duration_s - inputs.task_start_time_s;
+        const auto requested_deviation = [&](const Eigen::Matrix<double, 7, 1>& q,
+                                             double t) {
+            const double u = (t - inputs.task_start_time_s) / task_span;
+            const double t_req = requested_start + u * requested_span;
+            std::size_t k = 1;
+            while (k + 1 < requested.size() && requested[k].t_s < t_req) ++k;
+            const auto& a = requested[k - 1];
+            const auto& b = requested[k];
+            const double span = b.t_s - a.t_s;
+            const double w = span > 0.0 ? (t_req - a.t_s) / span : 0.0;
+            const Eigen::Vector3d target =
+                (1.0 - w) * a.pose.translation() + w * b.pose.translation();
+            return (ToolPoseInMount(model, q).translation() - target).norm();
+        };
+        if (task_span > 0.0) {
+            for (const Sample& s : samples) {
+                if (s.t < inputs.task_start_time_s) continue;
+                const double error = requested_deviation(s.q, s.t);
+                if (error > report.trace_dense_max_position_m) {
+                    report.trace_dense_max_position_m = error;
+                    report.trace_dense_worst_time_s = s.t;
+                }
+            }
+            report.task_valid =
+                report.task_valid &&
+                report.trace_dense_max_position_m <=
+                    inputs.path_position_tolerance_m;
+        }
+    }
+
+    if (!inputs.desired_task_path->samples.empty()) {
         std::vector<double> position_errors;
         double position_error_sum = 0.0;
         const auto& requested_samples = inputs.desired_task_path->samples;
@@ -263,28 +358,88 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
                 std::sqrt(sum_sq / static_cast<double>(position_errors.size()));
             const std::size_t index = static_cast<std::size_t>(
                 std::ceil(0.95 * static_cast<double>(position_errors.size())) - 1.0);
-            report.trace_p95_position_m = position_errors[std::min(index, position_errors.size() - 1)];
+            report.trace_p95_position_m =
+                position_errors[std::min(index, position_errors.size() - 1)];
         }
     }
-    const bool terminal_valid = report.terminal_position_error_m <= 0.001 &&
-                                report.terminal_orientation_error_rad <= 0.01;
-    const bool non_dynamic_valid = report.finite && report.start_valid &&
-        report.scene_valid && report.self_collision_valid &&
-        report.joint_limits_valid && terminal_valid;
-    if (!non_dynamic_valid) {
+}
+
+// ---- 3. Classification helper --------------------------------------------
+
+PlanValidationReport Reject(PlanValidationReport report, const char* reason) {
+    report.disposition = CandidateDisposition::kInvalid;
+    report.failure_reason = reason;
+    return report;
+}
+
+}  // namespace
+
+PlanValidationReport MeasureConfigurationClearance(
+    const PlannerModel& model,
+    const Eigen::Matrix<double, 7, 1>& q_rad,
+    const std::vector<NamedObstacleField>& obstacle_fields,
+    double minimum_clearance_m)
+{
+    PlanValidationReport report;
+    report.scene_valid = true;
+    report.self_collision_valid = true;
+    report.has_self_pairs = !kSelfCollisionPairs.empty();
+    report.minimum_scene_clearance_m = std::numeric_limits<double>::infinity();
+    report.minimum_self_clearance_m = std::numeric_limits<double>::infinity();
+    UpdateConfigurationClearance(model, q_rad, 0.0, obstacle_fields,
+                                 minimum_clearance_m, report);
+    FinalizeClearance(report);
+    return report;
+}
+
+PlanValidationReport ValidatePlan(const PlannerModel& model,
+                                  const TrajectoryResult& trajectory,
+                                  double duration_s,
+                                  const PlanValidationInputs& inputs) {
+    PlanValidationReport report;
+
+    // 1. Basic trajectory sanity.
+    if (!ValidTrajectoryShape(trajectory, duration_s, inputs)) {
         report.disposition = CandidateDisposition::kInvalid;
-        if (!report.finite) report.failure_reason = "non_finite_trajectory";
-        else if (!report.start_valid) report.failure_reason = "start_state_mismatch";
-        else if (!report.scene_valid) report.failure_reason = "scene_clearance";
-        else if (!report.self_collision_valid) report.failure_reason = "self_collision";
-        else if (!report.joint_limits_valid) report.failure_reason = "joint_position_limits";
-        else report.failure_reason = "terminal_pose_error";
-    } else if (report.max_velocity_ratio > 1.0 || report.max_acceleration_ratio > 1.0) {
+        report.failure_reason = "malformed_trajectory";
+        return report;
+    }
+
+    const auto samples =
+        SampleTrajectory(trajectory, duration_s, inputs.validation_dt_s);
+
+    // 2. Measure everything once; no measurement decides anything.
+    MeasureStartState(samples, inputs, report);
+    MeasureJointLimits(samples, inputs, report);
+    MeasureDynamics(samples, inputs, report);
+    MeasureClearance(model, samples, inputs, report);
+    MeasureTerminalError(model, samples.back(), inputs, report);
+    MeasureTaskQuality(model, trajectory, duration_s, samples, inputs, report);
+
+    // 3. Safety: hard rejection. (Start velocity over the effective limit is
+    // preflighted in PlanSolver before any solve; it is not re-checked here.)
+    if (!report.finite)
+        return Reject(std::move(report), "non_finite_trajectory");
+    if (!report.start_valid)
+        return Reject(std::move(report), "start_state_mismatch");
+    if (!report.joint_limits_valid)
+        return Reject(std::move(report), "joint_position_limits");
+    if (!report.scene_valid)
+        return Reject(std::move(report), "scene_clearance");
+    if (!report.self_collision_valid)
+        return Reject(std::move(report), "self_collision");
+
+    // 4. Valid geometry, but too fast: fix timing, don't reject the plan.
+    if (report.max_velocity_ratio > 1.0 || report.max_acceleration_ratio > 1.0) {
         report.disposition = CandidateDisposition::kNeedsLongerDuration;
         report.failure_reason = "dynamic_limits_exceeded";
-    } else {
-        report.disposition = CandidateDisposition::kExecutable;
-        report.executable = true;
+        return report;
     }
+
+    // Cartesian task accuracy (terminal error, path deviation, task_valid)
+    // is MEASURED above and reported, never used as a veto: the validator
+    // answers "is this safe to send", the optimiser owns task quality.
+    report.disposition = CandidateDisposition::kExecutable;
+    report.executable = true;
     return report;
 }
