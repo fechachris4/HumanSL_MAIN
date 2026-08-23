@@ -201,6 +201,27 @@ void SummarizeSceneBlockersLines(SummaryWriter& summary,
                 Fixed(blocker.worst_time_s, 2) + " s, blocked " +
                 std::to_string(blocker.attempts_blocked) + " attempt(s)");
     }
+    const ScreenedTerminalSummary screened =
+        SummarizeScreenedTerminals(attempts, sphere_groups);
+    if (screened.rejected_count > 0)
+        summary.Line(
+            "terminal candidates in scene contact",
+            std::to_string(screened.rejected_count) +
+                " screened out before solving (worst: " +
+                screened.worst.object_id + " vs sphere " +
+                std::to_string(screened.worst.sphere_index) + " (" +
+                CollisionSphereGroupName(screened.worst.group) +
+                "), clearance " +
+                Fixed(screened.worst.worst_clearance_m * 1e3) + " mm)");
+    const std::optional<DynamicAttemptEvidence> closest =
+        ClosestDynamicAttempt(attempts);
+    if (closest)
+        summary.Line(
+            "closest dynamic attempt",
+            "velocity ratio " + Fixed(closest->velocity_ratio, 3) +
+                ", acceleration ratio " + Fixed(closest->acceleration_ratio, 3) +
+                " at " + Fixed(closest->duration_s, 1) +
+                " s (executable needs both <= 1.0; the attempt cap stopped repair here)");
 }
 
 // The IK walk's summary lines: solved count, the failed ranges with their
