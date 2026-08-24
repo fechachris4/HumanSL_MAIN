@@ -93,8 +93,8 @@ constexpr char kUsageText[] =
     "                         from the URDF at build time — do not\n"
     "                         hand-edit).\n"
     "  --joint-limits PATH    Joint limits YAML. Default:\n"
-    "                         config/joint_limits.yaml beside\n"
-    "                         config/goal.yaml, resolved relative to the\n"
+    "                         ../model/joint_limits.yaml (beside the\n"
+    "                         URDF), resolved relative to the\n"
     "                         executable's directory.\n"
     "  --planner-config PATH  Planner tuning YAML: plan pacing and every\n"
     "                         factor-graph weight. Default: config/\n"
@@ -221,7 +221,9 @@ void SummarizeSceneBlockersLines(SummaryWriter& summary,
             "velocity ratio " + Fixed(closest->velocity_ratio, 3) +
                 ", acceleration ratio " + Fixed(closest->acceleration_ratio, 3) +
                 " at " + Fixed(closest->duration_s, 1) +
-                " s (executable needs both <= 1.0; the attempt cap stopped repair here)");
+                " s (worst peak: joint " + std::to_string(closest->peak_joint) +
+                " at t=" + Fixed(closest->peak_time_s, 2) +
+                " s; executable needs both <= 1.0; the attempt cap stopped repair here)");
 }
 
 // The IK walk's summary lines: solved count, the failed ranges with their
@@ -392,7 +394,9 @@ std::string DefaultDhPath(bool left_arm) {
 }
 
 std::string DefaultJointLimitsPath() {
-    return ExecutableDirectory() + "/../config/joint_limits.yaml";
+    // planning/build -> ../../model: the limits live with the URDF, owned by
+    // neither planner nor controller.
+    return ExecutableDirectory() + "/../../model/joint_limits.yaml";
 }
 
 // Beside goal.yaml, and resolved the same way — from the executable, never
@@ -1044,10 +1048,7 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                 const CandidateEvidence& selected =
                     plan.candidate_attempts[*plan.selected_candidate_attempt];
                 diagnostics << "selected candidate: branch "
-                            << selected.terminal_branch << ", route "
-                            << RouteHypothesisName(selected.route)
-                            << ", duration attempt "
-                            << selected.duration_attempt << ", scene sigma "
+                            << selected.terminal_branch << ", scene sigma "
                             << selected.scene_collision_sigma << "\n";
             }
             if (parsed.verbose)
@@ -1077,12 +1078,18 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                     plan.candidate_attempts[*plan.selected_candidate_attempt];
                 summary.Line("selected candidate",
                              "branch " +
-                                 std::to_string(selected.terminal_branch) +
-                                 ", " + RouteHypothesisName(selected.route) +
-                                 ", duration attempt " +
-                                 std::to_string(selected.duration_attempt));
+                                 std::to_string(selected.terminal_branch));
             }
-            summary.Line("task fidelity (quality)",
+            summary.Line("path fidelity (dense executed)",
+                         "max " +
+                             Fixed(plan.validation.trace_dense_max_position_m * 1e3, 2) +
+                             " mm at t=" +
+                             Fixed(plan.validation.trace_dense_worst_time_s, 2) +
+                             " s (tolerance " +
+                             Fixed(planner_config.path_following
+                                       .maximum_planning_error_m * 1e3, 1) +
+                             " mm)");
+            summary.Line("anchor fidelity (diagnostic)",
                          "max " + Fixed(plan.validation.trace_max_position_m * 1e3, 2) +
                              " mm / p95 " +
                              Fixed(plan.validation.trace_p95_position_m * 1e3, 2) +
@@ -1096,6 +1103,10 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
             summary.Line("self collision", plan.validation.self_collision_valid ? "valid" : "invalid");
             summary.Line("dynamic ratios", "velocity " + Fixed(plan.validation.max_velocity_ratio) +
                          ", acceleration " + Fixed(plan.validation.max_acceleration_ratio));
+            summary.Line("graph error (accepted)",
+                         Fixed(plan.trajectory->final_error, 6) +
+                             " (threshold " +
+                             Fixed(planner_config.acceptance_graph_error, 6) + ")");
         }
         SummarizeWalk(summary, plan.ik_walk, plan.joint_limits,
                       planner_config.path_following.maximum_planning_error_m);
@@ -1226,14 +1237,15 @@ PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
                         *outcome.selected_candidate_attempt];
                 summary.Line("selected candidate",
                              "branch " +
-                                 std::to_string(selected.terminal_branch) +
-                                 ", " + RouteHypothesisName(selected.route) +
-                                 ", duration attempt " +
-                                 std::to_string(selected.duration_attempt));
+                                 std::to_string(selected.terminal_branch));
             }
             summary.Line("final requested goal error",
                          Fixed(outcome.validation.requested_terminal_position_error_m * 1e3, 3) +
                              " mm");
+            summary.Line("graph error (accepted)",
+                         Fixed(outcome.trajectory->final_error, 6) +
+                             " (threshold " +
+                             Fixed(planner_config.acceptance_graph_error, 6) + ")");
             // Smallest distance any dense state comes to a bounded joint
             // limit — arithmetic over the trajectory the solver produced.
             double min_margin_rad = std::numeric_limits<double>::infinity();

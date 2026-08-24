@@ -193,15 +193,40 @@ void MeasureDynamics(const std::vector<Sample>& samples,
 {
     Eigen::Matrix<double, 7, 1> max_qdot = Eigen::Matrix<double, 7, 1>::Zero();
     Eigen::Matrix<double, 7, 1> max_qddot = Eigen::Matrix<double, 7, 1>::Zero();
+    // Track where the worst per-limit-normalised peaks occur, so a
+    // dynamics rejection names its joint and time in the evidence.
+    double worst_velocity_ratio = 0.0;
+    double worst_acceleration_ratio = 0.0;
     for (std::size_t i = 0; i < samples.size(); ++i) {
         const Sample& s = samples[i];
         if (!s.q.allFinite() || !s.qdot.allFinite()) continue;
         max_qdot = max_qdot.cwiseMax(s.qdot.cwiseAbs());
+        for (int joint = 0; joint < 7; ++joint) {
+            const double ratio = std::abs(s.qdot(joint)) /
+                                 inputs.effective_velocity_rad_s(joint);
+            if (ratio > worst_velocity_ratio) {
+                worst_velocity_ratio = ratio;
+                report.peak_velocity_time_s = s.t;
+                report.peak_velocity_joint = joint + 1;
+            }
+        }
         if (i > 0) {
             const double dt = s.t - samples[i - 1].t;
-            if (dt > 0.0)
-                max_qddot = max_qddot.cwiseMax(
-                    ((s.qdot - samples[i - 1].qdot) / dt).cwiseAbs());
+            if (dt > 0.0) {
+                const Eigen::Matrix<double, 7, 1> qddot =
+                    ((s.qdot - samples[i - 1].qdot) / dt).cwiseAbs();
+                max_qddot = max_qddot.cwiseMax(qddot);
+                for (int joint = 0; joint < 7; ++joint) {
+                    const double ratio =
+                        qddot(joint) /
+                        inputs.effective_acceleration_rad_s2(joint);
+                    if (ratio > worst_acceleration_ratio) {
+                        worst_acceleration_ratio = ratio;
+                        report.peak_acceleration_time_s = s.t;
+                        report.peak_acceleration_joint = joint + 1;
+                    }
+                }
+            }
         }
     }
     for (std::size_t i = 1; i < samples.size(); ++i) {
@@ -418,16 +443,18 @@ PlanValidationReport ValidatePlan(const PlannerModel& model,
 
     // 3. Safety: hard rejection. (Start velocity over the effective limit is
     // preflighted in PlanSolver before any solve; it is not re-checked here.)
+    //
+    // joint_limits_valid, scene_valid and self_collision_valid are measured
+    // above and reported (2026-08-24, docs/intent/story.md "Multi-gate plan
+    // validation" — superseded per Christian: rank by raw graph error,
+    // accept the best under a single threshold, refuse only above it).
+    // They no longer reject here: PlanSolver's acceptance gate on raw graph
+    // error is the whole decision now, and the optimizer's own factors for
+    // these already price them into that error.
     if (!report.finite)
         return Reject(std::move(report), "non_finite_trajectory");
     if (!report.start_valid)
         return Reject(std::move(report), "start_state_mismatch");
-    if (!report.joint_limits_valid)
-        return Reject(std::move(report), "joint_position_limits");
-    if (!report.scene_valid)
-        return Reject(std::move(report), "scene_clearance");
-    if (!report.self_collision_valid)
-        return Reject(std::move(report), "self_collision");
 
     // 4. Valid geometry, but too fast: fix timing, don't reject the plan.
     if (report.max_velocity_ratio > 1.0 || report.max_acceleration_ratio > 1.0) {

@@ -499,7 +499,10 @@ LoopResult RunControlLoop(k_api::Base::BaseClient* base,
                 request.vicon_frame_number =
                     base_pose_sample.vicon_frame_number;
                 request.receive_steady_s = base_pose_sample.t_receive_s;
-                request.age_s = std::max(0.0, base_pose_age_s);
+                // Not clamped: a negative age means the steady clock went
+                // backwards, and ValidatePlanningRequest exists to reject
+                // that. Flooring it here would hide the fault.
+                request.age_s = base_pose_age_s;
                 request.world_T_mount = Eigen::Isometry3d::Identity();
                 request.world_T_mount.translation() =
                     result.state.world_p_mountseg;

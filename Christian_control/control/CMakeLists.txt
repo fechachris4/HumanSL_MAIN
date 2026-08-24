@@ -13,7 +13,7 @@
 #
 # Buildable on its own:
 #   cmake -S . -B build && cmake --build build
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.16)
 project(control)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -21,9 +21,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif ()
-# Warnings on for first-party code; vendor headers (Pinocchio, Eigen) are
-# SYSTEM includes below, so their noise is suppressed without -w.
-add_compile_options(-Wall -Wextra)
 
 # compile_commands.json, so clang-tidy (or an editor) knows the include paths.
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -67,6 +64,14 @@ function(add_bundled_eigen_to target)
     )
 endfunction()
 
+# Warnings on for first-party code only; vendor headers (Pinocchio, Eigen)
+# are SYSTEM includes, so their noise is suppressed without -w. Target-scoped
+# rather than add_compile_options so nested add_subdirectory consumers and
+# vendored code are never affected.
+function(add_humansl_warnings_to target)
+    target_compile_options(${target} PRIVATE -Wall -Wextra)
+endfunction()
+
 # One call wires a target to humansl_execution_core: the archive's PUBLIC
 # usage requirements carry this directory and the contracts' include dirs, the
 # bundled Eigen/Pinocchio SYSTEM includes, the URDF path definition, the
@@ -76,7 +81,8 @@ endfunction()
 # library's sources — each source then compiles once, into the archive (a
 # static library links only the objects a consumer actually references).
 function(add_execution_core_to target)
-    target_link_libraries(${target} humansl_execution_core)
+    target_link_libraries(${target} PRIVATE humansl_execution_core)
+    add_humansl_warnings_to(${target})
     set_target_properties(${target} PROPERTIES
             BUILD_RPATH "${HUMANSL_ROOT}/third_party/lib"
     )
@@ -84,8 +90,9 @@ endfunction()
 
 # --- Joint limits, generated from the ONE authoritative table ---------------
 # The physical Kinova position and velocity limits live in exactly one file,
-# ../planning/config/joint_limits.yaml, together with the margins the planner
-# and controller each apply to them. This step turns that yaml into a
+# ../model/joint_limits.yaml (with the URDF: they are facts about the machine,
+# owned by neither planner nor controller), together with the margins the
+# planner and controller each apply to them. This step turns that yaml into a
 # constexpr header in the build tree, the same way the planner derives its DH
 # tables from the URDF: the constants stay compile-time, the controller gains
 # no runtime file dependency, and a yaml edit cannot silently diverge from an
@@ -93,7 +100,7 @@ endfunction()
 # whenever it changes. The generator refuses to write a header whose margins
 # are not correctly ordered, so a bad edit fails the build.
 set(JOINT_LIMITS_YAML
-    "${HUMANSL_ROOT}/Christian_control/planning/config/joint_limits.yaml")
+    "${HUMANSL_ROOT}/Christian_control/model/joint_limits.yaml")
 set(JOINT_LIMITS_HEADER "${CMAKE_CURRENT_BINARY_DIR}/generated/JointLimits.h")
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -126,14 +133,51 @@ add_custom_target(joint_limits_header ALL DEPENDS "${JOINT_LIMITS_HEADER}")
 set(CONTROL_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated"
     CACHE INTERNAL "control's generated-header directory")
 
+# --- humansl_robot_model: the arm's geometric model and kinematics, and
+#     nothing that decides a command. Split from the execution core so the
+#     planner can link FK/Jacobians without depending on controller,
+#     actuation or mailbox machinery: planning and control both stand on
+#     this target independently. It carries every usage requirement a
+#     Pinocchio consumer needs — this directory (Config.h/State.h are
+#     headers here), the generated JointLimits.h, the bundled Eigen and
+#     Pinocchio SYSTEM includes, the URDF path definition and the Pinocchio
+#     .so files. INTERFACE link options: libpinocchio_parsers.so references
+#     collision symbols (coal) that are not bundled and that we never call
+#     (we only build the model, no collision geometry);
+#     --allow-shlib-undefined leaves them unresolved and -z lazy keeps the
+#     loader from looking them up at startup. ---
+add_library(humansl_robot_model STATIC
+        Kinematics.cpp
+        RobotModel.cpp
+)
+add_humansl_warnings_to(humansl_robot_model)
+target_include_directories(humansl_robot_model PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_BINARY_DIR}/generated)
+add_dependencies(humansl_robot_model joint_limits_header)
+target_include_directories(humansl_robot_model SYSTEM PUBLIC
+        ${HUMANSL_ROOT}/third_party/include
+        ${HUMANSL_ROOT}/third_party/include/eigen3
+)
+target_compile_definitions(humansl_robot_model PUBLIC
+        GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
+target_link_libraries(humansl_robot_model PUBLIC
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
+        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
+)
+target_link_options(humansl_robot_model INTERFACE
+        -Wl,--allow-shlib-undefined
+        -Wl,-z,lazy
+)
+
 # --- humansl_execution_core: the ONE hardware-independent arm execution
 #     library (Plan 01 Task 4). It owns the explicit per-cycle contract
 #     (ExecutionCore), the immutable configuration snapshot
-#     (ExecutionConfig), the controller/reference/actuation mathematics, and
-#     the Pinocchio model and kinematics. Dependencies are ONLY the bundled
-#     Eigen/Pinocchio, humansl_contracts and pthread — a Kinova::Api or Vicon
-#     SDK symbol in this archive breaks that isolation, and nothing checks
-#     for one automatically. ---
+#     (ExecutionConfig), and the controller/reference/actuation mathematics;
+#     the model and kinematics arrive from humansl_robot_model. Dependencies
+#     are ONLY that model target, humansl_contracts and pthread — a
+#     Kinova::Api or Vicon SDK symbol in this archive breaks that isolation,
+#     and nothing checks for one automatically. ---
 add_library(humansl_execution_core STATIC
         ExecutionCore.cpp
         ExecutionConfig.cpp
@@ -141,36 +185,14 @@ add_library(humansl_execution_core STATIC
         CartesianReference.cpp
         CartesianTrajectoryMailbox.cpp
         Actuation.cpp
-        Kinematics.cpp
-        RobotModel.cpp
 )
-# PUBLIC: every consumer sees this directory plus the bundled Eigen/Pinocchio
-# SYSTEM includes, and links the Pinocchio .so files transitively. The
-# exchange types arrive the same way, through humansl_contracts' own PUBLIC
-# include directory. INTERFACE link options: libpinocchio_parsers.so
-# references collision symbols (coal) that are not bundled and that we never
-# call (we only build the model, no collision geometry);
-# --allow-shlib-undefined leaves them unresolved and -z lazy keeps the loader
-# from looking them up at startup.
-target_include_directories(humansl_execution_core PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_BINARY_DIR}/generated)
-add_dependencies(humansl_execution_core joint_limits_header)
-target_include_directories(humansl_execution_core SYSTEM PUBLIC
-        ${HUMANSL_ROOT}/third_party/include
-        ${HUMANSL_ROOT}/third_party/include/eigen3
-)
-target_compile_definitions(humansl_execution_core PUBLIC
-        GEN3_DUAL_URDF_PATH="${GEN3_DUAL_URDF}")
-target_link_libraries(humansl_execution_core PUBLIC
-        humansl_contracts
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_default.so
-        ${HUMANSL_ROOT}/third_party/lib/libpinocchio_parsers.so
-        pthread
-)
-target_link_options(humansl_execution_core INTERFACE
-        -Wl,--allow-shlib-undefined
-        -Wl,-z,lazy
+add_humansl_warnings_to(humansl_execution_core)
+# PUBLIC: consumers see the model target's includes/definitions/libraries and
+# the exchange types transitively. pthread is an implementation detail (the
+# mailbox); PRIVATE on a static library still reaches the final link line.
+target_link_libraries(humansl_execution_core
+        PUBLIC humansl_robot_model humansl_contracts
+        PRIVATE pthread
 )
 
 # --- Offline tools. Every binary here reads the model or replays a log; none

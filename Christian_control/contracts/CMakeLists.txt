@@ -14,7 +14,7 @@
 # it with add_subdirectory and link humansl_contracts, which is what stopped
 # these three sources being compiled separately into both the controller's
 # execution core and the planner's library.
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.16)
 
 get_filename_component(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 
@@ -24,6 +24,9 @@ add_library(humansl_contracts STATIC
         WorldCartesianTrajectory.cpp
         WorldCartesianTrajectoryWire.cpp
 )
+# Warnings carried by the target itself: consumers add this directory from
+# several projects, none of which sets directory-wide options any more.
+target_compile_options(humansl_contracts PRIVATE -Wall -Wextra)
 
 target_include_directories(humansl_contracts PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # The bundled Eigen, as a SYSTEM include so -Wall stays quiet inside it.

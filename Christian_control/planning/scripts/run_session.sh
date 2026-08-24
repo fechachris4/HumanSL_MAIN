@@ -21,8 +21,7 @@ ALLOW_STALE=0; DRY_RUN=0
 usage() {
     echo "usage: run_session.sh [--arm right|left|both] [--mount fixed|vicon]"
     echo "                      [--fixed-pose 'x y z qx qy qz qw'] [--plan on|off]"
-    echo "                      [--record on|off] [--planner current|baseline]"
-    echo "                      [--baseline-bridge PATH] [--allow-stale] [--dry-run]"
+    echo "                      [--record on|off] [--allow-stale] [--dry-run]"
     exit 1
 }
 while [[ $# -gt 0 ]]; do case "$1" in
@@ -38,12 +37,6 @@ while [[ $# -gt 0 ]]; do case "$1" in
     --plan)
         [[ $# -ge 2 ]] || { echo "--plan needs on or off"; exit 1; }
         PLAN="$2"; shift 2 ;;
-    --planner)
-        [[ $# -ge 2 ]] || { echo "--planner needs current or baseline"; exit 1; }
-        PLANNER="$2"; shift 2 ;;
-    --baseline-bridge)
-        [[ $# -ge 2 ]] || { echo "--baseline-bridge needs a path"; exit 1; }
-        BASELINE_BRIDGE="$2"; shift 2 ;;
     --record)
         [[ $# -ge 2 ]] || { echo "--record needs on or off"; exit 1; }
         RECORD="$2"; shift 2 ;;
@@ -54,20 +47,6 @@ esac; done
 [[ "$MOUNT" == "fixed" || "$MOUNT" == "vicon" ]] || { echo "error: --mount must be 'fixed' or 'vicon' (got '$MOUNT')"; exit 1; }
 [[ "$PLAN" == "on" || "$PLAN" == "off" ]] || { echo "error: --plan must be 'on' or 'off' (got '$PLAN')"; exit 1; }
 [[ "$RECORD" == "on" || "$RECORD" == "off" ]] || { echo "error: --record must be 'on' or 'off' (got '$RECORD')"; exit 1; }
-PLANNER="${PLANNER:-current}"
-[[ "$PLANNER" == "current" || "$PLANNER" == "baseline" ]] || { echo "error: --planner must be 'current' or 'baseline' (got '$PLANNER')"; exit 1; }
-if [[ "$PLANNER" == "baseline" ]]; then
-    # The frozen known-good planner (branch baseline/planner-0807 =
-    # 5abc1b2c). Default: the permanent baseline worktree's in-tree build —
-    # see ~/Desktop/HumanSL_baseline_evidence/BASELINE.md.
-    BASELINE_BRIDGE="${BASELINE_BRIDGE:-$HOME/Desktop/HumanSL_baseline/Christian_control/planner_bridge/build/planner_bridge}"
-    [[ -x "$BASELINE_BRIDGE" ]] || {
-        echo "error: baseline planner binary not found or not executable: $BASELINE_BRIDGE"
-        echo "build it per ~/Desktop/HumanSL_baseline_evidence/BASELINE.md, or pass --baseline-bridge PATH"
-        exit 1
-    }
-    echo "planner: BASELINE (5abc1b2c) at $BASELINE_BRIDGE — frozen binary, freshness gate does not apply to it"
-fi
 if [[ -n "$FIXED_POSE" && "$MOUNT" != "fixed" ]]; then
     echo "error: --fixed-pose is only meaningful with --mount fixed"; exit 1
 fi
@@ -132,7 +111,7 @@ echo "  - Kinova web dashboard CLOSED (it blocks SetServoingMode)"
 echo "  - This run is explicitly authorized"
 read -r -p "Type GO to start the controller: " confirm
 [[ "$confirm" == "GO" ]] || { echo "aborted"; exit 1; }
-[[ $DRY_RUN = 1 ]] && { echo "dry-run: would start $CONTROLLER --arm $ARM --mount $MOUNT --plan $PLAN --record $RECORD --planner $PLANNER now"; exit 0; }
+[[ $DRY_RUN = 1 ]] && { echo "dry-run: would start $CONTROLLER --arm $ARM --mount $MOUNT --plan $PLAN --record $RECORD now"; exit 0; }
 
 mkdir -p "$REPO/runs"   # first run on a fresh checkout has no runs/ dir yet
 
@@ -167,13 +146,7 @@ finalize_session() {
         echo "  \"git_dirty\": $(if [[ -n "$(git -C "$REPO" status --porcelain 2>/dev/null)" ]]; then echo true; else echo false; fi),"
         echo "  \"arm\": \"$ARM\","
         echo "  \"controller_sha256\": \"$(sha_of "$CONTROLLER")\","
-        if [[ "$PLANNER" == "baseline" ]]; then
-            echo "  \"planner_handoff\": \"baseline_5abc1b2c_joint_wire_projected\","
-            echo "  \"baseline_bridge\": \"$BASELINE_BRIDGE\","
-            echo "  \"baseline_bridge_sha256\": \"$(sha_of "$BASELINE_BRIDGE")\","
-        else
-            echo "  \"planner_handoff\": \"in_process_typed_world_cartesian\","
-        fi
+        echo "  \"planner_handoff\": \"in_process_typed_world_cartesian\","
         echo "  \"urdf_sha256\": \"$(sha_of "$URDF")\","
         echo "  \"started\": \"$SESSION_START\","
         echo "  \"ended\": \"$(date -Is)\","
@@ -222,8 +195,6 @@ trap cleanup_session EXIT
 # the trap works.
 # shellcheck disable=SC2086 — FIXED_POSE is 7 numbers becoming 7 arguments
 "$CONTROLLER" --arm "$ARM" --mount "$MOUNT" --plan "$PLAN" --record "$RECORD" \
-    --planner "$PLANNER" \
-    ${BASELINE_BRIDGE:+--baseline-bridge "$BASELINE_BRIDGE"} \
     ${FIXED_POSE:+--fixed-pose $FIXED_POSE} \
     > "$SESSION_DIR/controller.log" 2>&1 & CONTROLLER_PID=$!
 tail -n +1 -f "$SESSION_DIR/controller.log" 2>/dev/null & CONTROLLER_TAIL_PID=$!

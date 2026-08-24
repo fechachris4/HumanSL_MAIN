@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
     const PlannerModel model = LoadPlannerModel(argv[1], /*has_tool=*/true);
     PlannerConfig config = LoadPlannerConfig("../config/planner.yaml");
     config.scene.clear();  // keep this start-state characterization collision-free
-    const std::string joint_limits = "../config/joint_limits.yaml";
+    const std::string joint_limits = "../../model/joint_limits.yaml";
     const Eigen::Matrix<double, 7, 1> q_plan = MeasuredQ();
     const Eigen::Matrix<double, 7, 1> qdot_meas = MeasuredQdot();
     const Eigen::Vector3d start_position = ToolPositionInMount(model, q_plan);
@@ -132,22 +132,27 @@ int main(int argc, char** argv) {
               "traced graph contains velocity equality");
         Check(traced.terminal_candidate.has_value(),
               "traced records selected terminal IK candidate");
-        // A traced plan ends in the configuration its own IK walk reached;
-        // the independently solved terminal candidate stands in only when
-        // the walk's last sample was interpolated rather than solved
-        // (2026-08-23: pinning the candidate's solution family forced a
-        // joint-space bridge into the final samples).
-        if (traced.terminal_candidate && !traced.ik_walk.samples.empty()) {
-            const PathIkSample& walk_end = traced.ik_walk.samples.back();
-            const Eigen::Matrix<double, 7, 1>& expected_terminal =
-                walk_end.solved ? walk_end.configuration
-                                : traced.terminal_candidate->configuration;
-            Check(MaxAbs(traced.trajectory->trajectory_pos.back() -
-                         expected_terminal) < 1e-12,
-                  "traced qN equals the walk's final configuration");
+        // A traced plan's terminal is NOT pinned by a joint equality
+        // (2026-08-24): the walk is obstacle-unaware, and an equality to
+        // its final configuration forces any obstacle-driven null-space
+        // difference to be repaid inside the last support interval — a
+        // duration-invariant acceleration peak the repair loop can never
+        // fix. The terminal is held on the path by the same pose prior as
+        // every other task state, and near the walk's family by its
+        // initial value; it must land on the requested final pose without
+        // being forced to an exact joint vector.
+        Check(traced.trajectory->start_costs.count("TerminalPosEquality") == 0,
+              "traced graph has no terminal joint equality");
+        {
+            const gtsam::Pose3 end_pose = ToolPoseInMount(
+                model, traced.trajectory->trajectory_pos.back());
+            const double end_error_m =
+                (end_pose.translation() - path.samples.back().pose.translation())
+                    .norm();
+            Check(end_error_m < 0.005,
+                  "traced terminal lands on the path's final pose (" +
+                      std::to_string(end_error_m * 1e3) + " mm)");
         }
-        Check(traced.trajectory->start_costs.count("TerminalPosEquality") == 1,
-              "traced graph contains terminal equality");
     }
 
     const PathPlanOutcome offline_path = SolveAlongPath(

@@ -96,9 +96,13 @@ ArmExecutionResult ArmExecutionCore::Step(const ArmExecutionInput& in)
     // deadline/overrun diagnostics and stale-world ageing.
     constexpr double kControlDt = config::kControlDtS;
     const double control_dt_s = kControlDt;
-    const double actual_dt_s = cycle_ == 0
-        ? nominal_dt_s_
-        : (std::isfinite(in.dt_s) && in.dt_s > 0.0 ? in.dt_s : 0.0);
+    // in.dt_s is a steady-clock delta, so a non-positive value is a broken
+    // clock. Substituting 0.0 here would freeze world_stale_elapsed_s_ and
+    // make a stale Vicon world look permanently fresh.
+    if (cycle_ > 0 && !(std::isfinite(in.dt_s) && in.dt_s > 0.0))
+        throw std::logic_error(
+            "ArmExecutionCore::Step received a non-positive measured dt");
+    const double actual_dt_s = cycle_ == 0 ? nominal_dt_s_ : in.dt_s;
     if (cycle_ > 0 && in.dt_s > overrun_factor_ * control_dt_s) {
         ++overrun_count_;
         out.overrun = true;

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn planning/config/joint_limits.yaml into a constexpr C++ header.
+"""Turn model/joint_limits.yaml into a constexpr C++ header.
 
 Why this exists: the physical Kinova limits used to live in five places at
 once (this yaml, control/Config.h, analytical_ik.h, quik_solveIK.h, the

@@ -26,7 +26,9 @@ BRIDGE_BUILD = PLANNING / "build"
 BRIDGE_BIN = BRIDGE_BUILD / "planner_bridge"
 GOAL_YAML = PLANNING / "config" / "goal.yaml"
 PLANNER_YAML = PLANNING / "config" / "planner.yaml"
-JOINT_LIMITS_YAML = PLANNING / "config" / "joint_limits.yaml"
+# Joint limits live with the URDF in model/: facts about the machine, owned
+# by neither planner nor controller.
+JOINT_LIMITS_YAML = CHRISTIAN_CONTROL / "model" / "joint_limits.yaml"
 RUN_SESSION_SH = PLANNING / "scripts" / "run_session.sh"
 
 URDF = CHRISTIAN_CONTROL / "model" / "GEN3_dual_mounted.urdf"

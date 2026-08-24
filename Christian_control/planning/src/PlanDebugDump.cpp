@@ -150,7 +150,7 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
             "terminal_ik_position_residual_m,terminal_ik_orientation_residual_rad,"
             "terminal_ik_legal,terminal_ik_exact,requested_position_shortfall_m,"
             "requested_orientation_shortfall_rad,orientation_tier,"
-            "route,duration_attempt,duration_s,scene_collision_sigma,solve_time_s,"
+            "duration_s,scene_collision_sigma,solve_time_s,"
             "optimizer_converged,optimizer_termination,optimizer_iterations,"
             "optimizer_max_iterations,"
             "optimizer_start_total_cost,optimizer_final_total_cost,"
@@ -178,7 +178,7 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
         return static_cast<std::size_t>(std::count_if(
             attempts.begin(), attempts.end(), [&](const CandidateEvidence& attempt) {
                 return attempt.terminal_kind == kind &&
-                       attempt.duration_attempt > 0;
+                       attempt.stage == "route";
             }));
     };
     const std::size_t exact_actual = solve_count(PlanStatus::kReached);
@@ -215,8 +215,6 @@ std::optional<std::string> WriteCandidateAttemptsCsv(
              << "," << attempt.requested_position_shortfall_m
              << "," << attempt.requested_orientation_shortfall_rad
              << "," << attempt.orientation_tier
-             << "," << RouteHypothesisName(attempt.route)
-             << "," << attempt.duration_attempt
              << "," << attempt.duration_s
              << "," << attempt.scene_collision_sigma
              << "," << attempt.solve_time_s

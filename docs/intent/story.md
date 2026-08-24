@@ -476,6 +476,55 @@ Past decisions Christian has explicitly overridden. The old decision and
 its reasoning stay recorded — never deleted — so the history of why the
 system's guardrails are what they are is never lost, only superseded.
 
+- **Multi-gate plan validation, 2026-08-24.** Prior state (accumulated
+  across the validator work up to 2c0cac9b): the planner could return
+  FAILED/REJECT with nothing emitted, gated by scene clearance, self
+  collision, joint limits and task-error checks. Superseded: Christian
+  stated the validator \"was not my choice\", that the constrained planner
+  \"is hurting my project\" (traced paths returned nothing in 26 of 47
+  attempts, 2026-08-21..24), and that he prefers Bjorn's acceptance
+  semantics: rank candidates by raw graph error, accept the best under a
+  single numerical threshold, refuse only above it. Confirmed by two
+  interactive answers 2026-08-24 (raw graph error over millimetres;
+  refuse over threshold rather than emit-with-warning — both against my
+  recommendation, recorded as misses in predictions.md). Why, in his
+  words: \"it's better when the robot tries than just being safe\" and
+  Bjorn's approach \"lets me do the work\". Retained regardless of the
+  threshold: numerical-sanity checks (finite values, malformed
+  trajectory, start splice) and dynamics-driven duration repair, because
+  the controller refuses over-speed blocks at ingest and repairing
+  timing is not a veto. Hardware safety stays in the controller path,
+  unchanged. (Prompts: raw-prompt-log 2026-08-24 01:53, 01:58, 02:06.)
+
+- **Branch/route/bypass terminal search, 2026-08-24.** Prior state (this
+  session, immediately superseding "Multi-gate plan validation, 2026-08-24"
+  above): acceptance was gated by a single graph-error threshold, but the
+  search that produced candidates was still the deterministic 3-exact/19-
+  shortened terminal branch loop with positive/negative route bypass
+  (`search_phase`, `PlanSolver.cpp`). Superseded: Christian asked directly
+  why Bjorn's loop found good trajectories when his own often didn't
+  ("bjor 100 at least tried 100 times it found the best one right but my
+  ones does not?"). Investigation (git history, `TrajectoryRealTime/src/
+  plan.cpp` at d32146b5, not present in the working tree) confirmed: Bjorn's
+  loop re-seeded the optimizer's initial guess FRESH every retry (stochastic
+  IK init), so each attempt was a genuinely different local-minimum search;
+  the current branch search seeds from a fixed `effective_ik_seed` and
+  therefore produces byte-identical output on every call — retrying bought
+  nothing. Christian chose full replacement (option 3 of 3 offered) over the
+  minimal local-retry fix (option 1, my recommendation) — see
+  predictions.md, second miss of the session in the same direction.
+  Mechanism: the branch/shortened-terminal/bypass search is replaced by a
+  bounded inner retry loop per duration attempt, drawing a fresh
+  `IKSeeding{seed, stream}` each iteration (the existing primitive from
+  77991493 "deterministic IK", not raw `rand()`) so exploration is restored
+  without reopening the cross-run reproducibility bug that commit fixed
+  (0.04-14 deg closure drift between identical requests). Retained: the
+  duration-repair loop (Bjorn's code never searched duration, this is
+  Christian's later addition and a separate timing concern) and all of
+  SolveAlongPath's path-specific cost/validation machinery (no Bjorn
+  precedent existed for traced paths at all). (Prompts: raw-prompt-log
+  2026-08-24 06:27, 06:38.)
+
 - **Guard-override editability, 2026-08-12.** Prior decision (2026-08-05,
   `compiled-config-guard-overrides` session memory; encoded in
   `tools/panel/config_file.py`'s `GUARD_OVERRIDES` tuple and docstring:

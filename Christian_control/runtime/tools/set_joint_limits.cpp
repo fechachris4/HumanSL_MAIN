@@ -11,7 +11,7 @@
 // controller has no separate client-side joint-position clamp. Its velocity
 // clip, reach screen, and following-error stop are separate protections.
 // Warnings ARE the physical Kinova limits, derived from the one
-// authoritative table (planning/config/joint_limits.yaml) since 2026-08-20;
+// authoritative table (model/joint_limits.yaml) since 2026-08-20;
 // they are no longer three hand-authored numbers. Errors stay hand-authored
 // and sit outside those limits, as the last robot-side protection:
 //

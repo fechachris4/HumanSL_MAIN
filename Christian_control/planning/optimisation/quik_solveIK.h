@@ -21,7 +21,7 @@
 using Eigen::Matrix4d;
 
 // Physical Kinova joint limits in radians, derived from the ONE authoritative
-// table (planning/config/joint_limits.yaml, via the generated JointLimits.h)
+// table (model/joint_limits.yaml, via the generated JointLimits.h)
 // rather than hand-copied. These are the PHYSICAL limits, not the planner's
 // margined ones: this is a feasibility/seeding test on whether a
 // configuration exists at all, which is a question about the robot, not

@@ -39,7 +39,6 @@
 #include "GoalSocket.h"
 #include "Hardware.h"
 #include "InProcessPlanner.h"
-#include "BaselineBridge.h"
 #include "Kinematics.h"
 #include "MainArgs.h"
 #include "ProcessLock.h"
@@ -66,6 +65,7 @@ namespace {
     std::cerr << "usage: controller --arm <right|left|both> --mount <fixed|vicon>\n"
               << "                  [--fixed-pose x y z qx qy qz qw] [--plan on|off]\n"
               << "                  [--record on|off] [--log <file>]\n"
+              << "                  [--planner-artifacts <directory>]\n"
               << "  --arm <right|left|both>  required — which physical arm(s)\n"
               << "                           this run controls (config::kRightArmConfig\n"
               << "                           / kLeftArmConfig, Config.h). No default: every\n"
@@ -170,8 +170,10 @@ void WriteCsvPreamble(const ParsedMainArgs& args,
     csv << "# arm = " << arm_config.name << " (" << arm_config.ip << ")\n";
     csv << "# planning = " << (args.plan ? "on" : "off") << "\n";
     csv << "# planner_handoff = in_process_typed_world_cartesian\n";
-    if (args.plan && args.planner == "current")
+    if (args.plan)
         csv << "# goal_input = live_mount_goal_socket\n";
+    if (!args.planner_artifacts_dir.empty())
+        csv << "# planner_artifacts = " << args.planner_artifacts_dir << "\n";
     WriteConfigLines(args.log_file, csv, "# ");
 }
 } // namespace
@@ -369,12 +371,10 @@ namespace
             // arm. Commands no motion; a latched leftover from a previous run
             // clears, and anything LIVE simply re-latches and is caught by the
             // readiness gate below, which runs on a fresh post-clear read.
-            try {
-                connection.base()->ClearFaults();
-            } catch (...) {
-                std::cout << tag << "Unable to clear robot faults" << std::endl;
-                return 1;
-            }
+            // A failure here reaches the KDetailedException handler below,
+            // which names the Kortex sub-code. Catching it here would replace
+            // that with a message that does not say which fault refused.
+            connection.base()->ClearFaults();
             // The base needs a moment to re-arm the actuators after a clear
             // before the gate reads a frame that reflects it.
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -576,38 +576,21 @@ namespace
             // captures its world hold at the first fresh sample and stays
             // there. The planner_config paths are not even read.
             const PlannerRuntimeConfig planner_config{
-                PLANNER_GOAL_FILE,
                 PLANNER_CONFIG_FILE,
                 PLANNER_JOINT_LIMITS_FILE,
                 PLANNER_RIGHT_DH_FILE,
                 PLANNER_LEFT_DH_FILE,
                 RUNS_ROOT_DIR,
-                args.baseline_bridge};
-            // Which planner implementation the worker calls — the ONE
-            // switch point, so the log line below and the running code
-            // cannot disagree. `baseline` = the frozen known-good 5abc1b2c
-            // planner as a subprocess, adapted at the wire (BaselineBridge.h).
-            const bool baseline_planner = args.planner == "baseline";
-            const PlannerSolveFunction solve_fn = baseline_planner
-                ? &SolveBaselineBridgeForRequest
-                : &SolvePlanForRequest;
-            if (args.plan) {
-                if (baseline_planner)
-                    std::cout << tag << "planner implementation: BASELINE "
-                                 "bridge (5abc1b2c) at "
-                              << args.baseline_bridge
-                              << " — joint wire adapted to the world-"
-                                 "Cartesian contract via current FK\n";
-                else
-                    std::cout << tag << "planner implementation: current "
-                                 "in-process world planner\n";
-            }
+                args.planner_artifacts_dir};
+            if (args.plan)
+                std::cout << tag << "planner implementation: current "
+                             "in-process world planner\n";
             std::thread planner_thread;
             if (args.plan)
                 planner_thread = std::thread(
                     RunInProcessPlanner, std::ref(planning_requests),
                     std::ref(trajectory_targets), std::cref(planner_config),
-                    std::cref(g_stop), solve_fn);
+                    std::cref(g_stop));
             else
                 std::cout << tag << "planning OFF: no planner worker; the arm "
                              "holds its captured world pose\n";
@@ -615,7 +598,7 @@ namespace
 
             GoalCommandSlot live_goal_slot;
             std::unique_ptr<GoalSocket> goal_socket;
-            if (args.plan && !baseline_planner) {
+            if (args.plan) {
                 const char* socket_path = controlled_arm == Arm::kLeft
                     ? kLeftGoalSocketPath : kRightGoalSocketPath;
                 goal_socket = std::make_unique<GoalSocket>(

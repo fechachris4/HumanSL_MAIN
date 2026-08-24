@@ -62,6 +62,8 @@ posture:
   limit_threshold_deg: 20.0
 solver:
   max_iterations: 1000
+  acceptance_graph_error: 100.0
+  max_restart_attempts: 10
 path_following:
   position_prior_sigma_m: 0.0012
   rotation_prior_sigma_rad: 0.01

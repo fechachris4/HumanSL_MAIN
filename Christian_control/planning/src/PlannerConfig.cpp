@@ -345,8 +345,21 @@ PlannerConfig LoadPlannerConfig(const std::string& path) {
     }
 
     const YAML::Node solver = root["solver"];
-    RequireExactKeys(solver, {"max_iterations"}, "solver");
+    RequireExactKeys(solver,
+                     {"max_iterations", "acceptance_graph_error", "max_restart_attempts"},
+                     "solver");
     config.optimizer.max_iterations = Integer(solver, "max_iterations", "solver", 1, 100000);
+    // Upper bound is a sanity rail, not a physical limit — gtsam graph
+    // error has no natural ceiling; it just needs to catch a fat-fingered
+    // magnitude. See PlannerConfig.h for what this gates.
+    config.acceptance_graph_error =
+        Number(solver, "acceptance_graph_error", "solver", 1e-6, 1e9);
+    // See PlannerConfig.h for what this gates. Upper bound is a sanity
+    // rail: the retained-terminal-candidate pool (kRetainedTerminalCandidates,
+    // PlanSolver.cpp) caps how many distinct postures actually exist to
+    // restart with, so a value far past that pool size cannot buy anything.
+    config.max_restart_attempts =
+        Integer(solver, "max_restart_attempts", "solver", 1, 100);
 
     return config;
 }
@@ -384,6 +397,8 @@ std::string EffectiveConfigText(const PlannerConfig& config) {
     }
     text << "  smoothness.qc_scale      = " << config.optimizer.qc_scale << "\n";
     text << "  solver.max_iterations    = " << config.optimizer.max_iterations << "\n";
+    text << "  solver.acceptance_graph_error = " << config.acceptance_graph_error << "\n";
+    text << "  solver.max_restart_attempts = " << config.max_restart_attempts << "\n";
     const PathFollowingConfig& pf = config.path_following;
     text << "  path_following.position_prior_sigma_m     = " << pf.position_prior_sigma_m << "\n";
     text << "  path_following.rotation_prior_sigma_rad   = " << pf.rotation_prior_sigma_rad << "\n";

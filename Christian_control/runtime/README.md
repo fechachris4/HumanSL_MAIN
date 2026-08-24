@@ -76,25 +76,12 @@ it is a procedure, not an authorization.
 
 ## Planner boundary
 
-`planner_bridge` still solves in joint space internally with GPMP2. Candidate
-search is bounded and ordered as exact search, then shortened search, then one
-outcome. Every candidate that can execute passes the same `ValidatePlan` call:
-exact measured start, finite state, componentwise position/velocity/
-acceleration limits, authored-scene and self clearance, and equality to that
-candidate's terminal. Duration repair performs at most three fresh GPMP2 solves
-at longer durations; it does not rescale an already-solved trajectory.
-
-There are three outcomes. `REACHED` carries a validated trajectory whose final
-joint state is the exact requested-terminal IK candidate. `GOAL_BLOCKED` carries
-a validated trajectory to a recorded shortened terminal after exact search is
-exhausted. `FAILED` carries no trajectory, terminal candidate, or selected
-candidate. Only `REACHED` and `GOAL_BLOCKED` proceed to Pinocchio projection and
-mailbox publication.
-
-After validation, the planner application projects every dense state through
-Pinocchio FK and `J_W qdot`. The production handoff is one typed
-`WorldCartesianTrajectory` object containing world-frame pose/twist samples;
-its offline text formatter is used only by the standalone preview CLI.
+`planner_bridge` still solves in joint space internally with GPMP2. After the
+final plan passes validation and timing, the planner application projects every
+dense state through Pinocchio FK and `J_W qdot`. The production handoff is one
+typed `WorldCartesianTrajectory` object containing world-frame pose/twist
+samples; its offline text formatter is used only by the standalone preview
+CLI.
 
 The trajectory contains no `q_ref`, `qdot_ref`, null-space posture, or frame selector.
 The planner constructs and validates the complete typed object. The controller
@@ -108,11 +95,6 @@ One non-real-time planner worker per arm consumes that slot, solves, and moves
 the resulting `WorldCartesianTrajectory` directly into the controller mailbox.
 GPMP2 never runs in the cyclic thread; requests arriving during a solve
 coalesce to the newest pending request, and solves remain sequential per arm.
-
-These statuses are offline executable contracts, not physical completion
-claims. Exact physical completion still requires a Christian-authorized,
-supervised run that observes the arm and retained telemetry. No obstacle-aware
-planner change documented here has been executed on hardware.
 
 ## Vicon dropout behavior
 
@@ -177,6 +159,12 @@ alive while the panel sends any number of mount-frame goals. Planner
 diagnostics, controller log, configuration snapshots, and run CSVs are retained under
 `runs/YYYY-MM-DD/session_HHMMSS/`. Ctrl+C or Enter stops the controller and
 its in-process planner workers through the common teardown path.
+
+For the current in-process planner, every live request also gets a directory
+under `session_HHMMSS/plans/`. Existing planner debug CSVs, the exact emitted
+`CART_TRAJ`, diagnostics, replay arguments, timing/result metadata and the
+planner configuration snapshot are retained there. Recording failure is a
+warning and never changes the planner result.
 
 `--dry-run` exercises preflight and authorization prompts without starting the
 controller. A typed `GO` is only a script gate; it is not authorization to run

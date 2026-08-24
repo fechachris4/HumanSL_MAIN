@@ -32,8 +32,7 @@ public:
         }
         if (hold_s_ <= 0.0)
             return true;
-        if (std::isfinite(dt_s) && dt_s > 0.0)
-            settled_s_ += dt_s;
+        settled_s_ += dt_s;
         return settled_s_ >= hold_s_;
     }
 
@@ -65,8 +64,7 @@ public:
         }
         if (timeout_s_ <= 0.0)
             return false;
-        if (std::isfinite(dt_s) && dt_s > 0.0)
-            waited_s_ += dt_s;
+        waited_s_ += dt_s;
         if (!fired_ && waited_s_ >= timeout_s_) {
             fired_ = true;
             return true;

@@ -22,25 +22,16 @@
 //                             translation (m) + quaternion. Omitted =
 //                             identity (world ≡ mount, the bench case).
 //   --plan <on|off>           default on — run the in-process planner worker
-//   --planner <current|baseline>
-//                             default current — which planner implementation
-//                             the worker calls. `baseline` runs the frozen
-//                             known-good 5abc1b2c planner_bridge binary as a
-//                             subprocess (BaselineBridge.h) and requires
-//                             --baseline-bridge.
-//   --baseline-bridge <path>  path to that frozen binary; required with
-//                             --planner baseline, refused otherwise (a path
-//                             nothing reads would be a silent lie)
 //   --record <on|off>         default on — write the run CSV
 //   --log <file>              optional, refused with --arm both
+//   --planner-artifacts <dir> optional non-real-time per-goal artifact root
 struct ParsedMainArgs {
     std::string arm;      // "right", "left", or "both"
     std::string log_file; // empty = timestamped default
     std::string mount;    // "fixed" or "vicon"
     bool plan = true;
     bool record = true;
-    std::string planner = "current";  // "current" or "baseline"
-    std::string baseline_bridge;      // binary path; set iff planner=="baseline"
+    std::string planner_artifacts_dir; // empty disables planner recording
 
     // world_T_mount for --mount fixed: x y z (m), then quaternion x y z w.
     // Identity unless --fixed-pose was given. Meaningless with --mount vicon.

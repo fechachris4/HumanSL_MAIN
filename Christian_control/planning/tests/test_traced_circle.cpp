@@ -70,7 +70,7 @@ int main(int argc, char** argv)
          "--world-mount-pose-m-quat", "0", "0", "0", "0", "0", "0", "1",
          "--vicon-sequence", "1", "--trajectory-id", "1",
          "--planner-config", "../config/planner.yaml",
-         "--joint-limits", "../config/joint_limits.yaml",
+         "--joint-limits", "../../model/joint_limits.yaml",
          "--runs-root", runs_root.string()},
         targets, diagnostics);
     const std::string log = diagnostics.str();

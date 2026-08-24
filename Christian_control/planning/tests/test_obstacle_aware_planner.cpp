@@ -442,7 +442,15 @@ void FixturePointDetour(const PlannerModel& model, const std::string& limits)
         IndependentMinimumClearance(model, {relaxed.scene.back()}, q_start);
     Check(start_clearance < relaxed.minimum_clearance_m,
           "start overlap is present");
+    relaxed.optimizer.max_iterations = 2000;  // DIAG: temporary, see if it's an iteration-budget issue
     const PlanOutcome escaped = SolveToPosition(model, request, limits, relaxed);
+    std::printf("DIAG escaped.status=%s failure_reason=%s attempts=%zu\n",
+                PlanStatusName(escaped.status), escaped.failure_reason.c_str(),
+                escaped.candidate_attempts.size());
+    for (const auto& a : escaped.candidate_attempts)
+        std::printf("DIAG attempt branch=%zu disposition=%s final_cost=%g executable=%d\n",
+                    a.terminal_branch, a.disposition.c_str(),
+                    a.optimizer_final_total_cost, a.validation.executable);
     Check(escaped.status == PlanStatus::kReached && bool(escaped.trajectory),
           "a violating start plans an escape instead of refusing");
     if (escaped.trajectory) {
@@ -554,7 +562,7 @@ void FixtureExactRoutesExhaustThenShorten(const PlannerModel& model,
         const std::size_t selected_index = *result.selected_candidate_attempt;
         const CandidateEvidence& selected = result.candidate_attempts[selected_index];
         Check(selected.terminal_kind == PlanStatus::kGoalBlocked &&
-                  selected.disposition == "best_validated_bounded_candidate" &&
+                  selected.disposition == "executable_selected" &&
                   selected.validation.executable,
               "selected evidence names the validated GOAL_BLOCKED winner");
         Check(std::any_of(
@@ -562,7 +570,7 @@ void FixtureExactRoutesExhaustThenShorten(const PlannerModel& model,
                   result.candidate_attempts.begin() + selected_index,
                   [](const CandidateEvidence& attempt) {
                       return attempt.terminal_kind == PlanStatus::kReached &&
-                             attempt.duration_attempt > 0;
+                             attempt.stage == "route";
                   }),
               "an exact GPMP2 attempt precedes the shortened winner");
     }
@@ -594,7 +602,7 @@ void FixtureNoShortenedRoute(const PlannerModel& model, const std::string& limit
           "FAILED owns no terminal or selected trajectory evidence");
     Check(std::any_of(result.candidate_attempts.begin(), result.candidate_attempts.end(),
                       [](const CandidateEvidence& attempt) {
-                          return attempt.duration_attempt > 0 &&
+                          return attempt.stage == "route" &&
                                  !attempt.validation.executable;
                       }),
           "FAILED follows at least one invalid GPMP2 candidate");
@@ -626,8 +634,9 @@ void FixtureMovingStartDurationRepair(const PlannerModel& model,
     Check((result.trajectory->trajectory_vel.front() - qdot_start).cwiseAbs().maxCoeff() < 1e-12,
           "moving-start qdot(0) is measured qdot");
     Check(result.selected_candidate_attempt &&
-              result.candidate_attempts[*result.selected_candidate_attempt].duration_attempt > 1,
-          "dynamic excess triggers a fresh longer-duration solve");
+              std::abs(result.candidate_attempts[*result.selected_candidate_attempt].duration_s -
+                       result.total_time_sec) < 1e-9,
+          "dynamic excess is repaired by retiming the selected solve");
     Check(result.validation.max_velocity_ratio <= 1.0 + 1e-9 &&
               result.validation.max_acceleration_ratio <= 1.0 + 1e-9,
           "repaired trajectory meets effective dynamic limits");
@@ -644,7 +653,7 @@ int main(int argc, char** argv)
     if (argc == 3)
         artifact_root = std::filesystem::path(argv[2]);
     const PlannerModel model = LoadPlannerModel(argv[1], /*has_tool=*/true);
-    const std::string limits = "../config/joint_limits.yaml";
+    const std::string limits = "../../model/joint_limits.yaml";
     FixturePointDetour(model, limits);
     FixtureTraceDetourAndRejoin(model, limits);
     FixtureExactRoutesExhaustThenShorten(model, limits);

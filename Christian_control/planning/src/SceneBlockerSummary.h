@@ -60,6 +60,9 @@ struct DynamicAttemptEvidence {
     double velocity_ratio = 0.0;
     double acceleration_ratio = 0.0;
     double duration_s = 0.0;
+    // Where the worst of the two ratios peaks: 1-based joint and time.
+    int peak_joint = 0;
+    double peak_time_s = 0.0;
 };
 std::optional<DynamicAttemptEvidence> ClosestDynamicAttempt(
     const std::vector<CandidateEvidence>& attempts);

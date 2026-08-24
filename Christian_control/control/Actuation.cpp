@@ -61,10 +61,6 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
     JointVector& setpoint_velocity_deg_s)
 {
     ApplyStatus status;
-    // The core supplies the fixed positive control step, but Apply is a public
-    // pure seam: direct invalid input must hold rather than reverse or poison
-    // the persistent command. Use this one effective value everywhere below.
-    const double effective_dt_s = std::isfinite(dt_s) && dt_s > 0.0 ? dt_s : 0.0;
     // Calculate all candidates before committing any of them: one bounded
     // joint crossing its software position boundary must hold the whole
     // command frame.
@@ -75,8 +71,7 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
         const double previous = q_command_rad_[i];
         // Take one small step from that last command using the already-safe,
         // speed-limited joint velocity supplied by the Runner.
-        const double requested_step_rad = effective_dt_s > 0.0
-            ? qdot_clamped_rad_s[i] * effective_dt_s : 0.0;
+        const double requested_step_rad = qdot_clamped_rad_s[i] * dt_s;
         const double proposed = previous + requested_step_rad;
         // Record the unconstrained proposal before the lead and final-rate
         // constraints can change it — this is the "requested" run record.
@@ -145,9 +140,7 @@ PositionIntegration::ApplyStatus PositionIntegration::Apply(
         // Derive log velocity from the command actually applied above, after
         // both the lead candidate and the final rate envelope.
         setpoint_velocity_deg_s[i] =
-            effective_dt_s > 0.0
-                ? (q_command_rad_[i] - previous) * kRadToDeg / effective_dt_s
-                : 0.0;
+            (q_command_rad_[i] - previous) * kRadToDeg / dt_s;
         setpoints_deg[i] = q_command_rad_[i] * kRadToDeg;
     }
     return status;

@@ -71,8 +71,7 @@ VALID_MOUNTS = ("fixed", "vicon")
 
 def default_launch_command(arm: str, mount: str, planning: bool,
                            recording: bool,
-                           fixed_pose: Optional[list[float]] = None,
-                           planner: str = "current") -> list[str]:
+                           fixed_pose: Optional[list[float]] = None) -> list[str]:
     """The command a session is started with.
 
     Note what is absent: `--allow-stale`. The script offers it and the panel
@@ -82,11 +81,6 @@ def default_launch_command(arm: str, mount: str, planning: bool,
     command = [str(paths.RUN_SESSION_SH), "--arm", arm, "--mount", mount,
                "--plan", "on" if planning else "off",
                "--record", "on" if recording else "off"]
-    # "current" is the no-flag form: the command for an ordinary session is
-    # unchanged. "baseline" runs the frozen known-good 5abc1b2c planner —
-    # run_session.sh resolves the binary path and refuses if it is missing.
-    if planner != "current":
-        command += ["--planner", planner]
     if fixed_pose is not None:
         command += ["--fixed-pose", " ".join(f"{v:.9g}" for v in fixed_pose)]
     return command
@@ -376,8 +370,7 @@ def _tail(log_path: Path, lines: int = 12) -> str:
 
 def _launch(arm: str, log_path: Path, mount: str = "vicon",
             planning: bool = True, recording: bool = True,
-            fixed_pose: Optional[list] = None,
-            planner: str = "current") -> subprocess.Popen:
+            fixed_pose: Optional[list] = None) -> subprocess.Popen:
     """Start run_session.sh detached, with GO already waiting on its stdin.
 
     The stdin pipe is built by hand rather than with `stdin=subprocess.PIPE`
@@ -396,8 +389,7 @@ def _launch(arm: str, log_path: Path, mount: str = "vicon",
         os.write(write_fd, b"GO\n")
         with open(log_path, "wb") as log:
             process = subprocess.Popen(
-                launch_command(arm, mount, planning, recording, fixed_pose,
-                               planner),
+                launch_command(arm, mount, planning, recording, fixed_pose),
                 cwd=str(paths.REPO),
                 stdin=read_fd,
                 stdout=log,
@@ -414,14 +406,10 @@ def _launch(arm: str, log_path: Path, mount: str = "vicon",
     return process
 
 
-VALID_PLANNERS = ("current", "baseline")
-
-
 def start(arm: str, confirm: str, client_address: Any,
           is_local: Optional[bool] = None, mount: str = "vicon",
           planning: bool = True, recording: bool = True,
-          fixed_pose: Optional[list] = None,
-          planner: str = "current") -> dict:
+          fixed_pose: Optional[list] = None) -> dict:
     """Begin a supervised session, or say why not.
 
     `confirm` must be the literal "GO". The gate is not weakened by moving it
@@ -444,12 +432,6 @@ def start(arm: str, confirm: str, client_address: Any,
                 "error": f"mount must be one of {', '.join(VALID_MOUNTS)} (got {mount!r})"}
     planning = bool(planning)
     recording = bool(recording)
-    if planner not in VALID_PLANNERS:
-        return {"ok": False,
-                "error": f"planner must be one of {', '.join(VALID_PLANNERS)} (got {planner!r})"}
-    if planner == "baseline" and not planning:
-        return {"ok": False,
-                "error": "planner=baseline is meaningless with planning off"}
     if fixed_pose is not None:
         if mount != "fixed":
             return {"ok": False,
@@ -498,8 +480,7 @@ def start(arm: str, confirm: str, client_address: Any,
     log_path = _staging_log_path()
     log_path.parent.mkdir(parents=True, exist_ok=True)  # a fresh checkout has no runs/
     started = datetime.now().astimezone().isoformat(timespec="seconds")
-    process = _launch(arm, log_path, mount, planning, recording, fixed_pose,
-                      planner)
+    process = _launch(arm, log_path, mount, planning, recording, fixed_pose)
     _process = process
 
     # The script's own gates run after launch, so a refusal (missing binary,
@@ -547,7 +528,6 @@ def start(arm: str, confirm: str, client_address: Any,
         "mount": mount,
         "planning": planning,
         "recording": recording,
-        "planner": planner,
         "fixed_pose": fixed_pose,
         "started": started,
         "session_dir": session_dir,
@@ -563,7 +543,6 @@ def start(arm: str, confirm: str, client_address: Any,
         "mount": mount,
         "planning": planning,
         "recording": recording,
-        "planner": planner,
         "started": started,
         "session_dir": session_dir,
         "log_path": str(log_path),
@@ -662,8 +641,6 @@ def send_goal(arm: str, fields: dict) -> dict:
         return {"ok": False, "error": "live goals currently require a fixed-mount session"}
     if not current.get("planning"):
         return {"ok": False, "error": "the running session has planning disabled"}
-    if current.get("planner", "current") != "current":
-        return {"ok": False, "error": "live goals require the current in-process planner"}
     try:
         line = _goal_command_line(fields)
         send_goal_datagram(paths.GOAL_SOCKETS[arm], line)
@@ -710,7 +687,6 @@ def status() -> dict:
         "mount": state.get("mount"),
         "planning": state.get("planning"),
         "recording": state.get("recording"),
-        "planner": state.get("planner", "current"),
         "started": state.get("started"),
         "session_dir": state.get("session_dir"),
         "log_path": state.get("log_path"),

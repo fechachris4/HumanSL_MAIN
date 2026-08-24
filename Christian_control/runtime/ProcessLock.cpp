@@ -23,7 +23,6 @@ ProcessLock::ProcessLock(const std::string& path,
 
     const int lock_error = errno;
     ::close(fd_);
-    fd_ = -1;
     if (lock_error == EWOULDBLOCK || lock_error == EAGAIN)
         throw std::runtime_error(already_locked_message);
     throw std::system_error(lock_error, std::generic_category(),
@@ -32,9 +31,8 @@ ProcessLock::ProcessLock(const std::string& path,
 
 ProcessLock::~ProcessLock()
 {
-    if (fd_ >= 0)
-        // Closing the last descriptor releases flock, including when the
-        // kernel closes descriptors after a crash. Keep the file itself:
-        // unlinking it would permit two processes to lock different inodes.
-        ::close(fd_);
+    // Closing the last descriptor releases flock, including when the kernel
+    // closes descriptors after a crash. Keep the file itself: unlinking it
+    // would permit two processes to lock different inodes.
+    ::close(fd_);
 }

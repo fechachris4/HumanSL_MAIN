@@ -326,7 +326,6 @@ class _Handler(BaseHTTPRequestHandler):
                         planning=bool(req.get("planning", True)),
                         recording=bool(req.get("recording", True)),
                         fixed_pose=req.get("fixed_pose"),
-                        planner=str(req.get("planner", "current")),
                     )
                 self._json(result, 200 if result.get("ok") else 400)
             elif route == "/api/session/stop":

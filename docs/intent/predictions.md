@@ -704,3 +704,29 @@ Question: plan debugger / plan viewer only / text summary table / explain
 only. Actual: the plan debugger (my recommended option) — Cartesian plots
 plus joint angles against limits and per-sample IK success, accepting that
 it needs a diagnostic side-file from the planner.
+
+## 2026-08-24 — acceptance threshold semantics (Bjorn-style planner acceptance)
+
+My prediction was embedded in the Recommended labels before the answers
+arrived: (1) millimetres of task error over raw graph error, because it is
+physically meaningful and thesis-defensible; (2) emit-best-with-warning over
+refuse, because the previous message argued the robot trying beats refusing.
+Actual: raw graph error like Bjorn's (**miss**), refuse over threshold like
+Bjorn's (**miss**). Both misses point the same way: I over-weighted my own
+graded-output framing and under-weighted his stated preference for Bjorn's
+exact, simple semantics — "it lets me do the work" outranks graded
+sophistication.
+
+## 2026-08-24 — option 1 vs option 3 for the acceptance-search rewrite
+
+Prediction embedded in the ranked options: I recommended option 1 (minimal,
+local retry inside SolveDurationCandidate only) while flagging option 3
+(full Bjorn-shape replacement) as "the more honest answer" to his stated
+preference, expecting he might take the safer minimal path given how much
+existing machinery option 3 removes.
+Actual: option 3, explicitly — "go full Bjorn style" (**miss**, same
+direction as the 2026-08-24 threshold-semantics miss earlier today: he
+consistently picks the more literal Bjorn-faithful option over my
+smaller-blast-radius recommendation). Pattern now seen twice in one
+session — stop defaulting the recommendation to the minimal option when his
+stated preference is this explicit.

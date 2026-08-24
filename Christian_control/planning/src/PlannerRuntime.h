@@ -13,18 +13,14 @@
 #include "WorldCartesianTrajectory.h"
 
 struct PlannerRuntimeConfig {
-    std::string goal_file;
     std::string planner_config_file;
     std::string joint_limits_file;
     std::string right_dh_file;
     std::string left_dh_file;
     std::string runs_root;
-    // Path to the frozen known-good planner binary (branch
-    // baseline/planner-0807). Consumed ONLY by SolveBaselineBridgeForRequest
-    // (BaselineBridge.h) — which solve implementation actually runs is the
-    // function pointer Main.cpp hands to RunInProcessPlanner, chosen by
-    // --planner. Empty when the current planner is selected.
-    std::string baseline_bridge_binary;
+    // Empty disables per-attempt artifacts. run_session.sh supplies its
+    // session-local plans/ directory for live current-planner sessions.
+    std::string planning_artifacts_root;
 };
 
 struct PlannerSolveResult {

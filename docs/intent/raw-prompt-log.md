@@ -8191,3 +8191,7631 @@ communication failure:
 TRACK/HOLD → COMMS_FAULT
 controller terminates safely
 So yes, your intuition is right. The controller should be the persistent part of the system. Goals and plans come and go around it. You should not tear down the controller just because you want the arm to do something new.
+
+## 2026-08-21 18:35:13 BST
+
+how much code was removed how much was added
+
+## 2026-08-21 18:36:16 BST
+
+show me the diff
+
+## 2026-08-21 18:43:56 BST
+
+I want you to revise the current change because the goal is **not to add a separate live-goal feature or subsystem**. I want to refactor the existing one-shot architecture so the program stays running and the existing planner/controller pipeline can accept goals repeatedly at runtime. First inspect the current code and identify exactly what makes it one-shot today: where the goal is loaded, what causes planning to happen only once, what lifecycle assumptions cause the session to finish or wait for restart, and what existing request/trajectory machinery can already be reused. Then make the smallest architectural change needed so the runtime behaves as: start → HOLD → wait for goal → plan from the current measured joint state → execute → accept another goal at any time → replan from the current state → continue indefinitely. There should be one normal `Goal` concept, not separate "offline" and "live" goal architectures; YAML may remain only as an optional offline/debug goal source. Different producers such as the panel, a socket, Vicon target, vision, or a script should eventually be able to update the same latest goal without changing the planner. Keep **goal reception separate from the decision to replan**, because a moving target may update frequently and should not necessarily invoke GPMP2 on every tiny change. Do not introduce new preemption states, trajectory-ID machinery, Vicon/world gating, special baseline behaviour, threads, buffers, or abstractions unless the existing code proves they are necessary. In particular, mount-frame goals must not depend on fresh Vicon/world data. Prefer modifying and simplifying the existing lifecycle over layering a new feature on top. Before editing, show me the current one-shot execution path, identify the minimum files and assumptions that need to change, explain which parts of the previous +900-line implementation are unnecessary under this model, and propose the clean refactor.
+
+## 2026-08-21 19:49:07 BST
+
+this is confusing can you please rever your previous work
+
+## 2026-08-21 20:05:01 BST
+
+what change do i need to make so the controller can take like targets
+
+## 2026-08-21 20:05:25 BST
+
+what change do i need to make so the controller can take live pose targets
+
+## 2026-08-21 20:10:29 BST
+
+so if want to give the controller directly a target pose so it calculate the error and reach the pose what does that cureent look like
+
+## 2026-08-21 20:22:43 BST
+
+i need to check if it works the controller but now i dont know how to access it
+
+## 2026-08-21 22:46:02 BST
+
+What I would investigate first
+
+Trace exactly these four values through the point planner:
+
+requested goal pose
+IK-produced q_goal + FK(q_goal)
+optimizer endpoint q_N + FK(q_N)
+emitted CART_TRAJ final point
+
+## 2026-08-21 22:57:54 BST
+
+Add FK(q_goal) after PlanSolver.cpp:54 for tracing
+
+## 2026-08-22 18:52:22 BST
+
+if i want to send commands to robot right now is only through the panel
+
+## 2026-08-22 18:55:14 BST
+
+but what if i want to use clion or vs code i can use the easily to send commands and flags are usually not used because it adds a lot of memory to human
+
+## 2026-08-22 19:15:14 BST
+
+you write too much protective coding
+
+## 2026-08-22 19:15:53 BST
+
+look at my code base and check where this was done
+
+## 2026-08-23 15:38:35 BST
+
+can you look at my latest run and diagnose why it perrformed so badly
+
+## 2026-08-23 15:40:32 BST
+
+can you look at my latest run and diagnose why it perrformed so badly - can you think of like a robotics engineer ratherr than debugging problem
+
+## 2026-08-23 15:49:05 BST
+
+Diagnose this run interactively with me as a robotics engineer, not as an autonomous code debugger. Start from the physical behaviour of the robot and work through the system in order: desired Cartesian task → planner joint trajectory → FK of the planned trajectory → time scaling/reference generation → controller tracking → measured robot motion. Investigate only one meaningful layer at a time. After every significant finding, stop and tell me: what you observed quantitatively, what it means physically, your 2–3 most likely hypotheses ranked, and the single next check that would distinguish them. Ask me about anything I may have observed on the real robot when that information would help. Do not chase a code-level hypothesis such as axis swaps, parsing bugs, or implementation mistakes until the logged behaviour gives evidence for it. Do not make edits. I want us to progressively determine the first point in the pipeline where the behaviour becomes wrong, then diagnose the engineering cause from there.
+
+## 2026-08-23 15:52:48 BST
+
+i feel like a fucked my planner from the original one with bjorn and after i integrated it  and now its become this can you compare and see why my planner is so much worse now
+
+## 2026-08-23 16:07:45 BST
+
+IK was dense and chained. Christian_control/planning/optimisation/TrajectoryInitiation.cpp solved IK for every pose along the task path, each solve seeded from the previous sample's solution (solveQuik(pose_trajectory[i], base_pose, end_confs[i-1], …)). The whole initial guess therefore lay in one continuous joint-solution family by construction.
+The end of the path was constrained only in workspace. The goal was a soft GaussianPriorWorkspacePoseArm — "put the tool here" — with no joint-space pin. Whatever configuration the arm naturally arrived in was acceptable.
+Duration was an input, never an output. delta_t = total_time_sec / total_time_step; a 12 s task planned as 12 s. Velocity limits were soft factors inside the optimisation, so the optimiser bent the joint path to fit the clock, not the clock to fit the path.
+^
+^
+i think maybe we should have this again and remove the things that make it worst what do you think
+
+## 2026-08-23 16:10:25 BST
+
+yes implement them in that order but what if want arm to move faster?
+
+## 2026-08-23 16:32:49 BST
+
+commit this
+
+## 2026-08-23 16:36:16 BST
+
+can i run it on the arm now
+
+## 2026-08-23 16:45:29 BST
+
+there is an issue is set terso collision model however arm did not avoid executing a plan that lead to a collision - how can we address this think like a robotics engineer
+
+## 2026-08-23 16:56:15 BST
+
+i still cannot save
+
+## 2026-08-23 17:04:49 BST
+
+Can you look at the last run and tell me what we can do to prevent something like that to happen
+
+## 2026-08-23 17:11:27 BST
+
+no the probleb is join2 hitting its limit and it did not seem it was following a path to target
+
+## 2026-08-23 17:21:46 BST
+
+Diagnose the last hardware run as a robotics researcher, not as a code debugger. The observed physical failure is that joint 2 progressively reached its position limit and the safety stop halted the robot, while visually the TCP did not appear to make coherent progress along a path toward the requested target. Do not propose fixes or new thresholds yet. Reconstruct the motion from desired Cartesian goal → planner joint trajectory → FK of that trajectory → controller reference → commanded joint motion → measured joints → measured TCP. First determine whether joint 2 was already driven toward its limit by the planner or whether the divergence appeared during Cartesian control. Plot planned/reference/measured joint 2 with its limit, and planned/measured Cartesian distance-to-goal against time. If possible also separate the controller's task-space and joint-limit/null-space contributions to joint-2 velocity. After each finding, stop and tell me what it means physically, give 2–3 competing robotics hypotheses, and propose one measurement that distinguishes them. Treat the joint-limit stop as the successful safety response; the failure we are diagnosing is why the commanded robot motion evolved into that state in the first place. Do not edit code until we understand the mechanism.
+
+## 2026-08-23 17:40:01 BST
+
+Before the orientation sweep, resolve the replay discrepancy. Compare the hardware planning request and offline replay numerically: every start joint position and velocity, goal position and orientation, arm/frame, scene, configuration digest, seed, planner revision, and any timing-dependent input. Report the maximum difference for each. Then run the exact offline request 20 times without changing anything and record terminal stream, attempt, terminal joint configuration, minimum joint-limit margin and result. If identical repetitions produce different branches, diagnose planner nondeterminism/numerical instability first. If they are deterministic, identify the input difference responsible for the hardware-vs-replay change. Do not modify code.
+
+## 2026-08-23 17:53:57 BST
+
+For a redundant 7-DOF arm, you want the planner to have a preferred interior posture. In other words:
+Among all configurations that achieve the Cartesian task, prefer the one that keeps bounded joints comfortably away from their limits.
+1. Add a soft joint-centering objective
+For each bounded joint:
+qmid,i=2qmin,i+qmax,i
+and define a normalized centering cost such as
+Ccenter=i∑wi((qmax,i−qmin,i)/2qi−qmid,i)2.
+So:
+
+```
+
+```
+
+
+```
+centre of range    → cheap
+70% toward limit   → more expensive
+90% toward limit   → much more expensive
+at limit           → forbidden
+```
+
+You are not commanding the arm to stay exactly centred. You are telling GPMP2:
+“If two trajectories accomplish essentially the same task, choose the one with more joint headroom.”
+That is exactly what redundancy should be used for.
+2. I would also make the cost increasingly aggressive near the limit
+A simple quadratic is useful, but I would combine it with a soft barrier near the limits.
+Conceptually:
+
+```
+
+```
+
+
+```
+cost
+ ^
+ |                              /
+ |                         ____/
+ |                    ____/
+ |___________________/
+ +---------------------------> joint position
+ centre                  limit
+```
+
+So most of the workspace has only a gentle preference toward the middle, but the last 15 to 20° becomes increasingly unattractive.
+The hard joint limit remains the final boundary.
+That gives you:
+
+```
+
+```
+
+
+```
+hard limit       NEVER cross
+    |
+    |  high-cost region
+    |<------------>
+------------------------------- joint range
+         comfortable region
+```
+
+3. Terminal IK candidates should also be ranked by posture quality
+This is particularly relevant to what just happened.
+Right now it appears your search can eventually find something like:
+
+```
+
+```
+
+
+```
+candidate A
+goal error = 0.2 mm
+J2 = 126.5°
+margin = 0.4°
+```
+
+and accept it because it is technically feasible.
+Suppose another candidate is:
+
+```
+
+```
+
+
+```
+candidate B
+goal error = 0.4 mm
+J2 = 91°
+margin = 35°
+```
+
+For a physical robot, candidate B is clearly better.
+So I would not select the first valid IK solution. Generate a bounded set of candidates and rank them using things like:
+task errorminimum joint-limit marginjoint-centering costdistance from current configuration
+Possibly manipulability later, but I would not pile that in immediately.
+
+## 2026-08-23 18:14:56 BST
+
+commit this as one commit
+
+## 2026-08-23 18:28:04 BST
+
+Act as a robotics engineer and research thinking partner, not just a debugger. Review the latest 3–5 runs and explain why they failed by tracing the full path from the request to planning, communication, controller acceptance, and execution. Compare the runs, identify the earliest confirmed failure, and check timing, ownership, stale state, configuration, trajectory data, units, frames, joint ordering, limits, controller readiness, and hardware or safety state. Separate confirmed evidence from hypotheses and unknowns, challenge my assumptions, and propose the smallest safe experiment to distinguish the likely causes. Do not change code or run hardware tests until the failure mechanism is understood.
+
+## 2026-08-23 18:58:30 BST
+
+analyse the last run
+
+## 2026-08-23 19:08:19 BST
+
+Yes. This is the right next move because it increases information without changing planner behaviour.
+
+Determinism is good for part of your planner, but too much determinism is probably hurting robustness.
+Right now it is deterministic because the planner uses the same IK random seed, same configuration, and the same measured start state. So if the request is identical, it explores effectively the same search path and returns the same branch or the same failure.
+That gives you major advantages:
+
+* reproducibility, so a failed experiment can be replayed exactly
+* easier benchmarking because code changes can be compared fairly
+* easier diagnosis because behaviour does not randomly change between runs
+* safer hardware testing because identical inputs should not unexpectedly produce very different motions
+
+But your Kinova is a 7-DOF redundant manipulator. For one Cartesian pose there can be many valid joint configurations:
+
+```
+
+```
+
+
+```
+same TCP pose
+
+qA = roomy shoulder posture
+qB = elbow flipped
+qC = J2 near limit
+qD = another valid branch
+```
+
+If your deterministic search repeatedly explores essentially the same part of this space, it can keep discovering `qC` or keep failing even though `qA` exists.
+That is exactly why “just retry the same goal” currently buys you nothing.
+The best architecture for you is not fully random planning. I would use deterministic diversity.
+For example:
+
+```
+
+```
+
+
+```
+measured q
+   ↓
+candidate seed 1: continuation/current posture
+candidate seed 2: joint-centred posture
+candidate seed 3: elbow alternative
+candidate seed 4: another redundancy direction
+...
+   ↓
+solve each candidate
+   ↓
+rank valid solutions
+   ↓
+prefer:
+  task accuracy
+  good joint margin
+  reasonable joint travel
+  collision clearance
+```
+
+The candidate seeds can themselves come from a fixed deterministic sequence.
+So every time you ask for exactly the same goal:
+
+```
+
+```
+
+
+```
+run 1 → same candidate set → same best trajectory
+run 2 → same candidate set → same best trajectory
+```
+
+but you are no longer betting everything on one IK branch.
+That gives you both things you want:
+reproducibility + robustness.
+I would therefore keep GPMP2 itself deterministic and keep final ranking deterministic. What I would change is the breadth of the terminal/IK search.
+Your Goal 8 result is a perfect example. A configuration with 41° of margin existed, while the earlier search selected one with 0.4°. That suggests the problem was not determinism itself. It was that the deterministic search/ranking was not sufficiently biased toward good configurations.
+So I would not make the whole planner random. I would make it:
+deterministic, multi-hypothesis, posture-aware.
+That is a much stronger architecture for your project than either a single deterministic solve or uncontrolled random retries.
+
+## 2026-08-23 19:19:17 BST
+
+<!-- attach -->
+> Where I'd agree it's still too narrow: the path IK walk is single-hypothesis. SolvePathIk continues from the measured configuration along one branch family; the terminal candidates are diverse, but the walk that connects start to terminal isn't. Your "candidate seed 2/3/4" idea belongs there — a small fixed set of redundancy postures for the walk, solved and ranked deterministically. That keeps both properties you want: same input → same output, but no longer betting the whole solve on the continuation branch.
+> 
+> One caution before building it: diversity only pays where the failure is branch-dependent. For yesterday's circle, the shoulder-adjacent upper-arm spheres sit near the torso almost regardless of redundancy posture — the elbow moves between branches, the shoulder barely does. If the new blocker line shows a shoulder-side sphere (4 or 5) at near-constant deficit, no amount of IK diversity fixes it and the answer is the scene model or exemption boundary. If it shows the elbow sphere (7–10) at specific path times, multi-hypothesis walks are exactly the right investment. One re-send of the same circle goal on the next supervised session will tell us which — and that run needs no new authorization beyond your normal session flow.
+
+i like your idea here and you commit it
+
+## 2026-08-23 19:28:12 BST
+
+I ran the circle goal again, here is the new log: goal_mount_m: [0.4, 0.2, 0.1] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0x14fee826103dcc3d ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 3001 dense position waypoints
+Generated 3001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 3001 dense position waypoints
+Generated 3001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 3001 dense position waypoints
+Generated 3001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 3001 dense position waypoints
+Generated 3001 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 3001 dense position waypoints
+Generated 3001 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 3001 dense position waypoints
+Generated 3001 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 2991 dense position waypoints
+Generated 2991 dense velocity waypoints
+Actual frequency: 996.9 Hz
+Creating arm trajectory...
+Generated 2991 dense position waypoints
+Generated 2991 dense velocity waypoints
+Actual frequency: 996.9 Hz
+Creating arm trajectory...
+Generated 2991 dense position waypoints
+Generated 2991 dense velocity waypoints
+Actual frequency: 996.9 Hz
+Creating arm trajectory...
+Generated 2601 dense position waypoints
+Generated 2601 dense velocity waypoints
+Actual frequency: 996.4 Hz
+terminal IK: stream 7, attempt 82, residual 0.960723 mm / 0.198631 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: GOAL_BLOCKED, duration 2.61 s
+  selection: best_validated_bounded_candidate
+  requested terminal shortfall: 256.539 mm position / 0.199 deg orientation
+  selected candidate: branch 0, normal, duration attempt 1
+  final requested goal error: 256.539 mm
+  min joint-limit margin (trajectory): 17.9 deg at t=2.60 s
+  min modelled clearance: 123.6 mm at t=2.61 s
+  self collision clearance: 221.0 mm at t=1.77 s
+----
+arm: left, trajectory points: 2601, solve: 23 ms, final requested goal error: 256.539 mm
+loop stopped by user (Ctrl+C)
+  desired p:  0.4832 0.4413 0.07364 m,  current p: 0.4832 0.4413 0.07364 m
+cycle overruns: 13 of 252362 cycles (dt > 1.5 x nominal)
+[left] 252387 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_185159.csv
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_192513
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_192513
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_192514.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg        341.22     22.59      1.71    126.52    160.31     60.36     30.20
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00     -0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4831 0.0743 0.4036 (m, left-arm base frame)
+  orientation rpy: 1.5730 -1.2068 1.5717 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.483138    0.441276    0.073544   rpy    1.573785    0.001720    1.571106
+    left_base_link p    0.483138    0.074338    0.403631   rpy    1.572973   -1.206780    1.571665
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4831 0.07434 0.4036 m in left_base_link = 0.4831 0.4413 0.07354 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: CIRCLE 0.39000000000000001 0.68600000000000005 0.52129999999999999 0.14999999999999999 1 0 0 12 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 702
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0x14fee826103dcc3d ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.39 0.686 0.5213 m, radius 0.15 m, normal 1 0 0, 28 samples (chord error <= 1 mm), lap 12 s, declared in mount -> mount
+Creating arm trajectory...
+Generated 14125 dense position waypoints
+Generated 14125 dense velocity waypoints
+Actual frequency: 998.7 Hz
+Creating arm trajectory...
+Generated 15214 dense position waypoints
+Generated 15214 dense velocity waypoints
+Actual frequency: 999.7 Hz
+Creating arm trajectory...
+Generated 15478 dense position waypoints
+Generated 15478 dense velocity waypoints
+Actual frequency: 999.3 Hz
+Creating arm trajectory...
+Generated 14125 dense position waypoints
+Generated 14125 dense velocity waypoints
+Actual frequency: 998.7 Hz
+Creating arm trajectory...
+Generated 15214 dense position waypoints
+Generated 15214 dense velocity waypoints
+Actual frequency: 999.7 Hz
+Creating arm trajectory...
+Generated 15478 dense position waypoints
+Generated 15478 dense velocity waypoints
+Actual frequency: 999.3 Hz
+Creating arm trajectory...
+Generated 14125 dense position waypoints
+Generated 14125 dense velocity waypoints
+Actual frequency: 998.7 Hz
+Creating arm trajectory...
+Generated 15214 dense position waypoints
+Generated 15214 dense velocity waypoints
+Actual frequency: 999.7 Hz
+Creating arm trajectory...
+Generated 15478 dense position waypoints
+Generated 15478 dense velocity waypoints
+Actual frequency: 999.3 Hz
+Creating arm trajectory...
+Generated 14125 dense position waypoints
+Generated 14125 dense velocity waypoints
+Actual frequency: 998.7 Hz
+Creating arm trajectory...
+Generated 19702 dense position waypoints
+Generated 19702 dense velocity waypoints
+Actual frequency: 998.6 Hz
+Creating arm trajectory...
+Generated 21484 dense position waypoints
+Generated 21484 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 14125 dense position waypoints
+Generated 14125 dense velocity waypoints
+Actual frequency: 998.7 Hz
+Creating arm trajectory...
+Generated 19867 dense position waypoints
+Generated 19867 dense velocity waypoints
+Actual frequency: 999.9 Hz
+Creating arm trajectory...
+Generated 21319 dense position waypoints
+Generated 21319 dense velocity waypoints
+Actual frequency: 999.2 Hz
+Creating arm trajectory...
+Generated 14125 dense position waypoints
+Generated 14125 dense velocity waypoints
+Actual frequency: 998.7 Hz
+Creating arm trajectory...
+Generated 19801 dense position waypoints
+Generated 19801 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 21253 dense position waypoints
+Generated 21253 dense velocity waypoints
+Actual frequency: 999.1 Hz
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: dynamic_attempts_exhausted
+  scene blocker: torso vs sphere 15 (forearm): clearance -14.0 mm < floor 50.0 mm at t=0.00 s, blocked 16 attempt(s)
+  scene blocker: torso vs sphere 14 (forearm): clearance 44.4 mm < floor 50.0 mm at t=0.00 s, blocked 6 attempt(s)
+  IK anchors: 29 solved, 0 failed (dropped); 0 of 29 samples interpolated
+  worst position residual: 0.5 mm at sample 24 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 40.9 deg at sample 11
+----
+error: solve failed: dynamic_attempts_exhausted
+
+
+this is should not cause an error
+
+## 2026-08-23 19:59:16 BST
+
+Reassess this failure from the perspective of a robotics engineer and researcher, not as a software debugger trying to make the current error disappear. Treat the dynamic_attempts_exhausted result as evidence about the planner architecture. Trace what is happening physically and mathematically from the Cartesian circle request, IK branch selection, start boundary conditions, trajectory optimisation, timing, joint velocity/acceleration limits, and final execution feasibility.
+
+## 2026-08-23 20:20:00 BST
+
+There is one important architectural issue in your system
+This is the part I think matters most.
+Even if you make GPMP2 produce this:
+
+```
+
+```
+
+
+```
+q_plan:
+
+J2 57° → 70° → 82° → 90°
+```
+
+your current Cartesian execution architecture can still produce:
+
+```
+
+```
+
+
+```
+q_actual:
+
+J2 57° → 80° → 105° → 127°
+```
+
+because you take:
+
+```
+
+```
+
+
+```
+q_plan
+   ↓ FK
+Cartesian reference
+   ↓ DLS inverse
+new joint solution
+```
+
+You throw away some of the redundancy choice made by the planner.
+So ideally the planner and controller should agree about configuration preference.
+A natural controller formulation is:
+q˙=J#vtask+(I−J#J)K(qpreferred−q)
+where qpreferred can come from the planned joint configuration, rather than just blindly pushing every joint toward its midpoint.
+That gives you:
+
+```
+
+```
+
+
+```
+primary objective:
+    follow TCP path
+
+secondary objective:
+    stay near the configuration
+    the planner deliberately selected
+```
+
+This is more coherent than:
+
+```
+
+```
+
+
+```
+planner chooses redundancy one way
+controller chooses redundancy again independently
+```
+
+## 2026-08-23 20:25:39 BST
+
+GO, start with slice 1
+
+## 2026-08-23 20:35:54 BST
+
+GO, start with slice 1
+
+## 2026-08-23 20:37:02 BST
+
+GO slice 2
+
+## 2026-08-23 21:00:01 BST
+
+what is paused. ?
+
+```
+            hold_has_posture_ = paused.has_posture;
+            hold_posture_rad_ = paused.posture_rad;
+
+```
+
+## 2026-08-23 21:01:06 BST
+
+GO slice 3
+
+## 2026-08-23 21:20:07 BST
+
+there should not be a prohibited start position
+
+## 2026-08-23 21:37:40 BST
+
+```
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         74.08     68.11    268.26    139.34    171.66     64.52     93.56
+velocity deg/s        0.00      0.00      0.00      0.00      0.00     -0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4005 -0.1120 0.3472 (m, left-arm base frame)
+  orientation rpy: 1.5683 -1.2108 1.5722 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.400479    0.322480    0.227785   rpy    1.569651   -0.002320    1.571292
+    left_base_link p    0.400479   -0.111995    0.347213   rpy    1.568335   -1.210820    1.572204
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4005 -0.112 0.3472 m in left_base_link = 0.4005 0.3225 0.2278 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: POINT 0.40000000000000002 0.59999999999999998 0.20000000000000001 INHERIT
+planner Vicon sequence: 864
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.4, 0.6, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: FAILED at measured-start preflight
+  error: prohibited_start_collision object=torso sphere=16
+----
+error: solve failed: prohibited_start_collision object=torso sphere=16
+loop stopped by user (Ctrl+C)
+  desired p:  0.4017 0.3226 0.2284 m,  current p: 0.4029 0.3227 0.2291 m
+cycle overruns: 27 of 485072 cycles (dt > 1.5 x nominal)
+[left] 485097 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_211825.csv
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_213544
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_213545.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         74.11     68.20    268.20    138.84    171.59     63.99     93.76
+velocity deg/s        0.00      0.00      0.00      0.00      0.00     -0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4028 -0.1131 0.3478 (m, left-arm base frame)
+  orientation rpy: 1.5687 -1.2108 1.5722 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.402847    0.322679    0.229017   rpy    1.570058   -0.002301    1.571304
+    left_base_link p    0.402847   -0.113077    0.347836   rpy    1.568711   -1.210801    1.572237
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4028 -0.1131 0.3478 m in left_base_link = 0.4028 0.3227 0.229 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: POINT 0.40000000000000002 0.29999999999999999 0.20000000000000001 INHERIT
+planner Vicon sequence: 1620
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.4, 0.3, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 16201 dense position waypoints
+Generated 16201 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 38751 dense position waypoints
+Generated 38751 dense velocity waypoints
+Actual frequency: 999.8 Hz
+terminal IK: stream 9, attempt 10, residual 0.924803 mm / 0.202269 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: GOAL_BLOCKED, duration 38.76 s
+  selection: best_validated_bounded_candidate
+  requested terminal shortfall: 1.622 mm position / 0.202 deg orientation
+  selected candidate: branch 0, normal, duration attempt 3
+  final requested goal error: 1.622 mm
+  min joint-limit margin (trajectory): 3.7 deg at t=38.75 s
+  min modelled clearance: -32.5 mm at t=0.00 s
+  self collision clearance: 214.1 mm at t=35.28 s
+----
+arm: left, trajectory points: 38751, solve: 245 ms, final requested goal error: 1.62246 mm
+[left] live goal 2 received: POINT 0.40000000000000002 0.5 0.20000000000000001 INHERIT
+planner Vicon sequence: 4711
+trajectory ID: 2
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.4, 0.5, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 16081 dense position waypoints
+Generated 16081 dense velocity waypoints
+Actual frequency: 999.9 Hz
+Creating arm trajectory...
+Generated 22151 dense position waypoints
+Generated 22151 dense velocity waypoints
+Actual frequency: 999.9 Hz
+terminal IK: stream 6, attempt 89, residual 0.514668 mm / 0.0831109 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 22.15 s
+  selected candidate: branch 0, normal, duration attempt 3
+  final requested goal error: 0.515 mm
+  min joint-limit margin (trajectory): 7.4 deg at t=0.00 s
+  min modelled clearance: -32.0 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=2.96 s
+----
+arm: left, trajectory points: 22151, solve: 143 ms, final requested goal error: 0.514668 mm
+
+
+why is the arm is not moving
+```
+
+## 2026-08-23 21:42:40 BST
+
+Let's talk about this. So you're saying that there's a gauge that basically does not activate the planner if it's under a certain amount. However, like, the way I'm thinking about it, shouldn't the controller always be working? So if I need to, if it needs to move like a small little amount, then the, what do you call it, the controller just moves.
+
+And if it needs to move more than that amount, then it's given back to the planner.
+
+## 2026-08-23 21:45:06 BST
+
+GO
+
+## 2026-08-23 21:56:49 BST
+
+```
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         74.08     68.11    268.26    139.34    171.66     64.52     93.56
+velocity deg/s        0.00      0.00      0.00      0.00      0.00     -0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4005 -0.1120 0.3472 (m, left-arm base frame)
+  orientation rpy: 1.5683 -1.2108 1.5722 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.400479    0.322480    0.227785   rpy    1.569651   -0.002320    1.571292
+    left_base_link p    0.400479   -0.111995    0.347213   rpy    1.568335   -1.210820    1.572204
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4005 -0.112 0.3472 m in left_base_link = 0.4005 0.3225 0.2278 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: POINT 0.40000000000000002 0.59999999999999998 0.20000000000000001 INHERIT
+planner Vicon sequence: 864
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.4, 0.6, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: FAILED at measured-start preflight
+  error: prohibited_start_collision object=torso sphere=16
+----
+error: solve failed: prohibited_start_collision object=torso sphere=16
+loop stopped by user (Ctrl+C)
+  desired p:  0.4017 0.3226 0.2284 m,  current p: 0.4029 0.3227 0.2291 m
+cycle overruns: 27 of 485072 cycles (dt > 1.5 x nominal)
+[left] 485097 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_211825.csv
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_213544
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_213545.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         74.11     68.20    268.20    138.84    171.59     63.99     93.76
+velocity deg/s        0.00      0.00      0.00      0.00      0.00     -0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4028 -0.1131 0.3478 (m, left-arm base frame)
+  orientation rpy: 1.5687 -1.2108 1.5722 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.402847    0.322679    0.229017   rpy    1.570058   -0.002301    1.571304
+    left_base_link p    0.402847   -0.113077    0.347836   rpy    1.568711   -1.210801    1.572237
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4028 -0.1131 0.3478 m in left_base_link = 0.4028 0.3227 0.229 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: POINT 0.40000000000000002 0.29999999999999999 0.20000000000000001 INHERIT
+planner Vicon sequence: 1620
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.4, 0.3, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 16201 dense position waypoints
+Generated 16201 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 38751 dense position waypoints
+Generated 38751 dense velocity waypoints
+Actual frequency: 999.8 Hz
+terminal IK: stream 9, attempt 10, residual 0.924803 mm / 0.202269 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: GOAL_BLOCKED, duration 38.76 s
+  selection: best_validated_bounded_candidate
+  requested terminal shortfall: 1.622 mm position / 0.202 deg orientation
+  selected candidate: branch 0, normal, duration attempt 3
+  final requested goal error: 1.622 mm
+  min joint-limit margin (trajectory): 3.7 deg at t=38.75 s
+  min modelled clearance: -32.5 mm at t=0.00 s
+  self collision clearance: 214.1 mm at t=35.28 s
+----
+arm: left, trajectory points: 38751, solve: 245 ms, final requested goal error: 1.62246 mm
+[left] live goal 2 received: POINT 0.40000000000000002 0.5 0.20000000000000001 INHERIT
+planner Vicon sequence: 4711
+trajectory ID: 2
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.4, 0.5, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 16081 dense position waypoints
+Generated 16081 dense velocity waypoints
+Actual frequency: 999.9 Hz
+Creating arm trajectory...
+Generated 22151 dense position waypoints
+Generated 22151 dense velocity waypoints
+Actual frequency: 999.9 Hz
+terminal IK: stream 6, attempt 89, residual 0.514668 mm / 0.0831109 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 22.15 s
+  selected candidate: branch 0, normal, duration attempt 3
+  final requested goal error: 0.515 mm
+  min joint-limit margin (trajectory): 7.4 deg at t=0.00 s
+  min modelled clearance: -32.0 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=2.96 s
+----
+arm: left, trajectory points: 22151, solve: 143 ms, final requested goal error: 0.514668 mm
+[left] live goal 3 received: POINT 0.5 0.5 0.20000000000000001 INHERIT
+planner Vicon sequence: 102150
+trajectory ID: 3
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.5, 0.5, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 16031 dense position waypoints
+Generated 16031 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 27461 dense position waypoints
+Generated 27461 dense velocity waypoints
+Actual frequency: 999.8 Hz
+terminal IK: stream 6, attempt 38, residual 0.505799 mm / 0.0926178 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 27.46 s
+  selected candidate: branch 0, normal, duration attempt 3
+  final requested goal error: 0.506 mm
+  min joint-limit margin (trajectory): 7.7 deg at t=0.00 s
+  min modelled clearance: -31.6 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=1.56 s
+----
+arm: left, trajectory points: 27461, solve: 169 ms, final requested goal error: 0.505799 mm
+loop stopped by user (Ctrl+C)
+  desired p:  0.4062 0.3229 0.2309 m,  current p: 0.4073 0.323 0.2314 m
+cycle overruns: 25 of 519658 cycles (dt > 1.5 x nominal)
+[left] 519683 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_213545.csv
+controller exited; ending the session wrapper
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_215352
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_215353.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         74.15     68.19    268.26    137.91    171.59     62.99     93.86
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4073 -0.1152 0.3490 (m, left-arm base frame)
+  orientation rpy: 1.5695 -1.2107 1.5719 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.407302    0.323008    0.231412   rpy    1.570573   -0.002241    1.571189
+    left_base_link p    0.407302   -0.115199    0.348992   rpy    1.569532   -1.210741    1.571909
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4073 -0.1152 0.349 m in left_base_link = 0.4073 0.323 0.2314 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: POINT 0.5 0.5 0.20000000000000001 INHERIT
+planner Vicon sequence: 727
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.5, 0.5, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 15991 dense position waypoints
+Generated 15991 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 23191 dense position waypoints
+Generated 23191 dense velocity waypoints
+Actual frequency: 999.9 Hz
+terminal IK: stream 6, attempt 38, residual 0.520425 mm / 0.0963316 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 23.19 s
+  selected candidate: branch 0, normal, duration attempt 3
+  final requested goal error: 0.520 mm
+  min joint-limit margin (trajectory): 8.1 deg at t=0.00 s
+  min modelled clearance: -30.7 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=2.42 s
+----
+arm: left, trajectory points: 23191, solve: 150 ms, final requested goal error: 0.520425 mm
+[left] live goal 2 received: POINT 0.5 0.80000000000000004 0.20000000000000001 INHERIT
+planner Vicon sequence: 4917
+trajectory ID: 2
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.5, 0.8, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1191 dense position waypoints
+Generated 1191 dense velocity waypoints
+Actual frequency: 992.4 Hz
+terminal IK: stream 6, attempt 13, residual 0.0996242 mm / 0.0330047 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 1.20 s
+  selected candidate: branch 0, normal, duration attempt 1
+  final requested goal error: 0.100 mm
+  min joint-limit margin (trajectory): 30.9 deg at t=0.00 s
+  min modelled clearance: 162.9 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=0.95 s
+----
+arm: left, trajectory points: 1191, solve: 8 ms, final requested goal error: 0.0996242 mm
+[left] live goal 3 received: CIRCLE 0.80000000000000004 0.20000000000000001 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 10468
+trajectory ID: 3
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.2 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  terminal candidates in scene contact: 3 screened out before solving (worst: torso vs sphere 15 (forearm), clearance -37.2 mm)
+  IK anchors: 20 solved, 4 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-3 (0%-13% along the path)
+  solved neighbours: none before / sample 4 (residual 4.8 mm, margin 33.0 deg)
+  failure reasons: 4 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 29.7 mm at sample 1 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 16.7 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+[left] live goal 4 received: CIRCLE 0.80000000000000004 0.20000000000000001 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 11846
+trajectory ID: 4
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.2 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  terminal candidates in scene contact: 3 screened out before solving (worst: torso vs sphere 15 (forearm), clearance -37.2 mm)
+  IK anchors: 20 solved, 4 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-3 (0%-13% along the path)
+  solved neighbours: none before / sample 4 (residual 4.8 mm, margin 33.0 deg)
+  failure reasons: 4 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 29.7 mm at sample 1 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 16.7 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+
+
+
+why would this fail ? think like a robotics engineer
+```
+
+## 2026-08-23 22:01:05 BST
+
+this is lowkey ridiculous : the same issues are showing up over and over again
+
+## 2026-08-23 22:01:29 BST
+
+this is lowkey ridiculous : the same issues are showing up over and over again:  min modelled clearance: -31.6 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=1.56 s
+----
+arm: left, trajectory points: 27461, solve: 169 ms, final requested goal error: 0.505799 mm
+loop stopped by user (Ctrl+C)
+  desired p:  0.4062 0.3229 0.2309 m,  current p: 0.4073 0.323 0.2314 m
+cycle overruns: 25 of 519658 cycles (dt > 1.5 x nominal)
+[left] 519683 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_213545.csv
+controller exited; ending the session wrapper
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_215352
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_215353.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         74.15     68.19    268.26    137.91    171.59     62.99     93.86
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4073 -0.1152 0.3490 (m, left-arm base frame)
+  orientation rpy: 1.5695 -1.2107 1.5719 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.407302    0.323008    0.231412   rpy    1.570573   -0.002241    1.571189
+    left_base_link p    0.407302   -0.115199    0.348992   rpy    1.569532   -1.210741    1.571909
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4073 -0.1152 0.349 m in left_base_link = 0.4073 0.323 0.2314 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: POINT 0.5 0.5 0.20000000000000001 INHERIT
+planner Vicon sequence: 727
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.5, 0.5, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1001 dense position waypoints
+Generated 1001 dense velocity waypoints
+Actual frequency: 1000 Hz
+Creating arm trajectory...
+Generated 15991 dense position waypoints
+Generated 15991 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 23191 dense position waypoints
+Generated 23191 dense velocity waypoints
+Actual frequency: 999.9 Hz
+terminal IK: stream 6, attempt 38, residual 0.520425 mm / 0.0963316 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 23.19 s
+  selected candidate: branch 0, normal, duration attempt 3
+  final requested goal error: 0.520 mm
+  min joint-limit margin (trajectory): 8.1 deg at t=0.00 s
+  min modelled clearance: -30.7 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=2.42 s
+----
+arm: left, trajectory points: 23191, solve: 150 ms, final requested goal error: 0.520425 mm
+[left] live goal 2 received: POINT 0.5 0.80000000000000004 0.20000000000000001 INHERIT
+planner Vicon sequence: 4917
+trajectory ID: 2
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+goal_mount_m: [0.5, 0.8, 0.2] (declared_frame=mount)
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1191 dense position waypoints
+Generated 1191 dense velocity waypoints
+Actual frequency: 992.4 Hz
+terminal IK: stream 6, attempt 13, residual 0.0996242 mm / 0.0330047 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 1.20 s
+  selected candidate: branch 0, normal, duration attempt 1
+  final requested goal error: 0.100 mm
+  min joint-limit margin (trajectory): 30.9 deg at t=0.00 s
+  min modelled clearance: 162.9 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=0.95 s
+----
+arm: left, trajectory points: 1191, solve: 8 ms, final requested goal error: 0.0996242 mm
+[left] live goal 3 received: CIRCLE 0.80000000000000004 0.20000000000000001 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 10468
+trajectory ID: 3
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.2 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  terminal candidates in scene contact: 3 screened out before solving (worst: torso vs sphere 15 (forearm), clearance -37.2 mm)
+  IK anchors: 20 solved, 4 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-3 (0%-13% along the path)
+  solved neighbours: none before / sample 4 (residual 4.8 mm, margin 33.0 deg)
+  failure reasons: 4 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 29.7 mm at sample 1 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 16.7 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+[left] live goal 4 received: CIRCLE 0.80000000000000004 0.20000000000000001 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 11846
+trajectory ID: 4
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.2 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  terminal candidates in scene contact: 3 screened out before solving (worst: torso vs sphere 15 (forearm), clearance -37.2 mm)
+  IK anchors: 20 solved, 4 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-3 (0%-13% along the path)
+  solved neighbours: none before / sample 4 (residual 4.8 mm, margin 33.0 deg)
+  failure reasons: 4 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 29.7 mm at sample 1 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 16.7 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+[left] live goal 5 received: CIRCLE 0.80000000000000004 0.40000000000000002 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 21197
+trajectory ID: 5
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.4 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  IK anchors: 22 solved, 2 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-1 (0%-4% along the path)
+  solved neighbours: none before / sample 2 (residual 4.3 mm, margin 52.1 deg)
+  failure reasons: 2 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 18.5 mm at sample 0 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 43.3 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+loop stopped by user (Ctrl+C)
+  desired p:  0.5 0.7999 0.2 m,  current p: 0.5 0.7999 0.2 m
+cycle overruns: 5 of 107904 cycles (dt > 1.5 x nominal)
+[left] 107929 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_215353.csv
+controller exited; ending the session wrapper
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_215859
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_215900.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         36.65     33.66    248.47     68.68    109.84     63.11    144.07
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4999 0.0833 0.7838 (m, left-arm base frame)
+  orientation rpy: 1.5642 -1.2101 1.5777 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.499922    0.799966    0.199903   rpy    1.570650   -0.001633    1.573229
+    left_base_link p    0.499922    0.083309    0.783821   rpy    1.564203   -1.210125    1.577691
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4999 0.08331 0.7838 m in left_base_link = 0.4999 0.8 0.1999 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: CIRCLE 0.5 0.40000000000000002 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 2001
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.5 0.4 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: joint_position_limits
+  scene blocker: torso vs sphere 15 (forearm): clearance -20.2 mm < floor 5.0 mm at t=3.89 s, blocked 12 attempt(s)
+  scene blocker: torso vs sphere 16 (forearm): clearance 4.9 mm < floor 5.0 mm at t=0.60 s, blocked 4 attempt(s)
+  terminal candidates in scene contact: 18 screened out before solving (worst: torso vs sphere 14 (forearm), clearance -51.1 mm)
+  IK anchors: 24 solved, 0 failed (dropped); 0 of 24 samples interpolated
+  worst position residual: 0.5 mm at sample 11 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 29.9 deg at sample 10
+----
+error: solve failed: joint_position_limits
+[left] live goal 2 received: CIRCLE 0.5 0.59999999999999998 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 5884
+trajectory ID: 2
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.5 0.6 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 15719 dense position waypoints
+Generated 15719 dense velocity waypoints
+Actual frequency: 999.6 Hz
+Creating arm trajectory...
+Generated 29349 dense position waypoints
+Generated 29349 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 15719 dense position waypoints
+Generated 15719 dense velocity waypoints
+Actual frequency: 999.6 Hz
+Creating arm trajectory...
+Generated 29349 dense position waypoints
+Generated 29349 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 15719 dense position waypoints
+Generated 15719 dense velocity waypoints
+Actual frequency: 999.6 Hz
+Creating arm trajectory...
+Generated 29349 dense position waypoints
+Generated 29349 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 12819 dense position waypoints
+Generated 12819 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 24535 dense position waypoints
+Generated 24535 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 12848 dense position waypoints
+Generated 12848 dense velocity waypoints
+Actual frequency: 999.4 Hz
+Creating arm trajectory...
+Generated 24738 dense position waypoints
+Generated 24738 dense velocity waypoints
+Actual frequency: 999.3 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 12848 dense position waypoints
+Generated 12848 dense velocity waypoints
+Actual frequency: 998.9 Hz
+Creating arm trajectory...
+Generated 24593 dense position waypoints
+Generated 24593 dense velocity waypoints
+Actual frequency: 999.4 Hz
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: dynamic_attempts_exhausted
+  closest dynamic attempt: velocity ratio 0.740, acceleration ratio 1.122 at 24.5 s (executable needs both <= 1.0; the attempt cap stopped repair here)
+  IK anchors: 24 solved, 0 failed (dropped); 0 of 24 samples interpolated
+  worst position residual: 0.4 mm at sample 5 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 43.3 deg at sample 9
+----
+error: solve failed: dynamic_attempts_exhausted
+
+## 2026-08-23 22:09:30 BST
+
+We're now going to measure the toolt. The toolt is meant to make sure that it's safe. The way I've done it is I've made it large so I can test it out if it works like this and it remains safe. So it should work like that.
+
+Like, these collisions things, they shouldn't happen. Like, the arm is nowhere near close to the human right now, so nothing should be fighting the arm from moving. And in addition, like, I keep getting errors when I'm trying to do, like, circles now, whenever I'm trying to, like, that doesn't make any sense.
+
+Like, um, they think that I'm actually requesting a totally achievable, like, I can look at it right now. I can see that the forward kinematics is achievable. So if it's that, if maybe it's, if it's the seeds, then we should change that. We should, we shouldn't make the seeds deterministic.
+
+Like, um, things need to change. Like, it shouldn't be like this.
+
+## 2026-08-23 22:14:16 BST
+
+Honestly, timing does not even really matter, so timing does no need to be a reason why things should fail. And the plan and controller's job is not to basically deny paths, but to avoid them. So maybe we can change the minimum clearance to, like, 5 millimetres rather than 50.
+
+## 2026-08-23 22:23:00 BST
+
+```
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+goal orientation: INHERITED from the start pose (no orientation_rpy_deg in the goal block). Feasibility therefore depends on where the arm started; set it explicitly to make this goal mean the same thing every run.
+Creating arm trajectory...
+Generated 1191 dense position waypoints
+Generated 1191 dense velocity waypoints
+Actual frequency: 992.4 Hz
+terminal IK: stream 6, attempt 13, residual 0.0996242 mm / 0.0330047 deg
+---- PLAN SUMMARY (left arm, point goal) ----
+  result: REACHED, duration 1.20 s
+  selected candidate: branch 0, normal, duration attempt 1
+  final requested goal error: 0.100 mm
+  min joint-limit margin (trajectory): 30.9 deg at t=0.00 s
+  min modelled clearance: 162.9 mm at t=0.00 s
+  self collision clearance: 221.0 mm at t=0.95 s
+----
+arm: left, trajectory points: 1191, solve: 8 ms, final requested goal error: 0.0996242 mm
+[left] live goal 3 received: CIRCLE 0.80000000000000004 0.20000000000000001 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 10468
+trajectory ID: 3
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.2 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  terminal candidates in scene contact: 3 screened out before solving (worst: torso vs sphere 15 (forearm), clearance -37.2 mm)
+  IK anchors: 20 solved, 4 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-3 (0%-13% along the path)
+  solved neighbours: none before / sample 4 (residual 4.8 mm, margin 33.0 deg)
+  failure reasons: 4 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 29.7 mm at sample 1 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 16.7 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+[left] live goal 4 received: CIRCLE 0.80000000000000004 0.20000000000000001 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 11846
+trajectory ID: 4
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.2 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  terminal candidates in scene contact: 3 screened out before solving (worst: torso vs sphere 15 (forearm), clearance -37.2 mm)
+  IK anchors: 20 solved, 4 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-3 (0%-13% along the path)
+  solved neighbours: none before / sample 4 (residual 4.8 mm, margin 33.0 deg)
+  failure reasons: 4 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 29.7 mm at sample 1 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 16.7 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+[left] live goal 5 received: CIRCLE 0.80000000000000004 0.40000000000000002 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 21197
+trajectory ID: 5
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.8 0.4 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: route_seed_ik_failure
+  IK anchors: 22 solved, 2 failed (dropped); 0 of 24 samples interpolated
+  failed anchors: 0-1 (0%-4% along the path)
+  solved neighbours: none before / sample 2 (residual 4.3 mm, margin 52.1 deg)
+  failure reasons: 2 no-convergence, 0 converged-only-outside-joint-limits
+  worst position residual: 18.5 mm at sample 0 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 43.3 deg at sample 9
+----
+error: solve failed: route_seed_ik_failure
+loop stopped by user (Ctrl+C)
+  desired p:  0.5 0.7999 0.2 m,  current p: 0.5 0.7999 0.2 m
+cycle overruns: 5 of 107904 cycles (dt > 1.5 x nominal)
+[left] 107929 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_215353.csv
+controller exited; ending the session wrapper
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_215859
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_215900.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_READY, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         36.65     33.66    248.47     68.68    109.84     63.11    144.07
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4999 0.0833 0.7838 (m, left-arm base frame)
+  orientation rpy: 1.5642 -1.2101 1.5777 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.499922    0.799966    0.199903   rpy    1.570650   -0.001633    1.573229
+    left_base_link p    0.499922    0.083309    0.783821   rpy    1.564203   -1.210125    1.577691
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4999 0.08331 0.7838 m in left_base_link = 0.4999 0.8 0.1999 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: CIRCLE 0.5 0.40000000000000002 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 2001
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.5 0.4 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 3901 dense position waypoints
+Generated 3901 dense velocity waypoints
+Actual frequency: 996.7 Hz
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: joint_position_limits
+  scene blocker: torso vs sphere 15 (forearm): clearance -20.2 mm < floor 5.0 mm at t=3.89 s, blocked 12 attempt(s)
+  scene blocker: torso vs sphere 16 (forearm): clearance 4.9 mm < floor 5.0 mm at t=0.60 s, blocked 4 attempt(s)
+  terminal candidates in scene contact: 18 screened out before solving (worst: torso vs sphere 14 (forearm), clearance -51.1 mm)
+  IK anchors: 24 solved, 0 failed (dropped); 0 of 24 samples interpolated
+  worst position residual: 0.5 mm at sample 11 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 29.9 deg at sample 10
+----
+error: solve failed: joint_position_limits
+[left] live goal 2 received: CIRCLE 0.5 0.59999999999999998 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 5884
+trajectory ID: 2
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.5 0.6 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 15719 dense position waypoints
+Generated 15719 dense velocity waypoints
+Actual frequency: 999.6 Hz
+Creating arm trajectory...
+Generated 29349 dense position waypoints
+Generated 29349 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 15719 dense position waypoints
+Generated 15719 dense velocity waypoints
+Actual frequency: 999.6 Hz
+Creating arm trajectory...
+Generated 29349 dense position waypoints
+Generated 29349 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 15719 dense position waypoints
+Generated 15719 dense velocity waypoints
+Actual frequency: 999.6 Hz
+Creating arm trajectory...
+Generated 29349 dense position waypoints
+Generated 29349 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 12819 dense position waypoints
+Generated 12819 dense velocity waypoints
+Actual frequency: 999.8 Hz
+Creating arm trajectory...
+Generated 24535 dense position waypoints
+Generated 24535 dense velocity waypoints
+Actual frequency: 999.5 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 12848 dense position waypoints
+Generated 12848 dense velocity waypoints
+Actual frequency: 999.4 Hz
+Creating arm trajectory...
+Generated 24738 dense position waypoints
+Generated 24738 dense velocity waypoints
+Actual frequency: 999.3 Hz
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 12848 dense position waypoints
+Generated 12848 dense velocity waypoints
+Actual frequency: 998.9 Hz
+Creating arm trajectory...
+Generated 24593 dense position waypoints
+Generated 24593 dense velocity waypoints
+Actual frequency: 999.4 Hz
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: dynamic_attempts_exhausted
+  closest dynamic attempt: velocity ratio 0.740, acceleration ratio 1.122 at 24.5 s (executable needs both <= 1.0; the attempt cap stopped repair here)
+  IK anchors: 24 solved, 0 failed (dropped); 0 of 24 samples interpolated
+  worst position residual: 0.4 mm at sample 5 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 43.3 deg at sample 9
+----
+error: solve failed: dynamic_attempts_exhausted
+loop stopped by user (Ctrl+C)
+  desired p:  0.4999 0.8 0.1999 m,  current p: 0.4999 0.8 0.1999 m
+cycle overruns: 29 of 672611 cycles (dt > 1.5 x nominal)
+[left] 672636 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_215900.csv
+controller exited; ending the session wrapper
+== Supervised session checklist (project CLAUDE.md) ==
+  - arm(s): left
+  - mount source: fixed
+  - planning: on, recording: on
+  - Christian present, workspace clear, e-stop in reach
+  - Kinova web dashboard CLOSED (it blocks SetServoingMode)
+  - This run is explicitly authorized
+session artifacts: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/session_222130
+waiting for the left controller thread's run log...
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+  left state source: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_222131.csv
+waiting for telemetry data in the left run log...
+Controller holding. Send live goals from the panel; press Enter to stop.
+Model loaded successfully!
+Number of joints: 15
+Number of DOFs: 14
+Connected to arm at 192.168.1.9 (TCP + real-time UDP).
+arm state: ARMSTATE_SERVOING_MANUALLY_CONTROLLED, base fault bank 0
+joint 1 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 2 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 3 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 4 hard speed limit 80.0021 deg/s; configured qdot clip 79.2021 deg/s
+joint 5 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 6 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+joint 7 hard speed limit 70.004 deg/s; configured qdot clip 69.3039 deg/s
+kinematic hard-limit gate: PASS (seven live joint speed limits verify configured qdot clips; bundled schema has no live joint-position limits)
+joint-limit gate: PASS (configured thresholds verified)
+[left] == left arm (192.168.1.9) ==
+joint                    1         2         3         4         5         6         7
+position deg         36.64     33.65    248.47     68.68    109.83     63.10    144.07
+velocity deg/s        0.00      0.00      0.00      0.00      0.00      0.00      0.00
+left end-effector (left_end_effector_link in left_base_link): 0.4999 0.0834 0.7838 (m, left-arm base frame)
+  orientation rpy: 1.5640 -1.2101 1.5780 (rad, R = Rz*Ry*Rx)
+mount-frame FK at the measured left configuration (other arm at nominal, model-only — not measured):
+  right  tool frame right_tool_link
+    mount      p   -0.000000   -1.268828    0.440120   rpy    1.208507   -0.000000    0.000000
+    right_base_link p   -0.000000   -0.024860    1.307385   rpy    0.000007   -0.000000    0.000000
+  left   tool frame left_end_effector_link
+    mount      p    0.499869    0.800027    0.199820   rpy    1.570790   -0.001588    1.573349
+    left_base_link p    0.499869    0.083407    0.783848   rpy    1.564027   -1.210080    1.578029
+[left] reactive-pose position integration at 500 Hz (full settings in the CSV preamble)
+[left] fixed world-pose source: world_T_mount = 0 0 0 m, quat xyzw 0 0 0 1 (constant, published in-process)
+[left] current startup pose: 0.4999 0.08341 0.7838 m in left_base_link = 0.4999 0.8 0.1998 m in mount (goal-file frame); the arm will hold here
+[left] HOLD AT START: zero-error Cartesian hold until the first fresh world sample, then HOLD until a live goal arrives; Ctrl+C to stop
+[left] planner implementation: current in-process world planner
+[left] live mount-goal input: /tmp/humansl-goal-left.sock; controller stays alive across commands
+takeover hold: PASS (0.05 s unchanged POSITION command)
+[left] live goal 1 received: CIRCLE 0.5 0.59999999999999998 0.40000000000000002 0.10000000000000001 1 0 0 3 FIXED 1.5707963267948966 0 1.5707963267948966
+planner Vicon sequence: 747
+trajectory ID: 1
+T_W_M position [0, 0, 0] m, quaternion xyzw [0, 0, 0, 1]
+declared_input_frame=mount planning_frame=mount output_frame=world
+planner config: /home/christian/Desktop/HumanSL_MAIN/Christian_control/planning/config/planner.yaml digest(fnv1a64)=0xeda813d18466b627 ik_seed=20260807 (--verbose for all values)
+path: circle, centre 0.5 0.6 0.4 m, radius 0.1 m, normal 1 0 0, 23 samples (chord error <= 1 mm), lap 3 s, declared in mount -> mount
+Creating arm trajectory...
+Generated 3771 dense position waypoints
+Generated 3771 dense velocity waypoints
+Actual frequency: 996.7 Hz
+Creating arm trajectory...
+Generated 17517 dense position waypoints
+Generated 17517 dense velocity waypoints
+Actual frequency: 999.2 Hz
+Creating arm trajectory...
+Generated 38078 dense position waypoints
+Generated 38078 dense velocity waypoints
+Actual frequency: 999.6 Hz
+terminal IK: stream 9, attempt 17, residual 0.414082 mm / 0.0323361 deg
+continuation IK: largest joint step 6.52596 deg, closure drift 6.00155 deg
+selected candidate: branch 0, route normal, duration attempt 3, scene sigma 0.0005
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: REACHED, duration 38.09 s
+  selected candidate: branch 0, normal, duration attempt 3
+  task fidelity (quality): max 0.15 mm / p95 0.04 mm position, max 0.1 deg orientation
+  min modelled clearance: 70.4 mm at t=38.09 s
+  self collision: valid
+  dynamic ratios: velocity 0.7, acceleration 0.8
+  IK anchors: 24 solved, 0 failed (dropped); 0 of 24 samples interpolated
+  worst position residual: 0.5 mm at sample 5 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 43.5 deg at sample 9
+----
+arm: left, traced circle emitted, trajectory points: 38078, duration 38.0937 s
+loop stopped by user (Ctrl+C)
+  desired p:  0.5001 0.6001 0.5001 m,  current p: 0.5001 0.6001 0.5001 m
+cycle overruns: 1 of 28832 cycles (dt > 1.5 x nominal)
+[left] 28857 samples written
+[left] log: /home/christian/Desktop/HumanSL_MAIN/runs/2026-08-23/loop_log_left_20260823_222131.csv
+controller exited; ending the session wrapper
+```
+
+## 2026-08-23 22:43:51 BST
+
+Create a diagnostic plot for the latest run that compares the planner-generated Cartesian TCP trajectory, the Cartesian reference actually commanded by the controller, and the measured Cartesian end-effector trajectory. Use the canonical FK where necessary and align all signals by trajectory time. Show a 3D path overlay and XY projection, x/y/z versus time, commanded-to-measured Cartesian position error in mm, and Cartesian speed versus time for planned, commanded, and measured motion. Mark trajectory activation/handover events. Report RMS, mean, max, and 95th-percentile tracking error. The purpose is to determine whether the non-smooth circle originates in the planner trajectory, reference generation/interpolation, trajectory handover, or physical controller tracking. Do not change code yet. First use the existing run logs and tell me which of those layers introduces the irregularity.
+
+## 2026-08-23 22:55:22 BST
+
+The diagnostic plot now shows that the non-smooth circle originates primarily in the generated plan, not handover, playback, or controller tracking. The dense FK of the planned trajectory has radial p95 error 31.9 mm and max 91.5 mm despite the planner reporting about 0.15 mm path error, and planned Cartesian speed surges from p5 14 to p95 183 mm/s. Investigate this as a robotics trajectory-planning problem. Determine exactly how the reported path-fidelity metric is calculated, which states actually receive Cartesian path constraints, what happens between IK/path anchors during GPMP2 optimisation and interpolation, and why dense FK can leave the requested circle so severely. Also determine why the 3 s requested lap becomes 38.1 s and why Cartesian speed oscillates. Do not change code yet. Trace one problematic section of this run through requested Cartesian samples → IK anchors → optimiser states → output joint trajectory → dense FK, and identify the earliest stage where the circle geometry or smooth timing is lost.
+
+## 2026-08-23 23:02:24 BST
+
+Before proposing a repair, audit every property of the trajectory that is enforced or validated only at GP support states versus continuously/interpolated states. For Cartesian path fidelity, collision clearance, joint position limits, joint velocity limits and any acceleration/smoothness constraints, tell me where each constraint enters the factor graph, where it is validated, and whether the actual executed GP interpolation can violate it between supports. Also determine whether the requested 3 s circle is physically feasible under the robot's real joint limits using a geometrically valid trajectory. I want to know whether the 91 mm circle bulge is one isolated discretisation bug or evidence of a more general mismatch between what the planner certifies at support states and what the robot actually executes continuously. Do not change code yet.
+
+## 2026-08-23 23:08:22 BST
+
+A planned Cartesian path means the continuously executed FK trajectory must stay within a defined tolerance of that path, not merely intersect it at selected waypoints.
+
+This is a much stronger diagnosis. I would accept most of it, but I would challenge three statements before letting Claude implement the repair.
+First, “the fix is one fix” is slightly too strong. Bounding support spacing is probably the smallest effective repair, but it does not fundamentally guarantee continuous Cartesian path fidelity. A joint-space GP can still bow between two nearby Cartesian-constrained states. Smaller Δt reduces the opportunity for that to happen, but does not mathematically remove it. So the engineering contract should be:
+
+```
+
+```
+
+
+```
+bounded support spacing
++ dense executed-trajectory fidelity validation
+```
+
+not simply “0.15 s spacing means the GP has no room to bulge.”
+Second, the 3 s feasibility result is very encouraging, but not quite a proof of continuous dynamic feasibility. Finite differences of the 24 IK anchors show that there exists a very plausible joint sequence whose average segment velocities and approximate accelerations fit comfortably inside the limits. That is enough to say 38 s is clearly pathological, but the actual 3 s trajectory still needs continuous interpolation checked for:
+
+```
+
+```
+
+
+```
+joint velocity
+joint acceleration
+joint limits
+collision
+Cartesian deviation
+```
+
+If a sensible interpolation of those clean anchors passes those checks at 3 s, then you can call the 3 s lap demonstrably feasible.
+Third, this sentence goes too far:
+“Every recurring failure of the past two days is this same mismatch”
+The audit proves a shared architectural weakness that can explain several failure modes. It does not yet prove that every previous failure had this exact root cause. I would phrase it as:
+The same discrete-versus-continuous representation mismatch is capable of producing the observed fidelity, dynamic-repair, and joint-limit failures, and is confirmed as the root cause of this run.
+There is also one very interesting thing in the audit that I would exploit: your obstacle system already uses GP-interpolated factors between supports. That means your architecture already knows how to constrain an interpolated GP state. Longer term, the principled Cartesian solution is probably:
+
+```
+
+```
+
+
+```
+support pose factors
++
+a few interpolated Cartesian path factors
+```
+
+rather than making the support grid arbitrarily dense.
+But I would not jump there yet.
+The next repair I would approve is narrowly:
+
+1.  Make support resolution independent of duration. Increasing duration must add/redistribute support states so maximum Δt stays bounded. 
+2.  Make dense FK fidelity the authoritative path-quality check. 
+3.  Keep the existing anchor-fidelity metric as a diagnostic only. 
+4.  Rerun the same 3 s circle offline. 
+5.  Measure dense Cartesian error, speed, joint velocity, acceleration, clearance, solve time, and resulting duration. 
+6.  Only if dense path fidelity is still poor, investigate interpolated Cartesian factors / redundancy drift. 
+
+One additional experiment would be extremely valuable before changing the optimiser: take those existing clean 24 IK anchors and interpolate them using a simple controlled method at 3 s, then run your dense validator over it. If that produces a clean ~3 s circle, you have an extremely strong control experiment showing:
+the requested task, IK solutions, and robot dynamics are fine; the GP optimisation/interpolation is specifically introducing the pathology.
+That would turn an already strong diagnosis into a nearly airtight one.
+say it layman terms
+In simple terms:
+Your planner is choosing a few good points on the circle, but the robot does not teleport between those points. It moves through all the space in between.
+The problem is that those in-between movements are being created in joint space, and they are bending away from the circle.
+So you have this:
+
+```
+
+```
+
+
+```
+good point ●
+          \
+           \   bad curved motion
+            \
+             ● good point
+```
+
+The planner checks the two good points and says, "great, I'm accurate."
+But the robot actually travels along the curve between them, and that curve can be way off.
+That explains why:
+
+*  the planner claimed about 0.15 mm error 
+*  but the real planned path went up to 91 mm away from the circle 
+*  the motion became slow and jerky 
+*  the requested 3 s circle became 38 s 
+
+The 3 s request itself is probably fine. Your own IK points suggest the robot can physically do it.
+The main fix is:
+Don't let the planner leave huge gaps between the points where the circle is enforced.
+If the trajectory gets stretched from 3 s to 10 s, for example, you should add more support points rather than keeping the same 30 points spread further apart.
+And second:
+Validate the whole path the robot will actually execute, not just the few points where you told it to be on the circle.
+So the simple diagnosis is:
+The robot was not bad at following the plan. The plan itself was bad between the points where it was being checked.
+but we need balance
+Exactly. The goal is not “make the grid extremely dense.” That could make GPMP2 slow and defeat the purpose of a live planner.
+You need a balance between:
+
+```
+
+```
+
+
+```
+too sparse
+→ fast solve
+→ bad interpolation
+→ bulges / velocity spikes
+
+too dense
+→ beautiful trajectory
+→ large factor graph
+→ slow replanning
+```
+
+The sensible middle ground is:
+
+*  Keep the optimisation grid reasonably small. 
+*  Put a maximum time gap between support states so duration repair cannot create 1.3 s holes. 
+*  Validate the resulting continuous trajectory densely afterward. Dense FK validation is relatively cheap compared with optimisation. 
+*  Only add more support states when the current spacing is insufficient. 
+*  Do not immediately add Cartesian factors everywhere. First see whether reasonable support spacing solves the problem. 
+
+So instead of hard-coding:
+
+```
+
+```
+
+
+```
+always 30 states
+```
+
+or:
+
+```
+
+```
+
+
+```
+always 200 states
+```
+
+you want something closer to:
+
+```
+
+```
+
+
+```
+requested path + duration
+        ↓
+choose minimum reasonable number of supports
+        ↓
+ensure Δt <= allowed maximum
+        ↓
+optimise
+        ↓
+dense validation
+        ↓
+PASS → execute
+
+FAIL fidelity/dynamics
+        ↓
+increase resolution slightly
+        ↓
+solve again
+```
+
+For example, if a 3 s circle works well with 24 to 30 states, keep that. If duration repair produces a 6 s trajectory, you might need roughly twice as many states to maintain similar temporal resolution. But you should determine that experimentally rather than declaring `0.15 s` sacred.
+The engineering objective should be:
+Use the fewest support states that still produce a continuously valid trajectory.
+That gives you the balance you actually care about for a live robotic system: trajectory quality, robustness, and low planning latency, rather than maximising either accuracy or speed in isolation.
+
+## 2026-08-23 23:09:05 BST
+
+A planned Cartesian path means the continuously executed FK trajectory must stay within a defined tolerance of that path, not merely intersect it at selected waypoints.
+
+This is a much stronger diagnosis. I would accept most of it, but I would challenge three statements before letting Claude implement the repair.
+First, “the fix is one fix” is slightly too strong. Bounding support spacing is probably the smallest effective repair, but it does not fundamentally guarantee continuous Cartesian path fidelity. A joint-space GP can still bow between two nearby Cartesian-constrained states. Smaller Δt reduces the opportunity for that to happen, but does not mathematically remove it. So the engineering contract should be:
+
+```
+
+```
+
+
+```
+bounded support spacing
++ dense executed-trajectory fidelity validation
+```
+
+not simply “0.15 s spacing means the GP has no room to bulge.”
+Second, the 3 s feasibility result is very encouraging, but not quite a proof of continuous dynamic feasibility. Finite differences of the 24 IK anchors show that there exists a very plausible joint sequence whose average segment velocities and approximate accelerations fit comfortably inside the limits. That is enough to say 38 s is clearly pathological, but the actual 3 s trajectory still needs continuous interpolation checked for:
+
+```
+
+```
+
+
+```
+joint velocity
+joint acceleration
+joint limits
+collision
+Cartesian deviation
+```
+
+If a sensible interpolation of those clean anchors passes those checks at 3 s, then you can call the 3 s lap demonstrably feasible.
+Third, this sentence goes too far:
+“Every recurring failure of the past two days is this same mismatch”
+The audit proves a shared architectural weakness that can explain several failure modes. It does not yet prove that every previous failure had this exact root cause. I would phrase it as:
+The same discrete-versus-continuous representation mismatch is capable of producing the observed fidelity, dynamic-repair, and joint-limit failures, and is confirmed as the root cause of this run.
+There is also one very interesting thing in the audit that I would exploit: your obstacle system already uses GP-interpolated factors between supports. That means your architecture already knows how to constrain an interpolated GP state. Longer term, the principled Cartesian solution is probably:
+
+```
+
+```
+
+
+```
+support pose factors
++
+a few interpolated Cartesian path factors
+```
+
+rather than making the support grid arbitrarily dense.
+But I would not jump there yet.
+The next repair I would approve is narrowly:
+
+1.  Make support resolution independent of duration. Increasing duration must add/redistribute support states so maximum Δt stays bounded. 
+2.  Make dense FK fidelity the authoritative path-quality check. 
+3.  Keep the existing anchor-fidelity metric as a diagnostic only. 
+4.  Rerun the same 3 s circle offline. 
+5.  Measure dense Cartesian error, speed, joint velocity, acceleration, clearance, solve time, and resulting duration. 
+6.  Only if dense path fidelity is still poor, investigate interpolated Cartesian factors / redundancy drift. 
+
+One additional experiment would be extremely valuable before changing the optimiser: take those existing clean 24 IK anchors and interpolate them using a simple controlled method at 3 s, then run your dense validator over it. If that produces a clean ~3 s circle, you have an extremely strong control experiment showing:
+the requested task, IK solutions, and robot dynamics are fine; the GP optimisation/interpolation is specifically introducing the pathology.
+That would turn an already strong diagnosis into a nearly airtight one.
+say it layman terms
+In simple terms:
+Your planner is choosing a few good points on the circle, but the robot does not teleport between those points. It moves through all the space in between.
+The problem is that those in-between movements are being created in joint space, and they are bending away from the circle.
+So you have this:
+
+```
+
+```
+
+
+```
+good point ●
+          \
+           \   bad curved motion
+            \
+             ● good point
+```
+
+The planner checks the two good points and says, "great, I'm accurate."
+But the robot actually travels along the curve between them, and that curve can be way off.
+That explains why:
+
+*  the planner claimed about 0.15 mm error 
+*  but the real planned path went up to 91 mm away from the circle 
+*  the motion became slow and jerky 
+*  the requested 3 s circle became 38 s 
+
+The 3 s request itself is probably fine. Your own IK points suggest the robot can physically do it.
+The main fix is:
+Don't let the planner leave huge gaps between the points where the circle is enforced.
+If the trajectory gets stretched from 3 s to 10 s, for example, you should add more support points rather than keeping the same 30 points spread further apart.
+And second:
+Validate the whole path the robot will actually execute, not just the few points where you told it to be on the circle.
+So the simple diagnosis is:
+The robot was not bad at following the plan. The plan itself was bad between the points where it was being checked.
+but we need balance
+Exactly. The goal is not “make the grid extremely dense.” That could make GPMP2 slow and defeat the purpose of a live planner.
+You need a balance between:
+
+```
+
+```
+
+
+```
+too sparse
+→ fast solve
+→ bad interpolation
+→ bulges / velocity spikes
+
+too dense
+→ beautiful trajectory
+→ large factor graph
+→ slow replanning
+```
+
+The sensible middle ground is:
+
+*  Keep the optimisation grid reasonably small. 
+*  Put a maximum time gap between support states so duration repair cannot create 1.3 s holes. 
+*  Validate the resulting continuous trajectory densely afterward. Dense FK validation is relatively cheap compared with optimisation. 
+*  Only add more support states when the current spacing is insufficient. 
+*  Do not immediately add Cartesian factors everywhere. First see whether reasonable support spacing solves the problem. 
+
+So instead of hard-coding:
+
+```
+
+```
+
+
+```
+always 30 states
+```
+
+or:
+
+```
+
+```
+
+
+```
+always 200 states
+```
+
+you want something closer to:
+
+```
+
+```
+
+
+```
+requested path + duration
+        ↓
+choose minimum reasonable number of supports
+        ↓
+ensure Δt <= allowed maximum
+        ↓
+optimise
+        ↓
+dense validation
+        ↓
+PASS → execute
+
+FAIL fidelity/dynamics
+        ↓
+increase resolution slightly
+        ↓
+solve again
+```
+
+For example, if a 3 s circle works well with 24 to 30 states, keep that. If duration repair produces a 6 s trajectory, you might need roughly twice as many states to maintain similar temporal resolution. But you should determine that experimentally rather than declaring `0.15 s` sacred.
+The engineering objective should be:
+Use the fewest support states that still produce a continuously valid trajectory.
+That gives you the balance you actually care about for a live robotic system: trajectory quality, robustness, and low planning latency, rather than maximising either accuracy or speed in isolation.
+
+
+Do not add defensive code
+
+## 2026-08-23 23:18:35 BST
+
+GO. Keep this focused on the confirmed representation problem. Bound support spacing, make dense FK path fidelity authoritative, and allow at most one small resolution escalation if continuous Cartesian fidelity fails. Do not introduce a new dynamics-specific repair architecture or additional retry machinery. Existing dense velocity, acceleration, joint-limit and collision validation should remain as feasibility/safety gates. First establish whether fixing the inter-support trajectory removes the pathological speed and acceleration behaviour naturally. Benchmark the repaired GPMP2 trajectory against the 5.7 s / 0.43 mm control result for path error, duration, velocity, acceleration, clearance and solve time. i dont think velocity and trajectory shape should not be coupled
+
+## 2026-08-23 23:29:00 BST
+
+```
+---- PLAN SUMMARY (left arm, traced path) ----
+  result: FAILED after bounded exact and shortened search
+  error: path_fidelity
+  IK anchors: 33 solved, 0 failed (dropped); 0 of 33 samples interpolated
+  worst position residual: 0.5 mm at sample 2 (acceptance 5.0 mm)
+  min joint-limit margin (walk): 30.6 deg at sample 12
+----
+error: solve failed: path_fidelity
+
+
+why are are there errors for path fidelity 
+```
+
+## 2026-08-23 23:35:11 BST
+
+Rewrite it by separating measurement from decision-making, while keeping it in one file and avoiding a large abstraction rewrite.
+The current function mixes interpolation, collision measurement, task-quality metrics, dynamics, and final acceptance. I would make `ValidatePlan()` read almost like the engineering logic you actually care about:
+
+```cpp
+PlanValidationReport ValidatePlan(
+    const PlannerModel& model,
+    const TrajectoryResult& trajectory,
+    double duration_s,
+    const PlanValidationInputs& inputs)
+{
+    PlanValidationReport report;
+
+    // 1. Basic trajectory sanity
+    if (!ValidTrajectoryShape(trajectory, duration_s)) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "malformed_trajectory";
+        return report;
+    }
+
+    const auto samples =
+        SampleTrajectory(trajectory, duration_s, inputs.validation_dt_s);
+
+    // 2. Measure everything once
+    MeasureStartState(samples, inputs, report);
+    MeasureJointLimits(samples, inputs, report);
+    MeasureDynamics(samples, inputs, report);
+    MeasureClearance(model, samples, inputs, report);
+    MeasureTerminalError(model, samples.back(), inputs, report);
+    MeasureTaskQuality(model, trajectory, duration_s, inputs, report);
+
+    // 3. Safety: hard rejection
+    if (!report.finite) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "non_finite_trajectory";
+        return report;
+    }
+
+    if (!report.start_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "start_state_mismatch";
+        return report;
+    }
+
+    if (!report.joint_limits_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "joint_position_limits";
+        return report;
+    }
+
+    if (!report.scene_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "scene_clearance";
+        return report;
+    }
+
+    if (!report.self_collision_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "self_collision";
+        return report;
+    }
+
+    // 4. Did the trajectory actually accomplish the task?
+    if (!report.task_valid) {
+        report.disposition = CandidateDisposition::kNeedsGeometricRepair;
+        report.failure_reason = "task_error";
+        return report;
+    }
+
+    // 5. Geometry is good, only timing is wrong
+    if (report.max_velocity_ratio > 1.0 ||
+        report.max_acceleration_ratio > 1.0) {
+        report.disposition = CandidateDisposition::kNeedsLongerDuration;
+        report.failure_reason = "dynamic_limits_exceeded";
+        return report;
+    }
+
+    report.disposition = CandidateDisposition::kExecutable;
+    report.executable = true;
+    return report;
+}
+```
+
+That is the important rewrite. `ValidatePlan()` becomes an obvious engineering decision tree.
+1. Remove `trace_dense_valid` as a separate veto
+Right now you have:
+
+```cpp
+report.scene_valid &&
+report.self_collision_valid &&
+report.joint_limits_valid &&
+report.trace_dense_valid &&
+terminal_valid;
+```
+
+
+I would delete that concept from the execution gate.
+Instead define one task-validity condition:
+
+```cpp
+report.task_valid =
+    report.terminal_position_error_m <= inputs.terminal_position_tolerance_m &&
+    report.terminal_orientation_error_rad <= inputs.terminal_orientation_tolerance_rad;
+
+if (inputs.desired_task_path) {
+    report.task_valid =
+        report.task_valid &&
+        report.trace_dense_max_position_m <= inputs.path_position_tolerance_m;
+}
+```
+
+Now the semantics are simple:
+Did the trajectory follow the requested path closely enough?
+Not:
+Did dense interpolation become more inaccurate than the support samples by some extra amount?
+The current dense-vs-support comparison can remain as a diagnostic:
+
+```cpp
+report.interpolation_error_m =
+    std::max(
+        0.0,
+        report.trace_dense_max_position_m -
+        report.trace_support_max_position_m);
+```
+
+But don't reject on it.
+2. Replace the `1e-12` runtime requirement
+You currently use:
+
+```cpp
+constexpr double kExactStartToleranceRad = 1e-12;
+```
+
+
+If your design requires the planned trajectory to start exactly at the supplied start state, enforce that when constructing the trajectory.
+Then validation can use a small numerical tolerance:
+
+```cpp
+constexpr double kStartConsistencyToleranceRad = 1e-8;
+```
+
+or preferably:
+
+```cpp
+inputs.start_position_tolerance_rad
+```
+
+The key distinction is:
+
+```text
+Planner construction:
+q[0] = request.start.q       <- exact invariant
+
+Validation:
+q[0] approximately equals request.start.q
+```
+
+Do not use a physical validator as a floating-point identity test.
+3. Make task tolerances inputs
+Remove:
+
+```cpp
+terminal_position_error_m <= 0.001
+terminal_orientation_error_rad <= 0.01
+```
+
+
+Put them into:
+
+```cpp
+struct PlanValidationInputs {
+    ...
+
+    double terminal_position_tolerance_m = 0.001;
+    double terminal_orientation_tolerance_rad = 0.01;
+    double path_position_tolerance_m = 0.005;
+};
+```
+
+Then your circle experiment can say:
+
+```text
+path tolerance = 5 mm
+```
+
+while a point goal could use:
+
+```text
+terminal tolerance = 1 mm
+```
+
+without changing validator code.
+4. Keep your existing measurements
+I would not throw away most of the work in this file.
+Keep:
+
+```cpp
+report.trace_mean_position_m
+report.trace_rms_position_m
+report.trace_p95_position_m
+report.trace_max_position_m
+
+report.minimum_scene_clearance_m
+report.minimum_self_clearance_m
+
+report.max_velocity_ratio
+report.max_acceleration_ratio
+
+report.integrated_joint_travel_rad
+```
+
+Your path statistics are already calculated correctly as useful benchmarking outputs.
+They simply shouldn't all control whether the robot is permitted to move.
+Think:
+
+```text
+Validation report
+├── Safety
+│   ├── finite
+│   ├── joint limits
+│   ├── scene collision
+│   └── self collision
+│
+├── Task
+│   ├── terminal error
+│   └── path error
+│
+├── Dynamics
+│   ├── velocity ratio
+│   └── acceleration ratio
+│
+└── Quality metrics
+    ├── RMS error
+    ├── p95 error
+    ├── joint travel
+    └── minimum clearance
+```
+
+Only the first three affect candidate disposition.
+5. Keep collision evidence almost exactly as it is
+I would leave this logic mostly untouched:
+
+```cpp
+violation.object_id
+violation.sphere_index
+violation.time_s
+violation.clearance_m
+violation.outward_normal_mount
+violation.q
+```
+
+
+That's useful robotics diagnostics.
+But change this:
+
+```cpp
+if (!std::isfinite(report.minimum_scene_clearance_m))
+    report.minimum_scene_clearance_m = 0.0;
+```
+
+to something like:
+
+```cpp
+if (!report.has_scene_pairs)
+    report.minimum_scene_clearance_m =
+        std::numeric_limits<double>::infinity();
+```
+
+because no obstacle check is not the same as zero clearance.
+6. Add one disposition
+You currently appear to have roughly:
+
+```cpp
+kInvalid
+kNeedsLongerDuration
+kExecutable
+```
+
+I would add only one more:
+
+```cpp
+enum class CandidateDisposition {
+    kInvalid,
+    kNeedsGeometricRepair,
+    kNeedsLongerDuration,
+    kExecutable
+};
+```
+
+Meaning:
+
+```text
+kInvalid
+    unsafe / malformed / impossible to execute
+
+kNeedsGeometricRepair
+    safe candidate, but doesn't satisfy requested Cartesian task
+
+kNeedsLongerDuration
+    geometry is correct, timing exceeds robot limits
+
+kExecutable
+    send it
+```
+
+That is enough. You don't need fifteen failure states.
+7. The final logic should be this simple
+This is the section I would want to see at the bottom of the file:
+
+```cpp
+if (!report.finite)
+    return Reject(report, "non_finite_trajectory");
+
+if (!report.start_valid)
+    return Reject(report, "start_state_mismatch");
+
+if (!report.joint_limits_valid)
+    return Reject(report, "joint_position_limits");
+
+if (!report.scene_valid)
+    return Reject(report, "scene_clearance");
+
+if (!report.self_collision_valid)
+    return Reject(report, "self_collision");
+
+if (!report.task_valid) {
+    report.disposition = CandidateDisposition::kNeedsGeometricRepair;
+    report.failure_reason = "task_error";
+    return report;
+}
+
+if (report.max_velocity_ratio > 1.0 ||
+    report.max_acceleration_ratio > 1.0) {
+    report.disposition = CandidateDisposition::kNeedsLongerDuration;
+    report.failure_reason = "dynamic_limits_exceeded";
+    return report;
+}
+
+report.disposition = CandidateDisposition::kExecutable;
+report.executable = true;
+return report;
+```
+
+That tells you immediately what your planner believes.
+The resulting architecture is:
+
+```text
+                 optimiser
+                     │
+                     ▼
+                trajectory
+                     │
+                     ▼
+              Measure trajectory
+           ┌─────────┼─────────┐
+           ▼         ▼         ▼
+        safety      task    dynamics
+           │         │         │
+           └─────────┼─────────┘
+                     ▼
+                  classify
+                     │
+       ┌─────────────┼──────────────┐
+       ▼             ▼              ▼
+     reject      geometric       retime
+                repair
+                                      │
+                                      ▼
+                                  executable
+```
+
+This is the rewrite I would make. Do not rewrite the collision calculations, Hermite sampling, FK metrics, or all the reporting code just for cleanliness. Most of those are useful. Rewrite the authority and classification layer around them.
+That gives you a substantially less brittle planner without turning a validation cleanup into another 500-line architectural project.
+
+## 2026-08-23 23:45:26 BST
+
+```
+#include "PlannerRuntime.h"
+
+#include <algorithm>
+#include <array>
+#include <charconv>
+#include <climits>
+#include <iomanip>
+#include <limits>
+#include <cmath>
+#include <iostream>
+#include <mutex>
+#include <optional>
+#include <sstream>
+#include <stdexcept>
+
+#include <unistd.h>
+
+#include <yaml-cpp/yaml.h>
+
+#include "PlannerConfig.h"
+#include "PlannerModel.h"
+#include "PlanSolver.h"
+#include "SceneBlockerSummary.h"
+#include "StartState.h"
+#include "WorldTrajectoryProjection.h"
+#include "PathFrames.h"
+#include "PlanDebugDump.h"
+#include "PinocchioKinematicsAdapter.h"
+#include "Config.h"   // control — config::kReferenceFrame
+
+namespace {
+
+// The inherited optimizer writes progress to process-global std::cout. Keep
+// concurrent arm workers from redirecting that stream over one another. This
+// mutex is touched only by non-real-time planner calls; the 500 Hz path never
+// waits on it.
+std::mutex g_planner_solve_mutex;
+
+constexpr char kUsageText[] =
+    "usage: planner_bridge --arm <right|left>\n"
+    "                       [--goal X Y Z | --circle CX CY CZ R NX NY NZ D\n"
+    "                        | --goal-file PATH]\n"
+    "                       [--state-csv PATH | --start-deg J1..J7]\n"
+    "                       [--start-velocity-deg-s J1..J7]\n"
+    "                       [--runs-root PATH] [--dh PATH]\n"
+    "                       [--joint-limits PATH]\n"
+    "                       [--output world-cartesian]\n"
+    "                       [--world-mount-pose-m-quat PX PY PZ QX QY QZ QW\n"
+    "                        --vicon-sequence N --trajectory-id N]\n"
+    "\n"
+    "Output (stdout): one versioned CART_TRAJ world-frame pose/twist block.\n"
+    "GPMP2 remains joint-space internally; planned q/qdot never cross the\n"
+    "controller boundary.\n"
+    "\n"
+    "  --arm <right|left>     Required — which physical arm this plan is\n"
+    "                         for. Selects the default DH file (right:\n"
+    "                         dh_params_tool.yaml, mounted-tool collision\n"
+    "                         model; left: dh_params_flange.yaml, bare-\n"
+    "                         flange collision model), which run log this\n"
+    "                         process reads the start state from. No\n"
+    "                         default: every run states its target arm.\n"
+    "  --goal X Y Z           Target tool position, metres, in the\n"
+    "                         compiled config::kReferenceFrame.\n"
+    "  --goal-file PATH       YAML goal file, ARM-KEYED: a top-level `right:`\n"
+    "                         and/or `left:` block (only the one matching\n"
+    "                         --arm is read), each with its own `goal:\n"
+    "                         [x, y, z]` metres, an optional `frame:` (mount,\n"
+    "                         right_base or left_base; default\n"
+    "                         config::kReferenceFrame) governing that block\n"
+    "                         whole. One file can hold\n"
+    "                         both arms' targets for a --arm both session\n"
+    "                         without either reading the other's numbers.\n"
+    "                         When neither --goal nor --goal-file is given,\n"
+    "                         the default config/goal.yaml beside the\n"
+    "                         executable's parent directory is read — so\n"
+    "                         editing that one file is the normal way to\n"
+    "                         choose where each arm goes.\n"
+    "  --state-csv PATH       Start state: latest measured joint angles\n"
+    "                         (meas_j1..meas_j7) read from a controller\n"
+    "                         telemetry CSV.\n"
+    "  --start-deg J1..J7     (test-only) Start state: seven joint angles,\n"
+    "                         degrees, Kortex actuator order.\n"
+    "  --runs-root PATH       Root of dated run-log directories to search\n"
+    "                         when neither --state-csv nor --start-deg is\n"
+    "                         given (the newest loop_log_<arm>*.csv under\n"
+    "                         it, matching --arm). Default: <repo>/runs\n"
+    "                         resolved relative to the executable's\n"
+    "                         directory.\n"
+    "  --dh PATH               DH parameters YAML. Default: the\n"
+    "                         build-generated config/dh_params_tool.yaml\n"
+    "                         (--arm right) or config/dh_params_flange.yaml\n"
+    "                         (--arm left) beside the executable (derived\n"
+    "                         from the URDF at build time — do not\n"
+    "                         hand-edit).\n"
+    "  --joint-limits PATH    Joint limits YAML. Default:\n"
+    "                         config/joint_limits.yaml beside\n"
+    "                         config/goal.yaml, resolved relative to the\n"
+    "                         executable's directory.\n"
+    "  --planner-config PATH  Planner tuning YAML: plan pacing and every\n"
+    "                         factor-graph weight. Default: config/\n"
+    "                         planner.yaml beside config/goal.yaml. Every\n"
+    "                         key is required and unknown keys are refused,\n"
+    "                         so a typo fails the run naming the key rather\n"
+    "                         than silently planning something else. The\n"
+    "                         effective values and the file's digest are\n"
+    "                         echoed here on every run.\n"
+    "  --verbose              Echo the full effective planner config and\n"
+    "                         other low-priority detail. Without it a run\n"
+    "                         prints the config path, digest and IK seed\n"
+    "                         only — enough to reproduce, not to drown in.\n"
+    "  --debug-dir PATH       Optional diagnostic dump directory. Writes\n"
+    "                         joints.csv, joint_limits.csv, meta.csv,\n"
+    "                         candidate_attempts.csv and,\n"
+    "                         for a traced path, path_ik.csv — the\n"
+    "                         per-sample continuation walk, written even\n"
+    "                         when the walk FAILED, which is the case worth\n"
+    "                         looking at. Nothing goes to stdout and the\n"
+    "                         controller never reads these files; plot them\n"
+    "                         with scripts/plot_plan.py.\n"
+    "  --output MODE          Optional compatibility spelling; the only\n"
+    "                         accepted mode is `world-cartesian`, also the\n"
+    "                         default and sole output.\n"
+    "  --world-mount-pose-m-quat PX PY PZ QX QY QZ QW\n"
+    "                         Immutable Vicon T_W_M snapshot: translation in\n"
+    "                         metres and unit quaternion x y z w. Required\n"
+    "                         for every plan.\n"
+    "  --vicon-sequence N     Vicon frame sequence associated with T_W_M.\n"
+    "                         Required for every plan.\n"
+    "  --trajectory-id N      Caller-assigned trajectory identity. Required\n"
+    "                         for every plan.\n"
+    "\n"
+    "Exit codes: 0 targets emitted (also returned by --help), 1 bad\n"
+    "arguments, 2 start-state unavailable, 3 solve failed, 4 validation\n"
+    "rejected the plan.\n";
+
+// One number formatted for the summary, trimmed to what an eye can compare.
+std::string Fixed(double value, int decimals = 1) {
+    std::ostringstream text;
+    text << std::fixed << std::setprecision(decimals) << value;
+    return text.str();
+}
+
+std::string FailedPlanStage(const std::string& failure_reason)
+{
+    if (failure_reason.rfind("prohibited_start_", 0) == 0 ||
+        failure_reason == "start_velocity_over_effective_limit")
+        return "FAILED at measured-start preflight";
+    return "FAILED after bounded exact and shortened search";
+}
+
+// The high-priority result block every planning attempt ends its
+// diagnostics with. Everything here is a value the planner already
+// produced; the block only arranges it so the answer to "what happened and
+// where" does not have to be assembled from a scroll of detail.
+struct SummaryWriter {
+    std::ostream& diagnostics;
+    std::vector<std::pair<std::string, std::string>>& extra;
+
+    void Line(const std::string& key, const std::string& value) {
+        diagnostics << "  " << key << ": " << value << "\n";
+        extra.emplace_back(key, value);
+    }
+};
+
+void SummarizeGoalBlocked(SummaryWriter& summary, PlanStatus status,
+                          const PlanValidationReport& validation)
+{
+    if (status != PlanStatus::kGoalBlocked)
+        return;
+    summary.Line("selection", "best_validated_bounded_candidate");
+    summary.Line(
+        "requested terminal shortfall",
+        Fixed(validation.requested_terminal_position_error_m * 1e3, 3) +
+            " mm position / " +
+            Fixed(validation.requested_terminal_orientation_error_rad *
+                  180.0 / M_PI, 3) +
+            " deg orientation");
+}
+
+// On a failed solve, name WHAT blocked it: one line per distinct
+// (object, sphere) scene violation across every candidate attempt, worst
+// first, with the sphere's exemption group and the clearance floor it
+// missed. Without this a scene_clearance failure reports only its stage
+// (2026-08-23: three identical circle goals, 18 attempts each, and no way
+// to see which sphere hit the torso, when, or by how much).
+void SummarizeSceneBlockersLines(SummaryWriter& summary,
+                                 const std::vector<CandidateEvidence>& attempts,
+                                 const std::vector<CollisionSphereGroup>& sphere_groups,
+                                 double minimum_clearance_m)
+{
+    const std::vector<SceneBlockerLine> blockers =
+        SummarizeSceneBlockers(attempts, sphere_groups);
+    for (const SceneBlockerLine& blocker : blockers) {
+        summary.Line(
+            "scene blocker",
+            blocker.object_id + " vs sphere " +
+                std::to_string(blocker.sphere_index) + " (" +
+                CollisionSphereGroupName(blocker.group) + "): clearance " +
+                Fixed(blocker.worst_clearance_m * 1e3) + " mm < floor " +
+                Fixed(minimum_clearance_m * 1e3) + " mm at t=" +
+                Fixed(blocker.worst_time_s, 2) + " s, blocked " +
+                std::to_string(blocker.attempts_blocked) + " attempt(s)");
+    }
+    const ScreenedTerminalSummary screened =
+        SummarizeScreenedTerminals(attempts, sphere_groups);
+    if (screened.rejected_count > 0)
+        summary.Line(
+            "terminal candidates in scene contact",
+            std::to_string(screened.rejected_count) +
+                " screened out before solving (worst: " +
+                screened.worst.object_id + " vs sphere " +
+                std::to_string(screened.worst.sphere_index) + " (" +
+                CollisionSphereGroupName(screened.worst.group) +
+                "), clearance " +
+                Fixed(screened.worst.worst_clearance_m * 1e3) + " mm)");
+    const std::optional<DynamicAttemptEvidence> closest =
+        ClosestDynamicAttempt(attempts);
+    if (closest)
+        summary.Line(
+            "closest dynamic attempt",
+            "velocity ratio " + Fixed(closest->velocity_ratio, 3) +
+                ", acceleration ratio " + Fixed(closest->acceleration_ratio, 3) +
+                " at " + Fixed(closest->duration_s, 1) +
+                " s (executable needs both <= 1.0; the attempt cap stopped repair here)");
+}
+
+// The IK walk's summary lines: solved count, the failed ranges with their
+// percent of the way along the path, the worst residual, the smallest
+// joint-limit margin, and the solved neighbours around each failed range —
+// the samples a diagnosis starts from.
+void SummarizeWalk(SummaryWriter& out, const PathIkResult& walk,
+                   const PlanJointLimits& limits, double acceptance_m) {
+    const std::size_t count = walk.samples.size();
+    if (count == 0) return;
+    const double denominator = count > 1 ? static_cast<double>(count - 1) : 1.0;
+    const auto percent = [denominator](std::size_t index) {
+        return Fixed(100.0 * static_cast<double>(index) / denominator, 0) + "%";
+    };
+
+    // Anchors are the attempted samples: solved, or carrying a failure
+    // reason. Interpolated samples were never attempted and are the walk's
+    // normal state, not a shortfall.
+    const auto failed = [&](const PathIkSample& sample) {
+        return !sample.solved && sample.failure != PathIkFailure::kNone;
+    };
+    std::size_t solved = 0, failed_anchors = 0, interpolated = 0;
+    double worst_residual_m = 0.0;
+    std::size_t worst_residual_index = 0;
+    double min_margin_rad = std::numeric_limits<double>::infinity();
+    std::size_t min_margin_index = 0;
+    for (std::size_t index = 0; index < count; ++index) {
+        const PathIkSample& sample = walk.samples[index];
+        if (sample.solved) ++solved;
+        if (failed(sample)) ++failed_anchors;
+        if (sample.interpolated) ++interpolated;
+        if (sample.position_residual_m > worst_residual_m &&
+            std::isfinite(sample.position_residual_m)) {
+            worst_residual_m = sample.position_residual_m;
+            worst_residual_index = index;
+        }
+        const double margin = JointLimitMarginRad(sample.configuration, limits);
+        if (margin < min_margin_rad) {
+            min_margin_rad = margin;
+            min_margin_index = index;
+        }
+    }
+
+    out.Line("IK anchors", std::to_string(solved) + " solved, " +
+                               std::to_string(failed_anchors) +
+                               " failed (dropped); " +
+                               std::to_string(interpolated) + " of " +
+                               std::to_string(count) +
+                               " samples interpolated");
+    const std::string ranges = DescribeFailedRanges(walk);
+    if (!ranges.empty()) {
+        // First-to-last failed anchor as percent of the way along the path.
+        std::size_t first = count, last = 0;
+        for (std::size_t index = 0; index < count; ++index)
+            if (failed(walk.samples[index])) {
+                first = std::min(first, index);
+                last = std::max(last, index);
+            }
+        out.Line("failed anchors", ranges + " (" + percent(first) + "-" +
+                                       percent(last) + " along the path)");
+        // Solved neighbours around each failed range.
+        std::ostringstream neighbours;
+        bool first_range = true;
+        for (std::size_t index = 0; index < count;) {
+            if (!failed(walk.samples[index])) { ++index; continue; }
+            std::size_t end = index;
+            while (end + 1 < count && failed(walk.samples[end + 1])) ++end;
+            if (!first_range) neighbours << "; ";
+            first_range = false;
+            const auto describe = [&](std::size_t at) {
+                neighbours << "sample " << at << " (residual "
+                           << Fixed(walk.samples[at].position_residual_m * 1e3)
+                           << " mm, margin "
+                           << Fixed(JointLimitMarginRad(
+                                        walk.samples[at].configuration, limits) *
+                                    180.0 / M_PI)
+                           << " deg)";
+            };
+            // The adjacent sample may be interpolated (never attempted), so
+            // scan outward to the nearest SOLVED anchor on each side.
+            std::size_t before = index;
+            while (before > 0 && !walk.samples[before - 1].solved) --before;
+            if (before > 0) describe(before - 1);
+            else neighbours << "none before";
+            neighbours << " / ";
+            std::size_t after = end;
+            while (after + 1 < count && !walk.samples[after + 1].solved) ++after;
+            if (after + 1 < count) describe(after + 1);
+            else neighbours << "none after";
+            index = end + 1;
+        }
+        out.Line("solved neighbours", neighbours.str());
+        // Which failure the walk actually recorded, per kind.
+        std::size_t limits_failures = 0, convergence_failures = 0;
+        for (const PathIkSample& sample : walk.samples) {
+            if (sample.failure == PathIkFailure::kJointLimits) ++limits_failures;
+            if (sample.failure == PathIkFailure::kNoConvergence)
+                ++convergence_failures;
+        }
+        std::ostringstream reasons;
+        reasons << convergence_failures << " no-convergence, " << limits_failures
+                << " converged-only-outside-joint-limits";
+        out.Line("failure reasons", reasons.str());
+    }
+    out.Line("worst position residual",
+             Fixed(worst_residual_m * 1e3) + " mm at sample " +
+                 std::to_string(worst_residual_index) + " (acceptance " +
+                 Fixed(acceptance_m * 1e3) + " mm)");
+    if (std::isfinite(min_margin_rad))
+        out.Line("min joint-limit margin (walk)",
+                 Fixed(min_margin_rad * 180.0 / M_PI) + " deg at sample " +
+                     std::to_string(min_margin_index));
+}
+
+// Writes the diagnostic dump, if one was asked for. Deliberately never
+// fatal and never able to change an exit code: a plan's success is a
+// statement about the plan, not about whether a debug file could be
+// written. A failure to write is reported and the run carries on.
+void DumpPlanDebug(const std::optional<std::string>& directory,
+                   const PlanDebugMeta& meta, const TrajectoryResult* trajectory,
+                   const PlanJointLimits& limits,
+                   const std::vector<CandidateEvidence>& candidate_attempts,
+                   const std::optional<std::size_t>& selected_candidate_attempt,
+                   const CartesianPath* path_mount, const PathIkResult* walk,
+                   std::ostream& diagnostics)
+{
+    if (!directory)
+        return;
+    const auto report = [&diagnostics](const std::optional<std::string>& error) {
+        if (error)
+            diagnostics << "warning: debug dump: " << *error << "\n";
+    };
+    report(WritePlanMetaCsv(*directory, meta));
+    report(WriteJointLimitsCsv(*directory, limits));
+    report(WriteCandidateAttemptsCsv(*directory, candidate_attempts,
+                                     selected_candidate_attempt));
+    if (trajectory != nullptr && !trajectory->trajectory_pos.empty())
+        report(WriteJointTrajectoryCsv(*directory, *trajectory));
+    if (path_mount != nullptr && walk != nullptr)
+        report(WritePathIkCsv(*directory, *path_mount, *walk, limits));
+    diagnostics << "debug dump written to " << *directory << "\n";
+}
+
+// Directory containing the running executable, via /proc/self/exe. Falls
+// back to "." if the link cannot be read (e.g. non-Linux, sandboxed exec).
+std::string ExecutableDirectory() {
+    std::array<char, PATH_MAX> buffer{};
+    const ssize_t length = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
+    if (length <= 0)
+        return ".";
+    const std::string path(buffer.data(), static_cast<std::size_t>(length));
+    const auto slash = path.find_last_of('/');
+    return slash == std::string::npos ? "." : path.substr(0, slash);
+}
+
+std::string DefaultGoalPath() {
+    return ExecutableDirectory() + "/../config/goal.yaml";
+}
+
+std::string DefaultDhPath(bool left_arm) {
+    // The DH YAML is GENERATED from the URDF at build time into the build
+    // tree's config/ directory, beside the executable (see
+    // generate_dh_params in CMakeLists.txt). There is no committed copy.
+    // Two files, one per arm's own chain — dh_params_tool.yaml (right, ends
+    // at the mounted tool) and dh_params_flange.yaml (left, bare flange).
+    return ExecutableDirectory() + "/config/" +
+           (left_arm ? "dh_params_flange.yaml" : "dh_params_tool.yaml");
+}
+
+std::string DefaultJointLimitsPath() {
+    return ExecutableDirectory() + "/../config/joint_limits.yaml";
+}
+
+// Beside goal.yaml, and resolved the same way — from the executable, never
+// from the working directory, so which file configures a run never depends
+// on where it was started from (docs/decisions/runtime-config.md).
+std::string DefaultPlannerConfigPath() {
+    return ExecutableDirectory() + "/../config/planner.yaml";
+}
+
+std::string DefaultRunsRootPath() {
+    return ExecutableDirectory() + "/../../../runs";
+}
+
+// std::stod that rejects trailing garbage and non-finite results, so
+// "not-a-number" or "1.2xyz" fail instead of silently truncating.
+double ParseDouble(const std::string& token) {
+    std::size_t consumed = 0;
+    const double value = std::stod(token, &consumed);
+    if (consumed != token.size() || !std::isfinite(value))
+        throw std::invalid_argument("not a finite number: '" + token + "'");
+    return value;
+}
+
+std::uint64_t ParseUint64(const std::string& token) {
+    std::uint64_t value = 0;
+    const char* const begin = token.data();
+    const char* const end = begin + token.size();
+    const auto result = std::from_chars(begin, end, value);
+    if (token.empty() || result.ec != std::errc() || result.ptr != end)
+        throw std::invalid_argument("not an unsigned integer: '" + token + "'");
+    return value;
+}
+
+struct ParsedArgs {
+    std::optional<Eigen::Vector3d> goal;
+    // The frame `goal` was written in, before conversion. Set from a goal
+    // file's `frame:` key, otherwise config::kReferenceFrame.
+    config::ReferenceFrame frame = config::kReferenceFrame;
+    std::optional<std::string> goal_file;
+    std::optional<std::string> state_csv;
+    std::optional<std::array<double, 7>> start_deg;
+    std::optional<std::array<double, 7>> start_velocity_deg_s;
+    // Required, no default: which physical arm this plan is for. unset ==
+    // --arm was never given, refused by RunBridge before anything else runs.
+    std::optional<bool> left_arm;
+    // Goal orientation as roll/pitch/yaw in the block's declared frame,
+    // before conversion. Unset = inherit the start pose's orientation.
+    std::optional<Eigen::Vector3d> goal_rpy_rad;
+    // A traced path instead of a point goal. Mutually exclusive with
+    // `goal` — a block naming both is refused rather than one silently
+    // winning, because which one won would not be visible in any output.
+    std::optional<CircleSpec> circle;
+    // unset == use DefaultDhPath(*left_arm), resolved once --arm is known
+    // (its default depends on left_arm, so it cannot be a member initializer).
+    std::optional<std::string> dh_path;
+    std::string joint_limits_path = DefaultJointLimitsPath();
+    std::string planner_config_path = DefaultPlannerConfigPath();
+    std::string runs_root = DefaultRunsRootPath();
+    // unset == no diagnostic dump. Off by default: a plan run in a session
+    // should not silently start writing files beside itself.
+    std::optional<std::string> debug_dir;
+    // Full config echo and similar low-priority detail. Off by default so
+    // the summary is what a normal run's diagnostics end with.
+    bool verbose = false;
+    std::optional<Eigen::Isometry3d> world_T_mount;
+    std::optional<std::uint64_t> vicon_sequence;
+    std::optional<std::uint64_t> trajectory_id;
+};
+
+
+// ---------------------------------------------------------------
+// Frame boundary
+// ---------------------------------------------------------------
+//
+// The planner is `mount` internally, everywhere: the gpmp2 arm model and the
+// SDF are paired in one ObstacleSDFFactorArm, so they must share a frame or
+// every collision check is silently wrong — and since PlannerModel builds the
+// arm at DhRootInMount(), that shared frame is mount for both arms. Input
+// declared in an arm's base frame or in Vicon `world` is converted here once
+// at the edge, through the ONE conversion module (PathFrames.h); input
+// already in mount passes through untouched. A world-declared input
+// requires the run's valid world_T_mount snapshot and is rejected without
+// one; mount and base inputs never need it.
+//
+// The base transforms come from the URDF through Pinocchio, never from a
+// constant in this file, so surveying the rig and regenerating the URDF
+// needs no code change.
+
+const char* FrameName(config::ReferenceFrame frame) {
+    return config::kReferenceFrameNames[static_cast<int>(frame)];
+}
+
+config::ReferenceFrame FrameFromName(const std::string& name) {
+    for (int i = 0; i < 4; ++i)
+        if (name == config::kReferenceFrameNames[i])
+            return static_cast<config::ReferenceFrame>(i);
+    throw std::invalid_argument(
+        "unknown frame '" + name +
+        "' (expected mount, right_base, left_base or world)");
+}
+
+// Rotation matrix from roll/pitch/yaw, R = Rz*Ry*Rx — the convention
+// FramePrint.h prints and the controller's orientation line uses, so a
+// number read off a diagnostic can be pasted straight into a goal file.
+Eigen::Matrix3d RotationFromRpy(const Eigen::Vector3d& rpy_rad) {
+    return (Eigen::AngleAxisd(rpy_rad.z(), Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(rpy_rad.y(), Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(rpy_rad.x(), Eigen::Vector3d::UnitX()))
+        .toRotationMatrix();
+}
+
+// The inverse of RotationFromRpy, so an orientation can be echoed back in
+// the frame it was converted INTO rather than the one it was written in.
+Eigen::Vector3d RpyFromRotation(const Eigen::Matrix3d& rotation) {
+    return rotation.eulerAngles(2, 1, 0).reverse();  // R = Rz*Ry*Rx
+}
+
+// Reads a YAML sequence of exactly three finite numbers into a vector,
+// naming `what` in the error so the operator sees which key was malformed.
+Eigen::Vector3d ReadVector3(const YAML::Node& node, const std::string& what) {
+    if (!node || !node.IsSequence() || node.size() != 3)
+        throw std::invalid_argument(what + " must be a list of three numbers");
+    Eigen::Vector3d value;
+    for (int axis = 0; axis < 3; ++axis) {
+        value(axis) = node[static_cast<std::size_t>(axis)].as<double>();
+        if (!std::isfinite(value(axis)))
+            throw std::invalid_argument(what + " contains a non-finite number");
+    }
+    return value;
+}
+
+// Fills `parsed.goal` from a YAML goal file. Goal files are ARM-KEYED: one
+// top-level block per arm ("right:" and/or "left:"), each with its own
+// goal/frame, so one file can hold both arms' targets for a --arm both
+// session without either
+// silently reading the other's numbers. This function reads only the block
+// matching `left_arm`; the other block (if present) is untouched. Any
+// failure — missing file, missing arm block, wrong shape, non-numeric value
+// — throws std::invalid_argument naming the file, so a typo becomes a
+// refusal to plan rather than a coordinate the arm accepts.
+void LoadGoalFile(const std::string& path, ParsedArgs& parsed, bool left_arm) {
+    YAML::Node root;
+    try {
+        root = YAML::LoadFile(path);
+    } catch (const std::exception& error) {
+        throw std::invalid_argument("cannot read goal file " + path + ": " +
+                                    error.what());
+    }
+    const std::string arm_key = left_arm ? "left" : "right";
+    try {
+        const YAML::Node arm_node = root[arm_key];
+        if (!arm_node)
+            throw std::invalid_argument(
+                "no '" + arm_key + ":' block — goal files are arm-keyed: a "
+                "top-level 'right:' and/or 'left:' block, each with its own "
+                "goal/frame");
+        if (arm_node["box"])
+            throw std::invalid_argument(
+                "box is retired — edit obstacles.scene in planner.yaml");
+        // One `frame:` per arm block governs that block whole. Omitted means
+        // the compiled config::kReferenceFrame, which is also what a bare
+        // --goal uses.
+        if (arm_node["frame"])
+            parsed.frame = FrameFromName(arm_node["frame"].as<std::string>());
+        // `goal:` and `path:` are mutually exclusive. Refusing both-present
+        // matters more than it looks: silently preferring one would make the
+        // arm trace something the file also appears to ask against.
+        const bool has_goal = static_cast<bool>(arm_node["goal"]);
+        const bool has_path = static_cast<bool>(arm_node["path"]);
+        if (has_goal && has_path)
+            throw std::invalid_argument(
+                "block has BOTH 'goal:' and 'path:' — they are mutually "
+                "exclusive; a point goal and a traced path are different "
+                "requests");
+        if (!has_goal && !has_path)
+            throw std::invalid_argument(
+                "block has neither 'goal:' nor 'path:' — one is required");
+
+        if (has_path) {
+            const YAML::Node path_node = arm_node["path"];
+            const std::string type =
+                path_node["type"] ? path_node["type"].as<std::string>() : "";
+            if (type != "circle")
+                throw std::invalid_argument(
+                    "path.type must be 'circle' (got '" + type +
+                    "'); other shapes use the same CartesianPath pipeline but "
+                    "have no generator yet");
+            CircleSpec circle;
+            circle.centre_m = ReadVector3(path_node["centre"], "path.centre");
+            circle.radius_m = path_node["radius_m"]
+                                  ? path_node["radius_m"].as<double>()
+                                  : throw std::invalid_argument("path.radius_m is required");
+            if (!(circle.radius_m > 0.0) || !std::isfinite(circle.radius_m))
+                throw std::invalid_argument("path.radius_m must be finite and positive");
+            circle.normal = ReadVector3(path_node["normal"], "path.normal");
+            if (circle.normal.norm() < 1e-9)
+                throw std::invalid_argument(
+                    "path.normal is degenerate — it cannot define a plane");
+            if (!path_node["duration_s"])
+                throw std::invalid_argument("path.duration_s is required");
+            circle.duration_s = path_node["duration_s"].as<double>();
+            if (!(circle.duration_s > 0.0) || !std::isfinite(circle.duration_s))
+                throw std::invalid_argument("path.duration_s must be finite and positive");
+            if (path_node["start_angle_deg"])
+                circle.start_angle_rad =
+                    path_node["start_angle_deg"].as<double>() * M_PI / 180.0;
+            const std::string orientation =
+                path_node["orientation"] ? path_node["orientation"].as<std::string>()
+                                         : "fixed";
+            if (orientation == "fixed") {
+                circle.orientation = OrientationPolicy::kFixed;
+                if (!path_node["orientation_rpy_deg"])
+                    throw std::invalid_argument(
+                        "path.orientation: fixed requires path.orientation_rpy_deg — "
+                        "inheriting the start orientation makes a traced shape's "
+                        "feasibility depend on where the arm was parked");
+                circle.fixed_rpy_rad =
+                    ReadVector3(path_node["orientation_rpy_deg"],
+                                "path.orientation_rpy_deg") * (M_PI / 180.0);
+            } else if (orientation == "radial") {
+                circle.orientation = OrientationPolicy::kRadialInward;
+            } else {
+                throw std::invalid_argument(
+                    "path.orientation must be 'fixed' or 'radial', got '" +
+                    orientation + "'");
+            }
+            circle.frame = parsed.frame;
+            parsed.circle = circle;
+        } else {
+            parsed.goal = ReadVector3(arm_node["goal"], "goal");
+        }
+        // Optional: the orientation to hold at the goal, degrees, same
+        // frame as the position. Omitting it inherits the start pose's
+        // orientation, which RunBridge reports rather than leaving silent.
+        if (arm_node["orientation_rpy_deg"]) {
+            const Eigen::Vector3d rpy_deg =
+                ReadVector3(arm_node["orientation_rpy_deg"], "orientation_rpy_deg");
+            parsed.goal_rpy_rad = rpy_deg * (M_PI / 180.0);
+        }
+    } catch (const std::exception& error) {
+        throw std::invalid_argument("goal file " + path + ": " + error.what());
+    }
+}
+
+// Throws std::invalid_argument / std::out_of_range on any malformed input;
+// RunBridge turns that into exit code 1 with the usage text.
+ParsedArgs ParseArgs(const std::vector<std::string>& args) {
+    ParsedArgs parsed;
+    std::size_t i = 0;
+    const auto next = [&]() -> const std::string& {
+        if (i >= args.size())
+            throw std::invalid_argument("missing value after flag");
+        return args[i++];
+    };
+    while (i < args.size()) {
+        const std::string flag = args[i++];
+        if (flag == "--arm") {
+            const std::string value = next();
+            if (value == "right") parsed.left_arm = false;
+            else if (value == "left") parsed.left_arm = true;
+            else throw std::invalid_argument(
+                "--arm must be 'right' or 'left' (got '" + value + "')");
+        } else if (flag == "--goal") {
+            const double x = ParseDouble(next());
+            const double y = ParseDouble(next());
+            const double z = ParseDouble(next());
+            parsed.goal = Eigen::Vector3d(x, y, z);
+        } else if (flag == "--goal-rpy-rad") {
+            // Named locals, not Vector3d(ParseDouble(next()), ...): C++
+            // leaves function-argument evaluation order to the compiler,
+            // and GCC filled the vector back-to-front (run 2026-08-23:
+            // the circle was planned around a component-reversed centre
+            // with a reversed normal). Statements sequence the reads.
+            const double roll = ParseDouble(next());
+            const double pitch = ParseDouble(next());
+            const double yaw = ParseDouble(next());
+            parsed.goal_rpy_rad = Eigen::Vector3d(roll, pitch, yaw);
+        } else if (flag == "--circle") {
+            CircleSpec circle;
+            const double centre_x = ParseDouble(next());
+            const double centre_y = ParseDouble(next());
+            const double centre_z = ParseDouble(next());
+            circle.centre_m = Eigen::Vector3d(centre_x, centre_y, centre_z);
+            circle.radius_m = ParseDouble(next());
+            const double normal_x = ParseDouble(next());
+            const double normal_y = ParseDouble(next());
+            const double normal_z = ParseDouble(next());
+            circle.normal = Eigen::Vector3d(normal_x, normal_y, normal_z);
+            circle.duration_s = ParseDouble(next());
+            circle.frame = config::ReferenceFrame::kMount;
+            parsed.circle = circle;
+        } else if (flag == "--circle-orientation") {
+            if (!parsed.circle)
+                throw std::invalid_argument(
+                    "--circle-orientation requires --circle first");
+            const std::string value = next();
+            if (value == "fixed")
+                parsed.circle->orientation = OrientationPolicy::kFixed;
+            else if (value == "radial")
+                parsed.circle->orientation = OrientationPolicy::kRadialInward;
+            else
+                throw std::invalid_argument(
+                    "--circle-orientation must be fixed or radial");
+        } else if (flag == "--goal-file") {
+            parsed.goal_file = next();
+        } else if (flag == "--state-csv") {
+            parsed.state_csv = next();
+        } else if (flag == "--start-deg") {
+            std::array<double, 7> degrees{};
+            for (double& d : degrees) d = ParseDouble(next());
+            parsed.start_deg = degrees;
+        } else if (flag == "--start-velocity-deg-s") {
+            std::array<double, 7> velocity{};
+            for (double& value : velocity) value = ParseDouble(next());
+            parsed.start_velocity_deg_s = velocity;
+        } else if (flag == "--dh") {
+            parsed.dh_path = next();
+        } else if (flag == "--joint-limits") {
+            parsed.joint_limits_path = next();
+        } else if (flag == "--planner-config") {
+            parsed.planner_config_path = next();
+        } else if (flag == "--runs-root") {
+            parsed.runs_root = next();
+        } else if (flag == "--debug-dir") {
+            parsed.debug_dir = next();
+        } else if (flag == "--verbose") {
+            parsed.verbose = true;
+        } else if (flag == "--box") {
+            throw std::invalid_argument(
+                "--box is retired — edit obstacles.scene in planner.yaml");
+        } else if (flag == "--output") {
+            const std::string value = next();
+            if (value != "world-cartesian")
+                throw std::invalid_argument(
+                    "--output must be 'world-cartesian' (got '" +
+                    value + "')");
+        } else if (flag == "--world-mount-pose-m-quat") {
+            std::array<double, 7> pose{};
+            for (double& value : pose)
+                value = ParseDouble(next());
+            Eigen::Quaterniond world_q_mount(pose[6], pose[3], pose[4], pose[5]);
+            if (std::abs(world_q_mount.norm() - 1.0) > 1e-3)
+                throw std::invalid_argument(
+                    "--world-mount-pose-m-quat must contain a unit quaternion");
+            world_q_mount.normalize();
+            Eigen::Isometry3d world_T_mount = Eigen::Isometry3d::Identity();
+            world_T_mount.linear() = world_q_mount.toRotationMatrix();
+            world_T_mount.translation() =
+                Eigen::Vector3d(pose[0], pose[1], pose[2]);
+            parsed.world_T_mount = world_T_mount;
+        } else if (flag == "--vicon-sequence") {
+            parsed.vicon_sequence = ParseUint64(next());
+        } else if (flag == "--trajectory-id") {
+            parsed.trajectory_id = ParseUint64(next());
+        } else {
+            throw std::invalid_argument("unrecognized flag: '" + flag + "'");
+        }
+    }
+    if (!parsed.left_arm)
+        throw std::invalid_argument(
+            "--arm is required and must be 'right' or 'left'");
+    if ((parsed.goal || parsed.circle) && parsed.goal_file)
+        throw std::invalid_argument(
+            "at most one direct goal or --goal-file may be given");
+    if (!parsed.goal && !parsed.circle)
+        LoadGoalFile(parsed.goal_file ? *parsed.goal_file : DefaultGoalPath(),
+                     parsed, *parsed.left_arm);
+    if (parsed.circle) {
+        if (!(parsed.circle->radius_m > 0.0) ||
+            !(parsed.circle->duration_s > 0.0) ||
+            parsed.circle->normal.norm() < 1e-9)
+            throw std::invalid_argument(
+                "--circle requires positive radius/duration and nonzero normal");
+        if (parsed.circle->orientation == OrientationPolicy::kFixed) {
+            if (!parsed.goal_rpy_rad)
+                throw std::invalid_argument(
+                    "fixed --circle requires --goal-rpy-rad");
+            parsed.circle->fixed_rpy_rad = *parsed.goal_rpy_rad;
+        }
+    }
+    if (parsed.state_csv && parsed.start_deg)
+        throw std::invalid_argument(
+            "at most one of --state-csv or --start-deg may be given");
+    if (!parsed.world_T_mount)
+        throw std::invalid_argument(
+            "--world-mount-pose-m-quat is required for world-cartesian output");
+    if (!parsed.vicon_sequence || *parsed.vicon_sequence == 0)
+        throw std::invalid_argument(
+            "--vicon-sequence must be nonzero for world-cartesian output");
+    if (!parsed.trajectory_id || *parsed.trajectory_id == 0)
+        throw std::invalid_argument(
+            "--trajectory-id must be nonzero for world-cartesian output");
+    return parsed;
+}
+
+constexpr double kDegToRad = M_PI / 180.0;
+
+// Redirects std::cout's stream buffer to another stream for the guard's
+// lifetime, restoring the original buffer on destruction — including via
+// an exception unwinding through the guarded scope. Used to keep the
+// legacy optimizer's stdout chatter out of the preview `targets` stream
+// (see the call site below).
+class CoutRedirectGuard {
+public:
+    explicit CoutRedirectGuard(std::ostream& to) : old_(std::cout.rdbuf(to.rdbuf())) {}
+    ~CoutRedirectGuard() { std::cout.rdbuf(old_); }
+    CoutRedirectGuard(const CoutRedirectGuard&) = delete;
+    CoutRedirectGuard& operator=(const CoutRedirectGuard&) = delete;
+
+private:
+    std::streambuf* old_;
+};
+
+}  // namespace
+
+
+namespace {
+
+using JointVector = Eigen::Matrix<double, 7, 1>;
+
+std::optional<JointVector> StartVelocityRadS(const ParsedArgs& parsed) {
+    if (!parsed.start_velocity_deg_s)
+        return std::nullopt;
+
+    JointVector qdot;
+    for (int joint = 0; joint < 7; ++joint)
+        qdot(joint) = (*parsed.start_velocity_deg_s)[joint] * kDegToRad;
+    return qdot;
+}
+
+bool LoadPlannerStartState(const ParsedArgs& parsed, bool left_arm,
+                           JointVector& q_start_rad,
+                           std::ostream& diagnostics,
+                           int& exit_code) {
+    if (parsed.start_deg) {
+        for (int joint = 0; joint < 7; ++joint)
+            q_start_rad(joint) = (*parsed.start_deg)[joint] * kDegToRad;
+    } else {
+        std::string state_csv;
+        if (parsed.state_csv) {
+            state_csv = *parsed.state_csv;
+        } else {
+            const std::string log_prefix =
+                left_arm ? "loop_log_left" : "loop_log_right";
+            std::string find_error;
+            const std::optional<std::string> found =
+                FindLatestRunCsv(parsed.runs_root, find_error, log_prefix);
+            if (!found) {
+                diagnostics << "error: no " << log_prefix
+                            << "*.csv run log found under " << parsed.runs_root
+                            << " — start the controller (--arm "
+                            << (left_arm ? "left" : "right")
+                            << ") first (it creates the log), or pass "
+                               "--state-csv/--start-deg\n";
+                exit_code = 2;
+                return false;
+            }
+            state_csv = *found;
+        }
+
+        std::string error;
+        const std::optional<JointVector> q = ReadLatestMeasuredQ(state_csv, error);
+        if (!q) {
+            diagnostics << "error: start state unavailable: " << error << "\n";
+            exit_code = 2;
+            return false;
+        }
+        q_start_rad = *q;
+    }
+
+    // GPMP2 uses a flat signed-radian coordinate representation. Convert the
+    // actuator convention once at the planner boundary before any solve.
+    for (int joint = 0; joint < 7; ++joint)
+        q_start_rad(joint) = WrapToPrincipalRad(q_start_rad(joint));
+
+    return true;
+}
+
+void PrintRuntimeHeader(const ParsedArgs& parsed,
+                        const Eigen::Isometry3d& world_T_mount,
+                        std::ostream& diagnostics) {
+    const Eigen::Quaterniond world_q_mount(world_T_mount.linear());
+    diagnostics << "planner Vicon sequence: " << *parsed.vicon_sequence << "\n"
+                << "trajectory ID: " << *parsed.trajectory_id << "\n"
+                << "T_W_M position [" << world_T_mount.translation().x() << ", "
+                << world_T_mount.translation().y() << ", "
+                << world_T_mount.translation().z() << "] m, quaternion xyzw ["
+                << world_q_mount.x() << ", " << world_q_mount.y() << ", "
+                << world_q_mount.z() << ", " << world_q_mount.w() << "]\n"
+                << "declared_input_frame=" << FrameName(parsed.frame)
+                << " planning_frame=mount output_frame=world\n";
+}
+
+void PrintPlannerConfigSummary(const PlannerConfig& planner_config,
+                               bool verbose,
+                               std::ostream& diagnostics) {
+    if (verbose) {
+        diagnostics << EffectiveConfigText(planner_config);
+        return;
+    }
+
+    diagnostics << "planner config: " << planner_config.source_path
+                << " digest(fnv1a64)=" << std::hex << std::showbase
+                << planner_config.source_fnv1a64 << std::dec << std::noshowbase
+                << " ik_seed=" << planner_config.effective_ik_seed
+                << " (--verbose for all values)\n";
+}
+
+bool ProjectForController(PlannerModel& model,
+                          const Eigen::Isometry3d& world_T_mount,
+                          const TrajectoryResult& trajectory,
+                          double total_time_s,
+                          const ParsedArgs& parsed,
+                          PlannerSolveResult& result,
+                          std::ostream& diagnostics) {
+    try {
+        WorldCartesianTrajectory projected = ProjectWorldTrajectory(
+            model, world_T_mount, trajectory.trajectory_pos,
+            trajectory.trajectory_vel, total_time_s,
+            *parsed.trajectory_id, *parsed.vicon_sequence);
+        result.trajectory =
+            std::make_unique<WorldCartesianTrajectory>(std::move(projected));
+        return true;
+    } catch (const std::exception& error) {
+        diagnostics << "error: plan rejected: " << error.what() << "\n";
+        result.status = PlanStatus::kFailed;
+        result.failure_reason = error.what();
+        result.exit_code = 4;
+        return false;
+    }
+}
+
+PlannerSolveResult SolvePathTask(const ParsedArgs& parsed,
+                                 bool left_arm,
+                                 const Eigen::Isometry3d& world_T_mount,
+                                 const JointVector& q_start_rad,
+                                 const std::optional<JointVector>& qdot_start_rad_s,
+                                 PlannerModel& model,
+                                 const PlannerConfig& planner_config,
+                                 std::ostream& diagnostics) {
+    PlannerSolveResult result;
+    CircleSpec circle = *parsed.circle;
+    circle.samples = CircleSamplesForChordError(
+        circle.radius_m, planner_config.path_following.max_chord_error_m);
+
+    CartesianPath task_path;
+    try {
+        task_path = PathToMount(GenerateCircle(circle), world_T_mount);
+    } catch (const std::exception& error) {
+        diagnostics << "error: " << error.what() << "\n";
+        result.exit_code = 1;
+        return result;
+    }
+
+    diagnostics << "path: circle, centre " << circle.centre_m.x() << " "
+                << circle.centre_m.y() << " " << circle.centre_m.z()
+                << " m, radius " << circle.radius_m << " m, normal "
+                << circle.normal.x() << " " << circle.normal.y() << " "
+                << circle.normal.z() << ", " << circle.samples
+                << " samples (chord error <= "
+                << planner_config.path_following.max_chord_error_m * 1000.0
+                << " mm), lap " << circle.duration_s << " s, declared in "
+                << FrameName(parsed.frame) << " -> "
+                << FrameName(config::ReferenceFrame::kMount) << "\n";
+
+    PathPlanOutcome plan;
+    {
+        const CoutRedirectGuard cout_guard(diagnostics);
+        plan = SolveAlongPath(model, task_path, q_start_rad, qdot_start_rad_s,
+                              parsed.joint_limits_path, planner_config);
+    }
+
+    result.status = plan.status;
+    result.failure_reason = plan.failure_reason;
+
+    PlanDebugMeta meta;
+    meta.arm = left_arm ? "left" : "right";
+    meta.plan_kind = "path";
+    meta.status = plan.status;
+    meta.failure_reason = plan.failure_reason;
+    meta.total_time_s = plan.total_time_sec;
+
+    if (plan.terminal_candidate) {
+        diagnostics << "terminal IK: stream " << plan.terminal_candidate->stream_id
+                    << ", attempt " << plan.terminal_candidate->attempt_index
+                    << ", residual "
+                    << plan.terminal_candidate->position_residual_m * 1000.0
+                    << " mm / "
+                    << plan.terminal_candidate->orientation_residual_rad * 180.0 / M_PI
+                    << " deg\n";
+    }
+
+    if (IsExecutable(plan.status) && plan.trajectory) {
+        diagnostics << "continuation IK: largest joint step "
+                    << plan.maximum_joint_step_rad * 180.0 / M_PI
+                    << " deg, closure drift "
+                    << plan.closure_drift_rad * 180.0 / M_PI << " deg\n";
+        if (plan.ik_unresolved_samples > 0) {
+            diagnostics << "continuation IK gaps: " << plan.ik_unresolved_samples
+                        << " unresolved sample(s) seeded ("
+                        << plan.ik_interpolated_samples
+                        << " interpolated) — GPMP2 keeps the configured pose "
+                           "priors and the final validation judges the result\n";
+        }
+        if (plan.selected_candidate_attempt) {
+            const CandidateEvidence& selected =
+                plan.candidate_attempts[*plan.selected_candidate_attempt];
+            diagnostics << "selected candidate: branch "
+                        << selected.terminal_branch << ", route "
+                        << RouteHypothesisName(selected.route)
+                        << ", duration attempt " << selected.duration_attempt
+                        << ", scene sigma " << selected.scene_collision_sigma
+                        << "\n";
+        }
+        if (parsed.verbose) {
+            diagnostics << "trace quality: max position "
+                        << plan.validation.trace_max_position_m * 1000.0
+                        << " mm, RMS "
+                        << plan.validation.trace_rms_position_m * 1000.0
+                        << " mm, p95 "
+                        << plan.validation.trace_p95_position_m * 1000.0
+                        << " mm, max orientation "
+                        << plan.validation.trace_max_orientation_rad * 180.0 / M_PI
+                        << " deg\n";
+        }
+    }
+
+    diagnostics << "---- PLAN SUMMARY (" << meta.arm
+                << " arm, traced path) ----\n";
+    SummaryWriter summary{diagnostics, meta.extra};
+    if (!IsExecutable(plan.status) || !plan.trajectory) {
+        summary.Line("result", FailedPlanStage(plan.failure_reason));
+        summary.Line("error", plan.failure_reason);
+        SummarizeSceneBlockersLines(summary, plan.candidate_attempts,
+                                    model.sphere_groups,
+                                    planner_config.minimum_clearance_m);
+    } else {
+        summary.Line("result", std::string(PlanStatusName(plan.status)) +
+                                   ", duration " + Fixed(plan.total_time_sec, 2) +
+                                   " s");
+        SummarizeGoalBlocked(summary, plan.status, plan.validation);
+        if (plan.selected_candidate_attempt) {
+            const CandidateEvidence& selected =
+                plan.candidate_attempts[*plan.selected_candidate_attempt];
+            summary.Line("selected candidate",
+                         "branch " + std::to_string(selected.terminal_branch) +
+                             ", " + RouteHypothesisName(selected.route) +
+                             ", duration attempt " +
+                             std::to_string(selected.duration_attempt));
+        }
+        summary.Line(
+            "path fidelity (dense executed)",
+            "max " +
+                Fixed(plan.validation.trace_dense_max_position_m * 1e3, 2) +
+                " mm at t=" +
+                Fixed(plan.validation.trace_dense_worst_time_s, 2) +
+                " s (tolerance " +
+                Fixed(planner_config.path_following.maximum_planning_error_m * 1e3,
+                      1) +
+                " mm)");
+        summary.Line(
+            "anchor fidelity (diagnostic)",
+            "max " + Fixed(plan.validation.trace_max_position_m * 1e3, 2) +
+                " mm / p95 " +
+                Fixed(plan.validation.trace_p95_position_m * 1e3, 2) +
+                " mm position, max " +
+                Fixed(plan.validation.trace_max_orientation_rad * 180.0 / M_PI) +
+                " deg orientation");
+        summary.Line("min modelled clearance",
+                     Fixed(plan.validation.minimum_scene_clearance_m * 1e3) +
+                         " mm at t=" +
+                         Fixed(plan.validation.worst_scene_time_s, 2) + " s");
+        summary.Line("self collision",
+                     plan.validation.self_collision_valid ? "valid" : "invalid");
+        summary.Line("dynamic ratios",
+                     "velocity " + Fixed(plan.validation.max_velocity_ratio) +
+                         ", acceleration " +
+                         Fixed(plan.validation.max_acceleration_ratio));
+    }
+
+    SummarizeWalk(summary, plan.ik_walk, plan.joint_limits,
+                  planner_config.path_following.maximum_planning_error_m);
+    if (IsExecutable(plan.status) && plan.trajectory) {
+        meta.extra.emplace_back("task_start_time_s",
+                                Fixed(plan.task_start_time_s, 6));
+    }
+    DumpPlanDebug(parsed.debug_dir, meta,
+                  plan.trajectory ? &*plan.trajectory : nullptr,
+                  plan.joint_limits, plan.candidate_attempts,
+                  plan.selected_candidate_attempt, &task_path, &plan.ik_walk,
+                  diagnostics);
+    diagnostics << "----\n";
+
+    if (!IsExecutable(plan.status) || !plan.trajectory) {
+        diagnostics << "error: solve failed: " << plan.failure_reason << "\n";
+        result.exit_code = 3;
+        return result;
+    }
+
+    if (!ProjectForController(model, world_T_mount, *plan.trajectory,
+                              plan.total_time_sec, parsed, result, diagnostics)) {
+        return result;
+    }
+
+    diagnostics << "arm: " << (left_arm ? "left" : "right")
+                << ", traced circle emitted, trajectory points: "
+                << result.trajectory->points.size() << ", duration "
+                << plan.total_time_sec << " s\n";
+    result.exit_code = 0;
+    result.status = plan.status;
+    result.failure_reason.clear();
+    return result;
+}
+
+PlannerSolveResult SolvePointTask(const ParsedArgs& parsed,
+                                  bool left_arm,
+                                  const Eigen::Isometry3d& world_T_mount,
+                                  const JointVector& q_start_rad,
+                                  const std::optional<JointVector>& qdot_start_rad_s,
+                                  PlannerModel& model,
+                                  const PlannerConfig& planner_config,
+                                  std::ostream& diagnostics) {
+    PlannerSolveResult result;
+
+    Eigen::Vector3d goal_mount;
+    try {
+        goal_mount = PointToMount(*parsed.goal, parsed.frame, world_T_mount);
+    } catch (const std::exception& error) {
+        diagnostics << "error: " << error.what() << "\n";
+        result.exit_code = 1;
+        return result;
+    }
+
+    diagnostics << "goal_mount_m: [" << goal_mount.x() << ", "
+                << goal_mount.y() << ", " << goal_mount.z()
+                << "] (declared_frame=" << FrameName(parsed.frame) << ")\n";
+
+    PlanRequest request;
+    request.q_start_rad = q_start_rad;
+    request.qdot_start_rad_s = qdot_start_rad_s;
+    request.goal_position_m = goal_mount;
+
+    if (parsed.goal_rpy_rad) {
+        request.goal_rotation = RotationToMount(
+            RotationFromRpy(*parsed.goal_rpy_rad), parsed.frame, world_T_mount);
+        const Eigen::Vector3d rpy_mount = RpyFromRotation(*request.goal_rotation);
+        diagnostics << "goal_orientation_rpy_mount_deg: ["
+                    << rpy_mount.x() * 180.0 / M_PI << ", "
+                    << rpy_mount.y() * 180.0 / M_PI << ", "
+                    << rpy_mount.z() * 180.0 / M_PI
+                    << "] (declared_frame=" << FrameName(parsed.frame) << ")\n";
+    } else {
+        diagnostics << "goal orientation: INHERITED from the start pose (no "
+                       "orientation_rpy_deg in the goal block). Feasibility "
+                       "therefore depends on where the arm started; set it "
+                       "explicitly to make this goal mean the same thing every "
+                       "run.\n";
+    }
+
+    PlanOutcome outcome;
+    {
+        const CoutRedirectGuard cout_guard(diagnostics);
+        outcome = SolveToPosition(model, request, parsed.joint_limits_path,
+                                  planner_config);
+    }
+
+    result.status = outcome.status;
+    result.failure_reason = outcome.failure_reason;
+
+    PlanDebugMeta meta;
+    meta.arm = left_arm ? "left" : "right";
+    meta.plan_kind = "point";
+    meta.status = outcome.status;
+    meta.failure_reason = outcome.failure_reason;
+    meta.final_goal_error_m = outcome.final_goal_error_m;
+    meta.total_time_s = outcome.total_time_sec;
+
+    if (outcome.terminal_candidate) {
+        diagnostics << "terminal IK: stream "
+                    << outcome.terminal_candidate->stream_id << ", attempt "
+                    << outcome.terminal_candidate->attempt_index << ", residual "
+                    << outcome.terminal_candidate->position_residual_m * 1000.0
+                    << " mm / "
+                    << outcome.terminal_candidate->orientation_residual_rad *
+                           180.0 / M_PI
+                    << " deg\n";
+    }
+
+    diagnostics << "---- PLAN SUMMARY (" << meta.arm
+                << " arm, point goal) ----\n";
+    SummaryWriter summary{diagnostics, meta.extra};
+    if (!IsExecutable(outcome.status) || !outcome.trajectory) {
+        summary.Line("result", FailedPlanStage(outcome.failure_reason));
+        summary.Line("error", outcome.failure_reason);
+        SummarizeSceneBlockersLines(summary, outcome.candidate_attempts,
+                                    model.sphere_groups,
+                                    planner_config.minimum_clearance_m);
+    } else {
+        summary.Line("result", std::string(PlanStatusName(outcome.status)) +
+                                   ", duration " +
+                                   Fixed(outcome.total_time_sec, 2) + " s");
+        SummarizeGoalBlocked(summary, outcome.status, outcome.validation);
+        if (outcome.selected_candidate_attempt) {
+            const CandidateEvidence& selected =
+                outcome.candidate_attempts[*outcome.selected_candidate_attempt];
+            summary.Line("selected candidate",
+                         "branch " + std::to_string(selected.terminal_branch) +
+                             ", " + RouteHypothesisName(selected.route) +
+                             ", duration attempt " +
+                             std::to_string(selected.duration_attempt));
+        }
+        summary.Line(
+            "final requested goal error",
+            Fixed(outcome.validation.requested_terminal_position_error_m * 1e3,
+                  3) +
+                " mm");
+
+        double min_margin_rad = std::numeric_limits<double>::infinity();
+        double min_margin_time_s = 0.0;
+        for (std::size_t state = 0;
+             state < outcome.trajectory->trajectory_pos.size(); ++state) {
+            JointVector q;
+            for (int joint = 0; joint < 7; ++joint)
+                q(joint) = outcome.trajectory->trajectory_pos[state](joint);
+            const double margin = JointLimitMarginRad(q, outcome.joint_limits);
+            if (margin < min_margin_rad) {
+                min_margin_rad = margin;
+                min_margin_time_s =
+                    static_cast<double>(state) * outcome.trajectory->dt;
+            }
+        }
+        if (std::isfinite(min_margin_rad)) {
+            summary.Line("min joint-limit margin (trajectory)",
+                         Fixed(min_margin_rad * 180.0 / M_PI) +
+                             " deg at t=" + Fixed(min_margin_time_s, 2) + " s");
+        }
+        if (outcome.validation.has_scene_pairs) {
+            summary.Line("min modelled clearance",
+                         Fixed(outcome.validation.minimum_scene_clearance_m * 1e3) +
+                             " mm at t=" +
+                             Fixed(outcome.validation.worst_scene_time_s, 2) +
+                             " s");
+        } else {
+            summary.Line("min modelled clearance",
+                         "not applicable (no scene pairs)");
+        }
+        if (outcome.validation.has_self_pairs) {
+            summary.Line("self collision clearance",
+                         Fixed(outcome.validation.minimum_self_clearance_m * 1e3) +
+                             " mm at t=" +
+                             Fixed(outcome.validation.worst_self_time_s, 2) +
+                             " s");
+        } else {
+            summary.Line("self collision clearance",
+                         "not applicable (no self pairs)");
+        }
+    }
+
+    DumpPlanDebug(parsed.debug_dir, meta,
+                  outcome.trajectory ? &*outcome.trajectory : nullptr,
+                  outcome.joint_limits, outcome.candidate_attempts,
+                  outcome.selected_candidate_attempt, nullptr, nullptr,
+                  diagnostics);
+    diagnostics << "----\n";
+
+    if (!IsExecutable(outcome.status) || !outcome.trajectory) {
+        diagnostics << "error: solve failed: " << outcome.failure_reason << "\n";
+        result.exit_code = 3;
+        return result;
+    }
+
+    if (!ProjectForController(model, world_T_mount, *outcome.trajectory,
+                              outcome.total_time_sec, parsed, result,
+                              diagnostics)) {
+        return result;
+    }
+
+    diagnostics << "arm: " << (left_arm ? "left" : "right")
+                << ", trajectory points: " << result.trajectory->points.size()
+                << ", solve: "
+                << outcome.trajectory->optimization_duration.count()
+                << " ms, final requested goal error: "
+                << outcome.validation.requested_terminal_position_error_m * 1000.0
+                << " mm\n";
+    result.exit_code = 0;
+    result.status = outcome.status;
+    result.failure_reason.clear();
+    return result;
+}
+
+}  // namespace
+
+PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
+                             std::ostream& diagnostics) {
+    std::lock_guard<std::mutex> solve_lock(g_planner_solve_mutex);
+
+    PlannerSolveResult result;
+    for (const std::string& arg : args) {
+        if (arg == "--help" || arg == "-h") {
+            diagnostics << kUsageText;
+            result.exit_code = 0;
+            return result;
+        }
+    }
+
+    ParsedArgs parsed;
+    try {
+        parsed = ParseArgs(args);
+    } catch (const std::exception& error) {
+        diagnostics << "error: " << error.what() << "\n\n" << kUsageText;
+        result.exit_code = 1;
+        return result;
+    }
+
+    const bool left_arm = *parsed.left_arm;
+    const Eigen::Isometry3d world_T_mount = *parsed.world_T_mount;
+    PrintRuntimeHeader(parsed, world_T_mount, diagnostics);
+
+    JointVector q_start_rad;
+    if (!LoadPlannerStartState(parsed, left_arm, q_start_rad, diagnostics,
+                               result.exit_code)) {
+        return result;
+    }
+    const std::optional<JointVector> qdot_start_rad_s = StartVelocityRadS(parsed);
+
+    const std::string dh_path = parsed.dh_path.value_or(DefaultDhPath(left_arm));
+    PlannerModel model;
+    try {
+        const CoutRedirectGuard cout_guard(diagnostics);
+        model = LoadPlannerModel(dh_path, /*has_tool=*/!left_arm);
+    } catch (const std::exception& error) {
+        diagnostics << "error: solve failed: could not load planner model from "
+                    << dh_path << ": " << error.what() << "\n";
+        result.exit_code = 3;
+        return result;
+    }
+
+    PlannerConfig planner_config;
+    try {
+        planner_config = LoadPlannerConfig(parsed.planner_config_path);
+    } catch (const std::exception& error) {
+        diagnostics << "error: " << error.what() << "\n";
+        result.exit_code = 1;
+        return result;
+    }
+    PrintPlannerConfigSummary(planner_config, parsed.verbose, diagnostics);
+
+    if (parsed.circle) {
+        return SolvePathTask(parsed, left_arm, world_T_mount, q_start_rad,
+                             qdot_start_rad_s, model, planner_config,
+                             diagnostics);
+    }
+
+    return SolvePointTask(parsed, left_arm, world_T_mount, q_start_rad,
+                          qdot_start_rad_s, model, planner_config, diagnostics);
+}
+```
+
+ I rewrote it as a structural refactor, not a planner redesign. The original `SolvePlan()` was 511 lines and mixed state loading, frame handling, point/path solving, diagnostics, and controller projection in one function. The rewritten `SolvePlan()` is 64 lines and reads as the actual runtime flow:
+
+```
+
+```
+
+
+```
+PlannerSolveResult SolvePlan(const std::vector<std::string>& args,
+                             std::ostream& diagnostics) {
+    std::lock_guard<std::mutex> solve_lock(g_planner_solve_mutex);
+
+    PlannerSolveResult result;
+
+    if (WantsHelp(args)) {
+        diagnostics << kUsageText;
+        return result;
+    }
+
+    ParsedArgs parsed;
+    if (!TryParseArgs(args, parsed, result, diagnostics))
+        return result;
+
+    const bool left_arm = *parsed.left_arm;
+    const Eigen::Isometry3d world_T_mount = *parsed.world_T_mount;
+
+    PrintRuntimeHeader(parsed, world_T_mount, diagnostics);
+
+    JointVector q_start_rad;
+    if (!LoadPlannerStartState(
+            parsed, left_arm, q_start_rad,
+            diagnostics, result.exit_code))
+        return result;
+
+    const auto qdot_start_rad_s = StartVelocityRadS(parsed);
+
+    PlannerModel model;
+    if (!LoadModel(parsed, left_arm, model, result, diagnostics))
+        return result;
+
+    PlannerConfig config;
+    if (!LoadConfig(parsed, config, result, diagnostics))
+        return result;
+
+    PrintPlannerConfigSummary(config, parsed.verbose, diagnostics);
+
+    if (parsed.circle) {
+        return SolvePathTask(
+            parsed,
+            left_arm,
+            world_T_mount,
+            q_start_rad,
+            qdot_start_rad_s,
+            model,
+            config,
+            diagnostics);
+    }
+
+    return SolvePointTask(
+        parsed,
+        left_arm,
+        world_T_mount,
+        q_start_rad,
+        qdot_start_rad_s,
+        model,
+        config,
+        diagnostics);
+}
+```
+
+I deliberately did not change GPMP2 behaviour, IK policy, collision validation, candidate selection, dynamic limits, debug evidence, or world-trajectory projection. The existing diagnostics are valuable, especially the IK walk and scene-blocker evidence.  
+I also did not try to solve the two bigger architectural questions inside this one-file rewrite: making Vicon/world projection optional, and removing the `left = flange / right = tool` model decision. The latter is physically important enough that it should be resolved against your canonical Pinocchio model rather than guessed from this file. The current asymmetry is explicit in the supplied implementation. 
+Download the refactored PlannerRuntime.cpp
+I could structurally verify the rewrite and confirmed the key solver/projection/debug calls remain present, but I could not compile it against your project because only this translation unit was provided, not its headers/CMake/dependencies. The next repo-level rewrite I would make is more important: introduce the real `PlanningRequest → PlannerCore → PlanningResult` boundary so YAML, offline tests, the panel, and live goals all call exactly the same planner rather than entering through `ParsedArgs`.
+PlannerRuntime_refactored.cppCodeOpen file
+i wonder because before shapes where sorounded by anchors but now i dont know if that smart 
+Yes, anchors are still useful, but I would not make the shape depend on every anchor solving successfully.
+Your current code is actually moving toward the better formulation. The circle is first defined geometrically, then its sample count is chosen from a maximum chord error, instead of saying “a circle always has 30 anchors.”  That is a sensible robotics decision because the required number of constraints depends on curvature and radius.
+The important distinction is:
+
+```
+
+```
+
+
+```
+Old mental model
+
+circle
+  ↓
+anchor 0
+anchor 1
+anchor 2
+anchor 3
+...
+EVERY anchor must have valid IK
+  ↓
+optimizer
+```
+
+That is brittle. One difficult IK point can kill an otherwise perfectly feasible trajectory.
+A better design is:
+
+```
+
+```
+
+
+```
+Geometric Cartesian path
+        ↓
+adaptive path samples
+        ↓
+IK anchors used to initialise / guide GPMP2
+        ↓
+GPMP2 optimises continuous joint trajectory
+        ↓
+dense FK evaluation against original Cartesian path
+```
+
+That is basically what I would want.
+Your code even explicitly distinguishes solved anchors from interpolated samples, and says unresolved samples can be seeded while GPMP2 retains the pose priors and final validation decides whether the resulting motion is acceptable. 
+That is much more robust than:
+“IK failed at Cartesian sample 17, therefore the circle is impossible.”
+Where I would be careful
+I would not remove anchors entirely.
+GPMP2 still needs enough information to know:
+
+```
+
+```
+
+
+```
+          •
+       •     •
+     •         •
+     •         •
+       •     •
+          •
+```
+
+rather than simply:
+
+```
+
+```
+
+
+```
+start • ---------------- • end
+```
+
+For a circle, start and end are almost the same Cartesian position. Without intermediate path constraints, an optimiser has no reason whatsoever to travel around the circle.
+So you need intermediate constraints. The question is how many and what role they have.
+I would use:
+
+```
+
+```
+
+
+```
+Cartesian path = ground truth
+
+anchors = sparse constraints / initialisation
+
+GPMP2 support states = optimisation representation
+
+dense FK samples = final quality measurement
+```
+
+Not:
+
+```
+
+```
+
+
+```
+anchors = ground truth
+```
+
+Your current chord-error approach is particularly good
+Suppose two consecutive samples lie on a circle:
+
+```
+
+```
+
+
+```
+          arc
+       .-------.
+      /         \
+     A-----------B
+          chord
+```
+
+GPMP2 effectively sees constraints around `A` and `B`. If they are too far apart, the joint trajectory can cut inside the desired circle.
+Your code chooses the number of circle samples from:
+
+```
+
+```
+
+
+```
+CircleSamplesForChordError(
+    circle.radius_m,
+    planner_config.path_following.max_chord_error_m);
+```
+
+
+That is much better than arbitrarily choosing 20, 50 or 100 anchors.
+It lets you say something meaningful such as:
+“The discretisation itself cannot deviate from the requested circle by more than 0.5 mm.”
+Then your dense executed-path check asks whether the actual GPMP2 trajectory remains close to the requested path between those constraints. Your summary already reports that separately as `path fidelity (dense executed)`. 
+What I think you should aim for
+For your planner, I would keep this hierarchy:
+
+```
+
+```
+
+
+```
+Desired shape
+     │
+     │ analytical/geometric definition
+     ▼
+Adaptive Cartesian samples
+     │
+     ├──── IK succeeds ───→ useful joint seed
+     │
+     └──── IK fails ──────→ interpolate/continue if local gap is small
+                              │
+                              ▼
+                            GPMP2
+                              │
+                              ▼
+                     dense FK trajectory
+                              │
+                    compare with original shape
+                              │
+                    ┌─────────┴─────────┐
+                   pass               fail
+```
+
+And there should be limits on interpolation. You don't want:
+
+```
+
+```
+
+
+```
+✓ ✓ ✓ X X X X X X X ✓ ✓
+```
+
+to be silently accepted merely because GPMP2 managed to connect the ends.
+But:
+
+```
+
+```
+
+
+```
+✓ ✓ ✓ ✓ X ✓ ✓ ✓ ✓
+```
+
+is exactly the sort of local IK numerical failure that I would not let kill the planner.
+So yes, the old “shape surrounded by anchors” idea was fundamentally useful. What was wrong was treating those anchors as mandatory independent IK exams.
+For a live robotic planner, I think your current direction is stronger: the shape is the task; anchors are just a numerical mechanism for helping the optimiser represent it.
+to prevent this ?
+Yes. To prevent exactly this failure, you need anchors, but they must constrain the trajectory between them, not just prove that isolated IK points are reachable.
+The plot says the controller is not the main problem:
+
+*  requested circle radius: 100 mm 
+*  planner dense radial error: p95 31.9 mm, max 91.5 mm 
+*  measured radial p95: 41.5 mm 
+*  controller tracking RMS: 7.9 mm 
+*  requested lap: 3 s 
+*  planner produced: 38.1 s 
+*  planner speed is strongly surging 
+
+So the robot is largely following a bad reference. A 91.5 mm radial error on a 100 mm circle means the planner nearly destroys the shape in places.
+What I would change
+
+```
+
+```
+
+
+```
+Requested analytical circle
+          ↓
+Create path support points
+ θ0 θ1 θ2 θ3 ... θN
+          ↓
+Cartesian factor at EVERY task support state
+          ↓
+IK used only to initialise q
+          ↓
+GPMP2 optimisation
+          ↓
+dense interpolation of resulting joint trajectory
+          ↓
+FK every dense sample
+          ↓
+compare against analytical circle
+          ↓
+PASS only if dense error < tolerance
+```
+
+The crucial difference is this:
+
+```
+
+```
+
+
+```
+BAD
+
+anchor ●                 ● anchor
+       \_______________/
+         optimizer free
+         to cut/wobble
+```
+
+versus:
+
+```
+
+```
+
+
+```
+GOOD
+
+●──●──●──●──●──●──●──●
+↑  ↑  ↑  ↑  ↑  ↑  ↑  ↑
+Cartesian path constraint
+at optimisation states
+```
+
+You do not necessarily need hundreds of IK solves. Separate two concepts:
+
+```
+
+```
+
+
+```
+IK anchors      = help produce a good initial joint-space guess
+Path constraints = tell GPMP2 what Cartesian trajectory it must preserve
+```
+
+If IK at one intermediate point fails, interpolate the joint seed. But do not remove the Cartesian path constraint there. GPMP2 should still be told: “at this phase of the trajectory, TCP should be here.”
+There is also a timing problem
+A 3 s circle becoming 38.1 s should not be considered a successful plan.
+For a 100 mm radius circle requested over 3 seconds, nominal Cartesian speed is:
+v=32π(0.1)≈0.209 m/s 
+about 209 mm/s.
+Your planner should either:
+
+```
+
+```
+
+
+```
+3 s request
+   ↓
+dynamically feasible
+   ↓
+≈3 s trajectory
+```
+
+or:
+
+```
+
+```
+
+
+```
+3 s request
+   ↓
+not dynamically feasible
+   ↓
+FAIL / explicitly report minimum feasible duration
+```
+
+It should not silently transform the task into 38 seconds. That also lets the optimiser change phase progression and is likely contributing to the strange speed profile.
+I would therefore enforce four invariants
+
+1. Geometric constraint
+ Every task support state corresponds to the desired circle at a known phase `θ`. 
+2. Phase/time constraint
+ `θ(t)` progresses monotonically and approximately uniformly. The optimiser cannot spend 10 seconds around one section and race through another. 
+3. Dense post-validation
+ Evaluate FK between optimisation states. For example:
+
+```
+
+```
+
+
+```
+max Cartesian path error ≤ 2 mm
+p95 ≤ 1 mm
+```
+
+The exact numbers can be tuned, but validation must be on the interpolated trajectory actually sent to the controller, not only the anchors.
+4. Duration contract
+ Requested `3 s` must remain `3 s` within a small tolerance, otherwise explicitly report that the requested timing is infeasible. 
+
+And importantly, do not tune the controller to compensate for this plot yet. The green measured trajectory follows the planner's oscillations remarkably closely in many sections. Fix the blue trajectory first.
+So I would keep the old concept of the circle being “surrounded by anchors”, but reinterpret it:
+The circle should be densely constrained by Cartesian support states. IK anchors are only seeds. The analytical circle, not the IK anchors, is the ground truth.
+That directly prevents the planner from claiming `0.15 mm` at its anchors while producing a trajectory that is 91.5 mm away between them.
+
+## 2026-08-23 23:47:35 BST
+
+did you add things that i removed in the rewrite?
+
+## 2026-08-23 23:49:19 BST
+
+This validator is technically competent, but it has become too powerful for the role it should play in your planner. It is no longer just checking “is this trajectory safe and executable?” It is partly acting as a second planner, a trajectory-quality judge, a dynamics repair trigger, a path-tracking benchmark, and a diagnostic subsystem all at once.
+The biggest architectural problem is here:
+
+```
+
+```
+
+
+```
+const bool non_dynamic_valid = report.finite && report.start_valid &&
+    report.scene_valid && report.self_collision_valid &&
+    report.joint_limits_valid && report.trace_dense_valid && terminal_valid;
+```
+
+A candidate must simultaneously satisfy exact start consistency, obstacle clearance, self-collision, joint limits, dense path fidelity, terminal Cartesian accuracy, velocity limits and acceleration limits before it gets the `Executable` label. 
+For a live robotics planner, that creates brittleness because several fundamentally different concepts have been collapsed into one binary acceptance gate.
+1. The exact start tolerance is unnecessarily extreme
+
+```
+
+```
+
+
+```
+constexpr double kExactStartToleranceRad = 1e-12;
+```
+
+and later:
+
+```
+
+```
+
+
+```
+report.start_valid =
+    report.start_position_error_rad <= kExactStartToleranceRad;
+```
+
+ 
+`1e-12 rad` is essentially a numerical identity check, not a robotics tolerance.
+This makes sense as an internal invariant if the optimiser is mathematically constrained to use exactly the measured start state. It does not make sense as a physical validation criterion.
+I would distinguish:
+
+*  invariant: first trajectory state must be copied from `q_start` 
+*  physical validation: start state should be sufficiently close to current robot state 
+
+If you require exact equality internally, test the implementation with an assertion/unit test. Do not make a runtime planner candidate fail because of floating-point differences at `1e-12`.
+2. Dynamics are being treated more sensibly than the other checks
+This part is actually good:
+
+```
+
+```
+
+
+```
+} else if (report.max_velocity_ratio > 1.0 ||
+           report.max_acceleration_ratio > 1.0) {
+    report.disposition = CandidateDisposition::kNeedsLongerDuration;
+}
+```
+
+
+You correctly recognised that excessive velocity/acceleration usually means:
+geometry is valid, timing is wrong.
+That is exactly the right robotics interpretation.
+The problem is that the rest of the validator does not follow this philosophy. Most other deviations immediately become `kInvalid`.
+You probably want richer dispositions such as:
+
+```
+
+```
+
+
+```
+Executable
+NeedsRetiming
+NeedsGeometricRepair
+Unsafe
+Malformed
+```
+
+rather than making everything either executable or invalid.
+3. Path fidelity validation is particularly questionable
+This section worries me most:
+
+```
+
+```
+
+
+```
+if (inputs.path_fidelity_tolerance_m > 0.0 &&
+    report.trace_dense_max_position_m >
+        report.trace_support_max_position_m +
+            inputs.path_fidelity_tolerance_m)
+    report.trace_dense_valid = false;
+```
+
+
+Notice what you are actually testing.
+You are not simply testing absolute Cartesian path error.
+You are testing:
+
+```
+
+```
+
+
+```
+dense error > support-point error + tolerance
+```
+
+That means validity depends on how much worse interpolation becomes between support points.
+That can be a useful numerical diagnostic, but I would not make it a fundamental execution gate unless you have a strong research reason.
+You already compute much more intuitive quantities later:
+
+*  max error 
+*  mean error 
+*  RMS error 
+*  p95 error 
+*  orientation error 
+
+
+Those are excellent benchmark metrics.
+I would move most of them out of `ValidatePlan()` into something like:
+
+```
+
+```
+
+
+```
+EvaluateTrajectoryQuality()
+```
+
+because they describe planner quality rather than minimum safety.
+4. The validator is doing too many jobs
+`ValidatePlan()` currently performs:
+
+```
+
+```
+
+
+```
+trajectory structural validation
+interpolation/resampling
+joint travel computation
+joint position checking
+velocity checking
+acceleration estimation
+environment collision checking
+self-collision checking
+start-state checking
+terminal FK checking
+dense Cartesian tracking analysis
+support-point tracking analysis
+mean/RMS/p95 tracking statistics
+candidate classification
+failure diagnosis
+```
+
+That is too much responsibility for one function.
+You can see it directly in the file. The validation starts at line 131 and essentially becomes the whole planning acceptance pipeline. 
+I would split conceptually, but not necessarily create ten classes:
+
+```
+
+```
+
+
+```
+CheckTrajectoryStructure(...)
+CheckSafety(...)
+MeasureDynamics(...)
+MeasureTaskError(...)
+ClassifyCandidate(...)
+```
+
+These can remain simple free functions.
+The goal is not abstraction for abstraction's sake. It is to stop changing trajectory benchmarking from accidentally changing planner acceptance behaviour.
+5. Collision validation is one of the parts I would keep
+This section is good engineering:
+
+```
+
+```
+
+
+```
+query.clearance_m
+worst_scene_object_id
+worst_scene_sphere_index
+worst_scene_time_s
+outward_normal_mount
+q
+```
+
+
+This is exactly the kind of evidence you want from a robotics system.
+It tells you:
+what collided, where, when, by how much, and at what configuration?
+The problem is not this validation. The problem you discovered earlier was that the planner/runtime didn't expose this evidence when something failed.
+I would absolutely keep this.
+Likewise the self-collision check is understandable and bounded. 
+6. There is a potentially bad diagnostic convention
+You initialise minimum clearance as infinity:
+
+```
+
+```
+
+
+```
+report.minimum_scene_clearance_m =
+    std::numeric_limits<double>::infinity();
+```
+
+but then:
+
+```
+
+```
+
+
+```
+if (!std::isfinite(report.minimum_scene_clearance_m))
+    report.minimum_scene_clearance_m = 0.0;
+```
+
+ 
+If there were no applicable obstacle pairs, zero metres is semantically misleading.
+`0.0` could mean:
+touching an obstacle.
+But here it may mean:
+no measurement existed.
+That should probably remain `inf`, `NaN`, `std::optional<double>`, or have an explicit `has_scene_pairs` guard.
+You already have:
+
+```
+
+```
+
+
+```
+report.has_scene_pairs
+```
+
+so use that rather than manufacturing a clearance measurement.
+7. Acceleration is derived from sampled/interpolated velocity
+
+```
+
+```
+
+
+```
+(s.qdot - samples[i - 1].qdot) / dt
+```
+
+
+This isn't inherently wrong, but its result depends on `validation_dt_s` and your Hermite interpolation.
+Therefore the acceleration limit check isn't completely independent of validation discretisation.
+For your system this is probably acceptable, but you should recognise the architecture:
+
+```
+
+```
+
+
+```
+trajectory
+→ Hermite interpolation
+→ sampled qdot
+→ finite-difference qddot
+→ dynamic validity
+```
+
+So changing `validation_dt_s` can change whether a candidate passes.
+That is another reason dynamics should remain a retiming/repair signal, not be mixed with geometric invalidity.
+8. Your terminal tolerance is hard-coded
+
+```
+
+```
+
+
+```
+terminal_position_error_m <= 0.001
+terminal_orientation_error_rad <= 0.01
+```
+
+
+1 mm and roughly 0.57° may be perfectly reasonable for your experiment, but these values belong in planner/task configuration or task semantics.
+A point reaching task and a trajectory-following task do not necessarily need identical tolerances.
+This is especially true for a wearable Kinova system where:
+
+```
+
+```
+
+
+```
+model error
+mount deformation
+controller error
+Vicon error
+planner error
+```
+
+are all different sources.
+You do not want to accidentally require the offline planner to be dramatically more accurate than the physical system can meaningfully exploit.
+What I think the validator should become
+For your project I would reduce the hard execution gate to something much closer to:
+
+```
+
+```
+
+
+```
+safe =
+    finite &&
+    start_consistent &&
+    joint_limits_valid &&
+    scene_valid &&
+    self_collision_valid;
+
+task_satisfied =
+    terminal_error_within_tolerance &&
+    path_error_within_required_tolerance;
+
+dynamic_feasible =
+    velocity_ratio <= 1 &&
+    acceleration_ratio <= 1;
+```
+
+Then classify:
+
+```
+
+```
+
+
+```
+if (!safe)
+    Unsafe;
+
+else if (!task_satisfied)
+    NeedsGeometricRepair;
+
+else if (!dynamic_feasible)
+    NeedsRetiming;
+
+else
+    Executable;
+```
+
+And keep:
+
+```
+
+```
+
+
+```
+RMS path error
+mean path error
+p95
+dense error
+joint travel
+minimum clearance
+worst collision evidence
+```
+
+as measurements, not additional independent reasons for the planner to die.
+The important distinction
+Your planner should answer three different questions:
+
+```
+
+```
+
+
+```
+1. Is it safe?
+2. Does it accomplish the requested task?
+3. Can the robot execute it at this timing?
+```
+
+Right now `ValidatePlan()` mostly compresses those three questions into:
+
+```
+
+```
+
+
+```
+PASS / FAIL
+```
+
+That is why the system feels more brittle than the underlying robotics problem actually is.
+I would not remove validation. I would simplify its authority.
+The collision checks, joint-limit checks and diagnostics are valuable. The path statistics are valuable. The dynamic checks are valuable. What needs changing is the fact that all of these measurements have accumulated into one giant veto mechanism.
+That is the main architectural issue I see in this file.
+how rewrite it 
+Rewrite it by separating measurement from decision-making, while keeping it in one file and avoiding a large abstraction rewrite.
+The current function mixes interpolation, collision measurement, task-quality metrics, dynamics, and final acceptance.  I would make `ValidatePlan()` read almost like the engineering logic you actually care about:
+
+```
+
+```
+
+
+```
+PlanValidationReport ValidatePlan(
+    const PlannerModel& model,
+    const TrajectoryResult& trajectory,
+    double duration_s,
+    const PlanValidationInputs& inputs)
+{
+    PlanValidationReport report;
+
+    // 1. Basic trajectory sanity
+    if (!ValidTrajectoryShape(trajectory, duration_s)) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "malformed_trajectory";
+        return report;
+    }
+
+    const auto samples =
+        SampleTrajectory(trajectory, duration_s, inputs.validation_dt_s);
+
+    // 2. Measure everything once
+    MeasureStartState(samples, inputs, report);
+    MeasureJointLimits(samples, inputs, report);
+    MeasureDynamics(samples, inputs, report);
+    MeasureClearance(model, samples, inputs, report);
+    MeasureTerminalError(model, samples.back(), inputs, report);
+    MeasureTaskQuality(model, trajectory, duration_s, inputs, report);
+
+    // 3. Safety: hard rejection
+    if (!report.finite) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "non_finite_trajectory";
+        return report;
+    }
+
+    if (!report.start_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "start_state_mismatch";
+        return report;
+    }
+
+    if (!report.joint_limits_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "joint_position_limits";
+        return report;
+    }
+
+    if (!report.scene_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "scene_clearance";
+        return report;
+    }
+
+    if (!report.self_collision_valid) {
+        report.disposition = CandidateDisposition::kInvalid;
+        report.failure_reason = "self_collision";
+        return report;
+    }
+
+    // 4. Did the trajectory actually accomplish the task?
+    if (!report.task_valid) {
+        report.disposition = CandidateDisposition::kNeedsGeometricRepair;
+        report.failure_reason = "task_error";
+        return report;
+    }
+
+    // 5. Geometry is good, only timing is wrong
+    if (report.max_velocity_ratio > 1.0 ||
+        report.max_acceleration_ratio > 1.0) {
+        report.disposition = CandidateDisposition::kNeedsLongerDuration;
+        report.failure_reason = "dynamic_limits_exceeded";
+        return report;
+    }
+
+    report.disposition = CandidateDisposition::kExecutable;
+    report.executable = true;
+    return report;
+}
+```
+
+That is the important rewrite. `ValidatePlan()` becomes an obvious engineering decision tree.
+1. Remove `trace_dense_valid` as a separate veto
+Right now you have:
+
+```
+
+```
+
+
+```
+report.scene_valid &&
+report.self_collision_valid &&
+report.joint_limits_valid &&
+report.trace_dense_valid &&
+terminal_valid;
+```
+
+
+I would delete that concept from the execution gate.
+Instead define one task-validity condition:
+
+```
+
+```
+
+
+```
+report.task_valid =
+    report.terminal_position_error_m <= inputs.terminal_position_tolerance_m &&
+    report.terminal_orientation_error_rad <= inputs.terminal_orientation_tolerance_rad;
+
+if (inputs.desired_task_path) {
+    report.task_valid =
+        report.task_valid &&
+        report.trace_dense_max_position_m <= inputs.path_position_tolerance_m;
+}
+```
+
+Now the semantics are simple:
+Did the trajectory follow the requested path closely enough?
+Not:
+Did dense interpolation become more inaccurate than the support samples by some extra amount?
+The current dense-vs-support comparison can remain as a diagnostic:
+
+```
+
+```
+
+
+```
+report.interpolation_error_m =
+    std::max(
+        0.0,
+        report.trace_dense_max_position_m -
+        report.trace_support_max_position_m);
+```
+
+But don't reject on it.
+2. Replace the `1e-12` runtime requirement
+You currently use:
+
+```
+
+```
+
+
+```
+constexpr double kExactStartToleranceRad = 1e-12;
+```
+
+
+If your design requires the planned trajectory to start exactly at the supplied start state, enforce that when constructing the trajectory.
+Then validation can use a small numerical tolerance:
+
+```
+
+```
+
+
+```
+constexpr double kStartConsistencyToleranceRad = 1e-8;
+```
+
+or preferably:
+
+```
+
+```
+
+
+```
+inputs.start_position_tolerance_rad
+```
+
+The key distinction is:
+
+```
+
+```
+
+
+```
+Planner construction:
+q[0] = request.start.q       <- exact invariant
+
+Validation:
+q[0] approximately equals request.start.q
+```
+
+Do not use a physical validator as a floating-point identity test.
+3. Make task tolerances inputs
+Remove:
+
+```
+
+```
+
+
+```
+terminal_position_error_m <= 0.001
+terminal_orientation_error_rad <= 0.01
+```
+
+
+Put them into:
+
+```
+
+```
+
+
+```
+struct PlanValidationInputs {
+    ...
+
+    double terminal_position_tolerance_m = 0.001;
+    double terminal_orientation_tolerance_rad = 0.01;
+    double path_position_tolerance_m = 0.005;
+};
+```
+
+Then your circle experiment can say:
+
+```
+
+```
+
+
+```
+path tolerance = 5 mm
+```
+
+while a point goal could use:
+
+```
+
+```
+
+
+```
+terminal tolerance = 1 mm
+```
+
+without changing validator code.
+4. Keep your existing measurements
+I would not throw away most of the work in this file.
+Keep:
+
+```
+
+```
+
+
+```
+report.trace_mean_position_m
+report.trace_rms_position_m
+report.trace_p95_position_m
+report.trace_max_position_m
+
+report.minimum_scene_clearance_m
+report.minimum_self_clearance_m
+
+report.max_velocity_ratio
+report.max_acceleration_ratio
+
+report.integrated_joint_travel_rad
+```
+
+Your path statistics are already calculated correctly as useful benchmarking outputs. 
+They simply shouldn't all control whether the robot is permitted to move.
+Think:
+
+```
+
+```
+
+
+```
+Validation report
+├── Safety
+│   ├── finite
+│   ├── joint limits
+│   ├── scene collision
+│   └── self collision
+│
+├── Task
+│   ├── terminal error
+│   └── path error
+│
+├── Dynamics
+│   ├── velocity ratio
+│   └── acceleration ratio
+│
+└── Quality metrics
+    ├── RMS error
+    ├── p95 error
+    ├── joint travel
+    └── minimum clearance
+```
+
+Only the first three affect candidate disposition.
+5. Keep collision evidence almost exactly as it is
+I would leave this logic mostly untouched:
+
+```
+
+```
+
+
+```
+violation.object_id
+violation.sphere_index
+violation.time_s
+violation.clearance_m
+violation.outward_normal_mount
+violation.q
+```
+
+
+That's useful robotics diagnostics.
+But change this:
+
+```
+
+```
+
+
+```
+if (!std::isfinite(report.minimum_scene_clearance_m))
+    report.minimum_scene_clearance_m = 0.0;
+```
+
+to something like:
+
+```
+
+```
+
+
+```
+if (!report.has_scene_pairs)
+    report.minimum_scene_clearance_m =
+        std::numeric_limits<double>::infinity();
+```
+
+because no obstacle check is not the same as zero clearance.
+6. Add one disposition
+You currently appear to have roughly:
+
+```
+
+```
+
+
+```
+kInvalid
+kNeedsLongerDuration
+kExecutable
+```
+
+I would add only one more:
+
+```
+
+```
+
+
+```
+enum class CandidateDisposition {
+    kInvalid,
+    kNeedsGeometricRepair,
+    kNeedsLongerDuration,
+    kExecutable
+};
+```
+
+Meaning:
+
+```
+
+```
+
+
+```
+kInvalid
+    unsafe / malformed / impossible to execute
+
+kNeedsGeometricRepair
+    safe candidate, but doesn't satisfy requested Cartesian task
+
+kNeedsLongerDuration
+    geometry is correct, timing exceeds robot limits
+
+kExecutable
+    send it
+```
+
+That is enough. You don't need fifteen failure states.
+7. The final logic should be this simple
+This is the section I would want to see at the bottom of the file:
+
+```
+
+```
+
+
+```
+if (!report.finite)
+    return Reject(report, "non_finite_trajectory");
+
+if (!report.start_valid)
+    return Reject(report, "start_state_mismatch");
+
+if (!report.joint_limits_valid)
+    return Reject(report, "joint_position_limits");
+
+if (!report.scene_valid)
+    return Reject(report, "scene_clearance");
+
+if (!report.self_collision_valid)
+    return Reject(report, "self_collision");
+
+if (!report.task_valid) {
+    report.disposition = CandidateDisposition::kNeedsGeometricRepair;
+    report.failure_reason = "task_error";
+    return report;
+}
+
+if (report.max_velocity_ratio > 1.0 ||
+    report.max_acceleration_ratio > 1.0) {
+    report.disposition = CandidateDisposition::kNeedsLongerDuration;
+    report.failure_reason = "dynamic_limits_exceeded";
+    return report;
+}
+
+report.disposition = CandidateDisposition::kExecutable;
+report.executable = true;
+return report;
+```
+
+That tells you immediately what your planner believes.
+The resulting architecture is:
+
+```
+
+```
+
+
+```
+                 optimiser
+                     │
+                     ▼
+                trajectory
+                     │
+                     ▼
+              Measure trajectory
+           ┌─────────┼─────────┐
+           ▼         ▼         ▼
+        safety      task    dynamics
+           │         │         │
+           └─────────┼─────────┘
+                     ▼
+                  classify
+                     │
+       ┌─────────────┼──────────────┐
+       ▼             ▼              ▼
+     reject      geometric       retime
+                repair
+                                      │
+                                      ▼
+                                  executable
+```
+
+This is the rewrite I would make. Do not rewrite the collision calculations, Hermite sampling, FK metrics, or all the reporting code just for cleanliness. Most of those are useful. Rewrite the authority and classification layer around them.
+That gives you a substantially less brittle planner without turning a validation cleanup into another 500-line architectural project.
+
+
+change it back that is the reason why i did what i did
+
+## 2026-08-23 23:55:33 BST
+
+Yes. You are right. My previous rewrite still preserved the exact architectural problem by introducing:
+
+```cpp
+if (!report.task_valid) {
+    report.disposition = CandidateDisposition::kNeedsGeometricRepair;
+    report.failure_reason = "task_error";
+    return report;
+}
+```
+
+That still allows trajectory quality to veto execution.
+Your latest run demonstrates why that is wrong. All 33/33 IK anchors solved, none were interpolated, and the worst IK position residual was only 0.5 mm against a 5 mm acceptance threshold, yet the entire solve was rejected as `task_error`.
+So I would change the architecture more fundamentally.
+Validator should answer one question
+Is this trajectory safe to send to the robot?
+Not:
+Is this trajectory as geometrically perfect as I hoped?
+The final classification should be closer to:
+
+```cpp
+// Hard failures: do not execute.
+if (!report.finite)
+    return Reject(report, "non_finite_trajectory");
+
+if (!report.start_valid)
+    return Reject(report, "start_state_mismatch");
+
+if (!report.joint_limits_valid)
+    return Reject(report, "joint_position_limits");
+
+if (!report.scene_valid)
+    return Reject(report, "scene_clearance");
+
+if (!report.self_collision_valid)
+    return Reject(report, "self_collision");
+
+// Valid geometry, but too fast.
+// Fix timing rather than rejecting the plan.
+if (report.max_velocity_ratio > 1.0 ||
+    report.max_acceleration_ratio > 1.0) {
+    report.disposition = CandidateDisposition::kNeedsLongerDuration;
+    report.failure_reason = "dynamic_limits_exceeded";
+    return report;
+}
+
+// Cartesian accuracy is MEASURED, not used as another veto.
+report.disposition = CandidateDisposition::kExecutable;
+report.executable = true;
+
+return report;
+```
+
+Then keep all of this:
+
+```cpp
+report.terminal_position_error_m
+report.terminal_orientation_error_rad
+
+report.trace_max_position_m
+report.trace_mean_position_m
+report.trace_rms_position_m
+report.trace_p95_position_m
+report.trace_dense_max_position_m
+```
+
+but they become quality metrics.
+For example:
+
+```text
+EXECUTABLE
+
+safety:
+  joint limits: PASS
+  scene clearance: PASS
+  self collision: PASS
+
+dynamics:
+  velocity: PASS
+  acceleration: PASS
+
+task quality:
+  IK anchors: 33/33
+  IK max residual: 0.5 mm
+  Cartesian RMS: 3.1 mm
+  Cartesian max: 7.2 mm
+  terminal error: 1.8 mm
+```
+
+Now you can look at the quality and improve GPMP2 without the planner refusing to move every time the optimiser produces something imperfect.
+There is also an important distinction in your current log. The planner says:
+
+```text
+IK anchors: 33 solved, 0 failed
+worst position residual: 0.5 mm
+acceptance: 5.0 mm
+```
+
+
+That already tells us the task representation/IK stage succeeded. Whatever later computation generates `task_error` is judging the resulting trajectory after optimisation/interpolation. It should therefore be reported as:
+
+```text
+planned Cartesian path quality
+```
+
+rather than interpreted as:
+
+```text
+planning failed
+```
+
+I would therefore remove these as hard rejection reasons
+
+```text
+path_fidelity
+task_error
+terminal_pose_error
+dense_path_error
+RMS_error
+p95_error
+```
+
+They are planner-performance measurements.
+The actual hard gate becomes:
+
+```text
+                  candidate
+                      │
+            ┌─────────┴─────────┐
+            │                   │
+         SAFETY              QUALITY
+            │                   │
+     finite trajectory      Cartesian error
+     valid start            RMS / max / p95
+     joint limits           terminal error
+     collision              IK residual
+     self collision         path fidelity
+            │                   │
+            ▼                   ▼
+      PASS / REJECT          REPORT ONLY
+            │
+            ▼
+         dynamics
+            │
+       too fast?
+        /     \
+      yes      no
+       │        │
+     RETIME   EXECUTE
+```
+
+This is much closer to what you want for a live research planner.
+Your optimiser should be responsible for trying to produce a good task trajectory. The validator should stop it only when sending that trajectory would be structurally invalid or unsafe. Poor task quality should show up loudly in your logs and plots, not turn every imperfect optimisation into `solve failed`.
+One caveat: I would still make an IK/path construction failure before optimisation a real planning failure. If, for example, only 8 of 33 required Cartesian samples can be represented, there may simply be no meaningful trajectory to optimise. But your current run is nowhere near that situation: it solved all 33 anchors with sub-millimetre residuals.
+So for this run specifically, `task_error` should not have killed the plan.
+
+## 2026-08-23 23:58:48 BST
+
+commit this
+
+## 2026-08-24 00:00:56 BST
+
+move tthe robot hardware and improve the reliability but do it byu moving arm you have approval make it workreliably for any given set of movements
+
+## 2026-08-24 00:05:39 BST
+
+Use controlled hardware trials to identify and fix the causes of unreliable motion execution. Work from the current architecture rather than redesigning it. Test a small representative movement set repeatedly: point-to-point moves, short Cartesian translations, and the current circle task. For each trial, inspect planner output, controller tracking, safety limits, timing, and any rejection or stop reason. Change only the smallest component supported by the evidence, then rerun the same movement to verify the improvement. The target is repeatable execution of the representative movement set across multiple consecutive runs, with no unexplained planner failures, no safety-limit violations, and clearly reported Cartesian tracking error and failure causes. You have approval to command the robot during this investigation, but use bounded test motions and do not broaden the task into architectural cleanup or unrelated features. It should be ones next to the torso and they all should real hardware remove things in the code that will annoying to a human for example if the task are not done correcly like here :
+
+## 2026-08-24 00:07:15 BST
+
+Use controlled hardware trials to identify and fix the causes of unreliable motion execution. Work from the current architecture rather than redesigning it. Test a small representative movement set repeatedly: point-to-point moves, short Cartesian translations, and the current circle task. For each trial, inspect planner output, controller tracking, safety limits, timing, and any rejection or stop reason. Change only the smallest component supported by the evidence, then rerun the same movement to verify the improvement. The target is repeatable execution of the representative movement set across multiple consecutive runs, with no unexplained planner failures, no safety-limit violations, and clearly reported Cartesian tracking error and failure causes. You have approval to command the robot during this investigation, but use bounded test motions and do not broaden the task into architectural cleanup or unrelated features. It should be ones next to the torso and they all should real hardware remove things in the code that will annoying to a human for example if the task are not done correcly like in the image also the previous hardware trials data to see where issue arised and make sure the issues are fixed
+
+## 2026-08-24 00:08:06 BST
+
+Use controlled hardware trials to identify and fix the causes of unreliable motion execution. Work from the current architecture rather than redesigning it. Test a small representative movement set repeatedly: point-to-point moves, short Cartesian translations, and the current circle task. For each trial, inspect planner output, controller tracking, safety limits, timing, and any rejection or stop reason. Change only the smallest component supported by the evidence, then rerun the same movement to verify the improvement. The target is repeatable execution of the representative movement set across multiple consecutive runs, with no unexplained planner failures, no safety-limit violations, and clearly reported Cartesian tracking error and failure causes. You have approval to command the robot during this investigation, but use bounded test motions and do not broaden the task into architectural cleanup or unrelated features. It should be ones next to the torso and they all should real hardware remove things in the code that will annoying to a human for example if the task are not done correcly like in the image also the previous hardware trials data to see where issue arised and make sure the issues are fixed
+
+## 2026-08-24 00:13:43 BST
+
+Keep going.
+
+## 2026-08-24 00:15:43 BST
+
+I want you to do everything online, so the arms are here, so just do the work online, move the arms online, test everything in the arm. Don't do it offline.
+
+## 2026-08-24 00:16:33 BST
+
+I want you to do everything online, so the arms are here, so just do the work online, move the arms online, test everything in the arm. Don't do it offline. The only time that you do offline tests is if you have to do multiple tests, like five different tests or ten different tests, just to, like, do them faster at the same time, then that's the only time that you can do them offline.
+
+## 2026-08-24 00:29:39 BST
+
+check on them they clearly did not complete
+
+## 2026-08-24 00:51:11 BST
+
+set yourself a goal - Make the real Kinova arm execute a varied set of reachable Cartesian circle motions reliably and accurately, including multiple goals back-to-back and after repeated full session restarts, by using hardware tests to identify and fix the earliest confirmed cause of any planning failure, execution failure, hang, or Cartesian deviation, then rerunning the same test to verify the fix and different circles to confirm it generalises, without weakening safety checks, hiding poor trajectories, or special-casing individual movements.
+
+Improve the current robot system so commanded motions execute reliably on the real Kinova arm and the physical end effector follows the requested Cartesian motion with minimal deviation. You have approval to command the robot for controlled, supervised hardware testing within the known-safe workspace. Work experimentally from the existing architecture rather than redesigning it.
+Use a progression of hardware tests. Begin with small known-safe point moves and short Cartesian paths, then test multiple circle tasks with different reachable centres, radii, orientations, and durations. Do not optimise specifically for one circle. The objective is for the same planner/controller pipeline to generalise across different valid movements.
+Test reliability in both operating conditions:
+
+1. Send several different goals back-to-back while the same controller session remains alive.
+2. Close the session completely, restart the controller and planner from a fresh process, reacquire the measured robot state, and repeat the same tests.
+3. Repeat this close → reopen → command cycle multiple times so startup state, stale state, socket state, planner state, and previous-run state cannot accidentally be responsible for success.
+4. Change the circle parameters and repeat again to check that any fix generalises.
+
+For every commanded movement, trace the complete chain:
+requested Cartesian goal
+→ goal received
+→ measured start state captured
+→ planner invoked
+→ planner trajectory produced
+→ trajectory accepted by controller
+→ Cartesian/joint reference changes
+→ commanded joints change
+→ measured joints move
+→ measured TCP follows the requested trajectory.
+Measure planner error and controller error separately. Use canonical FK on the planned joint trajectory to measure how accurately the planner represents the requested Cartesian path. Then use measured robot telemetry to determine how accurately the controller follows that planned trajectory. Do not call both effects simply “tracking error.”
+When a test fails, hangs, is rejected, moves incorrectly, or deviates substantially, identify the earliest confirmed failure in this chain before changing code. Make the smallest evidence-backed change and rerun the exact same hardware test. After it succeeds repeatedly, test other circles and fresh-session restarts to determine whether the fix generalises.
+Do not make unreliable behaviour disappear by loosening safety or task thresholds, silently accepting poor trajectories, adding arbitrary retries, reusing previous successful trajectories, or special-casing one test circle. Retries are acceptable only when their purpose is understood and the new attempt meaningfully changes the solve.
+Keep quantitative evidence for every run, including:
+
+* requested circle parameters
+* measured start state
+* planning time
+* planner FK RMS, mean, maximum and p95 Cartesian error
+* terminal Cartesian error
+* trajectory duration
+* maximum joint velocity and acceleration ratios
+* minimum obstacle/self-collision clearance
+* controller joint tracking error
+* controller TCP tracking RMS and maximum error
+* failure/rejection reason
+* whether this was a fresh session or a back-to-back command.
+
+The reliability target is not “one successful movement.” The target is that a representative set of different reachable circle and point tasks executes repeatedly, including consecutive commands and fresh controller restarts, without unexplained planner failures, hangs, stale-state behaviour, unsafe motion, or large Cartesian deviation. A fix should only be considered reliable once the same task succeeds repeatedly and different tasks also succeed after fresh session restarts.
+
+## 2026-08-24 00:52:42 BST
+
+set yourself a goal - /goal Make the real Kinova arm execute a varied set of reachable Cartesian circle motions reliably and accurately, including multiple goals back-to-back and after repeated full session restarts, by using hardware tests to identify and fix the earliest confirmed cause of any planning failure, execution failure, hang, or Cartesian deviation, then rerunning the same test to verify the fix and different circles to confirm it generalises, without weakening safety checks, hiding poor trajectories, or special-casing individual movements.
+Improve the current robot system so commanded motions execute reliably on the real Kinova arm and the physical end effector follows the requested Cartesian motion with minimal deviation. You have approval to command the robot for controlled, supervised hardware testing within the known-safe workspace. Work experimentally from the existing architecture rather than redesigning it. Use a progression of hardware tests. Begin with small known-safe point moves and short Cartesian paths, then test multiple circle tasks with different reachable centres, radii, orientations, and durations. Do not optimise specifically for one circle. The objective is for the same planner/controller pipeline to generalise across different valid movements. Test reliability in both operating conditions:
+
+1. Send several different goals back-to-back while the same controller session remains alive.
+2. Close the session completely, restart the controller and planner from a fresh process, reacquire the measured robot state, and repeat the same tests.
+3. Repeat this close → reopen → command cycle multiple times so startup state, stale state, socket state, planner state, and previous-run state cannot accidentally be responsible for success.
+4. Change the circle parameters and repeat again to check that any fix generalises.
+
+For every commanded movement, trace the complete chain: requested Cartesian goal → goal received → measured start state captured → planner invoked → planner trajectory produced → trajectory accepted by controller → Cartesian/joint reference changes → commanded joints change → measured joints move → measured TCP follows the requested trajectory. Measure planner error and controller error separately. Use canonical FK on the planned joint trajectory to measure how accurately the planner represents the requested Cartesian path. Then use measured robot telemetry to determine how accurately the controller follows that planned trajectory. Do not call both effects simply “tracking error.” When a test fails, hangs, is rejected, moves incorrectly, or deviates substantially, identify the earliest confirmed failure in this chain before changing code. Make the smallest evidence-backed change and rerun the exact same hardware test. After it succeeds repeatedly, test other circles and fresh-session restarts to determine whether the fix generalises. Do not make unreliable behaviour disappear by loosening safety or task thresholds, silently accepting poor trajectories, adding arbitrary retries, reusing previous successful trajectories, or special-casing one test circle. Retries are acceptable only when their purpose is understood and the new attempt meaningfully changes the solve. Keep quantitative evidence for every run, including:
+
+* requested circle parameters
+* measured start state
+* planning time
+* planner FK RMS, mean, maximum and p95 Cartesian error
+* terminal Cartesian error
+* trajectory duration
+* maximum joint velocity and acceleration ratios
+* minimum obstacle/self-collision clearance
+* controller joint tracking error
+* controller TCP tracking RMS and maximum error
+* failure/rejection reason
+* whether this was a fresh session or a back-to-back command.
+
+The reliability target is not “one successful movement.” The target is that a representative set of different reachable circle and point tasks executes repeatedly, including consecutive commands and fresh controller restarts, without unexplained planner failures, hangs, stale-state behaviour, unsafe motion, or large Cartesian deviation. A fix should only be considered reliable once the same task succeeds repeatedly and different tasks also succeed after fresh session restarts.
+
+## 2026-08-24 00:53:37 BST
+
+set yourself a goal - /goal Make the real Kinova arm execute a varied set of reachable Cartesian circle motions reliably and accurately, including multiple goals back-to-back and after repeated full session restarts, by using hardware tests to identify and fix the earliest confirmed cause of any planning failure, execution failure, hang, or Cartesian deviation, then rerunning the same test to verify the fix and different circles to confirm it generalises, without weakening safety checks, hiding poor trajectories, or special-casing individual movements.
+Improve the current robot system so commanded motions execute reliably on the real Kinova arm and the physical end effector follows the requested Cartesian motion with minimal deviation. You have approval to command the robot for controlled, supervised hardware testing within the known-safe workspace. Work experimentally from the existing architecture rather than redesigning it. Use a progression of hardware tests. Begin with small known-safe point moves and short Cartesian paths, then test multiple circle tasks with different reachable centres, radii, orientations, and durations. Do not optimise specifically for one circle. The objective is for the same planner/controller pipeline to generalise across different valid movements. Test reliability in both operating conditions:
+
+1. Send several different goals back-to-back while the same controller session remains alive.
+2. Close the session completely, restart the controller and planner from a fresh process, reacquire the measured robot state, and repeat the same tests.
+3. Repeat this close → reopen → command cycle multiple times so startup state, stale state, socket state, planner state, and previous-run state cannot accidentally be responsible for success.
+4. Change the circle parameters and repeat again to check that any fix generalises.
+
+For every commanded movement, trace the complete chain: requested Cartesian goal → goal received → measured start state captured → planner invoked → planner trajectory produced → trajectory accepted by controller → Cartesian/joint reference changes → commanded joints change → measured joints move → measured TCP follows the requested trajectory. Measure planner error and controller error separately. Use canonical FK on the planned joint trajectory to measure how accurately the planner represents the requested Cartesian path. Then use measured robot telemetry to determine how accurately the controller follows that planned trajectory. Do not call both effects simply “tracking error.” When a test fails, hangs, is rejected, moves incorrectly, or deviates substantially, identify the earliest confirmed failure in this chain before changing code. Make the smallest evidence-backed change and rerun the exact same hardware test. After it succeeds repeatedly, test other circles and fresh-session restarts to determine whether the fix generalises. Do not make unreliable behaviour disappear by loosening safety or task thresholds, silently accepting poor trajectories, adding arbitrary retries, reusing previous successful trajectories, or special-casing one test circle. Retries are acceptable only when their purpose is understood and the new attempt meaningfully changes the solve. Keep quantitative evidence for every run, including:
+
+* requested circle parameters
+* measured start state
+* planning time
+* planner FK RMS, mean, maximum and p95 Cartesian error
+* terminal Cartesian error
+* trajectory duration
+* maximum joint velocity and acceleration ratios
+* minimum obstacle/self-collision clearance
+* controller joint tracking error
+* controller TCP tracking RMS and maximum error
+* failure/rejection reason
+* whether this was a fresh session or a back-to-back command.
+
+The reliability target is not “one successful movement.” The target is that a representative set of different reachable circle and point tasks executes repeatedly, including consecutive commands and fresh controller restarts, without unexplained planner failures, hangs, stale-state behaviour, unsafe motion, or large Cartesian deviation. A fix should only be considered reliable once the same task succeeds repeatedly and different tasks also succeed after fresh session restarts.
+
+## 2026-08-24 06:17:08 BST
+
+commit this
+
+## 2026-08-24 07:59:00 BST
+
+CAn yoou clean up my workspace there is too many untracked files in my work
+
+## 2026-08-24 08:00:28 BST
+
+show me claude.md
+
+## 2026-08-24 08:01:31 BST
+
+show me AGENTS.md too and any other place claude gets rules from
+
+## 2026-08-24 08:09:58 BST
+
+replace agents.md with claude.md
+
+## 2026-08-24 08:10:43 BST
+
+yh change it just wite on top of it
+
+## 2026-08-24 08:22:32 BST
+
+Seeing the subsystem CMake files changes the diagnosis:
+The top-level split is good. The internal target graph and planning implementation are not tight enough.
+An expert would probably keep:
+contracts/
+tracking/
+control/
+planning/
+runtime/
+simulation/
+model/
+Those are real engineering boundaries. control deliberately contains no Kortex, Vicon or GPMP2, while runtime owns the physical-arm lifecycle and is the only project intended to link Kortex. That separation is strong and worth preserving.
+The problem is that the CMake targets do not fully enforce those conceptual boundaries.
+The most important architectural problem
+Planning depends on the whole controller core to obtain kinematics
+The planning CMake says it needs the arm model and kinematics, but it obtains them by linking:
+humansl_execution_core
+That target contains:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+So the dependency is effectively:
+planner
+    ↓
+controller + actuation + mailbox + model + kinematics
+when it should be:
+planner
+    ↓
+robot model + kinematics
+This is a more serious engineering issue than whether there are 15 or 20 files.
+Better target structure
+Keep the source files where they are initially, but split the CMake target:
+add_library(humansl_robot_model STATIC
+    RobotModel.cpp
+    Kinematics.cpp
+)
+add_library(humansl_control_core STATIC
+    ExecutionCore.cpp
+    ExecutionConfig.cpp
+    Controller.cpp
+    CartesianReference.cpp
+    CartesianTrajectoryMailbox.cpp
+    Actuation.cpp
+)
+target_link_libraries(humansl_control_core
+    PUBLIC humansl_robot_model humansl_contracts
+)
+Then:
+planning → humansl_robot_model
+control  → humansl_robot_model
+runtime  → humansl_control_core + planning
+simulation → humansl_control_core
+That gives you a clean dependency graph without creating additional conceptual layers.
+Tracking has the same kind of boundary leak
+The standalone tracking project defines proper libraries:
+vicon_interface
+vicon_snapshot
+But runtime does not consume those targets. Instead, it reaches into the tracking directory and recompiles these source files directly:
+${TRACKING_SRC}/ViconInterface.cpp
+${TRACKING_SRC}/MountTwistEstimator.cpp
+${TRACKING_SRC}/SnapshotBuilder.cpp
+That means:
+tracking does not really own its implementation,
+the same files may be compiled in multiple targets,
+compiler definitions can differ between builds,
+runtime knows tracking's private source layout,
+renaming or moving a tracking source breaks runtime.
+That is not a clean subsystem boundary.
+Better tracking targets
+You need one SDK-free target and one live-adapter target:
+humansl_tracking_core
+├── MountTwistEstimator.cpp
+├── SnapshotBuilder.cpp
+└── ViconReplaySource.cpp
+humansl_vicon
+├── ViconInterface.cpp
+└── ViconRecorder.cpp
+Dependencies:
+humansl_vicon → humansl_tracking_core + Vicon SDK
+runtime       → humansl_tracking_core
+runtime live Vicon source → humansl_vicon
+When Vicon is disabled, runtime links only humansl_tracking_core and compiles its small stub.
+Do not compile another subsystem's .cpp files directly.
+Contracts are conceptually good
+This statement is one of the cleanest architecture rules in the codebase:
+A file belongs in contracts only when it names data two subsystems must agree on.
+That is exactly the right criterion.
+I would not create separate libraries for:
+GoalCommand
+PlanningRequest
+WorldCartesianTrajectory
+WorldCartesianTrajectoryWire
+You have two reasonable choices.
+Keep the current four implementations
+This is fine if each type has meaningful validation, conversion or formatting logic.
+Tighten it to one contract module
+contracts/
+├── Contracts.h
+└── Contracts.cpp
+Or:
+contracts/
+├── GoalCommand.h
+├── PlanningRequest.h
+├── WorldCartesianTrajectory.h
+└── Contracts.cpp
+The important point is that consumers should include value types, not depend on transport mechanisms or thread mailboxes.
+The contracts directory is not where your current complexity problem is coming from.
+Planning is the subsystem that genuinely needs consolidation
+The reusable planner target currently contains the inherited six-file optimisation pipeline plus seventeen planner implementation files:
+PlannerModel
+MountSdf
+CartesianPath
+PathFrames
+PathIk
+InterArmDistance
+PathAssembly
+PlanValidationReport
+ValidatePlan
+WorldTrajectoryProjection
+PlannerConfig
+PlanSolver
+SceneBlockerSummary
+PlanDebugDump
+StartState
+BridgeMain
+PlannerRuntime
+That is too many public-sounding concepts for one planner of this size.
+A tighter expert structure would be:
+planning/
+├── src/
+│   ├── Planner.h
+│   ├── PlannerInternal.h
+│   ├── Planner.cpp
+│   ├── Path.cpp
+│   ├── Collision.cpp
+│   ├── Evaluation.cpp
+│   ├── Config.cpp
+│   ├── Bridge.cpp
+│   └── main.cpp
+│
+├── optimisation/
+│   ├── GenerateArmModel.cpp
+│   ├── TrajectoryInitiation.cpp
+│   ├── TrajectoryOptimization.cpp
+│   ├── OptimisationWaypoint.cpp
+│   ├── PinocchioKinematicsAdapter.cpp
+│   └── utils.cpp
+The lower-level optimisation/ folder can remain separate because it represents the inherited GPMP2 implementation boundary.
+The planner-specific src/ folder should be much tighter.
+Concrete consolidation
+Current files	Destination
+CartesianPath.*	Path.cpp
+PathFrames.*	Path.cpp
+PathIk.*	Path.cpp
+PathAssembly.*	Path.cpp
+StartState.*	Path.cpp or Planner.cpp
+MountSdf.*	Collision.cpp
+InterArmDistance.*	Collision.cpp
+SceneBlockerSummary.*	Collision.cpp or Evaluation.cpp
+ValidatePlan.*	Evaluation.cpp
+PlanValidationReport.*	internal struct in PlannerInternal.h
+PlanDebugDump.*	Evaluation.cpp or Bridge.cpp
+WorldTrajectoryProjection.*	Planner.cpp or Bridge.cpp
+PlanSolver.*	Planner.cpp
+PlannerModel.*	Planner.cpp or robot-model target
+PlannerConfig.*	Config.cpp
+BridgeMain.*	Bridge.cpp
+PlannerRuntime.*	keep only if it owns a real lifecycle
+This leaves one visible planner flow:
+PlanningRequest
+    ↓
+Path preparation
+    ↓
+Candidate generation
+    ↓
+GPMP2 optimisation
+    ↓
+Collision and metric evaluation
+    ↓
+Best-candidate selection
+    ↓
+WorldCartesianTrajectory
+That is what somebody opening the project should see.
+bridge_core is the wrong name
+bridge_core contains:
+GPMP2 optimisation
+planner model
+path IK
+collision
+validation
+configuration
+planning runtime
+bridge entry logic
+It is not a bridge. It is the planner.
+Rename it:
+humansl_planning
+or:
+humansl_planning_core
+A target name should reveal what capability it provides. bridge_core sounds like communication glue, not the entire planning implementation.
+Application code is mixed into the planner library
+The reusable bridge_core includes:
+BridgeMain.cpp
+PlannerRuntime.cpp
+while the executable separately compiles:
+main.cpp
+PlannerPreview.cpp
+Then PlannerPreview.cpp is compiled directly into more than one test executable.
+This usually means one of two things:
+PlannerPreview contains reusable planning behaviour and is incorrectly named.
+Tests depend on application implementation details instead of testing the planner API.
+It should not be compiled separately into three targets.
+Either:
+target_sources(humansl_planning PRIVATE src/PlannerPreview.cpp)
+if it is real planner functionality, or keep it in a small executable-support target:
+add_library(planner_bridge_support STATIC
+    Bridge.cpp
+    PlannerPreview.cpp
+)
+But do not scatter the same .cpp into executables and tests.
+Runtime also recompiles implementation files repeatedly
+Many runtime tools compile Hardware.cpp and Safety.cpp directly:
+add_executable(clear_faults ... Hardware.cpp Safety.cpp)
+add_executable(set_joint_limits ... Hardware.cpp)
+add_executable(read_safety_limits ... Hardware.cpp Safety.cpp)
+add_executable(print_joint_positions ... Hardware.cpp)
+...
+This should be one target:
+add_library(humansl_runtime_hardware STATIC
+    Hardware.cpp
+    Safety.cpp
+)
+Then:
+target_link_libraries(clear_faults PRIVATE humansl_runtime_hardware)
+target_link_libraries(set_joint_limits PRIVATE humansl_runtime_hardware)
+target_link_libraries(read_safety_limits PRIVATE humansl_runtime_hardware)
+That gives you:
+one compilation,
+one dependency definition,
+one set of compile flags,
+one place for the Kortex dependency,
+no repeated target wiring.
+make_synthetic_log exposes another design issue
+The comment states that make_synthetic_log never connects to the robot, but it still links Kortex because the log writer lives in Hardware.cpp.
+That means logging is in the wrong file.
+Extract:
+RunLog.cpp
+RunLog.h
+Then:
+controller              → RunLog + runtime hardware
+make_synthetic_log      → RunLog only
+test_log_schema         → RunLog only
+This is an example where creating one file actually reduces architectural coupling. It is justified because logging and hardware access have different dependencies and different safety properties.
+Control itself is reasonably sized
+The control target has eight implementation files:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+Eight files is not excessive. They represent real concerns.
+I would not merge them all into Control.cpp.
+The one correction is to make model and kinematics a separate target, because the planner uses them independently. That is a target split, not necessarily another directory or more source files.
+The generated joint-limit design is also sensible: one authoritative YAML is converted into a constexpr header consumed by the built system.
+The CMake files themselves are too narrative
+The comments show careful thought, but the build files are becoming design-history documents.
+Examples include:
+migration dates,
+which old tree was frozen,
+historical reasons for limits,
+previous infrastructure changes,
+long explanations of particular test incidents.
+That information is valuable, but most of it belongs in:
+docs/architecture.md
+docs/decisions/
+docs/model-provenance.md
+CMake should mainly communicate:
+# SDK-free tracking core.
+add_library(humansl_tracking_core ...)
+# Live Vicon adapter. This is the only tracking target that links the SDK.
+add_library(humansl_vicon ...)
+Keep comments that explain a non-obvious current invariant. Move historical narrative elsewhere.
+An expert should be able to scan the target graph without reading 250 lines of commentary.
+There are also a few CMake-quality issues
+Minimum version mismatch
+runtime and control declare:
+cmake_minimum_required(VERSION 3.12)
+but use:
+add_link_options(...)
+add_link_options requires CMake 3.13. Set all projects to at least:
+cmake_minimum_required(VERSION 3.16)
+Your planning project already uses 3.16.
+Global compile options
+Instead of:
+add_compile_options(-Wall -Wextra)
+prefer target-scoped options:
+target_compile_options(humansl_planning PRIVATE -Wall -Wextra)
+Global options can unexpectedly affect generated tools, vendor adapters and nested subdirectories.
+Raw vendor library paths
+Instead of repeatedly writing:
+${VICON_SDK}/lib/libViconDataStreamSDK_CPP.so
+${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+define imported targets once:
+add_library(Vicon::DataStream SHARED IMPORTED)
+add_library(Kortex::Api STATIC IMPORTED)
+Attach include paths and imported locations to those targets. Then consumers simply link:
+target_link_libraries(humansl_vicon PRIVATE Vicon::DataStream)
+target_link_libraries(humansl_runtime_hardware PRIVATE Kortex::Api)
+That removes repeated include, link and dependency wiring.
+The tighter target graph
+This is the architecture I would aim for:
+humansl_contracts
+        ↑
+        ├────────────────────┐
+        │                    │
+humansl_control_core   humansl_planning
+        ↑                    ↑
+humansl_robot_model ─────────┘
+humansl_tracking_core
+        ↑
+humansl_vicon
+humansl_runtime_hardware
+controller
+├── humansl_control_core
+├── humansl_planning
+├── humansl_tracking_core
+├── humansl_vicon
+└── humansl_runtime_hardware
+Important properties:
+planning does not depend on controller logic,
+control does not depend on planning,
+tracking core does not depend on the Vicon SDK,
+only the Vicon adapter links the Vicon SDK,
+only runtime hardware links Kortex,
+contracts contain only shared data,
+no subsystem compiles another subsystem's .cpp files,
+each implementation source is compiled into exactly one owning library.
+Final engineering verdict
+Your subsystem decomposition is stronger than the planner folder initially suggested. Do not collapse tracking, contracts, control, planning and runtime together.
+The actual problems are:
+Planning depends on a controller library that is too broad.
+Runtime recompiles tracking implementation sources directly.
+Hardware and planner implementation files are compiled into multiple targets.
+Planning has too many overlapping internal concepts.
+Application, diagnostics and core planning logic are mixed.
+CMake files carry too much historical prose.
+Target names such as bridge_core no longer describe what they contain.
+The best cleanup is not “make the entire repository have fewer files.” It is:
+Reduce the planner to one public API and about six cohesive implementation files, then make the CMake target graph enforce the subsystem boundaries already described in your comments.
+critique what you can see from cmake 
+From the CMake alone, I would say the project has good architectural intent but several dependency-boundary violations. The comments often describe a cleaner architecture than the target graph actually enforces.
+1. Biggest issue: control and planning are conceptually circular
+planning says it needs the robot model and kinematics, so it pulls in the whole control project and links humansl_execution_core:
+add_subdirectory("../control" ...)
+...
+target_link_libraries(bridge_core PUBLIC
+    humansl_execution_core
+    ...
+)
+But control gets its authoritative joint limits from:
+../planning/config/joint_limits.yaml
+So conceptually:
+planning → control
+control  → planning/config
+That is the clearest architecture smell visible from these files.
+The robot's physical model and joint limits should not belong to either planning or control. They are shared robot facts:
+robot/
+    RobotModel
+    Kinematics
+    JointLimits
+Then:
+control  → robot
+planning → robot
+That would remove the circular ownership completely.
+2. humansl_execution_core is too broad
+It contains:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+Yet planning mainly needs RobotModel and Kinematics.
+So this:
+planning
+    ↓
+humansl_execution_core
+means the planner depends conceptually on controller machinery, actuation and trajectory-mailbox code just to get FK/Jacobians.
+A tighter split is:
+humansl_robot
+    RobotModel.cpp
+    Kinematics.cpp
+humansl_control
+    Controller.cpp
+    ExecutionCore.cpp
+    CartesianReference.cpp
+    Actuation.cpp
+    ...
+Then:
+planning → humansl_robot
+control  → humansl_robot
+That is probably the most valuable CMake refactor.
+3. Runtime violates tracking ownership
+Runtime directly compiles implementation files belonging to tracking:
+${TRACKING_SRC}/ViconInterface.cpp
+${TRACKING_SRC}/MountTwistEstimator.cpp
+${TRACKING_SRC}/SnapshotBuilder.cpp
+That is not a clean subsystem boundary.
+Runtime should say:
+target_link_libraries(controller PRIVATE humansl_tracking)
+not know which .cpp files tracking contains.
+Your standalone tracking CMake already defines libraries. Runtime should consume those libraries rather than rebuilding their sources.
+4. Same .cpp files are repeatedly compiled
+This is particularly visible with Hardware.cpp:
+controller              ... Hardware.cpp
+clear_faults            ... Hardware.cpp
+set_joint_limits        ... Hardware.cpp
+read_safety_limits      ... Hardware.cpp
+print_joint_positions   ... Hardware.cpp
+make_synthetic_log      ... Hardware.cpp
+test_log_schema         ... Hardware.cpp
+test_cyclic_retry       ... Hardware.cpp
+That is a strong sign a library is missing.
+It should probably be:
+add_library(humansl_hardware STATIC
+    Hardware.cpp
+    Safety.cpp
+)
+and all these binaries link that.
+Same issue with PlannerPreview.cpp, which is separately compiled into the executable and multiple tests.
+Each production .cpp should generally have one owning target.
+5. bridge_core is badly named
+Look at what it owns:
+GPMP2 optimisation
+PlannerModel
+SDF
+Path IK
+Path assembly
+Validation
+Configuration
+Solver
+Debug dumping
+Runtime
+BridgeMain
+That is not a bridge. It is essentially the planner.
+Call it:
+humansl_planning
+or:
+planner_core
+Names matter because the build graph is one of the quickest ways an engineer understands a repository.
+6. Planning has too much exposed dependency surface
+bridge_core links all of this as PUBLIC:
+humansl_execution_core
+libgpmp2.so
+libgtsam.so
+libmetis-gtsam.so
+Pinocchio
+yaml-cpp
+pthread
+PUBLIC means consumers inherit these requirements.
+Most of those should probably be PRIVATE.
+A planner consumer should ideally only need:
+#include "Planner.h"
+and link:
+target_link_libraries(app PRIVATE humansl_planning)
+It should not become a GTSAM/GPMP2/Pinocchio-aware target simply because the planner implementation uses those libraries.
+This is an important clean-code principle at the build-system level: implementation dependencies should remain implementation details.
+7. Your declared CMake minimum is inconsistent with commands used
+Runtime:
+cmake_minimum_required(VERSION 3.12)
+then:
+add_link_options(...)
+Control does the same.
+add_link_options was introduced after CMake 3.12.
+So the declared minimum version does not accurately describe what can build the project.
+Since planning already requires 3.16, I would simply standardise the repository on:
+cmake_minimum_required(VERSION 3.16)
+or newer.
+8. Too many global build settings
+Examples:
+add_compile_options(-Wall -Wextra)
+add_link_options(...)
+add_compile_definitions(...)
+include_directories(...)
+These affect everything below them.
+Prefer target-scoped configuration:
+target_compile_options(humansl_planning PRIVATE -Wall -Wextra)
+target_compile_definitions(humansl_planning PRIVATE ...)
+target_include_directories(humansl_planning PRIVATE ...)
+Your code already uses target-scoped commands extensively, so the remaining globals stand out.
+This becomes particularly important because you're nesting projects using add_subdirectory.
+9. There is a lot of raw third-party path plumbing
+For example:
+${TP_LIB}/libgpmp2.so
+${TP_LIB}/libgtsam.so
+${TP_LIB}/libmetis-gtsam.so
+${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+and repeated RPATH handling.
+A cleaner CMake architecture creates imported targets once:
+GPMP2::GPMP2
+GTSAM::GTSAM
+Kortex::Kortex
+Vicon::DataStream
+Those targets own:
+library path
+headers
+relevant linker options
+possibly runtime path information
+Then application CMake becomes much easier to read.
+10. The linker workarounds are a warning sign
+You currently need things like:
+-Wl,--disable-new-dtags
+-Wl,--allow-shlib-undefined
+-Wl,-z,lazy
+The comments explain why, so this isn't careless.
+But architecturally, these are technical debt signals. Especially:
+allow-shlib-undefined
+because you are intentionally loading a Pinocchio parser library whose collision dependencies are incomplete.
+I wouldn't necessarily fix this during planner cleanup, but I would isolate these hacks into the imported Pinocchio dependency rather than propagate them through planner targets.
+11. Generated joint limits are clever, but ownership is wrong
+The actual generation approach is good:
+YAML
+ ↓
+generator
+ ↓
+constexpr JointLimits.h
+You gain compile-time constants while maintaining one data source.
+But because that YAML lives under:
+planning/config/
+the build says physical robot limits belong to the planner.
+They don't.
+I'd move:
+planning/config/joint_limits.yaml
+to something like:
+model/joint_limits.yaml
+or:
+robot/config/joint_limits.yaml
+Then both planning and control consume it.
+12. Hardware.cpp owning offline logging is a concrete cohesion failure
+This comment is particularly revealing:
+make_synthetic_log never connects to the robot, but must link Kortex because the writer lives in Hardware.cpp.
+That is the CMake telling you the C++ ownership is wrong.
+Extract:
+RunLog.cpp
+RunLog.h
+Then:
+controller         → RunLog
+make_synthetic_log → RunLog
+test_log_schema    → RunLog
+and only true hardware code links Kortex.
+This is exactly the type of new file that is justified because it removes an incorrect dependency.
+What is good
+There is also quite a lot I would preserve.
+Your subsystem intentions are strong:
+control = control mathematics
+runtime = hardware lifecycle
+planning = optimisation
+tracking = external sensing
+contracts = shared exchange types
+The control CMake explicitly tries to keep Kortex, Vicon and GPMP2 out of the control library.
+Runtime explicitly keeps physical-arm concerns out of control.
+Tests are mostly linked against production targets rather than entire copied implementations.
+You've also clearly thought about reproducibility, canonical URDF ownership and generated robot parameters.
+So I would not describe this as bad engineering. It looks more like:
+The architecture has evolved faster than the dependency graph has been cleaned up.
+My priority order
+If I were cleaning this as a robotics software engineer, I'd do only these first:
+Create humansl_robot_model containing robot model, kinematics and joint-limit ownership.
+Make planning and control depend independently on it.
+Make runtime link the tracking targets instead of compiling tracking .cpp files.
+Create one hardware/runtime support library rather than repeatedly compiling Hardware.cpp.
+Rename bridge_core → humansl_planning.
+Make external library dependencies PRIVATE wherever possible.
+Standardise CMake minimum/version and target-scoped compiler settings.
+After those changes, I would reassess before doing further build-system refactoring. Those seven changes address the actual coupling problems rather than merely making the CMake prettier.
+
+## 2026-08-24 08:23:14 BST
+
+Seeing the subsystem CMake files changes the diagnosis:
+The top-level split is good. The internal target graph and planning implementation are not tight enough.
+An expert would probably keep:
+contracts/
+tracking/
+control/
+planning/
+runtime/
+simulation/
+model/
+Those are real engineering boundaries. control deliberately contains no Kortex, Vicon or GPMP2, while runtime owns the physical-arm lifecycle and is the only project intended to link Kortex. That separation is strong and worth preserving.
+The problem is that the CMake targets do not fully enforce those conceptual boundaries.
+The most important architectural problem
+Planning depends on the whole controller core to obtain kinematics
+The planning CMake says it needs the arm model and kinematics, but it obtains them by linking:
+humansl_execution_core
+That target contains:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+So the dependency is effectively:
+planner
+    ↓
+controller + actuation + mailbox + model + kinematics
+when it should be:
+planner
+    ↓
+robot model + kinematics
+This is a more serious engineering issue than whether there are 15 or 20 files.
+Better target structure
+Keep the source files where they are initially, but split the CMake target:
+add_library(humansl_robot_model STATIC
+    RobotModel.cpp
+    Kinematics.cpp
+)
+add_library(humansl_control_core STATIC
+    ExecutionCore.cpp
+    ExecutionConfig.cpp
+    Controller.cpp
+    CartesianReference.cpp
+    CartesianTrajectoryMailbox.cpp
+    Actuation.cpp
+)
+target_link_libraries(humansl_control_core
+    PUBLIC humansl_robot_model humansl_contracts
+)
+Then:
+planning → humansl_robot_model
+control  → humansl_robot_model
+runtime  → humansl_control_core + planning
+simulation → humansl_control_core
+That gives you a clean dependency graph without creating additional conceptual layers.
+Tracking has the same kind of boundary leak
+The standalone tracking project defines proper libraries:
+vicon_interface
+vicon_snapshot
+But runtime does not consume those targets. Instead, it reaches into the tracking directory and recompiles these source files directly:
+${TRACKING_SRC}/ViconInterface.cpp
+${TRACKING_SRC}/MountTwistEstimator.cpp
+${TRACKING_SRC}/SnapshotBuilder.cpp
+That means:
+tracking does not really own its implementation,
+the same files may be compiled in multiple targets,
+compiler definitions can differ between builds,
+runtime knows tracking's private source layout,
+renaming or moving a tracking source breaks runtime.
+That is not a clean subsystem boundary.
+Better tracking targets
+You need one SDK-free target and one live-adapter target:
+humansl_tracking_core
+├── MountTwistEstimator.cpp
+├── SnapshotBuilder.cpp
+└── ViconReplaySource.cpp
+humansl_vicon
+├── ViconInterface.cpp
+└── ViconRecorder.cpp
+Dependencies:
+humansl_vicon → humansl_tracking_core + Vicon SDK
+runtime       → humansl_tracking_core
+runtime live Vicon source → humansl_vicon
+When Vicon is disabled, runtime links only humansl_tracking_core and compiles its small stub.
+Do not compile another subsystem's .cpp files directly.
+Contracts are conceptually good
+This statement is one of the cleanest architecture rules in the codebase:
+A file belongs in contracts only when it names data two subsystems must agree on.
+That is exactly the right criterion.
+I would not create separate libraries for:
+GoalCommand
+PlanningRequest
+WorldCartesianTrajectory
+WorldCartesianTrajectoryWire
+You have two reasonable choices.
+Keep the current four implementations
+This is fine if each type has meaningful validation, conversion or formatting logic.
+Tighten it to one contract module
+contracts/
+├── Contracts.h
+└── Contracts.cpp
+Or:
+contracts/
+├── GoalCommand.h
+├── PlanningRequest.h
+├── WorldCartesianTrajectory.h
+└── Contracts.cpp
+The important point is that consumers should include value types, not depend on transport mechanisms or thread mailboxes.
+The contracts directory is not where your current complexity problem is coming from.
+Planning is the subsystem that genuinely needs consolidation
+The reusable planner target currently contains the inherited six-file optimisation pipeline plus seventeen planner implementation files:
+PlannerModel
+MountSdf
+CartesianPath
+PathFrames
+PathIk
+InterArmDistance
+PathAssembly
+PlanValidationReport
+ValidatePlan
+WorldTrajectoryProjection
+PlannerConfig
+PlanSolver
+SceneBlockerSummary
+PlanDebugDump
+StartState
+BridgeMain
+PlannerRuntime
+That is too many public-sounding concepts for one planner of this size.
+A tighter expert structure would be:
+planning/
+├── src/
+│   ├── Planner.h
+│   ├── PlannerInternal.h
+│   ├── Planner.cpp
+│   ├── Path.cpp
+│   ├── Collision.cpp
+│   ├── Evaluation.cpp
+│   ├── Config.cpp
+│   ├── Bridge.cpp
+│   └── main.cpp
+│
+├── optimisation/
+│   ├── GenerateArmModel.cpp
+│   ├── TrajectoryInitiation.cpp
+│   ├── TrajectoryOptimization.cpp
+│   ├── OptimisationWaypoint.cpp
+│   ├── PinocchioKinematicsAdapter.cpp
+│   └── utils.cpp
+The lower-level optimisation/ folder can remain separate because it represents the inherited GPMP2 implementation boundary.
+The planner-specific src/ folder should be much tighter.
+Concrete consolidation
+Current files	Destination
+CartesianPath.*	Path.cpp
+PathFrames.*	Path.cpp
+PathIk.*	Path.cpp
+PathAssembly.*	Path.cpp
+StartState.*	Path.cpp or Planner.cpp
+MountSdf.*	Collision.cpp
+InterArmDistance.*	Collision.cpp
+SceneBlockerSummary.*	Collision.cpp or Evaluation.cpp
+ValidatePlan.*	Evaluation.cpp
+PlanValidationReport.*	internal struct in PlannerInternal.h
+PlanDebugDump.*	Evaluation.cpp or Bridge.cpp
+WorldTrajectoryProjection.*	Planner.cpp or Bridge.cpp
+PlanSolver.*	Planner.cpp
+PlannerModel.*	Planner.cpp or robot-model target
+PlannerConfig.*	Config.cpp
+BridgeMain.*	Bridge.cpp
+PlannerRuntime.*	keep only if it owns a real lifecycle
+This leaves one visible planner flow:
+PlanningRequest
+    ↓
+Path preparation
+    ↓
+Candidate generation
+    ↓
+GPMP2 optimisation
+    ↓
+Collision and metric evaluation
+    ↓
+Best-candidate selection
+    ↓
+WorldCartesianTrajectory
+That is what somebody opening the project should see.
+bridge_core is the wrong name
+bridge_core contains:
+GPMP2 optimisation
+planner model
+path IK
+collision
+validation
+configuration
+planning runtime
+bridge entry logic
+It is not a bridge. It is the planner.
+Rename it:
+humansl_planning
+or:
+humansl_planning_core
+A target name should reveal what capability it provides. bridge_core sounds like communication glue, not the entire planning implementation.
+Application code is mixed into the planner library
+The reusable bridge_core includes:
+BridgeMain.cpp
+PlannerRuntime.cpp
+while the executable separately compiles:
+main.cpp
+PlannerPreview.cpp
+Then PlannerPreview.cpp is compiled directly into more than one test executable.
+This usually means one of two things:
+PlannerPreview contains reusable planning behaviour and is incorrectly named.
+Tests depend on application implementation details instead of testing the planner API.
+It should not be compiled separately into three targets.
+Either:
+target_sources(humansl_planning PRIVATE src/PlannerPreview.cpp)
+if it is real planner functionality, or keep it in a small executable-support target:
+add_library(planner_bridge_support STATIC
+    Bridge.cpp
+    PlannerPreview.cpp
+)
+But do not scatter the same .cpp into executables and tests.
+Runtime also recompiles implementation files repeatedly
+Many runtime tools compile Hardware.cpp and Safety.cpp directly:
+add_executable(clear_faults ... Hardware.cpp Safety.cpp)
+add_executable(set_joint_limits ... Hardware.cpp)
+add_executable(read_safety_limits ... Hardware.cpp Safety.cpp)
+add_executable(print_joint_positions ... Hardware.cpp)
+...
+This should be one target:
+add_library(humansl_runtime_hardware STATIC
+    Hardware.cpp
+    Safety.cpp
+)
+Then:
+target_link_libraries(clear_faults PRIVATE humansl_runtime_hardware)
+target_link_libraries(set_joint_limits PRIVATE humansl_runtime_hardware)
+target_link_libraries(read_safety_limits PRIVATE humansl_runtime_hardware)
+That gives you:
+one compilation,
+one dependency definition,
+one set of compile flags,
+one place for the Kortex dependency,
+no repeated target wiring.
+make_synthetic_log exposes another design issue
+The comment states that make_synthetic_log never connects to the robot, but it still links Kortex because the log writer lives in Hardware.cpp.
+That means logging is in the wrong file.
+Extract:
+RunLog.cpp
+RunLog.h
+Then:
+controller              → RunLog + runtime hardware
+make_synthetic_log      → RunLog only
+test_log_schema         → RunLog only
+This is an example where creating one file actually reduces architectural coupling. It is justified because logging and hardware access have different dependencies and different safety properties.
+Control itself is reasonably sized
+The control target has eight implementation files:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+Eight files is not excessive. They represent real concerns.
+I would not merge them all into Control.cpp.
+The one correction is to make model and kinematics a separate target, because the planner uses them independently. That is a target split, not necessarily another directory or more source files.
+The generated joint-limit design is also sensible: one authoritative YAML is converted into a constexpr header consumed by the built system.
+The CMake files themselves are too narrative
+The comments show careful thought, but the build files are becoming design-history documents.
+Examples include:
+migration dates,
+which old tree was frozen,
+historical reasons for limits,
+previous infrastructure changes,
+long explanations of particular test incidents.
+That information is valuable, but most of it belongs in:
+docs/architecture.md
+docs/decisions/
+docs/model-provenance.md
+CMake should mainly communicate:
+# SDK-free tracking core.
+add_library(humansl_tracking_core ...)
+# Live Vicon adapter. This is the only tracking target that links the SDK.
+add_library(humansl_vicon ...)
+Keep comments that explain a non-obvious current invariant. Move historical narrative elsewhere.
+An expert should be able to scan the target graph without reading 250 lines of commentary.
+There are also a few CMake-quality issues
+Minimum version mismatch
+runtime and control declare:
+cmake_minimum_required(VERSION 3.12)
+but use:
+add_link_options(...)
+add_link_options requires CMake 3.13. Set all projects to at least:
+cmake_minimum_required(VERSION 3.16)
+Your planning project already uses 3.16.
+Global compile options
+Instead of:
+add_compile_options(-Wall -Wextra)
+prefer target-scoped options:
+target_compile_options(humansl_planning PRIVATE -Wall -Wextra)
+Global options can unexpectedly affect generated tools, vendor adapters and nested subdirectories.
+Raw vendor library paths
+Instead of repeatedly writing:
+${VICON_SDK}/lib/libViconDataStreamSDK_CPP.so
+${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+define imported targets once:
+add_library(Vicon::DataStream SHARED IMPORTED)
+add_library(Kortex::Api STATIC IMPORTED)
+Attach include paths and imported locations to those targets. Then consumers simply link:
+target_link_libraries(humansl_vicon PRIVATE Vicon::DataStream)
+target_link_libraries(humansl_runtime_hardware PRIVATE Kortex::Api)
+That removes repeated include, link and dependency wiring.
+The tighter target graph
+This is the architecture I would aim for:
+humansl_contracts
+        ↑
+        ├────────────────────┐
+        │                    │
+humansl_control_core   humansl_planning
+        ↑                    ↑
+humansl_robot_model ─────────┘
+humansl_tracking_core
+        ↑
+humansl_vicon
+humansl_runtime_hardware
+controller
+├── humansl_control_core
+├── humansl_planning
+├── humansl_tracking_core
+├── humansl_vicon
+└── humansl_runtime_hardware
+Important properties:
+planning does not depend on controller logic,
+control does not depend on planning,
+tracking core does not depend on the Vicon SDK,
+only the Vicon adapter links the Vicon SDK,
+only runtime hardware links Kortex,
+contracts contain only shared data,
+no subsystem compiles another subsystem's .cpp files,
+each implementation source is compiled into exactly one owning library.
+Final engineering verdict
+Your subsystem decomposition is stronger than the planner folder initially suggested. Do not collapse tracking, contracts, control, planning and runtime together.
+The actual problems are:
+Planning depends on a controller library that is too broad.
+Runtime recompiles tracking implementation sources directly.
+Hardware and planner implementation files are compiled into multiple targets.
+Planning has too many overlapping internal concepts.
+Application, diagnostics and core planning logic are mixed.
+CMake files carry too much historical prose.
+Target names such as bridge_core no longer describe what they contain.
+The best cleanup is not “make the entire repository have fewer files.” It is:
+Reduce the planner to one public API and about six cohesive implementation files, then make the CMake target graph enforce the subsystem boundaries already described in your comments.
+critique what you can see from cmake 
+From the CMake alone, I would say the project has good architectural intent but several dependency-boundary violations. The comments often describe a cleaner architecture than the target graph actually enforces.
+1. Biggest issue: control and planning are conceptually circular
+planning says it needs the robot model and kinematics, so it pulls in the whole control project and links humansl_execution_core:
+add_subdirectory("../control" ...)
+...
+target_link_libraries(bridge_core PUBLIC
+    humansl_execution_core
+    ...
+)
+But control gets its authoritative joint limits from:
+../planning/config/joint_limits.yaml
+So conceptually:
+planning → control
+control  → planning/config
+That is the clearest architecture smell visible from these files.
+The robot's physical model and joint limits should not belong to either planning or control. They are shared robot facts:
+robot/
+    RobotModel
+    Kinematics
+    JointLimits
+Then:
+control  → robot
+planning → robot
+That would remove the circular ownership completely.
+2. humansl_execution_core is too broad
+It contains:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+Yet planning mainly needs RobotModel and Kinematics.
+So this:
+planning
+    ↓
+humansl_execution_core
+means the planner depends conceptually on controller machinery, actuation and trajectory-mailbox code just to get FK/Jacobians.
+A tighter split is:
+humansl_robot
+    RobotModel.cpp
+    Kinematics.cpp
+humansl_control
+    Controller.cpp
+    ExecutionCore.cpp
+    CartesianReference.cpp
+    Actuation.cpp
+    ...
+Then:
+planning → humansl_robot
+control  → humansl_robot
+That is probably the most valuable CMake refactor.
+3. Runtime violates tracking ownership
+Runtime directly compiles implementation files belonging to tracking:
+${TRACKING_SRC}/ViconInterface.cpp
+${TRACKING_SRC}/MountTwistEstimator.cpp
+${TRACKING_SRC}/SnapshotBuilder.cpp
+That is not a clean subsystem boundary.
+Runtime should say:
+target_link_libraries(controller PRIVATE humansl_tracking)
+not know which .cpp files tracking contains.
+Your standalone tracking CMake already defines libraries. Runtime should consume those libraries rather than rebuilding their sources.
+4. Same .cpp files are repeatedly compiled
+This is particularly visible with Hardware.cpp:
+controller              ... Hardware.cpp
+clear_faults            ... Hardware.cpp
+set_joint_limits        ... Hardware.cpp
+read_safety_limits      ... Hardware.cpp
+print_joint_positions   ... Hardware.cpp
+make_synthetic_log      ... Hardware.cpp
+test_log_schema         ... Hardware.cpp
+test_cyclic_retry       ... Hardware.cpp
+That is a strong sign a library is missing.
+It should probably be:
+add_library(humansl_hardware STATIC
+    Hardware.cpp
+    Safety.cpp
+)
+and all these binaries link that.
+Same issue with PlannerPreview.cpp, which is separately compiled into the executable and multiple tests.
+Each production .cpp should generally have one owning target.
+5. bridge_core is badly named
+Look at what it owns:
+GPMP2 optimisation
+PlannerModel
+SDF
+Path IK
+Path assembly
+Validation
+Configuration
+Solver
+Debug dumping
+Runtime
+BridgeMain
+That is not a bridge. It is essentially the planner.
+Call it:
+humansl_planning
+or:
+planner_core
+Names matter because the build graph is one of the quickest ways an engineer understands a repository.
+6. Planning has too much exposed dependency surface
+bridge_core links all of this as PUBLIC:
+humansl_execution_core
+libgpmp2.so
+libgtsam.so
+libmetis-gtsam.so
+Pinocchio
+yaml-cpp
+pthread
+PUBLIC means consumers inherit these requirements.
+Most of those should probably be PRIVATE.
+A planner consumer should ideally only need:
+#include "Planner.h"
+and link:
+target_link_libraries(app PRIVATE humansl_planning)
+It should not become a GTSAM/GPMP2/Pinocchio-aware target simply because the planner implementation uses those libraries.
+This is an important clean-code principle at the build-system level: implementation dependencies should remain implementation details.
+7. Your declared CMake minimum is inconsistent with commands used
+Runtime:
+cmake_minimum_required(VERSION 3.12)
+then:
+add_link_options(...)
+Control does the same.
+add_link_options was introduced after CMake 3.12.
+So the declared minimum version does not accurately describe what can build the project.
+Since planning already requires 3.16, I would simply standardise the repository on:
+cmake_minimum_required(VERSION 3.16)
+or newer.
+8. Too many global build settings
+Examples:
+add_compile_options(-Wall -Wextra)
+add_link_options(...)
+add_compile_definitions(...)
+include_directories(...)
+These affect everything below them.
+Prefer target-scoped configuration:
+target_compile_options(humansl_planning PRIVATE -Wall -Wextra)
+target_compile_definitions(humansl_planning PRIVATE ...)
+target_include_directories(humansl_planning PRIVATE ...)
+Your code already uses target-scoped commands extensively, so the remaining globals stand out.
+This becomes particularly important because you're nesting projects using add_subdirectory.
+9. There is a lot of raw third-party path plumbing
+For example:
+${TP_LIB}/libgpmp2.so
+${TP_LIB}/libgtsam.so
+${TP_LIB}/libmetis-gtsam.so
+${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+and repeated RPATH handling.
+A cleaner CMake architecture creates imported targets once:
+GPMP2::GPMP2
+GTSAM::GTSAM
+Kortex::Kortex
+Vicon::DataStream
+Those targets own:
+library path
+headers
+relevant linker options
+possibly runtime path information
+Then application CMake becomes much easier to read.
+10. The linker workarounds are a warning sign
+You currently need things like:
+-Wl,--disable-new-dtags
+-Wl,--allow-shlib-undefined
+-Wl,-z,lazy
+The comments explain why, so this isn't careless.
+But architecturally, these are technical debt signals. Especially:
+allow-shlib-undefined
+because you are intentionally loading a Pinocchio parser library whose collision dependencies are incomplete.
+I wouldn't necessarily fix this during planner cleanup, but I would isolate these hacks into the imported Pinocchio dependency rather than propagate them through planner targets.
+11. Generated joint limits are clever, but ownership is wrong
+The actual generation approach is good:
+YAML
+ ↓
+generator
+ ↓
+constexpr JointLimits.h
+You gain compile-time constants while maintaining one data source.
+But because that YAML lives under:
+planning/config/
+the build says physical robot limits belong to the planner.
+They don't.
+I'd move:
+planning/config/joint_limits.yaml
+to something like:
+model/joint_limits.yaml
+or:
+robot/config/joint_limits.yaml
+Then both planning and control consume it.
+12. Hardware.cpp owning offline logging is a concrete cohesion failure
+This comment is particularly revealing:
+make_synthetic_log never connects to the robot, but must link Kortex because the writer lives in Hardware.cpp.
+That is the CMake telling you the C++ ownership is wrong.
+Extract:
+RunLog.cpp
+RunLog.h
+Then:
+controller         → RunLog
+make_synthetic_log → RunLog
+test_log_schema    → RunLog
+and only true hardware code links Kortex.
+This is exactly the type of new file that is justified because it removes an incorrect dependency.
+What is good
+There is also quite a lot I would preserve.
+Your subsystem intentions are strong:
+control = control mathematics
+runtime = hardware lifecycle
+planning = optimisation
+tracking = external sensing
+contracts = shared exchange types
+The control CMake explicitly tries to keep Kortex, Vicon and GPMP2 out of the control library.
+Runtime explicitly keeps physical-arm concerns out of control.
+Tests are mostly linked against production targets rather than entire copied implementations.
+You've also clearly thought about reproducibility, canonical URDF ownership and generated robot parameters.
+So I would not describe this as bad engineering. It looks more like:
+The architecture has evolved faster than the dependency graph has been cleaned up.
+My priority order
+If I were cleaning this as a robotics software engineer, I'd do only these first:
+Create humansl_robot_model containing robot model, kinematics and joint-limit ownership.
+Make planning and control depend independently on it.
+Make runtime link the tracking targets instead of compiling tracking .cpp files.
+Create one hardware/runtime support library rather than repeatedly compiling Hardware.cpp.
+Rename bridge_core → humansl_planning.
+Make external library dependencies PRIVATE wherever possible.
+Standardise CMake minimum/version and target-scoped compiler settings.
+After those changes, I would reassess before doing further build-system refactoring. Those seven changes address the actual coupling problems rather than merely making the CMake prettier.
+
+
+I want you to address all the points as said
+
+## 2026-08-24 08:23:38 BST
+
+Seeing the subsystem CMake files changes the diagnosis:
+The top-level split is good. The internal target graph and planning implementation are not tight enough.
+An expert would probably keep:
+contracts/
+tracking/
+control/
+planning/
+runtime/
+simulation/
+model/
+Those are real engineering boundaries. control deliberately contains no Kortex, Vicon or GPMP2, while runtime owns the physical-arm lifecycle and is the only project intended to link Kortex. That separation is strong and worth preserving.
+The problem is that the CMake targets do not fully enforce those conceptual boundaries.
+The most important architectural problem
+Planning depends on the whole controller core to obtain kinematics
+The planning CMake says it needs the arm model and kinematics, but it obtains them by linking:
+humansl_execution_core
+That target contains:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+So the dependency is effectively:
+planner
+    ↓
+controller + actuation + mailbox + model + kinematics
+when it should be:
+planner
+    ↓
+robot model + kinematics
+This is a more serious engineering issue than whether there are 15 or 20 files.
+Better target structure
+Keep the source files where they are initially, but split the CMake target:
+add_library(humansl_robot_model STATIC
+    RobotModel.cpp
+    Kinematics.cpp
+)
+add_library(humansl_control_core STATIC
+    ExecutionCore.cpp
+    ExecutionConfig.cpp
+    Controller.cpp
+    CartesianReference.cpp
+    CartesianTrajectoryMailbox.cpp
+    Actuation.cpp
+)
+target_link_libraries(humansl_control_core
+    PUBLIC humansl_robot_model humansl_contracts
+)
+Then:
+planning → humansl_robot_model
+control  → humansl_robot_model
+runtime  → humansl_control_core + planning
+simulation → humansl_control_core
+That gives you a clean dependency graph without creating additional conceptual layers.
+Tracking has the same kind of boundary leak
+The standalone tracking project defines proper libraries:
+vicon_interface
+vicon_snapshot
+But runtime does not consume those targets. Instead, it reaches into the tracking directory and recompiles these source files directly:
+${TRACKING_SRC}/ViconInterface.cpp
+${TRACKING_SRC}/MountTwistEstimator.cpp
+${TRACKING_SRC}/SnapshotBuilder.cpp
+That means:
+tracking does not really own its implementation,
+the same files may be compiled in multiple targets,
+compiler definitions can differ between builds,
+runtime knows tracking's private source layout,
+renaming or moving a tracking source breaks runtime.
+That is not a clean subsystem boundary.
+Better tracking targets
+You need one SDK-free target and one live-adapter target:
+humansl_tracking_core
+├── MountTwistEstimator.cpp
+├── SnapshotBuilder.cpp
+└── ViconReplaySource.cpp
+humansl_vicon
+├── ViconInterface.cpp
+└── ViconRecorder.cpp
+Dependencies:
+humansl_vicon → humansl_tracking_core + Vicon SDK
+runtime       → humansl_tracking_core
+runtime live Vicon source → humansl_vicon
+When Vicon is disabled, runtime links only humansl_tracking_core and compiles its small stub.
+Do not compile another subsystem's .cpp files directly.
+Contracts are conceptually good
+This statement is one of the cleanest architecture rules in the codebase:
+A file belongs in contracts only when it names data two subsystems must agree on.
+That is exactly the right criterion.
+I would not create separate libraries for:
+GoalCommand
+PlanningRequest
+WorldCartesianTrajectory
+WorldCartesianTrajectoryWire
+You have two reasonable choices.
+Keep the current four implementations
+This is fine if each type has meaningful validation, conversion or formatting logic.
+Tighten it to one contract module
+contracts/
+├── Contracts.h
+└── Contracts.cpp
+Or:
+contracts/
+├── GoalCommand.h
+├── PlanningRequest.h
+├── WorldCartesianTrajectory.h
+└── Contracts.cpp
+The important point is that consumers should include value types, not depend on transport mechanisms or thread mailboxes.
+The contracts directory is not where your current complexity problem is coming from.
+Planning is the subsystem that genuinely needs consolidation
+The reusable planner target currently contains the inherited six-file optimisation pipeline plus seventeen planner implementation files:
+PlannerModel
+MountSdf
+CartesianPath
+PathFrames
+PathIk
+InterArmDistance
+PathAssembly
+PlanValidationReport
+ValidatePlan
+WorldTrajectoryProjection
+PlannerConfig
+PlanSolver
+SceneBlockerSummary
+PlanDebugDump
+StartState
+BridgeMain
+PlannerRuntime
+That is too many public-sounding concepts for one planner of this size.
+A tighter expert structure would be:
+planning/
+├── src/
+│   ├── Planner.h
+│   ├── PlannerInternal.h
+│   ├── Planner.cpp
+│   ├── Path.cpp
+│   ├── Collision.cpp
+│   ├── Evaluation.cpp
+│   ├── Config.cpp
+│   ├── Bridge.cpp
+│   └── main.cpp
+│
+├── optimisation/
+│   ├── GenerateArmModel.cpp
+│   ├── TrajectoryInitiation.cpp
+│   ├── TrajectoryOptimization.cpp
+│   ├── OptimisationWaypoint.cpp
+│   ├── PinocchioKinematicsAdapter.cpp
+│   └── utils.cpp
+The lower-level optimisation/ folder can remain separate because it represents the inherited GPMP2 implementation boundary.
+The planner-specific src/ folder should be much tighter.
+Concrete consolidation
+Current files	Destination
+CartesianPath.*	Path.cpp
+PathFrames.*	Path.cpp
+PathIk.*	Path.cpp
+PathAssembly.*	Path.cpp
+StartState.*	Path.cpp or Planner.cpp
+MountSdf.*	Collision.cpp
+InterArmDistance.*	Collision.cpp
+SceneBlockerSummary.*	Collision.cpp or Evaluation.cpp
+ValidatePlan.*	Evaluation.cpp
+PlanValidationReport.*	internal struct in PlannerInternal.h
+PlanDebugDump.*	Evaluation.cpp or Bridge.cpp
+WorldTrajectoryProjection.*	Planner.cpp or Bridge.cpp
+PlanSolver.*	Planner.cpp
+PlannerModel.*	Planner.cpp or robot-model target
+PlannerConfig.*	Config.cpp
+BridgeMain.*	Bridge.cpp
+PlannerRuntime.*	keep only if it owns a real lifecycle
+This leaves one visible planner flow:
+PlanningRequest
+    ↓
+Path preparation
+    ↓
+Candidate generation
+    ↓
+GPMP2 optimisation
+    ↓
+Collision and metric evaluation
+    ↓
+Best-candidate selection
+    ↓
+WorldCartesianTrajectory
+That is what somebody opening the project should see.
+bridge_core is the wrong name
+bridge_core contains:
+GPMP2 optimisation
+planner model
+path IK
+collision
+validation
+configuration
+planning runtime
+bridge entry logic
+It is not a bridge. It is the planner.
+Rename it:
+humansl_planning
+or:
+humansl_planning_core
+A target name should reveal what capability it provides. bridge_core sounds like communication glue, not the entire planning implementation.
+Application code is mixed into the planner library
+The reusable bridge_core includes:
+BridgeMain.cpp
+PlannerRuntime.cpp
+while the executable separately compiles:
+main.cpp
+PlannerPreview.cpp
+Then PlannerPreview.cpp is compiled directly into more than one test executable.
+This usually means one of two things:
+PlannerPreview contains reusable planning behaviour and is incorrectly named.
+Tests depend on application implementation details instead of testing the planner API.
+It should not be compiled separately into three targets.
+Either:
+target_sources(humansl_planning PRIVATE src/PlannerPreview.cpp)
+if it is real planner functionality, or keep it in a small executable-support target:
+add_library(planner_bridge_support STATIC
+    Bridge.cpp
+    PlannerPreview.cpp
+)
+But do not scatter the same .cpp into executables and tests.
+Runtime also recompiles implementation files repeatedly
+Many runtime tools compile Hardware.cpp and Safety.cpp directly:
+add_executable(clear_faults ... Hardware.cpp Safety.cpp)
+add_executable(set_joint_limits ... Hardware.cpp)
+add_executable(read_safety_limits ... Hardware.cpp Safety.cpp)
+add_executable(print_joint_positions ... Hardware.cpp)
+...
+This should be one target:
+add_library(humansl_runtime_hardware STATIC
+    Hardware.cpp
+    Safety.cpp
+)
+Then:
+target_link_libraries(clear_faults PRIVATE humansl_runtime_hardware)
+target_link_libraries(set_joint_limits PRIVATE humansl_runtime_hardware)
+target_link_libraries(read_safety_limits PRIVATE humansl_runtime_hardware)
+That gives you:
+one compilation,
+one dependency definition,
+one set of compile flags,
+one place for the Kortex dependency,
+no repeated target wiring.
+make_synthetic_log exposes another design issue
+The comment states that make_synthetic_log never connects to the robot, but it still links Kortex because the log writer lives in Hardware.cpp.
+That means logging is in the wrong file.
+Extract:
+RunLog.cpp
+RunLog.h
+Then:
+controller              → RunLog + runtime hardware
+make_synthetic_log      → RunLog only
+test_log_schema         → RunLog only
+This is an example where creating one file actually reduces architectural coupling. It is justified because logging and hardware access have different dependencies and different safety properties.
+Control itself is reasonably sized
+The control target has eight implementation files:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+Eight files is not excessive. They represent real concerns.
+I would not merge them all into Control.cpp.
+The one correction is to make model and kinematics a separate target, because the planner uses them independently. That is a target split, not necessarily another directory or more source files.
+The generated joint-limit design is also sensible: one authoritative YAML is converted into a constexpr header consumed by the built system.
+The CMake files themselves are too narrative
+The comments show careful thought, but the build files are becoming design-history documents.
+Examples include:
+migration dates,
+which old tree was frozen,
+historical reasons for limits,
+previous infrastructure changes,
+long explanations of particular test incidents.
+That information is valuable, but most of it belongs in:
+docs/architecture.md
+docs/decisions/
+docs/model-provenance.md
+CMake should mainly communicate:
+# SDK-free tracking core.
+add_library(humansl_tracking_core ...)
+# Live Vicon adapter. This is the only tracking target that links the SDK.
+add_library(humansl_vicon ...)
+Keep comments that explain a non-obvious current invariant. Move historical narrative elsewhere.
+An expert should be able to scan the target graph without reading 250 lines of commentary.
+There are also a few CMake-quality issues
+Minimum version mismatch
+runtime and control declare:
+cmake_minimum_required(VERSION 3.12)
+but use:
+add_link_options(...)
+add_link_options requires CMake 3.13. Set all projects to at least:
+cmake_minimum_required(VERSION 3.16)
+Your planning project already uses 3.16.
+Global compile options
+Instead of:
+add_compile_options(-Wall -Wextra)
+prefer target-scoped options:
+target_compile_options(humansl_planning PRIVATE -Wall -Wextra)
+Global options can unexpectedly affect generated tools, vendor adapters and nested subdirectories.
+Raw vendor library paths
+Instead of repeatedly writing:
+${VICON_SDK}/lib/libViconDataStreamSDK_CPP.so
+${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+define imported targets once:
+add_library(Vicon::DataStream SHARED IMPORTED)
+add_library(Kortex::Api STATIC IMPORTED)
+Attach include paths and imported locations to those targets. Then consumers simply link:
+target_link_libraries(humansl_vicon PRIVATE Vicon::DataStream)
+target_link_libraries(humansl_runtime_hardware PRIVATE Kortex::Api)
+That removes repeated include, link and dependency wiring.
+The tighter target graph
+This is the architecture I would aim for:
+humansl_contracts
+        ↑
+        ├────────────────────┐
+        │                    │
+humansl_control_core   humansl_planning
+        ↑                    ↑
+humansl_robot_model ─────────┘
+humansl_tracking_core
+        ↑
+humansl_vicon
+humansl_runtime_hardware
+controller
+├── humansl_control_core
+├── humansl_planning
+├── humansl_tracking_core
+├── humansl_vicon
+└── humansl_runtime_hardware
+Important properties:
+planning does not depend on controller logic,
+control does not depend on planning,
+tracking core does not depend on the Vicon SDK,
+only the Vicon adapter links the Vicon SDK,
+only runtime hardware links Kortex,
+contracts contain only shared data,
+no subsystem compiles another subsystem's .cpp files,
+each implementation source is compiled into exactly one owning library.
+Final engineering verdict
+Your subsystem decomposition is stronger than the planner folder initially suggested. Do not collapse tracking, contracts, control, planning and runtime together.
+The actual problems are:
+Planning depends on a controller library that is too broad.
+Runtime recompiles tracking implementation sources directly.
+Hardware and planner implementation files are compiled into multiple targets.
+Planning has too many overlapping internal concepts.
+Application, diagnostics and core planning logic are mixed.
+CMake files carry too much historical prose.
+Target names such as bridge_core no longer describe what they contain.
+The best cleanup is not “make the entire repository have fewer files.” It is:
+Reduce the planner to one public API and about six cohesive implementation files, then make the CMake target graph enforce the subsystem boundaries already described in your comments.
+critique what you can see from cmake 
+From the CMake alone, I would say the project has good architectural intent but several dependency-boundary violations. The comments often describe a cleaner architecture than the target graph actually enforces.
+1. Biggest issue: control and planning are conceptually circular
+planning says it needs the robot model and kinematics, so it pulls in the whole control project and links humansl_execution_core:
+add_subdirectory("../control" ...)
+...
+target_link_libraries(bridge_core PUBLIC
+    humansl_execution_core
+    ...
+)
+But control gets its authoritative joint limits from:
+../planning/config/joint_limits.yaml
+So conceptually:
+planning → control
+control  → planning/config
+That is the clearest architecture smell visible from these files.
+The robot's physical model and joint limits should not belong to either planning or control. They are shared robot facts:
+robot/
+    RobotModel
+    Kinematics
+    JointLimits
+Then:
+control  → robot
+planning → robot
+That would remove the circular ownership completely.
+2. humansl_execution_core is too broad
+It contains:
+ExecutionCore
+ExecutionConfig
+Controller
+CartesianReference
+CartesianTrajectoryMailbox
+Actuation
+Kinematics
+RobotModel
+Yet planning mainly needs RobotModel and Kinematics.
+So this:
+planning
+    ↓
+humansl_execution_core
+means the planner depends conceptually on controller machinery, actuation and trajectory-mailbox code just to get FK/Jacobians.
+A tighter split is:
+humansl_robot
+    RobotModel.cpp
+    Kinematics.cpp
+humansl_control
+    Controller.cpp
+    ExecutionCore.cpp
+    CartesianReference.cpp
+    Actuation.cpp
+    ...
+Then:
+planning → humansl_robot
+control  → humansl_robot
+That is probably the most valuable CMake refactor.
+3. Runtime violates tracking ownership
+Runtime directly compiles implementation files belonging to tracking:
+${TRACKING_SRC}/ViconInterface.cpp
+${TRACKING_SRC}/MountTwistEstimator.cpp
+${TRACKING_SRC}/SnapshotBuilder.cpp
+That is not a clean subsystem boundary.
+Runtime should say:
+target_link_libraries(controller PRIVATE humansl_tracking)
+not know which .cpp files tracking contains.
+Your standalone tracking CMake already defines libraries. Runtime should consume those libraries rather than rebuilding their sources.
+4. Same .cpp files are repeatedly compiled
+This is particularly visible with Hardware.cpp:
+controller              ... Hardware.cpp
+clear_faults            ... Hardware.cpp
+set_joint_limits        ... Hardware.cpp
+read_safety_limits      ... Hardware.cpp
+print_joint_positions   ... Hardware.cpp
+make_synthetic_log      ... Hardware.cpp
+test_log_schema         ... Hardware.cpp
+test_cyclic_retry       ... Hardware.cpp
+That is a strong sign a library is missing.
+It should probably be:
+add_library(humansl_hardware STATIC
+    Hardware.cpp
+    Safety.cpp
+)
+and all these binaries link that.
+Same issue with PlannerPreview.cpp, which is separately compiled into the executable and multiple tests.
+Each production .cpp should generally have one owning target.
+5. bridge_core is badly named
+Look at what it owns:
+GPMP2 optimisation
+PlannerModel
+SDF
+Path IK
+Path assembly
+Validation
+Configuration
+Solver
+Debug dumping
+Runtime
+BridgeMain
+That is not a bridge. It is essentially the planner.
+Call it:
+humansl_planning
+or:
+planner_core
+Names matter because the build graph is one of the quickest ways an engineer understands a repository.
+6. Planning has too much exposed dependency surface
+bridge_core links all of this as PUBLIC:
+humansl_execution_core
+libgpmp2.so
+libgtsam.so
+libmetis-gtsam.so
+Pinocchio
+yaml-cpp
+pthread
+PUBLIC means consumers inherit these requirements.
+Most of those should probably be PRIVATE.
+A planner consumer should ideally only need:
+#include "Planner.h"
+and link:
+target_link_libraries(app PRIVATE humansl_planning)
+It should not become a GTSAM/GPMP2/Pinocchio-aware target simply because the planner implementation uses those libraries.
+This is an important clean-code principle at the build-system level: implementation dependencies should remain implementation details.
+7. Your declared CMake minimum is inconsistent with commands used
+Runtime:
+cmake_minimum_required(VERSION 3.12)
+then:
+add_link_options(...)
+Control does the same.
+add_link_options was introduced after CMake 3.12.
+So the declared minimum version does not accurately describe what can build the project.
+Since planning already requires 3.16, I would simply standardise the repository on:
+cmake_minimum_required(VERSION 3.16)
+or newer.
+8. Too many global build settings
+Examples:
+add_compile_options(-Wall -Wextra)
+add_link_options(...)
+add_compile_definitions(...)
+include_directories(...)
+These affect everything below them.
+Prefer target-scoped configuration:
+target_compile_options(humansl_planning PRIVATE -Wall -Wextra)
+target_compile_definitions(humansl_planning PRIVATE ...)
+target_include_directories(humansl_planning PRIVATE ...)
+Your code already uses target-scoped commands extensively, so the remaining globals stand out.
+This becomes particularly important because you're nesting projects using add_subdirectory.
+9. There is a lot of raw third-party path plumbing
+For example:
+${TP_LIB}/libgpmp2.so
+${TP_LIB}/libgtsam.so
+${TP_LIB}/libmetis-gtsam.so
+${KORTEX_DIR}/lib/release/libKortexApiCpp.a
+and repeated RPATH handling.
+A cleaner CMake architecture creates imported targets once:
+GPMP2::GPMP2
+GTSAM::GTSAM
+Kortex::Kortex
+Vicon::DataStream
+Those targets own:
+library path
+headers
+relevant linker options
+possibly runtime path information
+Then application CMake becomes much easier to read.
+10. The linker workarounds are a warning sign
+You currently need things like:
+-Wl,--disable-new-dtags
+-Wl,--allow-shlib-undefined
+-Wl,-z,lazy
+The comments explain why, so this isn't careless.
+But architecturally, these are technical debt signals. Especially:
+allow-shlib-undefined
+because you are intentionally loading a Pinocchio parser library whose collision dependencies are incomplete.
+I wouldn't necessarily fix this during planner cleanup, but I would isolate these hacks into the imported Pinocchio dependency rather than propagate them through planner targets.
+11. Generated joint limits are clever, but ownership is wrong
+The actual generation approach is good:
+YAML
+ ↓
+generator
+ ↓
+constexpr JointLimits.h
+You gain compile-time constants while maintaining one data source.
+But because that YAML lives under:
+planning/config/
+the build says physical robot limits belong to the planner.
+They don't.
+I'd move:
+planning/config/joint_limits.yaml
+to something like:
+model/joint_limits.yaml
+or:
+robot/config/joint_limits.yaml
+Then both planning and control consume it.
+12. Hardware.cpp owning offline logging is a concrete cohesion failure
+This comment is particularly revealing:
+make_synthetic_log never connects to the robot, but must link Kortex because the writer lives in Hardware.cpp.
+That is the CMake telling you the C++ ownership is wrong.
+Extract:
+RunLog.cpp
+RunLog.h
+Then:
+controller         → RunLog
+make_synthetic_log → RunLog
+test_log_schema    → RunLog
+and only true hardware code links Kortex.
+This is exactly the type of new file that is justified because it removes an incorrect dependency.
+What is good
+There is also quite a lot I would preserve.
+Your subsystem intentions are strong:
+control = control mathematics
+runtime = hardware lifecycle
+planning = optimisation
+tracking = external sensing
+contracts = shared exchange types
+The control CMake explicitly tries to keep Kortex, Vicon and GPMP2 out of the control library.
+Runtime explicitly keeps physical-arm concerns out of control.
+Tests are mostly linked against production targets rather than entire copied implementations.
+You've also clearly thought about reproducibility, canonical URDF ownership and generated robot parameters.
+So I would not describe this as bad engineering. It looks more like:
+The architecture has evolved faster than the dependency graph has been cleaned up.
+My priority order
+If I were cleaning this as a robotics software engineer, I'd do only these first:
+Create humansl_robot_model containing robot model, kinematics and joint-limit ownership.
+Make planning and control depend independently on it.
+Make runtime link the tracking targets instead of compiling tracking .cpp files.
+Create one hardware/runtime support library rather than repeatedly compiling Hardware.cpp.
+Rename bridge_core → humansl_planning.
+Make external library dependencies PRIVATE wherever possible.
+Standardise CMake minimum/version and target-scoped compiler settings.
+After those changes, I would reassess before doing further build-system refactoring. Those seven changes address the actual coupling problems rather than merely making the CMake prettier.
+
+
+I want you to address all the points as said, dont overdoo
+
+## 2026-08-24 08:28:24 BST
+
+why is there so many things in source control

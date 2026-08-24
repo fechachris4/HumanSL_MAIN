@@ -10,7 +10,7 @@
 #
 #   cd Christian_control/simulation
 #   cmake -S . -B build
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.16)
 project(humansl_simulation)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -18,15 +18,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if (NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif ()
-
-
-add_compile_options(-Wall -Wextra)
-
-# DT_RUNPATH (the linker's new-dtags default) is non-transitive; DT_RPATH is
-# transitive and lets binaries run bare, outside ctest's LD_LIBRARY_PATH.
-# Same workaround as planner_bridge for the vendored third_party libraries,
-# which carry no RUNPATH of their own.
-add_link_options(-Wl,--disable-new-dtags)
 
 get_filename_component(HUMANSL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
 set(TP_LIB "${HUMANSL_ROOT}/third_party/lib")
@@ -63,6 +54,7 @@ set(SIM_MODEL_XML "${SIM_MODEL_DIR}/humansl_dual_gen3.xml")
 #     validation. Startup-only; after it returns, all control-loop access
 #     is by stored integer ids, never name lookup. ---
 add_library(sim_model STATIC src/ModelContract.cpp)
+add_humansl_warnings_to(sim_model)
 target_include_directories(sim_model PUBLIC src)
 target_link_libraries(sim_model PUBLIC mujoco)
 
@@ -76,6 +68,7 @@ target_link_libraries(sim_model PUBLIC mujoco)
 #     clock — which is why it is its own tiny library and its test links
 #     no simulator. ---
 add_library(sim_mount_motion STATIC src/MountMotion.cpp)
+add_humansl_warnings_to(sim_mount_motion)
 target_include_directories(sim_mount_motion PUBLIC src)
 target_link_libraries(sim_mount_motion PUBLIC humansl_execution_core)
 
@@ -92,6 +85,7 @@ target_link_libraries(sim_mount_motion PUBLIC humansl_execution_core)
 #     State.h/Config.h records (JointVector, CartesianPose, Twist) — the
 #     core itself is consumed by Task 5's coordinator, not here. ---
 add_library(sim_backend STATIC src/MujocoBackend.cpp)
+add_humansl_warnings_to(sim_backend)
 target_link_libraries(sim_backend PUBLIC sim_model humansl_execution_core)
 
 
@@ -103,6 +97,7 @@ target_link_libraries(sim_backend PUBLIC sim_model humansl_execution_core)
 #     the raw ideal WorldSample each tick (sequence = tick + 1, age 0);
 #     the core owns freshness classification. ---
 add_library(sim_runner STATIC src/DualSimulationRunner.cpp)
+add_humansl_warnings_to(sim_runner)
 target_link_libraries(sim_runner PUBLIC sim_backend sim_mount_motion
                                         humansl_execution_core)
 
@@ -112,7 +107,13 @@ target_link_libraries(sim_runner PUBLIC sim_backend sim_mount_motion
 option(HUMANSL_SIM_VIEWER
        "Build the optional passive GLFW viewer into humansl_sim" OFF)
 add_executable(humansl_sim src/SimMain.cpp)
+add_humansl_warnings_to(humansl_sim)
 target_link_libraries(humansl_sim sim_runner)
+# DT_RUNPATH (the linker's new-dtags default) is non-transitive; DT_RPATH is
+# transitive and lets the binary run bare, outside ctest's LD_LIBRARY_PATH.
+# Same workaround as planner_bridge for the vendored third_party libraries,
+# which carry no RUNPATH of their own.
+target_link_options(humansl_sim PRIVATE -Wl,--disable-new-dtags)
 target_compile_definitions(humansl_sim PRIVATE
     SIM_MODEL_XML_PATH="${SIM_MODEL_XML}"
     SIM_URDF_PATH="${HUMANSL_ROOT}/Christian_control/model/GEN3_dual_mounted.urdf")

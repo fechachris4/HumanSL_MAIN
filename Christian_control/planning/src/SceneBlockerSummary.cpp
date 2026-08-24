@@ -86,16 +86,25 @@ std::optional<DynamicAttemptEvidence> ClosestDynamicAttempt(
     std::optional<DynamicAttemptEvidence> closest;
     double closest_worst_ratio = 0.0;
     for (const CandidateEvidence& attempt : attempts) {
-        if (attempt.disposition != "dynamic_attempts_exhausted") continue;
+        if (attempt.disposition != "dynamic_attempts_exhausted" &&
+            attempt.disposition != "dynamic_repair_ineffective")
+            continue;
         const double worst_ratio =
             std::max(attempt.validation.max_velocity_ratio,
                      attempt.validation.max_acceleration_ratio);
         if (!closest || worst_ratio < closest_worst_ratio) {
             closest_worst_ratio = worst_ratio;
+            const bool velocity_worse =
+                attempt.validation.max_velocity_ratio >
+                attempt.validation.max_acceleration_ratio;
             closest = DynamicAttemptEvidence{
                 attempt.validation.max_velocity_ratio,
                 attempt.validation.max_acceleration_ratio,
-                attempt.duration_s};
+                attempt.duration_s,
+                velocity_worse ? attempt.validation.peak_velocity_joint
+                               : attempt.validation.peak_acceleration_joint,
+                velocity_worse ? attempt.validation.peak_velocity_time_s
+                               : attempt.validation.peak_acceleration_time_s};
         }
     }
     return closest;

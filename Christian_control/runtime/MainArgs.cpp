@@ -31,10 +31,11 @@ ParsedMainArgs ParseMainArgs(const std::vector<std::string>& args) {
             parsed.mount = next();
         } else if (flag == "--plan") {
             parsed.plan = ParseOnOff(flag, next());
-        } else if (flag == "--planner") {
-            parsed.planner = next();
-        } else if (flag == "--baseline-bridge") {
-            parsed.baseline_bridge = next();
+        } else if (flag == "--planner-artifacts") {
+            parsed.planner_artifacts_dir = next();
+            if (parsed.planner_artifacts_dir.empty())
+                throw std::invalid_argument(
+                    "--planner-artifacts requires a non-empty directory");
         } else if (flag == "--record") {
             parsed.record = ParseOnOff(flag, next());
         } else if (flag == "--fixed-pose") {
@@ -62,16 +63,9 @@ ParsedMainArgs ParseMainArgs(const std::vector<std::string>& args) {
     if (parsed.mount != "fixed" && parsed.mount != "vicon")
         throw std::invalid_argument(
             "--mount is required and must be 'fixed' or 'vicon'");
-    if (parsed.planner != "current" && parsed.planner != "baseline")
+    if (!parsed.planner_artifacts_dir.empty() && !parsed.plan)
         throw std::invalid_argument(
-            "--planner must be 'current' or 'baseline'");
-    if (parsed.planner == "baseline" && parsed.baseline_bridge.empty())
-        throw std::invalid_argument(
-            "--planner baseline requires --baseline-bridge <path> (the "
-            "frozen 5abc1b2c planner binary)");
-    if (parsed.planner != "baseline" && !parsed.baseline_bridge.empty())
-        throw std::invalid_argument(
-            "--baseline-bridge is only meaningful with --planner baseline");
+            "--planner-artifacts is only meaningful with --plan on");
     if (parsed.arm == "both" && !parsed.log_file.empty())
         throw std::invalid_argument(
             "--log is not valid with --arm both — each arm writes its own "

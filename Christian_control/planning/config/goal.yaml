@@ -57,16 +57,7 @@ left:
   # max_chord_error_m, because a stated tolerance is meaningless if the
   # chords between samples already miss the arc by more than it.
   frame: mount
-  path:
-    type: circle
-    centre: [ 0.39, 0.686, 0.5213 ]
-    radius_m: 0.15
-    normal: [ 1, 0, 0 ]
-    duration_s: 12
-    # fixed = hold one orientation for the whole trace (what drawing on a
-    # surface wants). radial = keep +z pointed at the circle's centre.
-    orientation: fixed
-    orientation_rpy_deg: [ 90, 0, 90 ]
+  goal: [ 0.4, 0.3, 0.2 ]
 
   # Uncomment to stop inheriting the start pose's orientation. The value
   # below is NOT a recommendation — it is the orientation measured to be

@@ -12,7 +12,7 @@
 #include <chrono>
 #include <cstddef>
 
-// Generated at build time from planning/config/joint_limits.yaml — the one
+// Generated at build time from model/joint_limits.yaml — the one
 // authoritative table of physical Kinova joint limits and of the margins the
 // planner and controller apply to them. See tools/generate_joint_limits.py.
 #include "JointLimits.h"
@@ -137,7 +137,7 @@ namespace config
 
     // Commanded-speed clip, deg/s. Derived, not authored: the physical
     // hard limits the base reports at startup live in
-    // planning/config/joint_limits.yaml, and this is
+    // model/joint_limits.yaml, and this is
     // kVelocityControllerFraction of them (JointLimits.h, generated from
     // that yaml at build time). The planner derives its own, stricter,
     // figure from the same table by the same mechanism, so the two cannot
@@ -231,7 +231,7 @@ namespace config
 
     // Published Gen3 7-DoF position limits, degrees, in Kortex actuator
     // order — Kinova's User Guide Table 39. Derived, not authored: they come
-    // from planning/config/joint_limits.yaml through the generated
+    // from model/joint_limits.yaml through the generated
     // JointLimits.h, which is the single authoritative table for the whole
     // repository. Joints 1/3/5/7 are continuous and carry the zero sentinel
     // and a zero mask. These model values remain the source for client-side
@@ -255,7 +255,7 @@ namespace config
     // applied per HIGH/LOW; 0 = leave that joint alone. The controller owns
     // every bounded joint's 2/4/6 threshold; continuous 1/3/5/7 have none.
     // The WARNING threshold is the physical limit itself, derived from
-    // planning/config/joint_limits.yaml like every other limit in the
+    // model/joint_limits.yaml like every other limit in the
     // repository (2026-08-20). It used to be three hand-authored numbers —
     // 130/145/118 deg — that followed no rule: j2's sat 1.1 deg OUTSIDE its
     // physical limit while j6's sat 2.3 deg inside, and that 118 was the

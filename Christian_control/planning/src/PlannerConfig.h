@@ -76,6 +76,16 @@ struct PlannerConfig {
     PathFollowingConfig path_following;
     OptimizerTuning optimizer;
     double minimum_clearance_m = 0.05;
+    // Diagnostic reference for the optimizer's raw GTSAM graph error
+    // (TrajectoryResult::final_error), reported beside each candidate's
+    // final cost. Acceptance itself is physical: the final validator's
+    // start/limit/collision/task facts decide, never this number.
+    double acceptance_graph_error = 100.0;
+    // Upper bound on how many distinct terminal IK postures the solver
+    // seeds one optimiser solve each from (further capped by the compiled
+    // kMaxTerminalSeeds). Diversity, not retries: each seed is solved
+    // once; there is no restart or duration-repair loop.
+    int max_restart_attempts = 10;
     // Named obstacle geometry, persisted once in config/planner.yaml. Every
     // value is in the mount frame, in metres; enabled objects remain present
     // when disabled so the panel does not lose an intentionally hidden shape.

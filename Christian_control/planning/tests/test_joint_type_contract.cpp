@@ -19,8 +19,8 @@ void Check(bool condition, const std::string& what) {
 }  // namespace
 
 int main() {
-    const PlannerJointLimits limits = createJointLimits("../config/joint_limits.yaml");
-    const YAML::Node config = YAML::LoadFile("../config/joint_limits.yaml");
+    const PlannerJointLimits limits = createJointLimits("../../model/joint_limits.yaml");
+    const YAML::Node config = YAML::LoadFile("../../model/joint_limits.yaml");
     const double acceleration_fraction =
         config["margins"]["acceleration_planner_fraction"].as<double>();
 

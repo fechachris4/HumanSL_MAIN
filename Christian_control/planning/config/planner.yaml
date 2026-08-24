@@ -45,19 +45,26 @@ motion:
   min_duration_s: 1.0
   # Optimizer support states between start and goal. More is a finer plan
   # and a slower solve — the factor graph is rebuilt per waypoint.
-  waypoints: 10
+  waypoints: 20
 
 # What the planner treats as "too close".
 obstacles:
   # Metres from an obstacle surface at which its cost switches on. With the
   # arm's 0.05 m collision spheres the effective clearance is about double.
-  minimum_clearance_m: 0.05
+  minimum_clearance_m: 0.005
   preferred_clearance_m: 0.10
   # Obstacle-avoidance weight. A gtsam sigma: SMALLER avoids harder.
   collision_sigma: 0.0005
   # The one persistent mount-frame obstacle scene. Keep empty until a
   # measured, Christian-confirmed geometry is supplied.
-  scene: {}
+  scene:
+    torso:
+      enabled: true
+      shape: cylinder
+      center_mount_m: [0.15, 0.0, 0.0]
+      permitted_sphere_groups: ["mount_interface", "proximal_arm", "upper_arm"]
+      radius_m: 0.24
+      height_m: 1.4
 
 # How far the plan may stray from constant velocity.
 smoothness:
@@ -84,6 +91,38 @@ posture:
 solver:
   # Levenberg-Marquardt iteration ceiling. Shapes convergence, not motion.
   max_iterations: 1000
+  # Bjorn-parity acceptance gate (2026-08-24, docs/intent/story.md
+  # "Multi-gate plan validation"): a candidate is accepted when its raw
+  # GTSAM graph error (the optimizer's final total weighted-squared-
+  # residual, TrajectoryResult::final_error) is below this single number.
+  # Scene clearance, self-collision, joint-limit and task-error checks are
+  # still measured and reported but no longer gate acceptance on their
+  # own.
+  #
+  # Calibrated 2026-08-24 against this file's own weights (planner_bridge,
+  # --planner-config ../config/planner.yaml), via offline point-goal and
+  # traced-circle solves:
+  #   good point goal (left arm, 0.024 mm task residual, clean reach):
+  #     final_error = 1.33
+  #   good traced circle (left arm, 5.76 mm max dense fidelity):
+  #     final_error = 4.24
+  #   bad plans (right arm, direct route through the torso obstacle,
+  #     production collision_sigma): final_error = 28028, 35124, 55298,
+  #     70135, 72386
+  # 100 sits >20x above the best good number and >280x below the smallest
+  # bad number measured — comfortable headroom on both sides.
+  acceptance_graph_error: 100.0
+  # Bjorn-parity multi-restart cap (2026-08-24, docs/intent/story.md
+  # "Branch/route/bypass terminal search"): how many fresh terminal
+  # postures the retry loop inside duration repair may try, per duration
+  # attempt, before falling through. Replaces the deterministic
+  # 3-exact/19-shortened branch/bypass search: obstacle avoidance is the
+  # optimizer's own SDF cost term's job now, and this restart budget is
+  # what recovers Bjorn's local-minimum-escape behaviour instead.
+  #
+  # Calibrated 2026-08-24 against the known-bad corpus — see the
+  # calibration note this same story.md entry cites.
+  max_restart_attempts: 10
 
 # Tracing a Cartesian path (a circle, a line). These path-following weights
 # are ignored by point-to-point plans.
@@ -103,11 +142,11 @@ path_following:
   maximum_orientation_error_rad: 0.1
   # Dense validation rate. 0.002 s = 500 Hz, the controller's own loop rate,
   # so validation sees what the arm sees.
-  validation_dt_s: 0.002
+  validation_dt_s: 0.004
   # Approach phase. Paced from JOINT displacement over joint velocity
   # limits — it is task-space unconstrained and has no commanded Cartesian
   # route, so a Cartesian length would be timing a path that does not exist.
-  approach_velocity_fraction: 0.9
+  approach_velocity_fraction: 0.7
   approach_min_duration_s: 0.1
   approach_waypoints: 5
   # Circle sampling by geometry rather than an arbitrary count:
@@ -123,4 +162,4 @@ seeding:
   # Retained for run provenance. Every planning report prints this value.
   ik_seed: 20260807
   # Retained for compatibility with existing run metadata.
-  randomised: false
+  randomised: true

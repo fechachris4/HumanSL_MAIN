@@ -85,7 +85,7 @@ def _physical_limit_deg():
     import yaml
 
     yaml_path = (Path(__file__).resolve().parents[2]
-                 / "planning" / "config" / "joint_limits.yaml")
+                 / "model" / "joint_limits.yaml")
     try:
         with open(yaml_path) as handle:
             doc = yaml.safe_load(handle)

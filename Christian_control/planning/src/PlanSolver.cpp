@@ -1,10 +1,9 @@
 #include "PlanSolver.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <cmath>
-#include <tuple>
+#include <limits>
 #include <utility>
 
 #include "MountSdf.h"
@@ -13,86 +12,58 @@
 #include "TrajectoryOptimization.h"
 #include "ValidatePlan.h"
 
+// The pipeline, both entry points:
+//
+//   request -> terminal IK seeds (few, diverse) -> one GPMP2 solve per seed
+//           -> best geometrically valid solution -> retime for dynamics
+//           -> final full validation -> trajectory (or an honest failure)
+//
+// GPMP2 decides WHERE the arm goes; retiming decides HOW FAST. A failed
+// stage reports why it failed — it never invents a new planning problem
+// to rescue itself.
+
 namespace
 {
 
-    // Timing is never a reason for a plan to fail (2026-08-23 policy):
-    // stretching duration always brings velocity (1/s) and acceleration
-    // (1/s^2) ratios down, so a feasible duration exists for every
-    // geometrically valid plan — the repair just has to reach it. Each
-    // attempt re-solves rather than time-scales, and the fresh solve's
-    // peaks drift 10-20% off the scaling prediction, so aiming at 0.999
-    // crept (1.075 -> 1.017 -> 1.011, then the cap — a full session of
-    // "achievable" circles dying at ratio 1.01-1.12). Aim well under 1.0
-    // and the first or second attempt lands; the raised cap is a runaway
-    // backstop, not a budget the search is expected to spend.
-    constexpr int kMaximumDurationAttempts = 6;
-    constexpr double kDurationRepairTargetDynamicRatio = 0.8;
+    // How many distinct terminal joint postures are tried, each with ONE
+    // optimiser solve. Diversity, not volume: a redundant 7-DoF arm has a
+    // handful of meaningfully different solution families for one pose, and
+    // SolveTerminalIkCandidates already ranks the best distinct ones first.
+    constexpr std::size_t kMaxTerminalSeeds = 4;
 
-    struct TerminalTarget {
-        gtsam::Pose3 pose;
-        std::string source = "requested";
-        std::size_t ordinal = 0;
-        double fraction = 1.0;
-        std::string blocker_id;
-    };
+    // Safety margin applied on top of the exact retiming factor, so the
+    // revalidated ratios land visibly below 1 rather than on the boundary.
+    constexpr double kRetimeMargin = 1.02;
 
     struct SearchTerminal {
         TerminalIkCandidate ik;
-        TerminalTarget target;
         gtsam::Pose3 candidate_pose;
-        PlanStatus kind = PlanStatus::kReached;
         double requested_position_shortfall_m = 0.0;
         double requested_orientation_shortfall_rad = 0.0;
         int orientation_tier = 1;
     };
 
-    struct RouteSolution {
+    // The best geometrically valid candidate so far, carried between the
+    // per-seed solve loop and the retime/final-validation stage.
+    struct SelectedCandidate {
         TrajectoryResult trajectory;
         PlanValidationReport validation;
         SearchTerminal terminal;
-        PathIkResult ik_walk;
-        bool has_ik_walk = false;
-        RouteHypothesis route = RouteHypothesis::kNormal;
+        std::size_t terminal_branch = 0;
         double duration_s = 0.0;
-        double task_start_time_s = 0.0;
         std::size_t evidence_index = 0;
     };
 
-    struct DurationSearchResult {
-        std::optional<RouteSolution> executable;
-        PlanValidationReport last_validation;
-        double last_duration_s = 0.0;
-    };
-
-    template <typename Outcome>
-    void ApplyRouteSolution(RouteSolution& solution, Outcome& outcome)
-    {
-        outcome.status = solution.terminal.kind;
-        outcome.trajectory = std::move(solution.trajectory);
-        outcome.validation = solution.validation;
-        outcome.total_time_sec = solution.duration_s;
-        outcome.terminal_candidate = solution.terminal.ik;
-        outcome.selected_candidate_attempt = solution.evidence_index;
-        outcome.candidate_attempts[solution.evidence_index].disposition =
-            "best_validated_bounded_candidate";
-        outcome.failure_reason.clear();
-    }
-
     CandidateEvidence MakeEvidence(const SearchTerminal& terminal,
                                    std::size_t terminal_branch,
-                                   RouteHypothesis route, int duration_attempt,
-                                   double duration_s, double scene_sigma)
+                                   double duration_s, double scene_sigma,
+                                   const gtsam::Pose3& requested_pose)
     {
         CandidateEvidence evidence;
-        evidence.terminal_kind = terminal.kind;
-        evidence.target_source = terminal.target.source;
-        evidence.target_ordinal = terminal.target.ordinal;
-        evidence.target_fraction = terminal.target.fraction;
-        evidence.target_position_mount_m = terminal.target.pose.translation();
+        evidence.terminal_kind = PlanStatus::kReached;
+        evidence.target_position_mount_m = requested_pose.translation();
         evidence.target_orientation_mount =
-            Eigen::Quaterniond(terminal.target.pose.rotation().matrix());
-        evidence.blocker_id = terminal.target.blocker_id;
+            Eigen::Quaterniond(requested_pose.rotation().matrix());
         evidence.terminal_branch = terminal_branch;
         evidence.terminal_ik_stream_id = terminal.ik.stream_id;
         evidence.terminal_ik_attempt_count = kTerminalIkAttemptsPerStream;
@@ -106,8 +77,6 @@ namespace
         evidence.requested_orientation_shortfall_rad =
             terminal.requested_orientation_shortfall_rad;
         evidence.orientation_tier = terminal.orientation_tier;
-        evidence.route = route;
-        evidence.duration_attempt = duration_attempt;
         evidence.duration_s = duration_s;
         evidence.scene_collision_sigma = scene_sigma;
         return evidence;
@@ -126,101 +95,69 @@ namespace
                                                      trajectory.final_costs.end());
     }
 
-    template <typename Solve, typename Validate>
-    DurationSearchResult
-    SolveDurationCandidate(const SearchTerminal& terminal, std::size_t terminal_branch,
-                           RouteHypothesis route, double base_duration_s, double scene_sigma,
-                           double preferred_clearance_m, Solve solve, Validate validate,
-                           std::vector<CandidateEvidence>& attempts, std::string& failure_reason)
+    // ---- validation facts -------------------------------------------------
+    //
+    // The validator reports facts; these two predicates are the ONLY places
+    // those facts are turned into decisions. Raw GTSAM graph error is an
+    // optimiser objective, not a physical statement — it is recorded in the
+    // evidence rows as a diagnostic and gates nothing.
+
+    // Everything retiming cannot fix. A candidate failing any of these is
+    // rejected outright: slowing down cannot repair a shape, a collision,
+    // a joint-limit violation or a task-error miss.
+    bool GeometricallyValid(const PlanValidationReport& report)
     {
-        DurationSearchResult result;
-        double duration_s = base_duration_s;
-        for (int attempt = 1; attempt <= kMaximumDurationAttempts; ++attempt) {
-            result.last_duration_s = duration_s;
-            const auto solve_start = std::chrono::steady_clock::now();
-            TrajectoryResult trajectory;
-            try {
-                trajectory = solve(duration_s);
-            } catch (const std::exception& exception) {
-                CandidateEvidence evidence = MakeEvidence(
-                    terminal, terminal_branch, route, attempt, duration_s, scene_sigma);
-                evidence.solve_time_s =
-                    std::chrono::duration<double>(std::chrono::steady_clock::now() - solve_start)
-                        .count();
-                evidence.disposition = "optimizer_exception";
-                attempts.push_back(std::move(evidence));
-                failure_reason = exception.what();
-                return result;
-            }
-            const auto solve_end = std::chrono::steady_clock::now();
-            trajectory.optimization_duration =
-                std::chrono::duration_cast<std::chrono::milliseconds>(solve_end - solve_start);
-
-            CandidateEvidence evidence = MakeEvidence(
-                terminal, terminal_branch, route, attempt, duration_s, scene_sigma);
-            evidence.solve_time_s = std::chrono::duration<double>(solve_end - solve_start).count();
-            if (trajectory.trajectory_pos.empty()) {
-                evidence.disposition = "empty_trajectory";
-                attempts.push_back(std::move(evidence));
-                failure_reason = "optimizer returned an empty trajectory";
-                return result;
-            }
-            CopyOptimizerEvidence(trajectory, evidence);
-
-            result.last_validation = validate(trajectory, duration_s);
-            evidence.validation = result.last_validation;
-            evidence.capped_clearance_m =
-                std::min(result.last_validation.minimum_scene_clearance_m,
-                         preferred_clearance_m);
-            evidence.disposition = result.last_validation.executable
-                                       ? "executable"
-                                       : result.last_validation.failure_reason;
-            if (result.last_validation.disposition == CandidateDisposition::kNeedsLongerDuration &&
-                attempt == kMaximumDurationAttempts)
-                evidence.disposition = "dynamic_attempts_exhausted";
-            attempts.push_back(std::move(evidence));
-            const std::size_t evidence_index = attempts.size() - 1;
-
-            if (result.last_validation.executable) {
-                RouteSolution solution;
-                solution.trajectory = std::move(trajectory);
-                solution.validation = result.last_validation;
-                solution.terminal = terminal;
-                solution.route = route;
-                solution.duration_s = duration_s;
-                solution.evidence_index = evidence_index;
-                result.executable = std::move(solution);
-                failure_reason.clear();
-                return result;
-            }
-            failure_reason = result.last_validation.failure_reason;
-            if (result.last_validation.disposition != CandidateDisposition::kNeedsLongerDuration)
-                return result;
-            if (attempt == kMaximumDurationAttempts) {
-                failure_reason = "dynamic_attempts_exhausted";
-                return result;
-            }
-            const double duration_scale = std::max(
-                result.last_validation.max_velocity_ratio /
-                    kDurationRepairTargetDynamicRatio,
-                std::sqrt(result.last_validation.max_acceleration_ratio /
-                          kDurationRepairTargetDynamicRatio));
-            duration_s *= duration_scale;
-        }
-        return result;
+        return report.disposition != CandidateDisposition::kInvalid &&
+               report.finite && report.start_valid && report.scene_valid &&
+               report.self_collision_valid && report.joint_limits_valid &&
+               report.task_valid;
     }
 
-    void RecordSeedFailure(const SearchTerminal& terminal, std::size_t terminal_branch,
-                           RouteHypothesis route, double scene_sigma,
-                           std::vector<CandidateEvidence>& attempts, std::string& failure_reason)
+    // The final physical acceptance: geometry AND dynamics.
+    bool PhysicallyExecutable(const PlanValidationReport& report)
     {
-        CandidateEvidence evidence =
-            MakeEvidence(terminal, terminal_branch, route, 0, 0.0, scene_sigma);
-        evidence.stage = "route_seed";
-        evidence.disposition = "route_seed_ik_failure";
-        attempts.push_back(std::move(evidence));
-        failure_reason = "route_seed_ik_failure";
+        return GeometricallyValid(report) && report.executable;
     }
+
+    std::string GeometryFailureReason(const PlanValidationReport& report)
+    {
+        if (!report.finite) return "trajectory_not_finite";
+        if (!report.start_valid) return "start_state_mismatch";
+        if (!report.scene_valid) return "scene_clearance_violation";
+        if (!report.self_collision_valid) return "self_collision";
+        if (!report.joint_limits_valid) return "joint_limit_violation";
+        if (!report.task_valid) return "task_error_above_tolerance";
+        if (!report.failure_reason.empty()) return report.failure_reason;
+        return "not_executable";
+    }
+
+    // ---- retiming ---------------------------------------------------------
+    //
+    // Uniform time scaling: the factor by which the trajectory must be
+    // slowed so no joint exceeds its velocity or acceleration limit.
+    // Geometry is untouched — the arm follows the same joint path, later.
+    //
+    //   alpha = max(1, max|qdot|/qdot_max, sqrt(max|qddot|/qddot_max))
+    //
+    // Velocity scales as 1/alpha and acceleration as 1/alpha^2, which is
+    // why the acceleration term takes a square root.
+    double RetimeScale(const PlanValidationReport& report)
+    {
+        const double alpha = std::max(
+            {1.0, report.max_velocity_ratio,
+             std::sqrt(std::max(0.0, report.max_acceleration_ratio))});
+        return alpha > 1.0 ? alpha * kRetimeMargin : 1.0;
+    }
+
+    void ApplyRetiming(TrajectoryResult& trajectory, double alpha,
+                       double& duration_s)
+    {
+        if (alpha <= 1.0) return;
+        duration_s *= alpha;
+        for (auto& velocity : trajectory.trajectory_vel) velocity /= alpha;
+    }
+
+    // ---- shared boundary helpers -------------------------------------------
 
     void CopyJointLimits(const PlannerJointLimits& source, PlanJointLimits& target)
     {
@@ -286,128 +223,6 @@ namespace
                             .minimum_scene_clearance_m);
     }
 
-    // Support resolution is independent of duration (2026-08-23): the task
-    // is real only where pose priors act, and stretching a plan in time must
-    // never widen the gaps between them — that is how a 0.13 s grid became
-    // 1.3 s holes whose joint-space GP bridges bowed 91.5 mm off a circle
-    // the anchors held to 0.15 mm. Splitting every interval into `factor`
-    // uniform parts keeps the grid uniform (densifyTrajectory's contract),
-    // lands every original state — and its prior — exactly on the new grid,
-    // and gives each inserted TASK state an interpolated pose prior of its
-    // own, so the requested geometry constrains the trajectory at least as
-    // often as the authored sampling. Approach intervals gain free states
-    // only: there is no requested geometry there to be faithful to.
-    AssembledPath SubdivideAssembly(const AssembledPath& base, std::size_t factor)
-    {
-        if (factor <= 1) return base;
-        AssembledPath fine;
-        fine.total_duration_s = base.total_duration_s;
-        fine.task_start_index = base.task_start_index * factor;
-        for (const std::size_t index : base.zero_velocity_indices)
-            fine.zero_velocity_indices.push_back(index * factor);
-        const std::size_t intervals = base.waypoints.size() - 1;
-        for (std::size_t i = 0; i < intervals; ++i) {
-            const auto& a = base.waypoints[i];
-            const auto& b = base.waypoints[i + 1];
-            const JointConfiguration& qa = base.initial_configurations[i];
-            const JointConfiguration& qb = base.initial_configurations[i + 1];
-            for (std::size_t j = 0; j < factor; ++j) {
-                const double w = static_cast<double>(j) / static_cast<double>(factor);
-                OptimisationWaypoint waypoint;
-                waypoint.time_s = (1.0 - w) * a.time_s + w * b.time_s;
-                if (j == 0) {
-                    waypoint.pose_prior = a.pose_prior;
-                } else if (a.pose_prior && b.pose_prior) {
-                    PosePrior prior;
-                    prior.target.translation() =
-                        (1.0 - w) * a.pose_prior->target.translation() +
-                        w * b.pose_prior->target.translation();
-                    const Eigen::Quaterniond qra(a.pose_prior->target.linear());
-                    Eigen::Quaterniond qrb(b.pose_prior->target.linear());
-                    prior.target.linear() = qra.slerp(w, qrb).toRotationMatrix();
-                    prior.rotation_sigma_rad = a.pose_prior->rotation_sigma_rad;
-                    prior.translation_sigma_m = a.pose_prior->translation_sigma_m;
-                    waypoint.pose_prior = prior;
-                }
-                fine.waypoints.push_back(std::move(waypoint));
-                fine.initial_configurations.push_back(qa + w * (qb - qa));
-            }
-        }
-        fine.waypoints.push_back(base.waypoints.back());
-        fine.initial_configurations.push_back(base.initial_configurations.back());
-        return fine;
-    }
-
-    std::optional<JointConfiguration>
-    SolveBypassMidpointIk(const PathIkArm& arm, const PathIkJointLimits& limits,
-                          const PlannerModel& model, const SceneViolationEvidence& collision,
-                          const Eigen::Vector3d& displacement_mount,
-                          std::uint64_t effective_ik_seed)
-    {
-        const gtsam::Pose3 collision_pose =
-            ToolPoseInMount(model, collision.q);
-        Eigen::Isometry3d target(collision_pose.matrix());
-        target.translation() += displacement_mount;
-
-        const auto candidates = SolveTerminalIkCandidates(
-            arm, target, collision.q, limits,
-            effective_ik_seed, 1);
-        if (candidates.empty())
-            return std::nullopt;
-        return candidates.front().configuration;
-    }
-
-    double CappedClearance(const PlanValidationReport& validation, double preferred_clearance_m)
-    {
-        return std::min(validation.minimum_scene_clearance_m, preferred_clearance_m);
-    }
-
-    bool BetterPointRoute(const RouteSolution& candidate, const RouteSolution& incumbent,
-                          double preferred_clearance_m)
-    {
-        const double candidate_clearance =
-            CappedClearance(candidate.validation, preferred_clearance_m);
-        const double incumbent_clearance =
-            CappedClearance(incumbent.validation, preferred_clearance_m);
-        if (candidate_clearance != incumbent_clearance)
-            return candidate_clearance > incumbent_clearance;
-        if (candidate.duration_s != incumbent.duration_s)
-            return candidate.duration_s < incumbent.duration_s;
-        if (candidate.validation.integrated_joint_travel_rad !=
-            incumbent.validation.integrated_joint_travel_rad)
-            return candidate.validation.integrated_joint_travel_rad <
-                   incumbent.validation.integrated_joint_travel_rad;
-        return static_cast<int>(candidate.route) < static_cast<int>(incumbent.route);
-    }
-
-    bool BetterTraceRoute(const RouteSolution& candidate, const RouteSolution& incumbent,
-                          double preferred_clearance_m)
-    {
-        if (candidate.validation.trace_rms_position_m != incumbent.validation.trace_rms_position_m)
-            return candidate.validation.trace_rms_position_m <
-                   incumbent.validation.trace_rms_position_m;
-        if (candidate.validation.trace_max_position_m != incumbent.validation.trace_max_position_m)
-            return candidate.validation.trace_max_position_m <
-                   incumbent.validation.trace_max_position_m;
-        const double candidate_clearance =
-            CappedClearance(candidate.validation, preferred_clearance_m);
-        const double incumbent_clearance =
-            CappedClearance(incumbent.validation, preferred_clearance_m);
-        if (candidate_clearance != incumbent_clearance)
-            return candidate_clearance > incumbent_clearance;
-        return static_cast<int>(candidate.route) < static_cast<int>(incumbent.route);
-    }
-
-    Eigen::Vector3d BypassDisplacement(const SceneViolationEvidence& collision,
-                                       double preferred_clearance_m, RouteHypothesis route)
-    {
-        const double lift = preferred_clearance_m - collision.clearance_m;
-        const Eigen::Vector3d normal = collision.outward_normal_mount.normalized();
-        const Eigen::Vector3d tangent = DeterministicTangent(normal);
-        const double tangent_sign = route == RouteHypothesis::kPositiveBypass ? 1.0 : -1.0;
-        return lift * normal + tangent_sign * lift * tangent;
-    }
-
     double OrientationError(const gtsam::Pose3& requested,
                             const gtsam::Pose3& actual)
     {
@@ -418,15 +233,11 @@ namespace
 
     SearchTerminal MakeSearchTerminal(const PlannerModel& model,
                                       const TerminalIkCandidate& ik,
-                                      const TerminalTarget& target,
-                                      const gtsam::Pose3& requested_pose,
-                                      PlanStatus kind)
+                                      const gtsam::Pose3& requested_pose)
     {
         SearchTerminal terminal;
         terminal.ik = ik;
-        terminal.target = target;
         terminal.candidate_pose = ToolPoseInMount(model, ik.configuration);
-        terminal.kind = kind;
         terminal.requested_position_shortfall_m =
             (terminal.candidate_pose.translation() -
              requested_pose.translation())
@@ -441,10 +252,7 @@ namespace
     void RecordTerminalIkSummaries(
         const PlannerModel& model,
         const std::vector<TerminalIkCandidate>& attempts,
-        const TerminalTarget& target, const gtsam::Pose3& requested_pose,
-        PlanStatus kind,
-        const std::vector<NamedObstacleField>* obstacle_fields,
-        double minimum_clearance_m,
+        const gtsam::Pose3& requested_pose,
         std::vector<CandidateEvidence>& evidence_rows)
     {
         const auto rank = [](const TerminalIkCandidate& value) {
@@ -465,252 +273,91 @@ namespace
             }
             if (!best)
                 continue;
-            const TerminalIkCandidate& ik = *best;
-            const SearchTerminal terminal = MakeSearchTerminal(
-                model, ik, target, requested_pose, kind);
-            CandidateEvidence evidence = MakeEvidence(
-                terminal, 0, RouteHypothesis::kNormal, 0, 0.0, 0.0);
+            const SearchTerminal terminal =
+                MakeSearchTerminal(model, *best, requested_pose);
+            CandidateEvidence evidence =
+                MakeEvidence(terminal, 0, 0.0, 0.0, requested_pose);
             evidence.stage = "terminal_ik";
             evidence.terminal_ik_attempt_count = attempt_count;
-            if (!ik.planner_limit_legal)
+            if (!best->planner_limit_legal)
                 evidence.disposition = "planner_limit_illegal";
-            else if (ik.exact)
+            else if (best->exact)
                 evidence.disposition = "exact_pose_candidate";
             else
                 evidence.disposition = "near_miss_candidate";
-            if (obstacle_fields && ik.planner_limit_legal) {
-                evidence.validation = MeasureConfigurationClearance(
-                    model, ik.configuration, *obstacle_fields,
-                    minimum_clearance_m);
-                if (!evidence.validation.scene_valid)
-                    evidence.disposition = "terminal_scene_clearance";
-                else if (!evidence.validation.self_collision_valid)
-                    evidence.disposition = "terminal_self_clearance";
-            }
             evidence_rows.push_back(std::move(evidence));
         }
     }
 
-    std::vector<SearchTerminal> GenerateExactTerminals(
+    // The few diverse terminal postures the seed loop draws from, best
+    // posture first (SolveTerminalIkCandidates ranks distinct solution
+    // families by joint headroom and displacement).
+    std::vector<SearchTerminal> GenerateTerminalSeeds(
         const PlannerModel& model, const PathIkArm& arm,
         const PathIkJointLimits& limits,
         const Eigen::Matrix<double, 7, 1>& measured_q,
         const gtsam::Pose3& requested_pose, std::uint64_t effective_seed,
+        std::size_t max_seeds,
         std::vector<CandidateEvidence>& evidence_rows)
     {
-        TerminalTarget target;
-        target.pose = requested_pose;
         std::vector<TerminalIkCandidate> attempts;
         const auto retained = SolveTerminalIkCandidates(
             arm, Eigen::Isometry3d(requested_pose.matrix()), measured_q,
-            limits, effective_seed, 3, &attempts);
-        RecordTerminalIkSummaries(
-            model, attempts, target, requested_pose, PlanStatus::kReached,
-            nullptr, 0.0, evidence_rows);
+            limits, effective_seed, max_seeds, &attempts);
+        RecordTerminalIkSummaries(model, attempts, requested_pose, evidence_rows);
         std::vector<SearchTerminal> terminals;
         for (const TerminalIkCandidate& ik : retained)
-            terminals.push_back(MakeSearchTerminal(
-                model, ik, target, requested_pose, PlanStatus::kReached));
+            terminals.push_back(MakeSearchTerminal(model, ik, requested_pose));
         return terminals;
     }
 
-    void AppendDistinctBlockers(const PlanValidationReport& report,
-                                std::vector<SceneViolationEvidence>& blockers)
+    // Straight joint-space interpolation from the measured start to the
+    // terminal posture: GPMP2's initial guess for a point goal.
+    std::vector<Eigen::Matrix<double, 7, 1>> InterpolatedJointSeed(
+        const Eigen::Matrix<double, 7, 1>& start,
+        const Eigen::Matrix<double, 7, 1>& terminal, std::size_t count)
     {
-        for (const SceneViolationEvidence& violation :
-             report.first_scene_violations) {
-            const bool seen = std::any_of(
-                blockers.begin(), blockers.end(),
-                [&](const SceneViolationEvidence& blocker) {
-                    return blocker.object_id == violation.object_id;
-                });
-            if (!seen)
-                blockers.push_back(violation);
-        }
-    }
-
-    bool SameTarget(const TerminalTarget& first, const TerminalTarget& second)
-    {
-        return (first.pose.translation() - second.pose.translation()).norm() <=
-                   1e-6 &&
-               OrientationError(first.pose, second.pose) <= 1e-9;
-    }
-
-    std::vector<TerminalTarget> GenerateShortenedTargets(
-        const PlannerModel& model, const gtsam::Pose3& start_pose,
-        const gtsam::Pose3& requested_pose,
-        const std::vector<SceneViolationEvidence>& blockers,
-        double minimum_clearance_m)
-    {
-        std::vector<TerminalTarget> targets;
-        std::size_t ordinal = 0;
-        for (int numerator = 16; numerator >= 1; --numerator) {
-            const double fraction = static_cast<double>(numerator) / 17.0;
-            TerminalTarget target;
-            target.pose = gtsam::Pose3(
-                requested_pose.rotation(),
-                gtsam::Point3(start_pose.translation() +
-                              fraction * (requested_pose.translation() -
-                                          start_pose.translation())));
-            target.source = "line_fraction";
-            target.ordinal = ordinal++;
-            target.fraction = fraction;
-            targets.push_back(std::move(target));
-        }
-        for (const SceneViolationEvidence& blocker : blockers) {
-            const Eigen::Vector3d violating_position =
-                ToolPoseInMount(model, blocker.q).translation();
-            const Eigen::Vector3d normal =
-                blocker.outward_normal_mount.normalized();
-            const Eigen::Vector3d tangent = DeterministicTangent(normal);
-            const double lift =
-                std::max(0.0, minimum_clearance_m - blocker.clearance_m);
-            const std::array<std::pair<std::string, Eigen::Vector3d>, 3>
-                offsets{{{"outward_projection", (lift * normal).eval()},
-                         {"positive_tangent", (lift * (normal + tangent)).eval()},
-                         {"negative_tangent", (lift * (normal - tangent)).eval()}}};
-            for (const auto& source_and_offset : offsets) {
-                TerminalTarget target;
-                target.pose = gtsam::Pose3(
-                    requested_pose.rotation(),
-                    gtsam::Point3(violating_position +
-                                  source_and_offset.second));
-                target.source = source_and_offset.first;
-                target.ordinal = ordinal++;
-                target.fraction = 0.0;
-                target.blocker_id = blocker.object_id;
-                if (std::none_of(targets.begin(), targets.end(),
-                                 [&](const TerminalTarget& retained) {
-                                     return SameTarget(retained, target);
-                                 }))
-                    targets.push_back(std::move(target));
-            }
-        }
-        return targets;
-    }
-
-    std::vector<SearchTerminal> GenerateShortenedTerminals(
-        const PlannerModel& model, const PathIkArm& arm,
-        const PathIkJointLimits& limits,
-        const Eigen::Matrix<double, 7, 1>& measured_q,
-        const gtsam::Pose3& start_pose, const gtsam::Pose3& requested_pose,
-        const std::vector<SceneViolationEvidence>& blockers,
-        const std::vector<NamedObstacleField>& obstacle_fields,
-        double minimum_clearance_m,
-        std::uint64_t effective_seed,
-        std::vector<CandidateEvidence>& evidence_rows)
-    {
-        const auto targets = GenerateShortenedTargets(
-            model, start_pose, requested_pose, blockers, minimum_clearance_m);
-        std::vector<SearchTerminal> exact_orientation;
-        std::vector<SearchTerminal> relaxed_orientation;
-        for (const TerminalTarget& target : targets) {
-            std::vector<TerminalIkCandidate> attempts;
-            (void)SolveTerminalIkCandidates(
-                arm, Eigen::Isometry3d(target.pose.matrix()), measured_q,
-                limits, effective_seed, 3, &attempts);
-            for (const TerminalIkCandidate& ik : attempts) {
-                if (!ik.planner_limit_legal)
-                    continue;
-                const PlanValidationReport terminal_clearance =
-                    MeasureConfigurationClearance(
-                        model, ik.configuration, obstacle_fields,
-                        minimum_clearance_m);
-                if (!terminal_clearance.scene_valid)
-                    continue;
-                if (!terminal_clearance.self_collision_valid)
-                    continue;
-                SearchTerminal terminal = MakeSearchTerminal(
-                    model, ik, target, requested_pose,
-                    PlanStatus::kGoalBlocked);
-                if (terminal.orientation_tier == 1)
-                    exact_orientation.push_back(std::move(terminal));
-                else
-                    relaxed_orientation.push_back(std::move(terminal));
-            }
-            RecordTerminalIkSummaries(
-                model, attempts, target, requested_pose,
-                PlanStatus::kGoalBlocked, &obstacle_fields,
-                minimum_clearance_m, evidence_rows);
-        }
-
-        std::vector<SearchTerminal>& pool =
-            exact_orientation.empty() ? relaxed_orientation : exact_orientation;
-        std::sort(pool.begin(), pool.end(), [](const SearchTerminal& first,
-                                               const SearchTerminal& second) {
-            if (first.orientation_tier != second.orientation_tier)
-                return first.orientation_tier < second.orientation_tier;
-            if (first.orientation_tier == 2 &&
-                first.requested_orientation_shortfall_rad !=
-                    second.requested_orientation_shortfall_rad)
-                return first.requested_orientation_shortfall_rad <
-                       second.requested_orientation_shortfall_rad;
-            if (first.requested_position_shortfall_m !=
-                second.requested_position_shortfall_m)
-                return first.requested_position_shortfall_m <
-                       second.requested_position_shortfall_m;
-            if (first.target.ordinal != second.target.ordinal)
-                return first.target.ordinal < second.target.ordinal;
-            if (first.ik.stream_id != second.ik.stream_id)
-                return first.ik.stream_id < second.ik.stream_id;
-            return first.ik.attempt_index < second.ik.attempt_index;
-        });
-
-        std::vector<SearchTerminal> retained;
-        for (SearchTerminal& candidate : pool) {
-            const bool duplicate = std::any_of(
-                retained.begin(), retained.end(),
-                [&](const SearchTerminal& existing) {
-                    Eigen::Matrix<double, 7, 1> difference =
-                        candidate.ik.configuration - existing.ik.configuration;
-                    for (int joint = 0; joint < 7; ++joint)
-                        difference(joint) =
-                            std::remainder(difference(joint), 2.0 * M_PI);
-                    return difference.cwiseAbs().maxCoeff() <= 1e-3;
-                });
-            if (duplicate)
-                continue;
-            retained.push_back(std::move(candidate));
-            if (retained.size() == 3)
-                break;
-        }
-        return retained;
-    }
-
-    CartesianPath TranslateTraceSeedToTerminal(
-        const CartesianPath& requested_path,
-        const gtsam::Pose3& candidate_terminal)
-    {
-        CartesianPath seed_path = requested_path;
-        if (seed_path.samples.empty())
-            return seed_path;
-        const Eigen::Vector3d displacement =
-            candidate_terminal.translation() -
-            requested_path.samples.back().pose.translation();
-        for (std::size_t index = 0; index < seed_path.samples.size(); ++index) {
-            const double u = seed_path.samples.size() > 1
-                                 ? static_cast<double>(index) /
-                                       static_cast<double>(seed_path.samples.size() - 1)
+        std::vector<Eigen::Matrix<double, 7, 1>> seed;
+        seed.reserve(count);
+        for (std::size_t i = 0; i < count; ++i) {
+            const double w = count > 1
+                                 ? static_cast<double>(i) /
+                                       static_cast<double>(count - 1)
                                  : 1.0;
-            seed_path.samples[index].pose.translation() += u * displacement;
+            seed.push_back(start + w * (terminal - start));
         }
-        return seed_path;
+        return seed;
+    }
+
+    // Retime the selected candidate and run the one final full validation.
+    // Returns true when the retimed trajectory is physically executable;
+    // the winner's evidence row is updated either way.
+    template <typename Revalidate>
+    bool FinishSelected(SelectedCandidate& selected, Revalidate revalidate,
+                        std::vector<CandidateEvidence>& attempts,
+                        std::string& failure_reason)
+    {
+        const double alpha = RetimeScale(selected.validation);
+        ApplyRetiming(selected.trajectory, alpha, selected.duration_s);
+        selected.validation =
+            revalidate(selected.trajectory, selected.duration_s,
+                       selected.terminal_branch);
+        CandidateEvidence& row = attempts[selected.evidence_index];
+        row.duration_s = selected.duration_s;
+        row.validation = selected.validation;
+        if (PhysicallyExecutable(selected.validation)) {
+            row.disposition = "executable_selected";
+            failure_reason.clear();
+            return true;
+        }
+        row.disposition = selected.validation.executable
+                              ? GeometryFailureReason(selected.validation)
+                              : selected.validation.failure_reason;
+        failure_reason = row.disposition;
+        return false;
     }
 
 } // namespace
-
-const char* RouteHypothesisName(RouteHypothesis route)
-{
-    switch (route) {
-    case RouteHypothesis::kNormal:
-        return "normal";
-    case RouteHypothesis::kPositiveBypass:
-        return "positive_bypass";
-    case RouteHypothesis::kNegativeBypass:
-        return "negative_bypass";
-    }
-    return "unknown";
-}
 
 PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& request,
                             const std::string& joint_limits_yaml, const PlannerConfig& config)
@@ -748,132 +395,134 @@ PlanOutcome SolveToPosition(const PlannerModel& model, const PlanRequest& reques
             start_vel = gtsam::Vector(*request.qdot_start_rad_s);
         OptimizeTrajectory optimizer;
 
-        std::vector<SceneViolationEvidence> exact_blockers;
-        const auto search_phase = [&](const std::vector<SearchTerminal>& terminals,
-                                      bool collect_blockers)
-            -> std::optional<RouteSolution> {
-          for (std::size_t branch = 0; branch < terminals.size(); ++branch) {
-            const SearchTerminal& terminal = terminals[branch];
-            const auto solve_route = [&](RouteHypothesis route,
-                                         const std::vector<JointConfiguration>& seed) {
-                const double scene_sigma = route == RouteHypothesis::kNormal
-                                               ? config.optimizer.collision_sigma
-                                               : 0.1 * config.optimizer.collision_sigma;
-                const double distance_m =
-                    (terminal.candidate_pose.translation() -
-                     start_pose.translation())
-                        .norm();
-                const double base_duration_s = std::max(
-                    config.motion.min_duration_s,
-                    distance_m / config.motion.nominal_speed_mps);
-                const auto solve = [&](double duration_s) {
-                    gtsam::Values initial_values;
-                    const double dt = duration_s / static_cast<double>(support_intervals);
-                    for (std::size_t i = 0; i <= support_intervals; ++i) {
-                        initial_values.insert(gtsam::Symbol('x', i), gtsam::Vector(seed[i]));
-                        const gtsam::Vector velocity =
-                            i == support_intervals ? gtsam::Vector::Zero(7)
-                                                   : gtsam::Vector((seed[i + 1] - seed[i]) / dt);
-                        initial_values.insert(gtsam::Symbol('v', i), velocity);
-                    }
-                    return optimizer.optimizeJointTrajectory(
-                        *model.arm_model, obstacle_fields, initial_values,
-                        gtsam::Vector(request.q_start_rad), start_vel,
-                        gtsam::Vector(terminal.ik.configuration), pos_limits, vel_limits,
-                        support_intervals, duration_s, config.optimizer, scene_sigma,
-                        config.optimizer.collision_sigma);
-                };
-                const auto validate = [&](const TrajectoryResult& trajectory, double duration_s) {
-                    PlanValidationInputs inputs =
-                        ValidationInputs(request.q_start_rad, request.qdot_start_rad_s, limits,
-                                         obstacle_fields, clearance_floor_m, goal_pose,
-                                         config.path_following.validation_dt_s);
-                    inputs.candidate_terminal_mount = terminal.candidate_pose;
-                    inputs.intended_status = terminal.kind;
-                    return ValidatePlan(model, trajectory, duration_s, inputs);
-                };
-                auto solved = SolveDurationCandidate(
-                    terminal, branch, route, base_duration_s, scene_sigma,
-                    config.optimizer.preferred_clearance_m, solve, validate,
-                    outcome.candidate_attempts, outcome.failure_reason);
-                if (collect_blockers)
-                    AppendDistinctBlockers(solved.last_validation,
-                                           exact_blockers);
-                return solved;
-            };
+        const std::size_t max_seeds = std::min(
+            kMaxTerminalSeeds,
+            static_cast<std::size_t>(std::max(1, config.max_restart_attempts)));
+        const auto terminals = GenerateTerminalSeeds(
+            model, arm, ik_limits, request.q_start_rad, goal_pose,
+            config.effective_ik_seed, max_seeds, outcome.candidate_attempts);
 
-            const auto normal_seed =
-                PointBypassSeed(request.q_start_rad, terminal.ik.configuration,
-                                support_intervals + 1);
-            auto normal = solve_route(RouteHypothesis::kNormal, normal_seed);
-            const PlanValidationReport& normal_report = normal.last_validation;
-            const double normal_duration_s = normal.last_duration_s;
-            std::optional<RouteSolution> branch_winner = std::move(normal.executable);
+        const double distance_m =
+            (goal_pose.translation() - start_pose.translation()).norm();
+        const double duration_s = std::max(
+            config.motion.min_duration_s,
+            distance_m / config.motion.nominal_speed_mps);
 
-            if (!branch_winner && !normal_report.first_scene_violations.empty()) {
-                const SceneViolationEvidence& first =
-                    normal_report.first_scene_violations.front();
-                if (first.time_s < normal_duration_s) {
-                    const double fraction =
-                        first.time_s / normal_duration_s;
-                    for (const RouteHypothesis route :
-                         {RouteHypothesis::kPositiveBypass, RouteHypothesis::kNegativeBypass}) {
-                        const auto midpoint = SolveBypassMidpointIk(
-                            arm, ik_limits, model, first,
-                            BypassDisplacement(first,
-                                               config.optimizer.preferred_clearance_m, route),
-                            config.effective_ik_seed);
-                        if (!midpoint) {
-                            RecordSeedFailure(
-                                terminal, branch, route,
-                                0.1 * config.optimizer.collision_sigma,
-                                outcome.candidate_attempts, outcome.failure_reason);
-                            continue;
-                        }
-                        const auto bypass_seed = PointBypassSeed(
-                            request.q_start_rad, terminal.ik.configuration,
-                            support_intervals + 1,
-                            std::make_pair(fraction, *midpoint));
-                        auto solved = solve_route(route, bypass_seed);
-                        if (solved.executable &&
-                            (!branch_winner ||
-                             BetterPointRoute(*solved.executable, *branch_winner,
-                                              config.optimizer.preferred_clearance_m)))
-                            branch_winner = std::move(solved.executable);
-                    }
-                }
-            }
-
-            if (branch_winner)
-                return branch_winner;
-          }
-          return std::nullopt;
+        const auto validate = [&](const TrajectoryResult& trajectory,
+                                  double trajectory_duration_s,
+                                  std::size_t branch) {
+            const SearchTerminal& candidate = terminals[branch];
+            PlanValidationInputs inputs =
+                ValidationInputs(request.q_start_rad, request.qdot_start_rad_s, limits,
+                                 obstacle_fields, clearance_floor_m, goal_pose,
+                                 config.path_following.validation_dt_s);
+            inputs.candidate_terminal_mount = candidate.candidate_pose;
+            return ValidatePlan(model, trajectory, trajectory_duration_s, inputs);
         };
 
-        const auto exact_terminals = GenerateExactTerminals(
-            model, arm, ik_limits, request.q_start_rad, goal_pose,
-            config.effective_ik_seed, outcome.candidate_attempts);
-        std::optional<RouteSolution> selected =
-            search_phase(exact_terminals, /*collect_blockers=*/true);
-        if (!selected) {
-            const auto shortened_terminals = GenerateShortenedTerminals(
-                model, arm, ik_limits, request.q_start_rad, start_pose,
-                goal_pose, exact_blockers, obstacle_fields,
-                clearance_floor_m,
-                config.effective_ik_seed, outcome.candidate_attempts);
-            selected = search_phase(shortened_terminals,
-                                    /*collect_blockers=*/false);
+        // One solve per seed, best geometrically valid solution wins.
+        // Ranking is physical: smallest requested-goal error, then the
+        // optimiser's own final cost as a tie-break diagnostic.
+        std::optional<SelectedCandidate> selected;
+        for (std::size_t branch = 0; branch < terminals.size(); ++branch) {
+            const SearchTerminal& candidate = terminals[branch];
+            const auto solve_start = std::chrono::steady_clock::now();
+            CandidateEvidence evidence = MakeEvidence(
+                candidate, branch, duration_s,
+                config.optimizer.collision_sigma, goal_pose);
+            TrajectoryResult trajectory;
+            try {
+                const auto seed = InterpolatedJointSeed(
+                    request.q_start_rad, candidate.ik.configuration,
+                    support_intervals + 1);
+                gtsam::Values initial_values;
+                const double dt = duration_s / static_cast<double>(support_intervals);
+                for (std::size_t i = 0; i <= support_intervals; ++i) {
+                    initial_values.insert(gtsam::Symbol('x', i), gtsam::Vector(seed[i]));
+                    const gtsam::Vector velocity =
+                        i == support_intervals ? gtsam::Vector::Zero(7)
+                                               : gtsam::Vector((seed[i + 1] - seed[i]) / dt);
+                    initial_values.insert(gtsam::Symbol('v', i), velocity);
+                }
+                trajectory = optimizer.optimizeJointTrajectory(
+                    *model.arm_model, obstacle_fields, initial_values,
+                    gtsam::Vector(request.q_start_rad), start_vel,
+                    gtsam::Vector(candidate.ik.configuration), pos_limits, vel_limits,
+                    support_intervals, duration_s, config.optimizer,
+                    config.optimizer.collision_sigma, config.optimizer.collision_sigma);
+            } catch (const std::exception& exception) {
+                evidence.solve_time_s =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                  solve_start)
+                        .count();
+                evidence.disposition = "optimizer_exception";
+                outcome.candidate_attempts.push_back(std::move(evidence));
+                outcome.failure_reason = exception.what();
+                continue;
+            }
+            const auto solve_end = std::chrono::steady_clock::now();
+            trajectory.optimization_duration =
+                std::chrono::duration_cast<std::chrono::milliseconds>(solve_end - solve_start);
+            evidence.solve_time_s =
+                std::chrono::duration<double>(solve_end - solve_start).count();
+            if (trajectory.trajectory_pos.empty()) {
+                evidence.disposition = "empty_trajectory";
+                outcome.candidate_attempts.push_back(std::move(evidence));
+                outcome.failure_reason = "optimizer returned an empty trajectory";
+                continue;
+            }
+            CopyOptimizerEvidence(trajectory, evidence);
+            const PlanValidationReport report = validate(trajectory, duration_s, branch);
+            evidence.validation = report;
+            evidence.capped_clearance_m =
+                std::min(report.minimum_scene_clearance_m,
+                         config.optimizer.preferred_clearance_m);
+            const bool valid = GeometricallyValid(report);
+            evidence.disposition =
+                valid ? "geometry_valid" : GeometryFailureReason(report);
+            outcome.candidate_attempts.push_back(std::move(evidence));
+            if (!valid) {
+                outcome.failure_reason = GeometryFailureReason(report);
+                continue;
+            }
+            const bool better =
+                !selected ||
+                report.requested_terminal_position_error_m <
+                    selected->validation.requested_terminal_position_error_m ||
+                (report.requested_terminal_position_error_m ==
+                     selected->validation.requested_terminal_position_error_m &&
+                 trajectory.final_error < selected->trajectory.final_error);
+            if (better) {
+                SelectedCandidate candidate_solution;
+                candidate_solution.trajectory = std::move(trajectory);
+                candidate_solution.validation = report;
+                candidate_solution.terminal = candidate;
+                candidate_solution.terminal_branch = branch;
+                candidate_solution.duration_s = duration_s;
+                candidate_solution.evidence_index =
+                    outcome.candidate_attempts.size() - 1;
+                selected = std::move(candidate_solution);
+            }
         }
 
-        if (selected) {
-            ApplyRouteSolution(*selected, outcome);
+        if (selected &&
+            FinishSelected(*selected, validate, outcome.candidate_attempts,
+                           outcome.failure_reason)) {
+            outcome.status = PlanStatus::kReached;
+            outcome.trajectory = std::move(selected->trajectory);
+            outcome.validation = selected->validation;
+            outcome.total_time_sec = selected->duration_s;
+            outcome.terminal_candidate = selected->terminal.ik;
+            outcome.selected_candidate_attempt = selected->evidence_index;
             outcome.final_goal_error_m =
                 selected->validation.requested_terminal_position_error_m;
         } else {
             outcome.status = PlanStatus::kFailed;
             outcome.trajectory.reset();
             if (outcome.failure_reason.empty())
-                outcome.failure_reason = "no executable bounded point trajectory";
+                outcome.failure_reason = terminals.empty()
+                                             ? "goal_ik_failure"
+                                             : "no executable point trajectory";
         }
     } catch (const std::exception& exception) {
         outcome.failure_reason = exception.what();
@@ -901,7 +550,6 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
 
         if (task_path.samples.empty())
             throw std::invalid_argument("traced request contains no path samples");
-        const gtsam::Pose3 start_pose = ToolPoseInMount(model, q_start_rad);
         const gtsam::Pose3 requested_terminal(
             gtsam::Rot3(task_path.samples.back().pose.linear()),
             gtsam::Point3(task_path.samples.back().pose.translation()));
@@ -919,10 +567,12 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
         const double clearance_floor_m = ClearanceFloorFromStart(
             model, q_start_rad, obstacle_fields, config.minimum_clearance_m);
 
-        std::vector<SceneViolationEvidence> exact_blockers;
-        const auto exact_terminals = GenerateExactTerminals(
+        const std::size_t max_seeds = std::min(
+            kMaxTerminalSeeds,
+            static_cast<std::size_t>(std::max(1, config.max_restart_attempts)));
+        const auto terminals = GenerateTerminalSeeds(
             model, arm, ik_limits, q_start_rad, requested_terminal,
-            config.effective_ik_seed, outcome.candidate_attempts);
+            config.effective_ik_seed, max_seeds, outcome.candidate_attempts);
 
         analytical_ik::IKTolerance tolerance;
         const double target_m = config.path_following.maximum_planning_error_m;
@@ -962,238 +612,194 @@ PathPlanOutcome SolveAlongPath(const PlannerModel& model, const CartesianPath& t
             outcome.ik_unresolved_samples = walk.unresolved_samples;
             outcome.ik_interpolated_samples = walk.interpolated_samples;
         };
-        const auto search_phase = [&](const std::vector<SearchTerminal>& terminal_candidates,
-                                      bool collect_blockers)
-            -> std::optional<RouteSolution> {
-          for (std::size_t branch = 0; branch < terminal_candidates.size(); ++branch) {
-            const SearchTerminal& terminal = terminal_candidates[branch];
-            const CartesianPath seed_path =
-                terminal.kind == PlanStatus::kReached
-                    ? task_path
-                    : TranslateTraceSeedToTerminal(task_path,
-                                                   terminal.candidate_pose);
-            const PathIkResult normal_walk = SolvePathIk(
-                seed_path, arm, q_start_rad, ik_limits, tolerance,
-                /*closed=*/terminal.kind == PlanStatus::kReached,
-                config.effective_ik_seed);
-            outcome.ik_walk = normal_walk;
-            update_walk_summary(normal_walk);
-            if (!normal_walk.success) {
-                RecordSeedFailure(
-                    terminal, branch, RouteHypothesis::kNormal,
-                    config.optimizer.collision_sigma,
-                    outcome.candidate_attempts, outcome.failure_reason);
+
+        // Per-seed candidate: its own continuation-IK walk (a fresh
+        // deterministic IKSeeding stream per seed, so each draw is
+        // reproducible) and the assembled approach+task problem built from
+        // it. A failed walk records its evidence and moves to the next
+        // seed — path IK generates initial guesses; it does not decide
+        // planner success.
+        struct PathCandidate {
+            PathIkResult walk;
+            AssembledPath assembled;
+        };
+        std::vector<std::optional<PathCandidate>> candidates(terminals.size());
+        for (std::size_t branch = 0; branch < terminals.size(); ++branch) {
+            const std::uint64_t walk_seed =
+                analytical_ik::IKSeeding{config.effective_ik_seed, branch}.Mixed();
+            PathIkResult walk = SolvePathIk(task_path, arm, q_start_rad, ik_limits,
+                                            tolerance, /*closed=*/true, walk_seed);
+            outcome.ik_walk = walk;
+            update_walk_summary(walk);
+            if (!walk.success) {
+                CandidateEvidence evidence = MakeEvidence(
+                    terminals[branch], branch, 0.0,
+                    config.optimizer.collision_sigma, requested_terminal);
+                evidence.stage = "path_ik";
+                evidence.disposition = "path_ik_failure";
+                outcome.candidate_attempts.push_back(std::move(evidence));
+                outcome.failure_reason = "path_ik_failure";
                 continue;
             }
-            const AssembledPath normal_assembled = AssembleCirclePlan(
-                task_path, configurations_from_walk(normal_walk), q_start_rad,
+            AssembledPath assembled = AssembleCirclePlan(
+                task_path, configurations_from_walk(walk), q_start_rad,
                 joint_velocity_limits, pacing, rotation_sigma, position_sigma);
-            const auto solve_route = [&](RouteHypothesis route, const AssembledPath& assembled,
-                                         const PathIkResult& seed_walk) {
-                // A traced plan ends in the configuration its own IK walk
-                // reached. The walk's final sample and the independently
-                // solved terminal candidate share the same tool pose but may
-                // sit in different joint solution families; pinning the
-                // candidate's family forces the optimiser to bridge them
-                // inside the final samples (run 2026-08-23: a 150.6 deg
-                // closure drift became a 0.8 m task-space excursion, and the
-                // duration repair stretched the whole 14.1 s plan to
-                // 100.1 s to make that bridge fit the joint limits). The
-                // candidate keeps its roles — reachability judgement and
-                // seed-path translation — and still stands in as terminal
-                // when the walk's last sample is interpolated rather than
-                // solved, because only a solved sample is an exact IK
-                // solution the equality may pin.
-                const PathIkSample& walk_end = seed_walk.samples.back();
-                const JointConfiguration& terminal_configuration =
-                    walk_end.solved ? walk_end.configuration
-                                    : terminal.ik.configuration;
-                const double scene_sigma = route == RouteHypothesis::kNormal
-                                               ? config.optimizer.collision_sigma
-                                               : 0.1 * config.optimizer.collision_sigma;
-                const double base_duration_s = assembled.total_duration_s;
-                const double task_start_fraction =
-                    assembled.waypoints[assembled.task_start_index].time_s / base_duration_s;
-                const auto solve = [&](double duration_s) {
-                    const double time_scale = duration_s / base_duration_s;
-                    // Support spacing stays bounded by the authored task
-                    // interval: a duration stretched x N gets x N the
-                    // states, each inserted task state carrying its own
-                    // interpolated pose prior (SubdivideAssembly above).
-                    const std::size_t subdivision =
-                        static_cast<std::size_t>(std::ceil(time_scale - 1e-9));
-                    const AssembledPath fine =
-                        SubdivideAssembly(assembled, subdivision);
-                    std::vector<OptimisationWaypoint> attempt_waypoints = fine.waypoints;
-                    for (OptimisationWaypoint& waypoint : attempt_waypoints)
-                        waypoint.time_s *= time_scale;
+            candidates[branch] = PathCandidate{std::move(walk), std::move(assembled)};
+        }
 
-                    gtsam::Values initial_values;
-                    const std::size_t states = attempt_waypoints.size();
-                    for (std::size_t i = 0; i < states; ++i) {
-                        const JointConfiguration& q = i + 1 == states
-                                                          ? terminal_configuration
-                                                          : fine.initial_configurations[i];
-                        initial_values.insert(gtsam::Symbol('x', i), gtsam::Vector(q));
-                        gtsam::Vector velocity = gtsam::Vector::Zero(7);
-                        if (i + 1 < states) {
-                            const double dt =
-                                attempt_waypoints[i + 1].time_s - attempt_waypoints[i].time_s;
-                            const JointConfiguration& next_q =
-                                i + 2 == states ? terminal_configuration
-                                                : fine.initial_configurations[i + 1];
-                            velocity = gtsam::Vector((next_q - q) / dt);
-                        }
-                        initial_values.insert(gtsam::Symbol('v', i), velocity);
-                    }
-                    return optimizer.optimizeTaskTrajectory(
-                        *model.arm_model, obstacle_fields, initial_values, attempt_waypoints,
-                        gtsam::Vector(q_start_rad), start_vel,
-                        gtsam::Vector(terminal_configuration), fine.zero_velocity_indices,
-                        pos_limits, vel_limits, duration_s, config.optimizer, scene_sigma,
-                        config.optimizer.collision_sigma);
-                };
-                const auto validate = [&](const TrajectoryResult& trajectory, double duration_s) {
-                    const double task_start_time_s = duration_s * task_start_fraction;
-                    PlanValidationInputs inputs =
-                        ValidationInputs(q_start_rad, qdot_start_rad_s, limits, obstacle_fields,
-                                         clearance_floor_m, requested_terminal,
-                                         config.path_following.validation_dt_s);
-                    inputs.candidate_terminal_mount = terminal.candidate_pose;
-                    inputs.intended_status = terminal.kind;
-                    inputs.desired_task_path = &task_path;
-                    inputs.task_start_time_s = task_start_time_s;
-                    inputs.path_position_tolerance_m =
-                        config.path_following.maximum_planning_error_m;
-                    return ValidatePlan(model, trajectory, duration_s, inputs);
-                };
-                auto result = SolveDurationCandidate(
-                    terminal, branch, route, base_duration_s, scene_sigma,
-                    config.optimizer.preferred_clearance_m, solve, validate,
-                    outcome.candidate_attempts, outcome.failure_reason);
-                if (collect_blockers)
-                    AppendDistinctBlockers(result.last_validation,
-                                           exact_blockers);
-                if (result.executable) {
-                    result.executable->ik_walk = seed_walk;
-                    result.executable->has_ik_walk = true;
-                    result.executable->task_start_time_s =
-                        result.executable->duration_s * task_start_fraction;
-                }
-                return result;
-            };
-
-            auto normal = solve_route(RouteHypothesis::kNormal, normal_assembled, normal_walk);
-            const PlanValidationReport& normal_report = normal.last_validation;
-            const double normal_duration_s = normal.last_duration_s;
-            const double normal_task_start_time_s =
-                normal_duration_s *
-                normal_assembled.waypoints[normal_assembled.task_start_index].time_s /
-                normal_assembled.total_duration_s;
-            std::optional<RouteSolution> branch_winner = std::move(normal.executable);
-
-            if (!branch_winner && !normal_report.first_scene_violations.empty()) {
-                const SceneViolationEvidence& first =
-                    normal_report.first_scene_violations.front();
-                if (first.time_s < normal_duration_s) {
-                    for (const RouteHypothesis route :
-                         {RouteHypothesis::kPositiveBypass, RouteHypothesis::kNegativeBypass}) {
-                        const Eigen::Vector3d displacement = BypassDisplacement(
-                            first, config.optimizer.preferred_clearance_m, route);
-                        AssembledPath bypass_assembled;
-                        PathIkResult bypass_walk = normal_walk;
-                        if (first.time_s < normal_task_start_time_s) {
-                            const auto midpoint = SolveBypassMidpointIk(
-                                arm, ik_limits, model, first, displacement,
-                                config.effective_ik_seed);
-                            if (!midpoint) {
-                                RecordSeedFailure(
-                                    terminal, branch, route,
-                                    0.1 * config.optimizer.collision_sigma,
-                                    outcome.candidate_attempts, outcome.failure_reason);
-                                continue;
-                            }
-                            bypass_assembled = normal_assembled;
-                            const double fraction = first.time_s /
-                                                    normal_task_start_time_s;
-                            const auto approach_seed = PointBypassSeed(
-                                q_start_rad,
-                                normal_assembled
-                                    .initial_configurations[normal_assembled.task_start_index],
-                                normal_assembled.task_start_index + 1,
-                                std::make_pair(fraction, *midpoint));
-                            for (std::size_t i = 0; i <= normal_assembled.task_start_index; ++i)
-                                bypass_assembled.initial_configurations[i] = approach_seed[i];
-                        } else {
-                            const double task_span_s = normal_duration_s - normal_task_start_time_s;
-                            const double parameter_u = (first.time_s -
-                                                        normal_task_start_time_s) /
-                                                       task_span_s;
-                            // Half-width of the bypass bump in path
-                            // samples. Historically tied to the IK anchor
-                            // stride; kept at that width when the stride
-                            // dropped to 1, because a one-sample bump would
-                            // be a spike, not a detour.
-                            constexpr std::size_t kTraceBypassSampleRadius = 4;
-                            const CartesianPath offset_path = TraceBypassSeed(
-                                seed_path, parameter_u, displacement,
-                                kTraceBypassSampleRadius);
-                            bypass_walk =
-                                SolvePathIk(offset_path, arm, q_start_rad, ik_limits, tolerance,
-                                            /*closed=*/terminal.kind == PlanStatus::kReached,
-                                            config.effective_ik_seed);
-                            if (!bypass_walk.success) {
-                                RecordSeedFailure(
-                                    terminal, branch, route,
-                                    0.1 * config.optimizer.collision_sigma,
-                                    outcome.candidate_attempts, outcome.failure_reason);
-                                continue;
-                            }
-                            bypass_assembled = AssembleCirclePlan(
-                                task_path, configurations_from_walk(bypass_walk), q_start_rad,
-                                joint_velocity_limits, pacing, rotation_sigma, position_sigma);
-                        }
-
-                        auto solved = solve_route(route, bypass_assembled, bypass_walk);
-                        if (solved.executable &&
-                            (!branch_winner ||
-                             BetterTraceRoute(*solved.executable, *branch_winner,
-                                              config.optimizer.preferred_clearance_m)))
-                            branch_winner = std::move(solved.executable);
-                    }
-                }
-            }
-
-            if (branch_winner)
-                return branch_winner;
-          }
-          return std::nullopt;
+        const auto validate = [&](const TrajectoryResult& trajectory,
+                                  double trajectory_duration_s,
+                                  std::size_t branch) {
+            const PathCandidate& entry = *candidates[branch];
+            const double task_start_fraction =
+                entry.assembled.waypoints[entry.assembled.task_start_index].time_s /
+                entry.assembled.total_duration_s;
+            PlanValidationInputs inputs =
+                ValidationInputs(q_start_rad, qdot_start_rad_s, limits, obstacle_fields,
+                                 clearance_floor_m, requested_terminal,
+                                 config.path_following.validation_dt_s);
+            inputs.candidate_terminal_mount = terminals[branch].candidate_pose;
+            inputs.desired_task_path = &task_path;
+            inputs.task_start_time_s = trajectory_duration_s * task_start_fraction;
+            inputs.path_position_tolerance_m =
+                config.path_following.maximum_planning_error_m;
+            return ValidatePlan(model, trajectory, trajectory_duration_s, inputs);
         };
 
-        std::optional<RouteSolution> selected =
-            search_phase(exact_terminals, /*collect_blockers=*/true);
-        if (!selected) {
-            const auto shortened_terminals = GenerateShortenedTerminals(
-                model, arm, ik_limits, q_start_rad, start_pose,
-                requested_terminal, exact_blockers, obstacle_fields,
-                clearance_floor_m,
-                config.effective_ik_seed,
-                outcome.candidate_attempts);
-            selected = search_phase(shortened_terminals,
-                                    /*collect_blockers=*/false);
-        }
-
-        if (selected) {
-            ApplyRouteSolution(*selected, outcome);
-            outcome.task_start_time_s = selected->task_start_time_s;
-            if (selected->has_ik_walk) {
-                outcome.ik_walk = selected->ik_walk;
-                update_walk_summary(selected->ik_walk);
+        // One solve per seed at the assembly's own duration. The terminal
+        // is NOT pinned by a joint equality: the walk is obstacle-unaware,
+        // so when the scene cost pushes the on-path states' redundant
+        // joints away from the walk's terminal configuration, an equality
+        // there demands the gap be repaid inside the final support interval,
+        // producing an acceleration peak no slowing can reduce (measured
+        // 2026-08-24: joint 2, ratio 2.2-3.3 invariant from 11 s to 223 s;
+        // without the equality the same request plans at ratio 0.9). The
+        // final state keeps its circle pose prior, its rest-velocity
+        // constraint, and the walk end as its initial value.
+        std::optional<SelectedCandidate> selected;
+        for (std::size_t branch = 0; branch < terminals.size(); ++branch) {
+            if (!candidates[branch])
+                continue;
+            const PathCandidate& entry = *candidates[branch];
+            const double duration_s = entry.assembled.total_duration_s;
+            const auto solve_start = std::chrono::steady_clock::now();
+            CandidateEvidence evidence = MakeEvidence(
+                terminals[branch], branch, duration_s,
+                config.optimizer.collision_sigma, requested_terminal);
+            TrajectoryResult trajectory;
+            try {
+                const PathIkSample& walk_end = entry.walk.samples.back();
+                const JointConfiguration& terminal_configuration =
+                    walk_end.solved ? walk_end.configuration
+                                    : terminals[branch].ik.configuration;
+                gtsam::Values initial_values;
+                const std::size_t states = entry.assembled.waypoints.size();
+                for (std::size_t i = 0; i < states; ++i) {
+                    const JointConfiguration& q =
+                        i + 1 == states ? terminal_configuration
+                                        : entry.assembled.initial_configurations[i];
+                    initial_values.insert(gtsam::Symbol('x', i), gtsam::Vector(q));
+                    gtsam::Vector velocity = gtsam::Vector::Zero(7);
+                    if (i + 1 < states) {
+                        const double dt = entry.assembled.waypoints[i + 1].time_s -
+                                          entry.assembled.waypoints[i].time_s;
+                        const JointConfiguration& next_q =
+                            i + 2 == states
+                                ? terminal_configuration
+                                : entry.assembled.initial_configurations[i + 1];
+                        velocity = gtsam::Vector((next_q - q) / dt);
+                    }
+                    initial_values.insert(gtsam::Symbol('v', i), velocity);
+                }
+                trajectory = optimizer.optimizeTaskTrajectory(
+                    *model.arm_model, obstacle_fields, initial_values,
+                    entry.assembled.waypoints, gtsam::Vector(q_start_rad), start_vel,
+                    /*terminal_config=*/std::nullopt,
+                    entry.assembled.zero_velocity_indices, pos_limits, vel_limits,
+                    duration_s, config.optimizer, config.optimizer.collision_sigma,
+                    config.optimizer.collision_sigma);
+            } catch (const std::exception& exception) {
+                evidence.solve_time_s =
+                    std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                                  solve_start)
+                        .count();
+                evidence.disposition = "optimizer_exception";
+                outcome.candidate_attempts.push_back(std::move(evidence));
+                outcome.failure_reason = exception.what();
+                continue;
+            }
+            const auto solve_end = std::chrono::steady_clock::now();
+            trajectory.optimization_duration =
+                std::chrono::duration_cast<std::chrono::milliseconds>(solve_end - solve_start);
+            evidence.solve_time_s =
+                std::chrono::duration<double>(solve_end - solve_start).count();
+            if (trajectory.trajectory_pos.empty()) {
+                evidence.disposition = "empty_trajectory";
+                outcome.candidate_attempts.push_back(std::move(evidence));
+                outcome.failure_reason = "optimizer returned an empty trajectory";
+                continue;
+            }
+            CopyOptimizerEvidence(trajectory, evidence);
+            const PlanValidationReport report = validate(trajectory, duration_s, branch);
+            evidence.validation = report;
+            evidence.capped_clearance_m =
+                std::min(report.minimum_scene_clearance_m,
+                         config.optimizer.preferred_clearance_m);
+            const bool valid = GeometricallyValid(report);
+            evidence.disposition =
+                valid ? "geometry_valid" : GeometryFailureReason(report);
+            outcome.candidate_attempts.push_back(std::move(evidence));
+            if (!valid) {
+                outcome.failure_reason = GeometryFailureReason(report);
+                continue;
+            }
+            // Ranking is physical: tightest dense executed-path fidelity,
+            // then the optimiser's own final cost as a tie-break.
+            const bool better =
+                !selected ||
+                report.trace_dense_max_position_m <
+                    selected->validation.trace_dense_max_position_m ||
+                (report.trace_dense_max_position_m ==
+                     selected->validation.trace_dense_max_position_m &&
+                 trajectory.final_error < selected->trajectory.final_error);
+            if (better) {
+                SelectedCandidate candidate_solution;
+                candidate_solution.trajectory = std::move(trajectory);
+                candidate_solution.validation = report;
+                candidate_solution.terminal = terminals[branch];
+                candidate_solution.terminal_branch = branch;
+                candidate_solution.duration_s = duration_s;
+                candidate_solution.evidence_index =
+                    outcome.candidate_attempts.size() - 1;
+                selected = std::move(candidate_solution);
             }
         }
 
-        if (!outcome.trajectory && outcome.failure_reason.empty())
-            outcome.failure_reason = "no executable bounded traced trajectory";
+        if (selected &&
+            FinishSelected(*selected, validate, outcome.candidate_attempts,
+                           outcome.failure_reason)) {
+            const PathCandidate& winner = *candidates[selected->terminal_branch];
+            const double task_start_fraction =
+                winner.assembled.waypoints[winner.assembled.task_start_index].time_s /
+                winner.assembled.total_duration_s;
+            outcome.status = PlanStatus::kReached;
+            outcome.trajectory = std::move(selected->trajectory);
+            outcome.validation = selected->validation;
+            outcome.total_time_sec = selected->duration_s;
+            outcome.terminal_candidate = selected->terminal.ik;
+            outcome.selected_candidate_attempt = selected->evidence_index;
+            outcome.task_start_time_s =
+                selected->duration_s * task_start_fraction;
+            outcome.ik_walk = winner.walk;
+            update_walk_summary(winner.walk);
+        } else {
+            outcome.status = PlanStatus::kFailed;
+            outcome.trajectory.reset();
+            if (outcome.failure_reason.empty())
+                outcome.failure_reason = terminals.empty()
+                                             ? "goal_ik_failure"
+                                             : "no executable traced trajectory";
+        }
     } catch (const std::exception& exception) {
         outcome.failure_reason = exception.what();
         outcome.status = PlanStatus::kFailed;

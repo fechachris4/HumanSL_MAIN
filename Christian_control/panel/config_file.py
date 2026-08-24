@@ -73,7 +73,7 @@ GUARD_OVERRIDES: tuple[str, ...] = (
 # name would silently change nothing the controller reads.
 # Empty since 2026-08-20: kModelVelocityLimitsDegS used to be here, but it is
 # now a derived alias (kVelocityControllerFraction of the physical hard limits
-# in planning/config/joint_limits.yaml) rather than a literal array. Writing it
+# in model/joint_limits.yaml) rather than a literal array. Writing it
 # would land on an alias, which this whitelist's own rule forbids. Speed is
 # edited in that yaml instead, through the planner-config screen.
 VECTOR_KNOBS: dict[str, tuple[str, str]] = {}
@@ -328,7 +328,7 @@ def read_joint_limits(path: Path | None = None) -> dict[str, object]:
     """Per-joint ranges, with the continuous joints reported as unbounded.
 
     Since 2026-08-20 the physical limits and the margins are NOT in Config.h.
-    They live in planning/config/joint_limits.yaml, which is the single
+    They live in model/joint_limits.yaml, which is the single
     authoritative table, and Config.h holds derived aliases that this module
     cannot text-parse. So the physical range, the bounded mask, the controller
     margin and the firmware warning (which IS the physical limit) all come

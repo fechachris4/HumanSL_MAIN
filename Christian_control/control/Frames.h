@@ -41,14 +41,14 @@ inline double StaleTwistDecayMultiplier(double sample_age_s,
                                         double fresh_max_age_s,
                                         double tau_s)
 {
-    if (!std::isfinite(sample_age_s) || !std::isfinite(fresh_max_age_s))
+    // fresh_max_age_s and tau_s are proven finite and positive by
+    // ValidateExecutionConfig; only the sample age arrives from Vicon.
+    if (!std::isfinite(sample_age_s))
         return 0.0;
     const double stale_age_s =
         std::max(0.0, sample_age_s - fresh_max_age_s);
     if (stale_age_s == 0.0)
         return 1.0;
-    if (!std::isfinite(tau_s) || tau_s <= 0.0)
-        return 0.0;
     return std::exp(-stale_age_s / tau_s);
 }
 
@@ -60,14 +60,12 @@ inline double EffectiveStaleDurationS(double sample_age_s,
                                       double stale_elapsed_s,
                                       double fresh_max_age_s)
 {
-    const double elapsed = std::isfinite(stale_elapsed_s)
-        ? std::max(0.0, stale_elapsed_s)
-        : 0.0;
-    const double beyond_age =
-        std::isfinite(sample_age_s) && std::isfinite(fresh_max_age_s)
+    // stale_elapsed_s is accumulated internally from the control step and
+    // fresh_max_age_s is config-validated; only the sample age is external.
+    const double beyond_age = std::isfinite(sample_age_s)
         ? std::max(0.0, sample_age_s - fresh_max_age_s)
         : 0.0;
-    return std::max(elapsed, beyond_age);
+    return std::max(stale_elapsed_s, beyond_age);
 }
 
 // State.h owns the shared fixed-size pose value; this name preserves the

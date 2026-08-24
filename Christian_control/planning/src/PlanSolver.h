@@ -37,10 +37,6 @@ struct PlanRequest {
     std::optional<Eigen::Matrix3d> goal_rotation;
 };
 
-enum class RouteHypothesis { kNormal, kPositiveBypass, kNegativeBypass };
-
-const char* RouteHypothesisName(RouteHypothesis route);
-
 struct CandidateEvidence {
     std::string stage = "route";
     PlanStatus terminal_kind = PlanStatus::kFailed;
@@ -61,8 +57,6 @@ struct CandidateEvidence {
     double requested_position_shortfall_m = 0.0;
     double requested_orientation_shortfall_rad = 0.0;
     int orientation_tier = 0;
-    RouteHypothesis route = RouteHypothesis::kNormal;
-    int duration_attempt = 0;
     double duration_s = 0.0;
     double scene_collision_sigma = 0.0;
     double solve_time_s = 0.0;
@@ -75,6 +69,8 @@ struct CandidateEvidence {
     std::map<std::string, double> optimizer_final_factor_costs;
     double capped_clearance_m = 0.0;
     PlanValidationReport validation;
+    // Human-readable record of what happened to this candidate, written at
+    // recording time. Reporting only: control flow never inspects it.
     std::string disposition;
 };
 
@@ -91,7 +87,7 @@ struct PlanOutcome {
     PlanJointLimits joint_limits;
 };
 
-// joint_limits_yaml: planner_bridge/config/joint_limits.yaml.
+// joint_limits_yaml: model/joint_limits.yaml (beside the URDF).
 // config: the run's tuning, from planner_bridge/config/planner.yaml — plan
 // pacing and every factor-graph weight (PlannerConfig.h). It is a parameter
 // rather than part of PlanRequest because it is ambient policy for the run,
@@ -139,14 +135,12 @@ struct PathPlanOutcome {
 // Plans a trajectory that traces `task_path`, then densely validates the
 // fresh optimizer result.
 //
-// If dynamic limits fail, a bounded duration re-solve rebuilds timed
-// waypoints, initial values and the optimizer result from scratch, then
-// validates that new result. The validated artifact is therefore the fresh
-// solve that would be sent.
-//
-// Time scaling is applied ONLY for dynamic-limit failures. A geometric,
-// collision or fidelity failure is not something slowing down can fix, and
-// retrying it would just burn solves while the report said the same thing.
+// One GPMP2 solve per terminal seed; geometry and timing are decoupled.
+// GPMP2 decides where the arm goes; if the geometrically valid winner is
+// merely too fast, uniform time scaling (retiming) slows the SAME joint
+// path down — velocities scale as 1/alpha and accelerations as 1/alpha^2 —
+// and the retimed trajectory is re-validated in full before acceptance.
+// The optimiser is never re-run to repair timing.
 PathPlanOutcome SolveAlongPath(const PlannerModel& model,
                                const CartesianPath& task_path,
                                const Eigen::Matrix<double, 7, 1>& q_start_rad,

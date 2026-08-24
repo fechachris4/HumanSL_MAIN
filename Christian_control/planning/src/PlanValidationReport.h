@@ -6,11 +6,14 @@
 #include <Eigen/Dense>
 
 enum class PlanStatus { kReached, kGoalBlocked, kFailed };
-// kInvalid            unsafe / malformed / impossible to execute
+// kInvalid            malformed trajectory or start-state mismatch
 // kNeedsLongerDuration geometry is safe, timing exceeds robot limits
 // kExecutable          send it
-// Task quality (terminal error, path deviation) is measured and reported
-// but never a disposition: the validator gates safety, not perfection.
+// Scene clearance, self-collision, joint limits and task quality (terminal
+// error, path deviation) are all measured and reported below as FACTS.
+// PlanSolver alone turns them into the accept/refuse decision: geometry
+// must be valid, then dynamics after retiming. Raw GTSAM graph error is
+// recorded as a diagnostic only and gates nothing.
 enum class CandidateDisposition {
     kInvalid,
     kNeedsLongerDuration,
@@ -57,6 +60,12 @@ struct PlanValidationReport {
         Eigen::Matrix<double, 7, 1>::Zero();
     double max_velocity_ratio = 0.0;
     double max_acceleration_ratio = 0.0;
+    // Where each worst dynamic ratio occurs: trajectory time and 1-based
+    // joint. Evidence only — dispositions never read these.
+    double peak_velocity_time_s = 0.0;
+    int peak_velocity_joint = 0;
+    double peak_acceleration_time_s = 0.0;
+    int peak_acceleration_joint = 0;
     double terminal_position_error_m = 0.0;
     double terminal_orientation_error_rad = 0.0;
     double requested_terminal_position_error_m = 0.0;

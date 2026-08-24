@@ -8,7 +8,7 @@ FixedMountSource::FixedMountSource(BasePoseSlot& slot,
                                    const Eigen::Isometry3d& world_T_mount)
     : slot_(slot),
       position_m_(world_T_mount.translation()),
-      rotation_(Eigen::Quaterniond(world_T_mount.linear()).normalized()),
+      rotation_(Eigen::Quaterniond(world_T_mount.linear())),
       thread_(&FixedMountSource::Run, this)
 {
 }
@@ -16,8 +16,7 @@ FixedMountSource::FixedMountSource(BasePoseSlot& slot,
 FixedMountSource::~FixedMountSource()
 {
     stop_.store(true, std::memory_order_relaxed);
-    if (thread_.joinable())
-        thread_.join();
+    thread_.join();
 }
 
 void FixedMountSource::Run()

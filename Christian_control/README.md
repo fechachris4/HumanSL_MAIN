@@ -9,12 +9,12 @@ after a vendor, an interface, or the history of how it came about.
 
 | Directory | Owns | Builds |
 |---|---|---|
-| `model/` | The one geometric description of the machine: the URDF and the mounting table that is its source of truth. Data only. | — |
+| `model/` | The one geometric description of the machine: the URDF, its mounting table, and the physical joint-limit table. Data only. | — |
 | `contracts/` | The typed values two subsystems must agree on: the planning request, the world-Cartesian trajectory, its text wire format. | `humansl_contracts` |
-| `control/` | What decides a joint command: the Pinocchio model, the compiled settings, and the whole per-cycle pipeline. Knows nothing about how a command is delivered. | `humansl_execution_core` |
-| `runtime/` | The program that runs `control/` against the real arm: the 500 Hz loop, Kortex I/O, safety decoding, telemetry, the worker threads. | `controller` |
-| `tracking/` | External body tracking: markers in, a validated world pose and twist out. | `vicon_interface`, `vicon_snapshot` |
-| `planning/` | A planning request in, a validated world trajectory out. `optimisation/` is the GPMP2 layer. | `bridge_core`, `planner_bridge` |
+| `control/` | What decides a joint command: the Pinocchio model and kinematics (`humansl_robot_model`, shared with the planner), the compiled settings, and the whole per-cycle pipeline. Knows nothing about how a command is delivered. | `humansl_robot_model`, `humansl_execution_core` |
+| `runtime/` | The program that runs `control/` against the real arm: the 500 Hz loop, Kortex I/O (owned by `humansl_runtime_hardware`, the only target set that links Kortex), safety decoding, telemetry, the worker threads. | `controller`, `humansl_runtime_hardware` |
+| `tracking/` | External body tracking: markers in, a validated world pose and twist out. Split on the SDK boundary: only `humansl_vicon` links the DataStream SDK. | `humansl_tracking_core`, `humansl_vicon` |
+| `planning/` | A planning request in, a validated world trajectory out. `optimisation/` is the GPMP2 layer. Depends on `humansl_robot_model`, never on controller machinery. | `humansl_planning`, `planner_bridge` |
 | `simulation/` | The MuJoCo execution twin: the same `control/` core, driven by physics instead of hardware. | `humansl_sim` |
 | `panel/` | The operator's browser surface: configure, plan, run, watch. | — |
 | `docs/` | Decisions, code reads, runbooks, thesis notes. | — |

@@ -26,7 +26,7 @@ PLANNER_KNOBS: dict[str, tuple[str, str, str]] = {
     "motion.waypoints": ("int", "min2",
         "Optimizer support states between start and goal"),
     "obstacles.minimum_clearance_m": ("double", "nonnegative",
-        "Configured minimum for final timed-trajectory validation"),
+        "Hard modelled minimum clearance in metres"),
     "obstacles.preferred_clearance_m": ("double", "nonnegative",
         "Preferred route-shaping clearance in metres"),
     "obstacles.collision_sigma": ("double", "positive",
@@ -44,6 +44,12 @@ PLANNER_KNOBS: dict[str, tuple[str, str, str]] = {
     # ("planner configuration is missing: goal.position_sigma_xyz, ...").
     "solver.max_iterations": ("int", "min1",
         "Levenberg-Marquardt iteration ceiling — convergence, not motion"),
+    "solver.acceptance_graph_error": ("double", "positive",
+        "Bjorn-parity acceptance gate: raw graph error a candidate must "
+        "clear to be accepted"),
+    "solver.max_restart_attempts": ("int", "min1",
+        "Bjorn-parity multi-restart cap: fresh postures tried per duration "
+        "attempt before falling through"),
     "path_following.position_prior_sigma_m": ("double", "positive",
         "Weight on each traced waypoint's position"),
     "path_following.rotation_prior_sigma_rad": ("double", "positive",
@@ -174,8 +180,8 @@ def write_planner_knob(name: str, value: object,
 # joint_limits.yaml also holds an acceleration_limits section, and the panel
 # deliberately does not offer it: createJointLimits (planning/optimisation/
 # src/utils.cpp) reads position_limits and velocity_limits only, and
-# PlanSolver.cpp consumes the acceleration table directly. An editable table
-# nothing reads is how "I changed it and nothing happened"
+# PlanSolver.cpp derives every acceleration bound as velocity upper x 2. An
+# editable table nothing reads is how "I changed it and nothing happened"
 # starts. The section stays in the file untouched.
 LIMIT_SECTIONS = ("position_limits", "velocity_limits")
 ACTUATORS = tuple(f"actuator_{i}" for i in range(1, 8))

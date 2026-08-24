@@ -880,7 +880,7 @@ def test_scene_save_and_session_start_handlers_do_not_overlap(monkeypatch):
 def test_live_goal_formats_mount_point_and_sends_to_running_arm(monkeypatch):
     monkeypatch.setattr(session, "status", lambda: {
         "commanding": True, "arm": "left", "mount": "fixed",
-        "planning": True, "planner": "current",
+        "planning": True,
     })
     sent = []
     monkeypatch.setattr(session, "send_goal_datagram",

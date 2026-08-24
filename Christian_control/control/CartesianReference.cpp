@@ -168,7 +168,6 @@ PoseReference CartesianReferenceSource::Get(
     const GoalPreemptCommand& goal_preempt,
     ControllerStatus& status)
 {
-    const bool valid_dt = std::isfinite(dt_s) && dt_s > 0.0;
     if (goal_preempt.preempt) {
         hold_world_ = measured.ee_pose_world;
         hold_trajectory_id_ = 0;
@@ -264,7 +263,7 @@ PoseReference CartesianReferenceSource::Get(
             }
             mailbox_.Retire(std::move(active_));
             reference = HoldingReference();
-        } else if (state.world_fresh && valid_dt) {
+        } else if (state.world_fresh) {
             trajectory_time_s_ = std::min(final_time,
                                           trajectory_time_s_ + dt_s);
         }

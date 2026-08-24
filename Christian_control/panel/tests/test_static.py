@@ -1,8 +1,44 @@
 from pathlib import Path
+import re
 
 from Christian_control.runtime.scripts import runlog
 
 STATIC = Path(__file__).resolve().parents[1] / "static"
+
+
+def test_planning_selector_has_only_current_worker_or_hold_modes():
+    """Breaks if the retired baseline planner becomes selectable again."""
+    panel_root = STATIC.parent
+    html = (STATIC / "index.html").read_text()
+    selector = re.search(
+        r'<select id="plan-select">(.*?)</select>', html, re.DOTALL)
+    assert selector is not None
+    assert re.findall(r'<option value="([^"]+)">', selector.group(1)) == [
+        "on", "off"]
+
+    active_sources = (
+        STATIC / "index.html",
+        STATIC / "panel.js",
+        panel_root / "server.py",
+        panel_root / "session.py",
+        panel_root.parent / "planning" / "scripts" / "run_session.sh",
+        panel_root.parent / "planning" / "CMakeLists.txt",
+        panel_root.parent / "planning" / "src" / "PlannerRuntime.h",
+        panel_root.parent / "runtime" / "MainArgs.h",
+        panel_root.parent / "runtime" / "MainArgs.cpp",
+        panel_root.parent / "runtime" / "Main.cpp",
+        panel_root.parent / "runtime" / "CMakeLists.txt",
+        panel_root.parent / "runtime" / "InProcessPlanner.h",
+        panel_root.parent / "runtime" / "InProcessPlanner.cpp",
+    )
+    active_text = "\n".join(path.read_text() for path in active_sources)
+    for marker in ("5abc1b2c", "SolveBaselineBridgeForRequest",
+                   "--baseline-bridge"):
+        assert marker not in active_text
+    assert not (panel_root.parent / "planning" / "src" /
+                "BaselineBridge.h").exists()
+    assert not (panel_root.parent / "planning" / "src" /
+                "BaselineBridge.cpp").exists()
 
 
 def test_run_scene_has_numeric_torso_cylinder_editor():

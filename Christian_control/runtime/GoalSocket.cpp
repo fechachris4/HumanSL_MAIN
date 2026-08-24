@@ -83,7 +83,6 @@ GoalSocket::GoalSocket(GoalCommandSlot& slot, const std::string& path,
     address.sun_family = AF_UNIX;
     if (path_.size() >= sizeof(address.sun_path)) {
         ::close(socket_fd_);
-        socket_fd_ = -1;
         throw std::runtime_error("goal socket path is too long: " + path_);
     }
     std::strncpy(address.sun_path, path_.c_str(), sizeof(address.sun_path) - 1);
@@ -91,7 +90,6 @@ GoalSocket::GoalSocket(GoalCommandSlot& slot, const std::string& path,
                sizeof(address)) != 0) {
         const std::string error = std::strerror(errno);
         ::close(socket_fd_);
-        socket_fd_ = -1;
         throw std::runtime_error("goal socket: cannot bind " + path_ + ": " +
                                  error);
     }
@@ -101,10 +99,8 @@ GoalSocket::GoalSocket(GoalCommandSlot& slot, const std::string& path,
 GoalSocket::~GoalSocket()
 {
     stop_.store(true, std::memory_order_relaxed);
-    if (thread_.joinable())
-        thread_.join();
-    if (socket_fd_ >= 0)
-        ::close(socket_fd_);
+    thread_.join();
+    ::close(socket_fd_);
     ::unlink(path_.c_str());
 }
 
@@ -129,7 +125,11 @@ void GoalSocket::Run()
         }
         ++next_id;
         slot_.Publish(command);
+        // std::endl, not "\n": under a file redirect stdout is block-
+        // buffered, and this line is the only receipt evidence until the
+        // planner prints — which a wedged solve never does (2026-08-24: a
+        // 12-minute planner hang left no trace of the goal in the log).
         std::cout << log_prefix_ << "live goal " << command.command_id
-                  << " received: " << buffer << "\n";
+                  << " received: " << buffer << std::endl;
     }
 }
