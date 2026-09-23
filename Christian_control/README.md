@@ -4,9 +4,10 @@ The control system for a wearable Supernumerary Robotic Limb built from Kinova
 Gen3 arms. The objective: hold or track the end-effector pose **in the world
 frame** while the wearer, and the backpack the arms are mounted on, move.
 
-> **Status, September 2026.** This is my C++ controller for the dual-arm rig in
-> [msc_project](https://github.com/fechachris4/msc_project), which has the
-> hardware results. It links prebuilt x86-64 Linux binaries checked into
+> **Status, September 2026.** A C++ control stack I wrote for the dual-arm rig in
+> [msc_project](https://github.com/fechachris4/msc_project). The controller that
+> ran the walking trials there is on the MUVE Lab machine and is not in this
+> repository. This one links prebuilt x86-64 Linux binaries checked into
 > `third_party/` (Kortex API, Vicon DataStream SDK, Pinocchio, GTSAM/GPMP2,
 > Boost). The planning, control and panel tests run without the robot.
 
