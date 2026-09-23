@@ -21,9 +21,6 @@ squares and a damped null-space projector (`control/ReactiveLaw.h`); clamp joint
 velocity and integrate to a position command (`control/Actuation.cpp`); send it
 over the Kortex cyclic exchange (`runtime/Hardware.cpp`).
 
-Every directory here is named for the engineering job it owns. None is named
-after a vendor, an interface, or the history of how it came about.
-
 | Directory | Owns | Builds |
 |---|---|---|
 | `model/` | The one geometric description of the machine: the URDF, its mounting table, and the physical joint-limit table. Data only. | — |
@@ -149,7 +146,6 @@ python3 -m pytest Christian_control/panel/tests           # from the repository 
 
 ## Before running anything
 
-`runtime/build/controller` commands a physical arm. Building it is not a test
-step. Running it requires Christian present, the workspace clear, the emergency
-stop to hand, and explicit authorization for that specific run. The same
-applies to every binary in `runtime/tools/`.
+`runtime/build/controller` and every binary in `runtime/tools/` command a
+physical arm. Building them is not a test step. Running one needs me present,
+the workspace clear and the emergency stop in hand.
