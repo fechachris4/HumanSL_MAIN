@@ -30,6 +30,8 @@
 .claude/worktrees/
 !docs/
 !docs/**
+# ...except the local agent intent log and notes: private, never source
+docs/intent/
 
 # Include this .gitignore file
 !.gitignore
