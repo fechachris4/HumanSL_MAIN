@@ -7,6 +7,10 @@
 > `CMakeLists.txt.legacy`. The description below documents the legacy
 > tube-handover pipeline this repository grew from.
 
+## Legacy pipeline (upstream project)
+
+*Written by the original author of [B-Harakat/HumanSL_MAIN](https://github.com/B-Harakat/HumanSL_MAIN), which this repository is forked from. Kept for reference; none of it describes `Christian_control/`.*
+
 Dual Kinova Gen3 7-DoF robotic arm system for human-robot collaborative pipe/tube manipulation, driven by real-time Vicon motion capture feedback.
 
 ## What It Does
