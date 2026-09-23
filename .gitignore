@@ -53,3 +53,6 @@ __pycache__/
 Christian_control/simulation/mutated_model_*.xml
 Christian_control/simulation/MUJOCO_LOG.TXT
 MUJOCO_LOG.TXT
+
+# control panel config backups
+*.panel.bak
