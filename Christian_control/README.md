@@ -4,6 +4,23 @@ The control system for a wearable Supernumerary Robotic Limb built from Kinova
 Gen3 arms. The objective: hold or track the end-effector pose **in the world
 frame** while the wearer, and the backpack the arms are mounted on, move.
 
+> **Status, September 2026.** This is my C++ controller for the dual-arm rig in
+> [msc_project](https://github.com/fechachris4/msc_project), which has the
+> hardware results. It links prebuilt x86-64 Linux binaries checked into
+> `third_party/` (Kortex API, Vicon DataStream SDK, Pinocchio, GTSAM/GPMP2,
+> Boost). The planning, control and panel tests run without the robot.
+
+<img src="https://github.com/fechachris4/msc_project/raw/main/media/rig.jpg" width="420" alt="The dual-arm rig on the treadmill">
+
+**One control cycle** (500 Hz, `kControlDtS` in `control/Config.h`): take the
+latest 100 Hz Vicon mount pose; estimate the mount twist by finite difference
+and a first-order low-pass (τ = 50 ms, `kViconMountTwistFilterTauS`); compose
+the end-effector pose and Jacobian in the world frame through the mount
+(Pinocchio); apply PD on the world-frame pose and twist error with damped least
+squares and a damped null-space projector (`control/ReactiveLaw.h`); clamp joint
+velocity and integrate to a position command (`control/Actuation.cpp`); send it
+over the Kortex cyclic exchange (`runtime/Hardware.cpp`).
+
 Every directory here is named for the engineering job it owns. None is named
 after a vendor, an interface, or the history of how it came about.
 
@@ -67,20 +84,17 @@ control/ExecutionCore.cpp            raises request_replan
   → control/CartesianReference.cpp               and back into the first flow
 ```
 
-## The boundaries, and what enforces them
+## The boundaries
 
-The layout is not a filing convention; each line below is checked by a test.
+These are the design rules the layout follows. The tests that used to enforce
+the linkage, model-parity and characterization rules were removed with the
+pre-migration suite (commit `0c10e17`, 20 Aug 2026) and have not been rebuilt,
+so today these rules hold by build structure, not by a test.
 
 - **`control/` never touches the robot.** No Kortex or Vicon SDK header is on
-  its include path, and `runtime/tests/check_execution_core_linkage.cmake`
-  fails the build if a Kortex or SDK symbol appears in
-  `libhumansl_execution_core.a`, or if the hardware `controller` and the
-  hardware-free probe stop linking the same archive.
-- **`simulation/` cannot reach the arm.** `simulation/tests/test_sim_no_kortex.cmake`
-  fails on a Kortex symbol, a robot IP address in the binary, or a hardware
-  object in the link command. `simulation/` never adds `runtime/`.
-- **GPMP2 stays outside the 500 Hz loop.** `runtime/tests/check_controller_planner_linkage.cmake`
-  checks the controller's planner linkage; planning runs on the worker thread
+  its include path; only `humansl_runtime_hardware` links Kortex.
+- **`simulation/` cannot reach the arm.** It never adds `runtime/`.
+- **GPMP2 stays outside the 500 Hz loop.** Planning runs on the worker thread
   in `runtime/InProcessPlanner.cpp`, never in `Runner.cpp`'s cycle.
 - **The planner has one executable boundary.** `ValidatePlan` checks exact
   start state, finite state, componentwise joint velocity/acceleration, joint
@@ -89,16 +103,25 @@ The layout is not a filing convention; each line below is checked by a test.
   trajectory to an explicitly shortened terminal; `FAILED` owns no trajectory.
   Only the first two cross the runtime mailbox boundary.
 - **One URDF, one FK implementation.** `model/GEN3_dual_mounted.urdf` is parsed
-  through `control/RobotModel.cpp` by every project. `control/tests/test_dual_arm_mounting.cpp`
-  holds the URDF's mounting block to `model/dual_arm_mounting.yaml`, and
-  `simulation/tests/test_model_parity.cpp` holds MuJoCo's kinematics to
-  Pinocchio's at 1e-8 m.
-- **The control mathematics is frozen against a recorded fixture.**
-  `control/tests/test_execution_characterization.cpp` replays
-  `tests/fixtures/execution_preextract_v1.csv` through the real units in the
-  real per-cycle order and requires the result byte for byte.
+  through `control/RobotModel.cpp` by every project.
 - **Only `runtime/tools/` can reach the arm.** Those eight binaries link
   Kortex; the offline model tools are in `control/tools/` and cannot connect.
+
+## Tests
+
+22 test files: C++ suites registered with CTest in each project, and pytest for
+the panel.
+
+| Area | What is tested |
+|---|---|
+| `control/` | goal preemption, TCP telemetry |
+| `runtime/` | run-log schema, cyclic-exchange retry, goal socket, argument parsing |
+| `planning/` | bridge arguments, dynamics peak, joint-type contract, mount SDF, obstacle-aware planning, path frames, start state, projection exit, scene config, terminal posture, traced circle |
+| `panel/` | plan, scene config, static files, telemetry, YAML text |
+
+Not tested at the moment: the reactive law and the per-cycle execution core.
+Rebuilding a test that holds `ReactiveLaw.h` to the Python law in msc_project
+on identical inputs is the first gap to close.
 
 ## Building
 
