@@ -11,8 +11,9 @@
 //   6. null-space proj.   q̇_raw = q̇_task + N q̇_null
 //
 // Header-only, Eigen-only, fixed-size, no allocation — no robot, no
-// Pinocchio, so tests/test_reactive_law.cpp cross-validates it against the
-// Python law on identical inputs. Changing the equations belongs here;
+// Pinocchio, so a test can hold it to the Python law on identical inputs
+// (tests/test_reactive_law.cpp did; it was removed in 0c10e17 and is not
+// yet rebuilt). Changing the equations belongs here;
 // changing gains belongs in Config.h.
 //
 // Deliberate deviations from the simulation law, for hardware:
