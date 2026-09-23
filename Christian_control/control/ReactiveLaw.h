@@ -72,8 +72,10 @@ inline Eigen::Vector3d RotationLog(const Eigen::Matrix3d& rotation)
 }
 
 // Equation 2: twist error, reference minus actual — the Kd term's input.
-// `measured` is the end-effector twist J·q̇, linear in rows 0-2 and angular
-// in rows 3-5, the row order the Jacobian already uses. Mirrors
+// `measured` is the world-frame end-effector twist: the arm's own J·q̇ plus
+// the motion the mount imposes (Frames.h transports the Vicon mount twist to
+// the end-effector). Linear in rows 0-2 and angular in rows 3-5, the row
+// order the Jacobian already uses. Mirrors
 // reactive_controller.py twist_error.
 //
 // A zero reference (the default Twist) reduces this to −measured, i.e. pure
