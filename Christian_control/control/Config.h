@@ -41,7 +41,7 @@ namespace config
     // right_tool_link, not the bare flange (right_end_effector_link): the
     // right arm carries a mounted tool, so this is the frame that matches
     // both the Kinova web dashboard's tool_pose and physical reality. See
-    // the right_tool_link comment in config/GEN3_dual_mounted.urdf for
+    // the right_tool_link comment in model/GEN3_dual_mounted.urdf for
     // the reading this offset was taken from and when to refresh it.
     inline constexpr const char* kRightEndEffectorFrame = "right_tool_link";
 
@@ -343,7 +343,10 @@ namespace config
     inline constexpr double kWorldFreshMaxAgeS = 0.05;
     // Mount-twist low-pass time constant. Five Vicon frames
     // at the nominal 100 Hz smooth finite-difference noise without hiding the
-    // value in an undocumented implementation constant. This estimate is
+    // value in an undocumented implementation constant. The cost is lag: at
+    // walking frequencies the low-pass delays the estimate by
+    // atan(2*pi*f*tau)/(2*pi*f), about 45-50 ms for f = 0.5-2 Hz, plus about
+    // half a Vicon frame from the finite difference.
     inline constexpr double kViconMountTwistFilterTauS = 0.05;
     // A gap at or above this resets differentiation; the next fresh frame
     // establishes a pose but deliberately has no inherited pre-gap twist.
