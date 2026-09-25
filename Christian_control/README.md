@@ -1,45 +1,45 @@
 # Christian_control
 
-The control system for a wearable Supernumerary Robotic Limb built from Kinova
-Gen3 arms. The objective: hold or track the end-effector pose **in the world
-frame** while the wearer, and the backpack the arms are mounted on, move.
+C++ control software for the wearable robot arms in my MSc project, [World Stable End Effector under Human Locomotion](https://github.com/fechachris4/msc_project). Two Kinova Gen3 arms are mounted on a backpack. As the wearer moves, the software makes each arm hold a pose, or follow a path, fixed in the room rather than on the body.
 
-> **Status, September 2026.** A C++ control stack I wrote for the dual-arm rig in
-> [msc_project](https://github.com/fechachris4/msc_project). The controller that
-> ran the walking trials there is on the MUVE Lab machine and is not in this
-> repository. This one links prebuilt x86-64 Linux binaries checked into
-> `third_party/` (Kortex API, Vicon DataStream SDK, Pinocchio, GTSAM/GPMP2,
-> Boost). The planning, control and panel tests run without the robot.
+Running a controller on real arms takes more than the control law. This software reads the backpack's position from Vicon motion capture, works out joint commands, and sends them to both arms 500 times a second. Planning runs separately, so it never holds up that loop. Each job has its own directory, and the tests run without the robot, though the control law itself is not yet covered (see [Tests](#tests)).
+
+> **Status, September 2026.** I wrote this for the dual-arm rig in [msc_project](https://github.com/fechachris4/msc_project). The controller that ran the walking trials there is on the MUVE Lab machine and is not in this repository. This one links prebuilt x86-64 Linux binaries checked into `third_party/` (Kortex API, Vicon DataStream SDK, Pinocchio, GTSAM/GPMP2, Boost).
 
 <img src="https://github.com/fechachris4/msc_project/raw/main/media/rig.jpg" width="420" alt="The dual-arm rig on the treadmill">
 
-**One control cycle** (500 Hz, `kControlDtS` in `control/Config.h`): take the
-latest 100 Hz Vicon mount pose; estimate the mount twist by finite difference
-and a first-order low-pass (τ = 50 ms, `kViconMountTwistFilterTauS`); compose
-the end-effector pose and Jacobian in the world frame through the mount
-(Pinocchio); apply PD on the world-frame pose and twist error with damped least
-squares and a damped null-space projector (`control/ReactiveLaw.h`); clamp joint
-velocity and integrate to a position command (`control/Actuation.cpp`); send it
-over the Kortex cyclic exchange (`runtime/Hardware.cpp`).
+## One control cycle
+
+Every 2 ms (500 Hz, set by `kControlDtS` in `control/Config.h`), for each arm:
+
+1. Take the latest backpack pose from Vicon, which updates at 100 Hz.
+2. Estimate how fast the backpack is moving, by differencing successive poses and smoothing the result with a first-order low-pass filter (τ = 50 ms, `kViconMountTwistFilterTauS`).
+3. Work out where the arm's hand is in the room, and how each joint moves it, by chaining transforms through the backpack (Pinocchio).
+4. Compare that with the target and compute joint speeds that close the gap: feedback on the position and speed error, turned into joint speeds with damped least squares, plus a damped null-space term that uses the arm's spare joint freedom without moving the hand (`control/ReactiveLaw.h`).
+5. Clamp the joint speeds and integrate them into a position command (`control/Actuation.cpp`).
+6. Send the command to the arm over Kortex's cyclic exchange (`runtime/Hardware.cpp`).
+
+## Layout
+
+Each directory owns one job, and the build targets follow the same split, so only the parts that talk to hardware can reach the arm.
 
 | Directory | Owns | Builds |
 |---|---|---|
-| `model/` | The one geometric description of the machine: the URDF, its mounting table, and the physical joint-limit table. Data only. | — |
-| `contracts/` | The typed values two subsystems must agree on: the planning request, the world-Cartesian trajectory, its text wire format. | `humansl_contracts` |
-| `control/` | What decides a joint command: the Pinocchio model and kinematics (`humansl_robot_model`, shared with the planner), the compiled settings, and the whole per-cycle pipeline. Knows nothing about how a command is delivered. | `humansl_robot_model`, `humansl_execution_core` |
-| `runtime/` | The program that runs `control/` against the real arm: the 500 Hz loop, Kortex I/O (owned by `humansl_runtime_hardware`, the only target set that links Kortex), safety decoding, telemetry, the worker threads. | `controller`, `humansl_runtime_hardware` |
-| `tracking/` | External body tracking: markers in, a validated world pose and twist out. Split on the SDK boundary: only `humansl_vicon` links the DataStream SDK. | `humansl_tracking_core`, `humansl_vicon` |
-| `planning/` | A planning request in, a validated world trajectory out. `optimisation/` is the GPMP2 layer. Depends on `humansl_robot_model`, never on controller machinery. | `humansl_planning`, `planner_bridge` |
-| `simulation/` | The MuJoCo execution twin: the same `control/` core, driven by physics instead of hardware. | `humansl_sim` |
-| `panel/` | The operator's browser surface: configure, plan, run, watch. | — |
-| `docs/` | Decisions, code reads, runbooks, thesis notes. | — |
+| `model/` | The single description of the machine: the URDF, how it is mounted, and the physical joint limits. Data only. | (none) |
+| `contracts/` | The typed values two subsystems must agree on: the planning request, the trajectory in room coordinates, and its text format. | `humansl_contracts` |
+| `control/` | Everything that decides a joint command: the Pinocchio model and kinematics (`humansl_robot_model`, shared with the planner), the compiled settings, and the whole per-cycle pipeline. It knows nothing about how a command is delivered. | `humansl_robot_model`, `humansl_execution_core` |
+| `runtime/` | The program that runs `control/` against the real arm: the 500 Hz loop, Kortex I/O (in `humansl_runtime_hardware`, the only target set that links Kortex), safety decoding, telemetry and worker threads. | `controller`, `humansl_runtime_hardware` |
+| `tracking/` | Body tracking: markers in, a checked pose and speed in room coordinates out. Only `humansl_vicon` links the Vicon SDK. | `humansl_tracking_core`, `humansl_vicon` |
+| `planning/` | A planning request in, a checked trajectory in room coordinates out. `optimisation/` is the GPMP2 layer. Depends on `humansl_robot_model`, never on the controller. | `humansl_planning`, `planner_bridge` |
+| `simulation/` | A MuJoCo twin that runs the same `control/` core, driven by physics instead of hardware. | `humansl_sim` |
+| `panel/` | The operator's browser page: configure, plan, run, watch. | (none) |
+| `docs/` | Decisions, code walkthroughs, runbooks, thesis notes. | (none) |
 
 ## The two flows
 
-Everything this system does is one of these two paths. Each is readable from
-about six files, and the directory names say which stage you are in.
+Everything the system does follows one of two paths. Each can be read from about six files, and the directory names tell you which stage you are in.
 
-**Tracking → world state → control → actuation → hardware**
+**Control: tracking → room coordinates → control → actuation → hardware.** This is the real-time path that runs every cycle.
 
 ```
 tracking/src/ViconInterface.cpp      the DataStream SDK
@@ -59,7 +59,7 @@ tracking/src/ViconInterface.cpp      the DataStream SDK
         ← runtime/Safety.cpp, control/StopPriority.h
 ```
 
-**Planning request → planner / IK / GPMP2 / collision → trajectory → runtime**
+**Planning: request → planner, IK, GPMP2 and collision checks → trajectory → runtime.** This path runs on a separate worker thread when the controller asks for a new plan, and hands the result back to the control path.
 
 ```
 control/ExecutionCore.cpp            raises request_replan
@@ -84,31 +84,18 @@ control/ExecutionCore.cpp            raises request_replan
 
 ## The boundaries
 
-These are the design rules the layout follows. The tests that used to enforce
-the linkage, model-parity and characterization rules were removed with the
-pre-migration suite (commit `0c10e17`, 20 Aug 2026) and have not been rebuilt,
-so today these rules hold by build structure, not by a test.
+These are the design rules the layout follows. The tests that used to enforce them were removed with the old test suite (commit `0c10e17`, 20 Aug 2026) and have not been rebuilt, so today the rules hold because of how the build is structured, not because a test checks them.
 
-- **`control/` never touches the robot.** No Kortex or Vicon SDK header is on
-  its include path; only `humansl_runtime_hardware` links Kortex.
+- **`control/` never touches the robot.** No Kortex or Vicon SDK header is on its include path; only `humansl_runtime_hardware` links Kortex.
 - **`simulation/` cannot reach the arm.** It never adds `runtime/`.
-- **GPMP2 stays outside the 500 Hz loop.** Planning runs on the worker thread
-  in `runtime/InProcessPlanner.cpp`, never in `Runner.cpp`'s cycle.
-- **The planner has one executable boundary.** `ValidatePlan` checks exact
-  start state, finite state, componentwise joint velocity/acceleration, joint
-  position, authored-scene clearance, self clearance, and terminal equality.
-  `REACHED` owns a trajectory to the requested terminal; `GOAL_BLOCKED` owns a
-  trajectory to an explicitly shortened terminal; `FAILED` owns no trajectory.
-  Only the first two cross the runtime mailbox boundary.
-- **One URDF, one FK implementation.** `model/GEN3_dual_mounted.urdf` is parsed
-  through `control/RobotModel.cpp` by every project.
-- **Only `runtime/tools/` can reach the arm.** Those eight binaries link
-  Kortex; the offline model tools are in `control/tools/` and cannot connect.
+- **Planning never slows the control loop.** GPMP2 runs on the worker thread in `runtime/InProcessPlanner.cpp`, never inside `Runner.cpp`'s 500 Hz cycle.
+- **Every plan passes one check before it can run.** `ValidatePlan` checks the start state, that every value is finite, joint speed and acceleration, joint position, clearance from the modelled scene and from the arm itself, and that the plan ends where it should. It returns one of three outcomes: `REACHED` carries a trajectory to the requested end point, `GOAL_BLOCKED` carries a trajectory to an explicitly shortened end point, and `FAILED` carries none. Only the first two are passed to the runtime.
+- **One robot model, one kinematics implementation.** Every project parses `model/GEN3_dual_mounted.urdf` through `control/RobotModel.cpp`.
+- **Only `runtime/tools/` can reach the arm.** Those eight programs link Kortex. The offline model tools are in `control/tools/` and cannot connect.
 
 ## Tests
 
-22 test files: C++ suites registered with CTest in each project, and pytest for
-the panel.
+The tests cover the plumbing around the controller, but not yet the control law. There are 22 test files: C++ suites registered with CTest in each project, and pytest for the panel.
 
 | Area | What is tested |
 |---|---|
@@ -117,15 +104,11 @@ the panel.
 | `planning/` | bridge arguments, dynamics peak, joint-type contract, mount SDF, obstacle-aware planning, path frames, start state, projection exit, scene config, terminal posture, traced circle |
 | `panel/` | plan, scene config, static files, telemetry, YAML text |
 
-Not tested at the moment: the reactive law and the per-cycle execution core.
-Rebuilding a test that holds `ReactiveLaw.h` to the Python law in msc_project
-on identical inputs is the first gap to close.
+Not tested at the moment: the reactive law and the per-cycle execution core. The first gap to close is a test that runs `ReactiveLaw.h` and the Python law in msc_project on identical inputs and checks they agree.
 
 ## Building
 
-There is deliberately no top-level `CMakeLists.txt`: each project configures on
-its own, and the shared pieces (`control/`, `contracts/`) are added as
-subdirectories by whoever needs them.
+There is deliberately no top-level `CMakeLists.txt`. Each project configures on its own, and the shared pieces (`control/`, `contracts/`) are added as subdirectories by whichever project needs them.
 
 ```
 cmake -S runtime    -B runtime/build    && cmake --build runtime/build -j8
@@ -134,19 +117,15 @@ cmake -S tracking   -B tracking/build   && cmake --build tracking/build -j8
 cmake -S simulation -B simulation/build && cmake --build simulation/build -j8
 ```
 
-`ctest --test-dir runtime/build` runs the whole controller side (control's
-tests are registered there too). `cmake -S control -B control/build` on its own
-gives the hardware-free subset for quick iteration.
+`ctest --test-dir runtime/build` runs the whole controller side (the `control/` tests are registered there too). `cmake -S control -B control/build` on its own gives the hardware-free subset for quick iteration.
 
-The panel and its tests:
+The panel and its tests, run from the repository root:
 
 ```
-python3 Christian_control/panel/control_panel.py          # from the repository root
-python3 -m pytest Christian_control/panel/tests           # from the repository root
+python3 Christian_control/panel/control_panel.py
+python3 -m pytest Christian_control/panel/tests
 ```
 
 ## Before running anything
 
-`runtime/build/controller` and every binary in `runtime/tools/` command a
-physical arm. Building them is not a test step. Running one needs me present,
-the workspace clear and the emergency stop in hand.
+`runtime/build/controller` and every program in `runtime/tools/` command a physical arm. Building them is not a test step. Running one needs me present, the workspace clear and the emergency stop in hand.
