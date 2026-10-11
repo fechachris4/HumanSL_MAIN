@@ -1,0 +1,7 @@
+{
+  "name": "msc-project-talk",
+  "private": true,
+  "description": "Generator for the MSc project talk deck (python3 make_assets.py && node build.js)",
+  "scripts": { "build": "python3 make_assets.py && node build.js" },
+  "dependencies": { "image-size": "^1.2.1", "pptxgenjs": "^4.0.1" }
+}
