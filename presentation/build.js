@@ -184,7 +184,7 @@ const SCRIPT = {
 	problem: `Here's a participant on the treadmill. The two arms are Kinova Gen3 robots, seven joints each, mounted on a backpack, which I'll call the mount. Vicon motion-capture cameras track the backpack in the room. The problem is walking. Every step moves the backpack, and everything attached to it. If the arms were simply locked, the hands would move 63 to 68 millimetres RMS, at every walking speed we tried. And steps come at roughly 1.8 per second, so this is fast, repeating motion, not slow drift. Whatever the hands are holding shakes with every step.`,
 	goal: `So the goal is to hold each hand fixed in the room, not on the body. This is my simulation with the controller on: four positions of the backpack in one cycle, with the motion enlarged three times. Panel e averages the whole cycle. The backpack and upper arms blur, because they move. The hands stay sharp, because the controller cancels that motion.`,
 	frames: `The approach is a chain of coordinate frames. Vicon measures the backpack's pose in the room. The arm base sits at a fixed, known offset on the backpack. The joint angles, through forward kinematics, place the hand relative to the base. Compose the three and I know where the hand is in the room, and how each joint moves it: the Jacobian. If you work in 3D, it's the same rigid-body maths as tracking a camera on a moving rig. Then the law. The bracket is a PD controller on the error in the room frame: how far the hand is from its spot, and how fast it is drifting. J-plus-lambda turns that into joint speeds, damped near awkward poses. The spare seventh joint drifts toward mid-range without moving the hand. A safety filter can also override a command that would bring the arm too close to the wearer. It was switched off for the results I'll show.`,
-	sim: `I tested the law first in MuJoCo, a physics engine, with the backpack following a walking-like motion at 1.8 hertz. Same motion three times: arms locked, my controller, and the controller plus feedforward. Watch the red target sphere in the middle row. Over eight seconds, locked arms leave 31 millimetres of error. The controller brings it to 6.7. Feedforward, which tells the controller how the backpack is moving, gets it to 2.6. In these runs the safety filter was switched off, so the numbers show the controller alone. The numbers on the clip are running values, so they differ a little. Keep in mind: feedforward needs the backpack's velocity on time.`,
+	sim: `First, I tested my own controller in MuJoCo, a physics engine, with the backpack following a walking-like motion at 1.8 hertz. Same motion three times: arms locked, my controller, and the controller plus feedforward. Watch the red target sphere in the middle row. Over eight seconds, locked arms leave 31 millimetres of error. The controller brings it to 6.7. Feedforward, which tells the controller how the backpack is moving, gets it to 2.6. In these runs the safety filter was switched off, so the numbers show the controller alone. The numbers on the clip are running values, so they differ a little. Keep in mind: feedforward needs the backpack's velocity on time.`,
 	hardware: `Then real people. Seven participants wore the arms on an instrumented treadmill at 0.5, 1 and 1.5 metres per second. To be precise about who did what: these trials ran the lab's existing 400 hertz controller on the MUVE Lab machine, which estimates the backpack's pose and velocity from Vicon with a Kalman filter, and has no feedforward. My own C++ controller wasn't used in these trials. The analysis is mine. On the left, one trial replayed: grey is where the hand would have gone with the arm locked; blue is where it went. To score a trial I compare those two; the locked model is accurate to within half a percent on arms that weren't being controlled. On the right: 71 percent of the motion removed at slow walking, 63 at normal speed, 56 at fast, means over six participants. 128 walking trials, mostly one arm at a time; on a pitching and swaying platform it removed 78 percent.`,
 	cpp: `The lab's controller isn't public, so I wrote my own real-time controller in C++, in the HumanSL_MAIN repository. The trade-off I designed around: planning is slow and unpredictable, but the control loop has to run every 2 milliseconds without fail. So Vicon arrives at 100 hertz on its own thread and is handed over through a wait-free slot; the loop never waits on a lock. The 500 hertz core runs the kinematics and the law, then clamps and integrates the joint speeds. Planning, with GPMP2, runs on a separate worker thread, and every plan passes one validator before it can run. A MuJoCo twin runs the same core, so it can be exercised without hardware. The cost: a new plan arrives a little later, because it has to pass the validator first.`,
 	gain: `Back to the trials, and the main challenge. Slow sway was mostly cancelled, but the bounce of each step was harder. The obvious fix: turn up the velocity gain. In a pilot with one wearer I raised it from 0.8 to 2.6. The model predicted the response near 1 hertz would fall by 38 percent. It fell by 9. And across six people, the measured amplitude matches a model with no velocity term at all. So the velocity term was barely acting. More tuning would not fix that; I needed to know why.`,
@@ -227,8 +227,8 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 		{ text: "World-Stable Supernumerary Effectors for Human", options: { breakLine: true } },
 		{ text: "Augmentation Under Locomotion-Scale Base Motion", options: {} },
 	], { placeholder: "title" });
-	text(s, "Keeping a wearable robot's hands still while the wearer walks", { x: M, y: 2.12, w: CW, h: 0.45, fontSize: 24, color: WHITE, objectName: "Subtitle" });
-	const capH = 0.32, top = 2.9, bottom = 7.0;
+	text(s, "Keeping a wearable robot's hands still while the wearer walks", { x: M, y: 2.27, w: CW, h: 0.45, fontSize: 24, color: WHITE, objectName: "Subtitle" });
+	const capH = 0.32, top = 2.95, bottom = 7.0;
 	const pad = 0.08, cardW = 5.45;
 	const d = fit("hw_turn.gif", { x: 0, y: 0, w: cardW - 2 * pad, h: 10 });
 	const cardH = d.h + 2 * pad;
@@ -332,7 +332,7 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 
 // ---- 5. Approach & solution: simulation
 {
-	const s = contentSlide("Approach & solution", TAG.AS, "Simulation first: same law, physics engine");
+	const s = contentSlide("Approach & solution", TAG.AS, "Simulation first: my controller in a physics engine");
 	const card = framedImage(s, "hold_pose.gif", { x: M, y: TOP, w: 7.55, h: 4.4 }, { alt: "Simulation: arms locked, reactive controller, controller with feedforward" });
 	caption(s, "Same motion (1.8 Hz), three controllers. Watch the red target, middle row.", card.x, card.y + card.h + 0.14, card.w);
 	const sx = 8.75, sw = R - sx;
@@ -374,10 +374,10 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 {
 	pres.addSection({ title: "Trade-offs & challenges" });
 	const s = contentSlide("Trade-offs & challenges", TAG.TC, "Trade-off: planning can never block the 2 ms loop");
-	const by = TOP, bh = 2.2;
+	const by = TOP, bh = 2.15;
 	roundCard(s, { x: M, y: by, w: CW, h: bh }, GREY, "Real-time band");
 	text(s, "REAL-TIME PATH · EVERY 2 ms", { x: M + 0.25, y: by + 0.1, w: 5, h: 0.32, fontSize: 14, bold: true, color: SLATE, charSpacing: 1 });
-	const ry = by + 0.5, rh = 1.5;
+	const ry = by + 0.5, rh = 1.45;
 	const vic = { x: 0.85, y: ry, w: 1.6, h: rh };
 	const slot = { x: 2.75, y: ry, w: 1.35, h: rh };
 	const core = { x: 4.4, y: ry, w: 4.85, h: rh };
@@ -400,7 +400,7 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	[[vic, slot], [slot, core], [core, kor], [kor, arms]].forEach(([a, b]) => arrow(s, a.x + a.w + 0.04, my, b.x - 0.04, my, NAVY, 2.25));
 
 	// Planner worker thread: label sits outside the card (left) so the card stays compact
-	const py = by + bh + 0.5, ph = 1.15;
+	const py = by + bh + 0.45, ph = 1.15;
 	const pl = { x: 2.9, y: py, w: 7.65, h: ph };
 	roundCard(s, pl, WHITE, "Planner thread", { r: 0.12, line: { color: HEX.accent6, width: 1.25, dashType: "dash" } });
 	text(s, [{ text: "PLANNER THREAD", options: { breakLine: true } }, { text: "NOT REAL-TIME", options: {} }], { x: M, y: py, w: pl.x - M - 0.2, h: ph, fontSize: 14, bold: true, color: SLATE, charSpacing: 1, align: "right", valign: "middle", objectName: "Planner label" });
@@ -417,12 +417,12 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	arrow(s, retX, pcy - 0.04, retX, coreBottom + 0.04, NAVY, 2);
 	text(s, "checked trajectory", { x: retX + 0.15, y: gapMid - 0.17, w: 2.4, h: 0.34, fontSize: 16, color: SLATE });
 
-	const ty = py + ph + 0.18;
+	const ty = py + ph + 0.33;
 	text(s, [
 		{ text: "Gain: ", options: { bold: true, color: NAVY } }, { text: "the 2 ms loop never waits on Vicon or the planner.", options: { breakLine: true } },
 		{ text: "Cost: ", options: { bold: true, color: NAVY } }, { text: "a new plan starts later, only after it passes the validator.", options: {} },
-	], { x: M, y: ty, w: CW, h: 0.72, fontSize: 18, objectName: "Gain and cost" });
-	caption(s, "My C++ controller (HumanSL_MAIN); a MuJoCo twin runs the same core.", M, ty + 0.76, CW, { h: 0.3 });
+	], { x: M, y: ty, w: CW, h: 0.62, fontSize: 18, objectName: "Gain and cost" });
+	caption(s, "My C++ controller (HumanSL_MAIN); a MuJoCo twin runs the same core.", M, ty + 0.66, CW, { h: 0.28 });
 	s.addNotes(NOTES.cpp);
 }
 
@@ -446,18 +446,22 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	const s = contentSlide("Trade-offs & challenges", TAG.TC, "The cause: the velocity arrives 61–71 ms late");
 	// Delay budget, proportional boxes in orange shades. Kalman lag: 36 ms solid + lighter tail to 46 ms.
 	const totalW = 3.0, bx = M, by = TOP + 0.35, bh = 1.1, k = (CW - totalW - 0.25) / 71;
+	// Kalman lag: one bar that fades. The pale 46 ms rectangle is drawn first and the solid 36 ms part
+	// on top of it, so there is no seam; one label is centred over the whole 46 ms.
+	const kw = 46 * k;
+	s.addShape(pres.shapes.RECTANGLE, { objectName: "Kalman lag (to 46 ms)", x: bx, y: by, w: kw, h: bh, fill: { color: ORANGE, transparency: 65 }, line: { type: "none" } });
+	s.addShape(pres.shapes.RECTANGLE, { objectName: "Kalman lag (36 ms)", x: bx, y: by, w: 36 * k, h: bh, fill: { color: ORANGE }, line: { type: "none" } });
+	text(s, "Kalman filter 36–46 ms", { x: bx, y: by, w: kw, h: bh, fontSize: 20, bold: true, color: WHITE, align: "center", valign: "middle", objectName: "Kalman label" });
 	const segs = [
-		{ ms: 36, transp: 0, runs: [{ text: "Kalman filter 36–46 ms", options: { color: WHITE } }] },
-		{ ms: 10, transp: 65, runs: null },  // lighter tail of the Kalman segment (36 -> 46 ms), no divider
 		{ ms: 10, transp: 25, runs: [{ text: "sensing", options: { color: NAVY, breakLine: true } }, { text: "~10 ms", options: { color: NAVY } }] },
 		{ ms: 15, transp: 45, runs: [{ text: "joints", options: { color: NAVY, breakLine: true } }, { text: "~15 ms", options: { color: NAVY } }] },
 	];
-	let x = bx;
+	let x = bx + kw;
 	segs.forEach((sg, i) => {
 		const w = sg.ms * k;
-		s.addShape(pres.shapes.RECTANGLE, { objectName: `Delay segment ${i + 1}`, x, y: by, w, h: bh, fill: { color: ORANGE, transparency: sg.transp }, line: { type: "none" } });
-		if (i >= 2) s.addShape(pres.shapes.LINE, { objectName: `Delay divider ${i}`, x, y: by, w: 0, h: bh, line: { color: WHITE, width: 2.5 } });
-		if (sg.runs) text(s, sg.runs, { x, y: by, w, h: bh, fontSize: 20, bold: true, align: "center", valign: "middle" });
+		s.addShape(pres.shapes.RECTANGLE, { objectName: `Delay segment ${sg.runs[0].text}`, x, y: by, w, h: bh, fill: { color: ORANGE, transparency: sg.transp }, line: { type: "none" } });
+		s.addShape(pres.shapes.LINE, { objectName: `Delay divider ${i + 1}`, x, y: by, w: 0, h: bh, line: { color: WHITE, width: 2.5 } });
+		text(s, sg.runs, { x, y: by, w, h: bh, fontSize: 20, bold: true, align: "center", valign: "middle" });
 		x += w;
 	});
 	text(s, "= 61–71\u00A0ms", { x: x + 0.25, y: by, w: R - x - 0.25, h: bh, fontSize: 36, bold: true, color: ORANGE, valign: "middle", objectName: "Delay total" });
