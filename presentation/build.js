@@ -76,7 +76,7 @@ pres.defineSlideMaster({
 	background: { color: HEX.dk2 },
 	objects: [
 		wordmark(WHITE),
-		{ placeholder: { options: { name: "title", type: "title", x: M, y: 1.15, w: CW, h: 1.85, fontSize: 36, bold: true, color: WHITE, align: "left", valign: "top", margin: 0, fontFace: "Arial" }, text: "" } },
+		{ placeholder: { options: { name: "title", type: "title", x: M, y: 1.0, w: CW, h: 1.1, fontSize: 32, bold: true, color: WHITE, align: "left", valign: "top", margin: 0, fontFace: "Arial" }, text: "" } },
 	],
 });
 
@@ -218,20 +218,31 @@ const NOTES = {};
 const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLENGES", I: "IMPACT" };
 
 // ---- 1. Title (dark)
+// The thesis title needs >= 8.0 in per line to fit 3 lines at 32 pt, so it runs full width
+// (2 lines, explicit break) and the hook clip gets the large right-hand block below it.
 {
 	pres.addSection({ title: "Opening" });
 	const s = pres.addSlide({ masterName: "TITLE_DARK", sectionTitle: "Opening" });
-	s.addText("World-Stable Supernumerary Effectors for Human Augmentation Under Locomotion-Scale Base Motion", { placeholder: "title" });
-	text(s, "Keeping a wearable robot's hands still while the wearer walks", { x: M, y: 3.1, w: CW, h: 0.5, fontSize: 24, color: GREY, objectName: "Subtitle" });
-	const card = framedImage(s, "hw_turn.gif", { x: 7.9, y: 3.95, w: R - 7.9, h: 2.6 }, { pad: 0.08, align: "r", line: HEX.lt1, alt: "The wearer twists his torso; the robot hands stay close to where they were" });
+	s.addText([
+		{ text: "World-Stable Supernumerary Effectors for Human", options: { breakLine: true } },
+		{ text: "Augmentation Under Locomotion-Scale Base Motion", options: {} },
+	], { placeholder: "title" });
+	text(s, "Keeping a wearable robot's hands still while the wearer walks", { x: M, y: 2.2, w: CW, h: 0.45, fontSize: 24, color: GREY, objectName: "Subtitle" });
+	const capH = 0.32, top = 2.9, bottom = 7.0;
+	const pad = 0.08, cardW = 5.45;
+	const d = fit("hw_turn.gif", { x: 0, y: 0, w: cardW - 2 * pad, h: 10 });
+	const cardH = d.h + 2 * pad;
+	const cy = top + (bottom - top - (cardH + 0.1 + capH)) / 2;
+	const card = framedImage(s, "hw_turn.gif", { x: R - cardW, y: cy, w: cardW, h: cardH }, { pad, align: "r", line: HEX.lt1, alt: "The wearer twists his torso; the robot hands stay close to where they were" });
+	caption(s, "Watch the hands, not the elbows.", card.x, card.y + card.h + 0.1, card.w, { color: GREY });
+	const lx = M, lw = card.x - M - 0.4, blockH = 2.2, ly = card.y + (card.h - blockH) / 2;
 	text(s, [
 		{ text: "Christian Akabueze", options: { fontSize: 24, bold: true, color: WHITE, breakLine: true } },
 		{ text: "MSc Human and Biological Robotics", options: { fontSize: 20, color: GREY, breakLine: true } },
 		{ text: "Imperial College London · MUVE Lab · 2026", options: { fontSize: 20, color: GREY } },
-	], { x: M, y: card.y, w: 6.6, h: 1.3, paraSpaceAfter: 4, objectName: "Presenter" });
+	], { x: lx, y: ly, w: lw, h: 1.3, paraSpaceAfter: 4, objectName: "Presenter" });
 	text(s, [{ text: "github.com/fechachris4/msc_project", options: { hyperlink: { url: "https://github.com/fechachris4/msc_project", tooltip: "Project repository" }, color: DATA } }],
-		{ x: M, y: card.y + card.h - 0.35, w: 6.6, h: 0.35, fontSize: 18, objectName: "GitHub link" });
-	caption(s, "Watch the hands, not the elbows.", card.x, card.y + card.h + 0.1, card.w, { color: GREY });
+		{ x: lx, y: ly + blockH - 0.35, w: lw, h: 0.35, fontSize: 18, objectName: "GitHub link" });
 	s.addNotes(NOTES.title);
 }
 
@@ -240,7 +251,7 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	pres.addSection({ title: "Problem" });
 	const s = contentSlide("Problem", TAG.P, "Every step moves your extra hands");
 	const card = framedImage(s, "hw_walk.gif", { x: M, y: TOP, w: 3.0, h: 4.45 }, { alt: "A participant walking on the treadmill with both arms on" });
-	caption(s, "A participant walking on the treadmill, both arms on.", card.x, card.y + card.h + 0.1, 3.9, { h: 0.5 });
+	caption(s, "Walking on the treadmill, both arms on.", card.x, card.y + card.h + 0.1, 3.9);
 	const sx = card.x + card.w + 1.0, sw = R - sx, mid = card.y + card.h / 2;
 	const stats = [
 		["63–68 mm", "hand motion if the arm were locked (RMS)"],
@@ -260,7 +271,7 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	const s = contentSlide("Problem", TAG.P, "Goal: fix the hand in the room, not on the body");
 	const capH = 0.75, gapC = 0.15;
 	const d = fit("task_illustration.png", { x: M, y: 0, w: CW, h: 4 });
-	const y = TOP + (BOTTOM - TOP - (d.h + gapC + capH)) / 2;
+	const capText = 0.6, visTop = 0.1, y = (1.6 + 6.9 - visTop - (d.h + gapC + capText)) / 2 + 0; // equal visual gap above and below
 	s.addImage({ path: A("task_illustration.png"), x: M, y, w: d.w, h: d.h, objectName: "Task illustration", altText: "Four backpack positions in one cycle and the average, where the hands stay sharp" });
 	text(s, [{ text: "(e) one cycle averaged: the backpack blurs, the hands stay sharp.", options: { breakLine: true } }, { text: "Simulation, controller on. Motion enlarged 3×.", options: {} }], { x: M, y: y + d.h + gapC, w: CW, h: capH, fontSize: 18, color: SLATE, objectName: "Caption" });
 	s.addNotes(NOTES.goal);
@@ -362,47 +373,48 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 {
 	pres.addSection({ title: "Trade-offs & challenges" });
 	const s = contentSlide("Trade-offs & challenges", TAG.TC, "Trade-off: planning can never block the 2 ms loop");
-	const by = TOP, bh = 2.1;
+	const by = TOP, bh = 2.4;
 	roundCard(s, { x: M, y: by, w: CW, h: bh }, GREY, "Real-time band");
-	text(s, "REAL-TIME PATH · EVERY 2 ms", { x: M + 0.25, y: by + 0.1, w: 5, h: 0.32, fontSize: 14, bold: true, color: SLATE, charSpacing: 1 });
-	const ry = by + 0.5, rh = 1.4;
+	text(s, "REAL-TIME PATH · EVERY 2 ms", { x: M + 0.25, y: by + 0.12, w: 5, h: 0.32, fontSize: 14, bold: true, color: SLATE, charSpacing: 1 });
+	const ry = by + 0.55, rh = 1.62;
 	const vic = { x: 0.85, y: ry, w: 1.7, h: rh };
 	const slot = { x: 2.9, y: ry, w: 1.45, h: rh };
 	const core = { x: 4.7, y: ry, w: 4.4, h: rh };
 	const kor = { x: 9.45, y: ry, w: 1.65, h: rh };
 	const arms = { x: 11.45, y: ry, w: 1.05, h: rh };
-	node(s, [{ text: "Vicon thread", options: { breakLine: true } }, { text: "100 Hz", options: { bold: false } }], vic, WHITE, NAVY, { fontSize: 16, shadow: true, name: "Vicon thread" });
-	node(s, [{ text: "Wait-free", options: { breakLine: true } }, { text: "slot", options: {} }], slot, WHITE, NAVY, { fontSize: 16, shadow: true, name: "Wait-free slot" });
+	node(s, [{ text: "Vicon thread", options: { breakLine: true } }, { text: "100 Hz", options: { bold: false } }], vic, WHITE, NAVY, { fontSize: 18, shadow: true, name: "Vicon thread" });
+	node(s, [{ text: "Wait-free", options: { breakLine: true } }, { text: "slot", options: {} }], slot, WHITE, NAVY, { fontSize: 18, shadow: true, name: "Wait-free slot" });
 	roundCard(s, core, NAVY, "Control core", { r: 0.1, shadow: true });
-	text(s, "500 Hz control core", { x: core.x, y: core.y + 0.1, w: core.w, h: 0.4, fontSize: 18, bold: true, color: WHITE, align: "center" });
+	text(s, "500 Hz control core", { x: core.x, y: core.y + 0.12, w: core.w, h: 0.42, fontSize: 20, bold: true, color: WHITE, align: "center" });
 	const chips = ["Kinematics", "Control law", "Clamp + integrate"];
-	const cpw = 1.22, cgap = (core.w - 0.3 - 3 * cpw) / 2;
+	const cpw = 1.26, cgap = (core.w - 0.24 - 3 * cpw) / 2, chy = core.y + 0.68, chh = 0.75;
 	chips.forEach((c, i) => {
-		const x = core.x + 0.15 + i * (cpw + cgap);
-		node(s, c, { x, y: core.y + 0.6, w: cpw, h: 0.62 }, TINT, NAVY, { fontSize: 15, name: `Core ${c}` });
-		if (i < 2) arrow(s, x + cpw + 0.03, core.y + 0.91, x + cpw + cgap - 0.03, core.y + 0.91, WHITE, 1.75);
+		const x = core.x + 0.12 + i * (cpw + cgap);
+		node(s, c, { x, y: chy, w: cpw, h: chh }, TINT, NAVY, { fontSize: 16, name: `Core ${c}` });
+		if (i < 2) arrow(s, x + cpw + 0.03, chy + chh / 2, x + cpw + cgap - 0.03, chy + chh / 2, WHITE, 1.75);
 	});
-	node(s, [{ text: "Kortex cyclic", options: { breakLine: true } }, { text: "exchange", options: {} }], kor, WHITE, NAVY, { fontSize: 16, shadow: true, name: "Kortex" });
-	node(s, [{ text: "Both", options: { breakLine: true } }, { text: "arms", options: {} }], arms, WHITE, NAVY, { fontSize: 16, shadow: true, name: "Arms" });
+	node(s, [{ text: "Kortex cyclic", options: { breakLine: true } }, { text: "exchange", options: {} }], kor, WHITE, NAVY, { fontSize: 18, shadow: true, name: "Kortex" });
+	node(s, [{ text: "Both", options: { breakLine: true } }, { text: "arms", options: {} }], arms, WHITE, NAVY, { fontSize: 18, shadow: true, name: "Arms" });
 	const my = ry + rh / 2;
 	[[vic, slot], [slot, core], [core, kor], [kor, arms]].forEach(([a, b]) => arrow(s, a.x + a.w + 0.04, my, b.x - 0.04, my, NAVY, 2.25));
 
-	const py = 4.6, ph = 1.6;
-	const pl = { x: 3.0, y: py, w: 7.45, h: ph };
+	const py = by + bh + 0.6, ph = 1.85;
+	const pl = { x: 2.9, y: py, w: 7.65, h: ph };
 	roundCard(s, pl, WHITE, "Planner thread", { r: 0.12, line: { color: HEX.accent6, width: 1.25, dashType: "dash" } });
-	text(s, "PLANNER WORKER THREAD · NOT REAL-TIME", { x: pl.x + 0.25, y: py + ph - 0.44, w: 6, h: 0.32, fontSize: 14, bold: true, color: SLATE, charSpacing: 1 });
-	const pcs = [["GPMP2 planner", 3.2], ["Validator", 5.65], ["Trajectory mailbox", 8.1]];
-	const pcw = 2.15, pcy = py + 0.22, pch = 0.78;
+	text(s, "PLANNER WORKER THREAD · NOT REAL-TIME", { x: pl.x + 0.25, y: py + ph - 0.46, w: 6, h: 0.32, fontSize: 14, bold: true, color: SLATE, charSpacing: 1 });
+	const pcw = 2.25, pcy = py + 0.25, pch = 0.95, pgap = (pl.w - 0.4 - 3 * pcw) / 2;
+	const pcs = ["GPMP2 planner", "Validator", "Trajectory mailbox"].map((c, i) => [c, pl.x + 0.2 + i * (pcw + pgap)]);
 	pcs.forEach(([c, x], i) => {
-		node(s, c, { x, y: pcy, w: pcw, h: pch }, TINT, NAVY, { fontSize: 16, name: `Planner ${c}` });
+		node(s, c, { x, y: pcy, w: pcw, h: pch }, TINT, NAVY, { fontSize: 18, name: `Planner ${c}` });
 		if (i < 2) arrow(s, x + pcw + 0.04, pcy + pch / 2, pcs[i + 1][1] - 0.04, pcy + pch / 2, NAVY, 2);
 	});
-	const coreBottom = core.y + core.h;
-	arrow(s, 4.95, coreBottom + 0.04, 4.95, pcy - 0.04, NAVY, 2);
-	text(s, "plan request", { x: 3.2, y: 4.13, w: 1.62, h: 0.32, fontSize: 14, color: SLATE, align: "right" });
-	arrow(s, 8.85, pcy - 0.04, 8.85, coreBottom + 0.04, NAVY, 2);
-	text(s, "checked trajectory", { x: 9.0, y: 4.13, w: 2.2, h: 0.32, fontSize: 14, color: SLATE });
-	caption(s, "My C++ controller (HumanSL_MAIN). A MuJoCo twin runs the same core.", M, 6.4, CW);
+	const coreBottom = core.y + core.h, gapMid = (by + bh + py) / 2;
+	const reqX = 4.95, retX = 8.85; // inside the core, over the planner and mailbox chips
+	arrow(s, reqX, coreBottom + 0.04, reqX, pcy - 0.04, NAVY, 2);
+	text(s, "plan request", { x: reqX - 1.85, y: gapMid - 0.17, w: 1.7, h: 0.34, fontSize: 16, color: SLATE, align: "right" });
+	arrow(s, retX, pcy - 0.04, retX, coreBottom + 0.04, NAVY, 2);
+	text(s, "checked trajectory", { x: retX + 0.15, y: gapMid - 0.17, w: 2.4, h: 0.34, fontSize: 16, color: SLATE });
+	caption(s, "My C++ controller (HumanSL_MAIN). A MuJoCo twin runs the same core.", M, py + ph + 0.12, CW);
 	s.addNotes(NOTES.cpp);
 }
 
@@ -410,13 +422,14 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 {
 	const s = contentSlide("Trade-offs & challenges", TAG.TC, "Turning up the gain barely helped");
 	const colW = 4.2, cxs = [W / 2 - 2.75, W / 2 + 2.75];
+	const groupH = 4.0, g0 = TOP + (BOTTOM - TOP - groupH) / 2; // whole group centred vertically
 	[["38%", "predicted drop near 1 Hz", SLATE], ["9%", "measured drop near 1 Hz", ORANGE]].forEach(([big, label, color], i) => {
-		text(s, big, { x: cxs[i] - colW / 2, y: TOP + 0.2, w: colW, h: 1.55, fontSize: 96, bold: true, color, align: "center", valign: "middle", objectName: `Compare ${i + 1}` });
-		text(s, label, { x: cxs[i] - colW / 2, y: TOP + 1.8, w: colW, h: 0.45, fontSize: 22, color: INK, align: "center", objectName: `Compare ${i + 1} label` });
+		text(s, big, { x: cxs[i] - colW / 2, y: g0, w: colW, h: 1.55, fontSize: 96, bold: true, color, align: "center", valign: "middle", objectName: `Compare ${i + 1}` });
+		text(s, label, { x: cxs[i] - colW / 2, y: g0 + 1.6, w: colW, h: 0.45, fontSize: 22, color: INK, align: "center", objectName: `Compare ${i + 1} label` });
 	});
-	text(s, "vs", { x: W / 2 - 0.6, y: TOP + 0.2, w: 1.2, h: 1.55, fontSize: 28, color: SLATE, align: "center", valign: "middle" });
-	text(s, "Pilot, one wearer: velocity gain (K_d) raised 0.8 → 2.6", { x: M, y: 4.75, w: CW, h: 0.45, fontSize: 22, color: SLATE, align: "center", objectName: "Pilot" });
-	text(s, "The velocity term was barely acting. Why?", { x: M, y: 5.45, w: CW, h: 0.7, fontSize: 32, bold: true, color: NAVY, align: "center", valign: "middle", objectName: "Takeaway" });
+	text(s, "vs", { x: W / 2 - 0.6, y: g0, w: 1.2, h: 1.55, fontSize: 28, color: SLATE, align: "center", valign: "middle" });
+	text(s, "Pilot, one wearer: velocity gain Kd raised 0.8 → 2.6", { x: M, y: g0 + 2.55, w: CW, h: 0.45, fontSize: 22, color: SLATE, align: "center", objectName: "Pilot" });
+	text(s, "The velocity term was barely acting. Why?", { x: M, y: g0 + 3.3, w: CW, h: 0.7, fontSize: 32, bold: true, color: NAVY, align: "center", valign: "middle", objectName: "Takeaway" });
 	s.addNotes(NOTES.gain);
 }
 
