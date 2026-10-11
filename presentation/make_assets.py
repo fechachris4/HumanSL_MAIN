@@ -38,5 +38,16 @@ for slug, url in [
     qr.make(fit=True)
     qr.make_image(fill_color=NAVY, back_color="white").convert("RGB").save(OUT / f"{slug}.png")
 
+# Horizontal fade for the 36 -> 46 ms tail of the Kalman-lag bar (slide "The cause"): Imperial
+# orange D24000 fading to 35 % strength over white. pptxgenjs has no gradient fills.
+ORANGE, W_ = (0xD2, 0x40, 0x00), (255, 255, 255)
+fade = Image.new("RGB", (400, 80))
+for x in range(400):
+    t = x / 399 * 0.65  # 0 = full orange, 0.65 = 35 % orange over white
+    c = tuple(round(o * (1 - t) + w * t) for o, w in zip(ORANGE, W_))
+    for y in range(80):
+        fade.putpixel((x, y), c)
+fade.save(OUT / "kalman_fade.png")
+
 for p in sorted(OUT.iterdir()):
     print(p.name, Image.open(p).size)
