@@ -31,24 +31,39 @@ section tag with one of those words, so the listener can tick them off.
 - Links: github.com/fechachris4/msc_project (results, sim, figures) and
   github.com/fechachris4/HumanSL_MAIN (C++ real-time controller, `Christian_control/`).
 
-## Slide plan (≈ 12 slides)
+## Slide plan (as built: 11 slides + 6 backups, ≈ 9:20)
 
-| # | Tag | Title (message) | Visual | Time |
+Four section tags only, in this order: PROBLEM → APPROACH & SOLUTION →
+TRADE-OFFS & CHALLENGES → IMPACT. One message per slide; detail lives in the notes.
+
+| # | Tag | Title | Visual | Time |
 |---|---|---|---|---|
-| 1 | — | Keeping a robot's hands still while its wearer moves | `hw_turn.gif` hero; name, MSc, Imperial, MUVE Lab, 2026 | 0:30 |
-| 2 | Problem | Every step moves your extra hands | `rig.jpg` + stat callouts (63–68 mm RMS, ~1.8 Hz, 2 × 7-DoF arms) | 0:50 |
-| 3 | Problem | Goal: hold the hand fixed in the room, not on the body | `task_illustration.png` full width | 0:40 |
-| 4 | Approach | Measure the backpack, cancel it through the arm | frame chain diagram world→mount→base→hand + 1 equation | 1:00 |
-| 5 | Approach | One control cycle, every 2 ms | `control_loop.png` + 5 numbered steps | 0:50 |
-| 6 | Approach | A fast loop that nothing can block | native architecture diagram (C++ runtime) | 0:50 |
-| 7 | Solution | Simulation first: same law, physics instead of hardware | `hold_pose.gif` + 31.0 → 6.7 → 2.6 mm | 0:45 |
-| 8 | Solution | Seven people walked on a treadmill wearing the arms | `hw_walk.gif` + `hw_replay.gif` | 0:45 |
-| 9 | Impact | About two-thirds of walking motion removed | native bar chart 71 / 63 / 56 % + 78 % platform | 0:45 |
-| 10 | Challenge | Turning up the gain barely helped (9 % vs 38 % predicted) | `hw_rejection.png` | 0:45 |
-| 11 | Challenge | The cause: the velocity signal arrives 61–71 ms late | delay budget bar + 2·sin(ωd/2) + `velocity_delay.png` | 1:00 |
-| 12 | Trade-offs | Trade-offs I made | 2×2 cards | 0:50 |
-| 13 | Impact | Impact, and what comes next | impact + next steps + what transfers | 0:45 |
-| 14 | — | Thank you / questions | GitHub links + QR codes | 0:10 |
+| 1 | — | Thesis title + "Keeping a wearable robot's hands still while the wearer walks" | `hw_turn.gif` | 0:35 |
+| 2 | Problem | Every step moves your extra hands | `hw_walk.gif` + 63–68 mm, ~1.8 Hz | 0:40 |
+| 3 | Problem | Goal: fix the hand in the room, not on the body | `task_illustration.png` | 0:30 |
+| 4 | Approach & solution | Measure the backpack, cancel it through the arm | frame chain + one equation | 1:20 |
+| 5 | Approach & solution | Simulation first: my controller in a physics engine | `hold_pose.gif` + 31.0 → 6.7 → 2.6 mm | 0:55 |
+| 6 | Approach & solution | 7 people: about two-thirds of walking motion removed | `hw_replay.gif` + 71/63/56 % chart; "trials ran the lab's 400 Hz controller" | 1:15 |
+| 7 | Trade-offs & challenges | Trade-off: planning can never block the 2 ms loop | C++ architecture diagram, gain/cost | 1:05 |
+| 8 | Trade-offs & challenges | Turning up the gain barely helped | 38 % predicted vs 9 % measured | 0:45 |
+| 9 | Trade-offs & challenges | The cause: the velocity arrives 61–71 ms late | delay budget bar + 2·sin(ωd/2) | 1:20 |
+| 10 | Impact | Impact, and what comes next | 2/3 removed; next step; lesson | 0:45 |
+| 11 | — | Thank you. Questions? | QR codes + links | 0:10 |
+
+Backups (only if asked): control loop (sim), frequency response at 1.0 m/s,
+simulation error vs delay, limits the data showed, pitching/swaying platform, the rig.
+
+Provenance rule: the hardware results come from the lab's 400 Hz Kalman-filtered
+controller; the C++ controller (slide 7) is separate work that did not run those trials.
+The simulation results were run with the safety filter off.
+
+## Building
+
+```
+npm install            # pptxgenjs, image-size
+python3 make_assets.py path/to/msc_project  # copy its media/, draw QR codes
+node build.js          # writes World_Stable_Supernumerary_Effectors_Akabueze.pptx
+```
 
 ## Fact sheet (the ONLY numbers allowed on slides)
 
