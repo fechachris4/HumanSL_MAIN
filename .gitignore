@@ -33,6 +33,10 @@
 # ...except the local agent intent log and notes: private, never source
 docs/intent/
 
+# Project talk: deck, generator and its media (not its node_modules)
+!presentation/
+presentation/node_modules/
+
 # Include this .gitignore file
 !.gitignore
 
