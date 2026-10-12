@@ -1,5 +1,6 @@
-// Generator for World_Stable_Supernumerary_Effectors_Akabueze.pptx (10-minute talk, 9 slides:
-// title, 7 content, closing; no backups — Q&A material lives in a separate doc).
+// Generator for World_Stable_Supernumerary_Effectors_Akabueze.pptx (10-minute talk, 10 slides:
+// title, 8 content, closing; no backups). Speaker notes follow Christian's own script
+// (12 Oct 2026), merged to 10 slides and de-jargoned.
 //
 //   python3 make_assets.py            # once: copies media, crops a figure, makes QR codes
 //   node build.js                     # writes the deck next to this file
@@ -183,20 +184,22 @@ function stat(slide, big, label, x, y, w, o) {
 }
 
 // ---------------------------------------------------------------- notes (spoken script)
-// First person, ~130 words/min. Each note starts with a timing cue computed from its word
-// count: [slide time | running total].
+// Christian's script (12 Oct 2026), merged to ten slides and de-jargoned; his "Check:" and
+// "Optional" lines are excluded. Paced at 140 words/min, his rate. Each note starts with a cue
+// computed from its word count: [slide time | running total].
 const SCRIPT = {
-	title: `Imagine wearing two extra robot arms on your back and asking them to hold something still while you walk. That was my MSc project, in the MUVE Lab at Imperial; I'm Christian Akabueze. Here the wearer twists about sixty degrees: the elbows swing, and the hands stay close to where they were. To be clear up front: the simulation, my controllers, the trial analysis and the diagnosis are mine; the hardware trials ran a 400 hertz controller on the lab machine.`,
-	problem: `The arms are two seven-joint Kinova Gen3 robots on a backpack, and Vicon motion capture tracks the backpack. If the arms were locked, held rigid on the backpack, walking would move the hands 63 to 68 millimetres RMS, at every speed we tried. Steps come about 1.8 times a second, so this is fast, repeating motion, not slow drift. So the goal is set in the world frame: hold each hand fixed in the room, not on the body.`,
-	frames: `The approach is a chain of 3D frames. Vicon gives the backpack's pose in the room, live. The arm base sits at a fixed, known offset on the backpack, and forward kinematics places the hand. Composing them gives the hand's pose and Jacobian in the room frame: the same composition as camera extrinsics. The control law is a PD term on that room-frame error, how far the hand is from its spot and how fast it is drifting, turned into joint speeds by a damped pseudo-inverse. A null-space term also uses the arm's spare degree of freedom to keep the joints near mid-range without moving the hand, and a safety filter swaps any command that gets too close to the wearer for the nearest safe one; in simulation it was on but never had to step in. I wrote this law in Python for simulation and as a 500 hertz real-time C++ controller, the second link at the end. Keep an eye on the orange part, K-d times e-dot, the velocity term. It comes back.`,
-	sim: `In simulation, I ran my Python controller in MuJoCo, a physics engine. Here the backpack's velocity is exact and on time; hold that thought. The backpack follows a walking-like motion at 1.8 hertz, smaller than real walking. Over eight seconds, locked arms leave 31.0 millimetres RMS, and the reactive controller brings that to 6.7. Adding feedforward, which uses that exact velocity to cancel the backpack's motion as it happens instead of waiting for the error, brings it to 2.6. The counters in the clip are a running RMS over a shorter window. The gains here are stiffer than on hardware, so compare trends, not millimetres. And remember that 2.6.`,
-	hardware: `Seven people walked on a treadmill at 0.5, 1 and 1.5 metres per second. The trials ran a 400 hertz controller on the lab machine: Kalman-filtered Vicon, no feedforward, and a velocity term with gain K-d. My C++ controller did not run these trials; the analysis is mine. The replay is a typical trial at 1 metre per second, closest to that wearer's median. Grey is where the hand would have gone with the arm locked to the mount, the backpack, and blue is where it went. I checked that locked-arm model on uncontrolled arms: median error half a percent, over 126 arms. Scored that way, the arms removed 71, 63 and 56 percent of the motion. Those are means over six of the seven people, four at the fastest speed; the first session is reported separately. 128 walking trials in all, mostly one arm at a time. Faster walking moves the hand faster, not further, and fast motion is harder to cancel: at 1 metre per second, motion at a quarter of a hertz is 85 percent cancelled, but the bounce of each step, at 2 hertz, only 29 percent.`,
-	gain: `The obvious fix for that bounce is more velocity gain. In a pilot session with one wearer, K-d was stepped from 0.8 to 2.6. The model predicted that the share of the backpack's motion reaching the hand near 1 hertz would fall by 38 percent. It fell by 9, about a quarter of the predicted effect. And across six people, the measured amplitude sits on a model with no velocity term at all, so the two-thirds removed on hardware is roughly what the position term alone would give. So the velocity term was barely acting, and more tuning wouldn't fix that. I needed to know why.`,
-	delay: `So I traced the velocity signal end to end. The Kalman estimate of the backpack's velocity lags by 36 to 46 milliseconds; the Vicon data is about 10 milliseconds old; the joints take about 15 to respond: 61 to 71 milliseconds in total. That's the trade-off: filtering makes the velocity smooth, but late. The arm reacts to how the backpack was moving, not how it moves now. A velocity that is d late is off by two sine omega d over two of its own size, with omega two pi times the step frequency: at 1.8 hertz and this delay, about 70 percent. For feedforward, that is exactly what's left uncancelled. Inside a feedback loop it also depends on the gains, so I checked the full model: with the measured delay and nothing fitted, it matches the hardware, in amplitude and phase, better than the no-velocity model in six of six people. The two differ mainly in phase, which is why the amplitude alone sat on the no-velocity model. And in simulation I can delay the velocity on purpose: at 60 milliseconds, the velocity term and the feedforward both end up at 8.2 to 8.6 millimetres, worse than the 7.5 with no velocity term. So a delay this size is enough, on its own, to erase the benefit. It's the best explanation, not yet proof; confirming it means changing the estimator on hardware, which is the next experiment.`,
-	impact: `On hardware, about two-thirds of walking motion was removed: 56 to 71 percent, means over six of the seven wearers, scored by my analysis. The part I'm proudest of is the diagnosis. When tuning stopped helping, the data pointed to a 61 to 71 millisecond delay, and that sets the next step: a faster velocity estimate, then feedforward on the real arms, which in simulation, with no delay, took the error from 6.7 to 2.6 millimetres. My own C++ controller isn't that fix yet: its velocity estimate uses a 50 millisecond low-pass, about 45 milliseconds of lag at step frequency. What transfers beyond robotics: frames and calibration are camera extrinsics. The hand sat a constant 18 to 21 millimetres from its goal, and arm by arm that offset follows how far the kinematic model and Vicon disagree: a calibration problem. A latency budget is sensor time-sync. And I validated my metric against ground truth.`,
-	close: `Thank you. The results, simulation and figures are in msc_project, and my C++ real-time controller is in HumanSL_MAIN. Happy to take questions.`,
+	title: `Imagine wearing two extra robot arms on your back and asking them to hold something still while you walk. Every step shakes them. I'm Christian Akabueze, and this was my MSc project at Imperial, in the MUVE Lab. In this clip the wearer twists about sixty degrees. The elbows swing; the hands barely move. It works, mostly. This talk is about the part that didn't, and why the obvious fix did almost nothing.`,
+	problem: `The arms are two Kinova Gen3 robots, seven joints each, on a backpack. Motion-capture cameras around the room, a Vicon system, track the backpack. An arm you wear is an extra pair of hands, until you take a step: anything it holds moves with you. With the arms locked, the hands move 63 to 68 millimetres on average, at every walking speed we tried. Steps come about 1.8 times a second, so this is fast, repeating motion, not slow drift. Remember that number, 1.8 steps a second. It comes back. So the goal is to hold each hand fixed in the room, not on the body.`,
+	frames: `The idea is a chain of coordinate frames. The cameras give me where the backpack is in the room. The arm's base sits at a fixed, known spot on the backpack. The joint angles then place the hand relative to that base. Chain the three and I know where the hand is in the room, and how each joint moves the hand. On top sits a feedback controller on the error in the room: how far the hand is from its spot, and how fast it's drifting. That gets turned into joint speeds, staying smooth near awkward poses. The same law runs in my simulation, my C++ controller, and the lab controller used in the trials.`,
+	sim: `Before hardware, I tested my Python controller in MuJoCo, a physics engine, with the backpack following a walking-like motion at 1.8 steps a second. Same motion three times. Arms locked: 31 millimetres of error. My controller: 6.7. Add feedforward, which tells the controller how the backpack is moving: 2.6. So knowing the backpack's velocity is worth a lot. Hold on to that, because on real hardware, getting that velocity on time turns out to be the hard part. The sim is stiffer than the rig, so read trends, not millimetres.`,
+	filter: `The first problem on real hardware wasn't accuracy. It was shaking. The camera signal is noisy, and fed straight in, the arm vibrated. Unusable. So I added a Kalman filter, a smoothing filter, to estimate the backpack's position and speed cleanly, and the shaking stopped. But a filter buys smoothness with time. Its estimate comes out late, so the position built from it is late too. So I fight the delay with the speed itself: if I know how fast the backpack is moving, I can predict its position a short step into the future and cancel part of the lag. The filter pushes me into the past; the prediction pulls me back toward now.`,
+	hardware: `Seven participants wore the arms on a treadmill at 0.5, 1 and 1.5 metres per second. The controller ran 400 times a second on the lab machine, with no feedforward; the trial analysis is mine. To score a trial, I replay what a locked arm would have done and compare it with the real hand: the percent removed is how much less the hand moved than the locked arm would have. On arms that weren't being controlled, that locked model is right to within half a percent. Averaged over six of the seven people: 71 percent removed at slow walking, 63 at normal, 56 at fast, across 128 walking trials. On a pitching, swaying platform, 78 percent. But notice the trend. The faster you walk, the less it removes.`,
+	gain: `So where does the missing third go? I split the motion by how fast it repeats. Slow sway, about once every four seconds: 85 percent cancelled. The bounce of each step, twice a second: only 29. That's a speed problem, and the textbook answer is to react harder to velocity. Turn up the velocity gain. In a pilot with one wearer, I raised it from 0.8 to 2.6, more than three times. My model said the response near the stride rate would drop by 38 percent. It dropped by 9. And across six people, the arm behaves like a model with no velocity term at all, as if the velocity wasn't there. That's when I stopped tuning and started asking why.`,
+	delay: `I traced the velocity signal end to end. Remember the prediction: it uses the velocity to pull the position back toward now. But nothing pulls the velocity itself forward. The smoothing filter's velocity estimate trails the real motion by 36 to 46 milliseconds. The camera measurement is about 10 milliseconds old, and the joints take about 15 to respond. In total, the velocity is 61 to 71 milliseconds late. A late velocity has the right size but the wrong timing, so subtracting it doesn't cancel the real one. The leftover is two times the sine of half the timing error, measured as an angle of the step cycle. At 1.8 steps a second and 60 milliseconds, that's two-thirds of the velocity, wrong. And it explains the trend: walk faster, steps come quicker, and the same delay costs more. With the measured delay and nothing fitted, the full model matches the hardware better than the no-velocity model in six of six people. Confirming it directly means changing the speed estimate on hardware. That's the next experiment.`,
+	impact: `On real arms worn by seven people, the controller removes about two-thirds of walking motion: 56 to 71 percent, depending on speed. The part I'm proudest of is the diagnosis. When tuning stopped helping, I traced it in the data to a 61 to 71 millisecond delay. That sets the order of what comes next. First, a faster velocity estimate. Only then feedforward: in simulation with no delay it cut the error from 6.7 to 2.6 millimetres, but at 60 milliseconds it loses that advantage, to around 8. I also wrote my own real-time controller in C++ for this rig, built so the path planner can never block the 2 millisecond control loop. With what I know now, I can see the same weak spot there: its own smoothing filter adds about 45 milliseconds of lag at step frequency, so the speed estimate is the next piece there too. The lesson I'd carry to any robot that sees through sensors: measure every delay in the chain before you tune the gains.`,
+	close: `Thank you. The code and results are on GitHub; the links are on the slide. Happy to take questions.`,
 };
-const WPM = 130;
+const WPM = 140;
 const wordCount = (str) => str.split(/\s+/).filter(Boolean).length;
 const mmss = (sec) => { const t = Math.round(sec); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`; };
 const NOTES = {};
@@ -252,8 +255,8 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	const goalH = 0.5, goalY = card.y + card.h - goalH;
 	const o = { bigPt: 80, bigH: 1.15, labelPt: 24, labelH: 0.48, gap: 0.06, color: BLUE };
 	const pitch = 1.8, y0 = 2.35;
-	stat(s, "63–68 mm", "hand motion, arm locked (RMS)", sx, y0, sw, o);
-	stat(s, "~1.8 Hz", "step rate", sx, y0 + pitch, sw, o);
+	stat(s, "63–68\u00A0mm", "hand motion, arm locked (average)", sx, y0, sw, o);
+	stat(s, "~1.8\u00A0Hz", "steps per second", sx, y0 + pitch, sw, o);
 	text(s, "Goal: hands fixed in the room, not the body", { x: sx, y: goalY, w: sw, h: goalH, fontSize: 26, bold: true, color: NAVY, valign: "bottom", objectName: "Goal" });
 	s.addNotes(NOTES.problem);
 }
@@ -270,7 +273,7 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	const edges = [
 		["Vicon, live", DATA, WHITE],
 		["fixed offset", GREY, NAVY],
-		["forward kinematics", TINT, NAVY],
+		["joint angles", TINT, NAVY],
 	];
 	const chipW = 3.0, chipH = 0.65, chipY = ny + nh + 0.27;
 	edges.forEach(([a, fill, col], i) => {
@@ -299,55 +302,73 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 	const gy = ey + eh + 0.2, gh = 0.4, tri = 0.2;
 	s.addShape(pres.shapes.ISOSCELES_TRIANGLE, { objectName: "Velocity-term marker", x: KD_X - tri / 2, y: gy + 0.08, w: tri, h: 0.17, fill: { color: ORANGE }, line: { type: "none" } });
 	text(s, "velocity term", { x: KD_X + tri / 2 + 0.1, y: gy, w: 2.4, h: gh, fontSize: 20, color: ORANGE, valign: "middle", objectName: "Velocity-term label" });
-	text(s, "room-frame error → joint speeds", { x: M, y: gy, w: KD_X - tri / 2 - 0.55 - M, h: gh, fontSize: 20, color: SLATE, align: "right", valign: "middle", objectName: "Control-law gloss" });
+	text(s, "error in the room → joint speeds", { x: M, y: gy, w: KD_X - tri / 2 - 0.55 - M, h: gh, fontSize: 20, color: SLATE, align: "right", valign: "middle", objectName: "Control-law gloss" });
 	s.addNotes(NOTES.frames);
 }
 
 // ---- 4. Approach & solution: simulation
 {
-	const s = contentSlide("Approach & solution", TAG.AS, "In simulation: my controller in a physics engine");
+	const s = contentSlide("Approach & solution", TAG.AS, "Simulation: knowing the velocity is worth a lot");
 	const card = framedImage(s, "hold_pose.gif", { x: M, y: TOP, w: 8.4, h: BOTTOM - TOP }, { alt: "Simulation: arms locked, reactive controller, reactive controller with feedforward" });
 	const sx = card.x + card.w + 0.45, sw = R - sx;
-	text(s, "Hand error, RMS over 8 s", { x: sx, y: TOP, w: sw, h: 0.4, fontSize: 18, bold: true, color: SLATE, objectName: "Sim header" });
+	text(s, "Hand error, 8 s average", { x: sx, y: TOP, w: sw, h: 0.4, fontSize: 18, bold: true, color: SLATE, objectName: "Sim header" });
 	const o = { bigPt: 54, bigH: 0.85, labelPt: 20, labelH: 0.4, gap: 0.02 };
-	[["31.0 mm", "arms locked", SLATE], ["6.7 mm", "reactive", DATA], ["2.6 mm", "reactive + feedforward", ORANGE]].forEach(([big, label, color], i) => {
+	[["31.0\u00A0mm", "arms locked", SLATE], ["6.7\u00A0mm", "my controller", DATA], ["2.6\u00A0mm", "+ speed fed forward", ORANGE]].forEach(([big, label, color], i) => {
 		stat(s, big, label, sx, TOP + 0.6 + i * 1.5, sw, { ...o, color });
 	});
 	s.addNotes(NOTES.sim);
 }
 
-// ---- 5. Approach & solution: hardware result
+// ---- 5. Approach & solution: the filter that costs time (Christian's script, slide 6)
+{
+	const s = contentSlide("Approach & solution", TAG.AS, "Making it usable: a filter that costs time");
+	const steps = [
+		["Raw camera tracking", "noisy, arm shakes", GREY, NAVY],
+		["Smoothing filter (Kalman)", "steady, but late", ORANGE, WHITE],
+		["Predict ahead from speed", "pulls back toward now", BLUE, WHITE],
+	];
+	const nw = 3.5, nh = 2.0, ny = 2.7, gap = (CW - 3 * nw) / 2;
+	steps.forEach(([a, b, fill, col], i) => {
+		const x = M + i * (nw + gap);
+		node(s, [r(a, col, { breakLine: true, bold: true, fontSize: 22 }), r(b, col, { fontSize: 20 })], { x, y: ny, w: nw, h: nh }, fill, col, { r: 0.14, bold: false, shadow: true, name: `Filter step ${i + 1}` });
+		if (i < 2) arrow(s, x + nw + 0.08, ny + nh / 2, x + nw + gap - 0.08, ny + nh / 2, NAVY, 2.5);
+	});
+	text(s, "Smoothness costs time.", { x: M, y: 5.35, w: CW, h: 0.8, fontSize: 36, bold: true, color: NAVY, align: "center", valign: "middle", objectName: "Takeaway" });
+	s.addNotes(NOTES.filter);
+}
+
+// ---- 6. Approach & solution: hardware result
 {
 	const s = contentSlide("Approach & solution", TAG.AS, "On real wearers: about 2/3 of walking motion removed");
-	text(s, "Trials: a 400 Hz controller on the lab machine. Analysis: mine.", { x: M, y: 1.85, w: CW, h: 0.4, fontSize: 20, color: NAVY, objectName: "Provenance" });
+	text(s, "Controller: 400 Hz on the lab machine, no feedforward. Analysis: mine.", { x: M, y: 1.85, w: CW, h: 0.4, fontSize: 20, color: NAVY, objectName: "Provenance" });
 	// The stat column (three rows + the n note) and the replay card share one vertical span.
 	const rep = framedImage(s, "hw_replay.gif", { x: M, y: 2.75, w: 8.7, h: 4.0 }, { alt: "One trial replayed: locked-arm path in grey, measured hand in blue" });
 	const sx = rep.x + rep.w + 0.4, sw = R - sx;
 	const o = { bigPt: 60, bigH: 0.85, labelPt: 20, labelH: 0.38, gap: 0.0, color: DATA };
 	const y0 = 2.5, pitch = 1.22;
 	[["71%", "0.5 m/s"], ["63%", "1.0 m/s"], ["56%", "1.5 m/s"]].forEach(([big, label], i) => stat(s, big, label, sx, y0 + i * pitch, sw, o));
-	// The 1.5 m/s mean is over 4 of the 6 wearers.
-	text(s, "n = 6 (4 at 1.5 m/s)", { x: sx, y: y0 + 2 * pitch + o.bigH + o.labelH + 0.02, w: sw, h: 0.35, fontSize: 18, color: SLATE, objectName: "Results note" });
+	text(s, "Mean of 6 of 7 wearers · 128 trials", { x: sx, y: y0 + 2 * pitch + o.bigH + o.labelH + 0.02, w: sw, h: 0.62, fontSize: 18, color: SLATE, objectName: "Results note" });
 	s.addNotes(NOTES.hardware);
 }
 
-// ---- 6. Trade-offs & challenges: the gain barely helped
+// ---- 7. Trade-offs & challenges: the obvious fix
 {
 	pres.addSection({ title: "Trade-offs & challenges" });
 	// The title carries the question; the set-up line and the number pair sit centred below it.
-	const s = contentSlide("Trade-offs & challenges", TAG.TC, "More velocity gain barely helped. Why?");
-	text(s, [r("One-wearer pilot: K"), r("d", null, { subscript: true }), r(" 0.8 → 2.6. Motion reaching the hand near 1 Hz fell:")],
-		{ x: M, y: 2.75, w: CW, h: 0.5, fontSize: 22, color: SLATE, align: "center", valign: "middle", objectName: "Pilot set-up" });
+	const s = contentSlide("Trade-offs & challenges", TAG.TC, "The obvious fix did almost nothing");
+	text(s, "One-wearer pilot: velocity gain 0.8 → 2.6. Hand motion near 1 Hz fell:",
+		{ x: M, y: 2.45, w: CW, h: 0.5, fontSize: 22, color: SLATE, align: "center", valign: "middle", objectName: "Pilot set-up" });
 	const colW = 4.4, cxs = [W / 2 - 2.75, W / 2 + 2.75];
 	[["38%", "predicted", SLATE], ["9%", "measured", ORANGE]].forEach(([big, label, color], i) => {
-		stat(s, big, label, cxs[i] - colW / 2, 3.4, colW, { bigPt: 130, bigH: 1.9, labelPt: 24, labelH: 0.5, gap: 0.02, color, align: "center" });
+		stat(s, big, label, cxs[i] - colW / 2, 3.05, colW, { bigPt: 130, bigH: 1.9, labelPt: 24, labelH: 0.5, gap: 0.02, color, align: "center" });
 	});
+	text(s, "Slow sway: 85% removed · Step bounce: only 29%", { x: M, y: 6.05, w: CW, h: 0.5, fontSize: 22, color: SLATE, align: "center", valign: "middle", objectName: "Frequency split" });
 	s.addNotes(NOTES.gain);
 }
 
-// ---- 7. Trade-offs & challenges: the delay
+// ---- 8. Trade-offs & challenges: the delay
 {
-	const s = contentSlide("Trade-offs & challenges", TAG.TC, "Best explanation: the velocity arrives 61–71 ms late");
+	const s = contentSlide("Trade-offs & challenges", TAG.TC, "The velocity arrives 61–71 ms late");
 	// Delay budget, proportional boxes in orange shades. Kalman lag: 36 ms solid + a fading tail to 46 ms.
 	const bx = M, by = 2.3, bh = 1.3, barW = 8.75, k = barW / 71;
 	const kw = 46 * k;
@@ -364,9 +385,9 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 		const t = ((i + 0.5) / FADE_N) * 0.65;
 		s.addShape(pres.shapes.RECTANGLE, { objectName: `Kalman lag fade ${i + 1}`, x: fadeX + i * sliceW, y: by, w: sliceW + (i < FADE_N - 1 ? 0.012 : 0), h: bh, fill: { color: mix(t) }, line: { type: "none" } });
 	}
-	text(s, "Kalman 36–46 ms", { x: bx, y: by, w: kw, h: bh, fontSize: 20, bold: true, color: WHITE, align: "center", valign: "middle", objectName: "Kalman label" });
+	text(s, "Smoothing filter 36–46 ms", { x: bx, y: by, w: kw, h: bh, fontSize: 20, bold: true, color: WHITE, align: "center", valign: "middle", objectName: "Kalman label" });
 	const segs = [
-		{ ms: 10, transp: 25, runs: [r("sensing", NAVY, { breakLine: true }), r("~10 ms", NAVY)] },
+		{ ms: 10, transp: 25, runs: [r("camera", NAVY, { breakLine: true }), r("~10 ms", NAVY)] },
 		{ ms: 15, transp: 45, runs: [r("joints", NAVY, { breakLine: true }), r("~15 ms", NAVY)] },
 	];
 	let x = bx + kw;
@@ -377,41 +398,43 @@ const TAG = { P: "PROBLEM", AS: "APPROACH & SOLUTION", TC: "TRADE-OFFS & CHALLEN
 		text(s, sg.runs, { x, y: by, w, h: bh, fontSize: 20, bold: true, align: "center", valign: "middle" });
 		x += w;
 	});
-	text(s, "= 61–71 ms", { x: x + 0.22, y: by, w: R - x - 0.22, h: bh, fontSize: 40, bold: true, color: ORANGE, valign: "middle", objectName: "Delay total" });
+	text(s, "= 61–71\u00A0ms", { x: x + 0.22, y: by, w: R - x - 0.22, h: bh, fontSize: 40, bold: true, color: ORANGE, valign: "middle", objectName: "Delay total" });
 
 	text(s, [
 		// A d-late velocity is off by 2·sin(ωd/2) of its own size (exact for any loop); 0.68-0.78 at 61-71 ms.
-		r("Velocity error: 2·sin("), r("ωd", null, { italic: true }), r("/2) ≈ "), r("70%", ORANGE), r(" at 1.8 Hz"),
-	], { x: M, y: 4.4, w: CW, h: 0.75, fontSize: 32, bold: true, color: NAVY, valign: "middle", objectName: "Delay formula" });
-	text(s, "Nothing fitted: beats no-velocity baseline, 6/6 wearers", { x: M, y: 5.5, w: CW, h: 0.45, fontSize: 20, color: SLATE, valign: "middle", objectName: "Evidence" });
+		r("Velocity error: 2·sin("), r("ωd", null, { italic: true }), r("/2)"),
+	], { x: M, y: 4.2, w: CW, h: 0.75, fontSize: 32, bold: true, color: NAVY, valign: "middle", objectName: "Delay formula" });
+	text(s, [r("Late by 60 ms at 1.8 steps/s → "), r("two-thirds", ORANGE, { bold: true }), r(" of the speed signal is wrong")], { x: M, y: 5.0, w: CW, h: 0.5, fontSize: 24, color: INK, valign: "middle", objectName: "Formula gloss" });
+	text(s, "Nothing fitted: explains the hardware better than a no-speed model, 6 of 6 wearers", { x: M, y: 5.75, w: CW, h: 0.45, fontSize: 20, color: SLATE, valign: "middle", objectName: "Evidence" });
 	s.addNotes(NOTES.delay);
 }
 
-// ---- 8. Impact: what it achieved, what's next (+ a quiet, unheaded "what transfers" column)
+// ---- 9. Impact: what it achieved, what comes next
 {
 	pres.addSection({ title: "Impact" });
-	const s = contentSlide("Impact", TAG.I, "What it achieved, and what's next");
+	const s = contentSlide("Impact", TAG.I, "What it achieved, and what comes next");
 	const lw = 5.4, h = BOTTOM - TOP, ix = M + 0.4, iw = lw - 0.8;
 	roundCard(s, { x: M, y: TOP, w: lw, h }, NAVY, "Impact card", { shadow: true });
 	text(s, "~2/3", { x: ix, y: TOP + 0.25, w: iw, h: 1.65, fontSize: 120, bold: true, color: WHITE, valign: "middle", objectName: "Impact stat" });
 	text(s, [r("walking motion removed", null, { breakLine: true }), r("on hardware")], { x: ix, y: TOP + 2.0, w: iw, h: 0.95, fontSize: 24, color: WHITE, objectName: "Impact label" });
-	// Next step as an inset panel at the foot of the card
-	const fh = 0.95, fy = TOP + h - 0.3 - fh;
-	roundCard(s, { x: M + 0.25, y: fy, w: lw - 0.5, h: fh }, BLUE, "Next-step panel", { r: 0.1 });
-	text(s, [r("Next: ", null, { bold: true }), r("faster estimator")], { x: M + 0.5, y: fy, w: lw - 1.0, h: fh, fontSize: 22, color: WHITE, valign: "middle", objectName: "Next step" });
+	const fh = 1.05, fy = TOP + h - 0.3 - fh;
+	roundCard(s, { x: M + 0.25, y: fy, w: lw - 0.5, h: fh }, BLUE, "Found-limit panel", { r: 0.1 });
+	text(s, [r("Found the limit: ", null, { bold: true }), r("a 61–71\u00A0ms delay")], { x: M + 0.5, y: fy, w: lw - 1.0, h: fh, fontSize: 22, color: WHITE, valign: "middle", objectName: "Found the limit" });
 
-	// What transfers: deliberately quieter than the card (no heading, slate, small grey dots)
-	const tx = M + lw + 0.6, items = ["Frames, calibration → camera extrinsics", "Latency budget → sensor time-sync", "Ground-truth the metric"];
-	const rowH = 0.45, pitch = 1.15, y0 = TOP + (h - (2 * pitch + rowH)) / 2, dot = 0.16;
-	items.forEach((t, i) => {
-		const y = y0 + i * pitch;
-		s.addShape(pres.shapes.OVAL, { objectName: `Transfer dot ${i + 1}`, x: tx, y: y + (rowH - dot) / 2, w: dot, h: dot, fill: { color: MIDGREY }, line: { type: "none" } });
-		text(s, t, { x: tx + 0.4, y, w: R - tx - 0.4, h: rowH, fontSize: 22, color: SLATE, valign: "middle", objectName: `Transfer ${i + 1}` });
+	const tx = M + lw + 0.6, tw = R - tx;
+	text(s, "Next", { x: tx, y: TOP + 0.1, w: tw, h: 0.55, fontSize: 28, bold: true, color: NAVY, objectName: "Next heading" });
+	const steps = [["1", "Faster speed estimate"], ["2", [r("Then feedforward", null, { breakLine: true }), r("(sim: 6.7\u00A0→\u00A02.6\u00A0mm)", SLATE, { fontSize: 20 })]]];
+	steps.forEach(([n, t], i) => {
+		const y = TOP + 0.85 + i * 1.1;
+		node(s, n, { x: tx, y: y + 0.05, w: 0.55, h: 0.55 }, i === 0 ? ORANGE : DATA, WHITE, { fontSize: 22, r: 0.27, name: `Next ${n}` });
+		text(s, t, { x: tx + 0.8, y, w: tw - 0.8, h: i ? 0.85 : 0.65, fontSize: 24, color: INK, valign: "middle", objectName: `Next step ${n}` });
 	});
+	roundCard(s, { x: tx, y: TOP + h - 1.35, w: tw, h: 1.35 }, GREY, "Lesson card");
+	text(s, [r("Lesson: ", NAVY, { bold: true }), r("measure delays before tuning")], { x: tx + 0.35, y: TOP + h - 1.35, w: tw - 0.7, h: 1.35, fontSize: 26, color: INK, valign: "middle", objectName: "Lesson" });
 	s.addNotes(NOTES.impact);
 }
 
-// ---- 9. Close (dark)
+// ---- 10. Close (dark)
 {
 	pres.addSection({ title: "Close" });
 	const s = pres.addSlide({ masterName: "CLOSING_DARK", sectionTitle: "Close" });
