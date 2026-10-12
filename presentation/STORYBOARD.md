@@ -7,8 +7,9 @@ graphics engineers) should leave with three beliefs:
 
 1. **Problem:** keeping a wearable robot's hands still in the room while the wearer
    walks is a hard, real 3D problem (every step moves the arms 6–7 cm).
-2. **Solution + impact:** I built and validated a controller that removes about
-   two-thirds of that motion on real arms worn by 7 people, from simulation to hardware.
+2. **Solution + impact:** I built the world-frame controller and validated it in
+   simulation, and my analysis of hardware trials (a 400 Hz controller on the lab
+   machine) shows about two-thirds of walking motion removed across 6 wearers.
 3. **How I work:** when tuning stopped helping, I found the cause from the data (the
    velocity signal arrives 61–71 ms late) instead of guessing, and that finding sets
    the next step.
@@ -21,7 +22,8 @@ section tag with one of those words, so the listener can tick them off.
 
 - Presented **remotely by screen share** → large type (body ≥ 18 pt, no text < 14 pt),
   high contrast, few words, nothing that depends on hover/click.
-- Total spoken time **≈ 8:45** (about a minute of slack in a 10-minute slot); speaker notes hold a timed script.
+- Total spoken time **≈ 8:55** (about a minute of slack in a 10-minute slot); speaker notes hold a timed script
+  (1,155 words at 130 wpm; each note starts with [slide time | running total]).
 - **Style:** Imperial College London look (navy dominant, Arial), built as a
   lookalike because no official .potx is available. Swap in the official template
   later if wanted.
@@ -31,7 +33,7 @@ section tag with one of those words, so the listener can tick them off.
 - Links: github.com/fechachris4/msc_project (results, sim, figures) and
   github.com/fechachris4/HumanSL_MAIN (C++ real-time controller, `Christian_control/`).
 
-## Slide plan (as built: 9 slides, no backups, ≈ 8:40 spoken)
+## Slide plan (as built: 9 slides, no backups, ≈ 8:55 spoken)
 
 Four section tags only, in this order: PROBLEM → APPROACH & SOLUTION →
 TRADE-OFFS & CHALLENGES → IMPACT. One message and one dominant visual per slide, at most
@@ -42,18 +44,19 @@ error vs delay, limits the data showed, platform 78 %, the rig, the C++ architec
 | # | Tag | Title | Visual | Time |
 |---|---|---|---|---|
 | 1 | — | Thesis title + "Keeping a wearable robot's hands still while the wearer walks" | `hw_turn.gif` | 0:35 |
-| 2 | Problem | Every step moves your extra hands | `hw_walk.gif` + 63–68 mm, ~1.8 Hz; goal line | 0:55 |
-| 3 | Approach & solution | Measure the backpack, cancel it through the arm | frame chain + one equation (K_d·ė in orange) | 1:15 |
-| 4 | Approach & solution | Simulation first: my controller in a physics engine | `hold_pose.gif` + 31.0 / 6.7 / 2.6 mm | 0:45 |
-| 5 | Approach & solution | On real wearers: about 2/3 of walking motion removed | `hw_replay.gif` + 71 / 63 / 56 %; "Trials: a 400 Hz controller on the lab machine. Analysis: mine." | 1:25 |
-| 6 | Trade-offs & challenges | Turning up the gain barely helped | 38 % predicted vs 9 % measured | 0:45 |
-| 7 | Trade-offs & challenges | Best explanation: the velocity arrives 61–71 ms late | delay budget bar + 2·sin(ωd/2) ≈ 2/3 | 1:35 |
-| 8 | Impact | Impact, and what transfers | 2/3 removed; next: faster estimator; what transfers | 1:10 |
+| 2 | Problem | Every step moves your extra hands | `hw_walk.gif` + 63–68 mm, ~1.8 Hz; goal line | 0:40 |
+| 3 | Approach & solution | Measure the backpack, cancel it through the arm | frame chain + the PD law q̇ = J⁺λ(K_p·e + K_d·ė), K_d·ė in orange | 1:20 |
+| 4 | Approach & solution | In simulation: my controller in a physics engine | `hold_pose.gif` (opens on its last frame) + 31.0 / 6.7 / 2.6 mm | 0:50 |
+| 5 | Approach & solution | On real wearers: about 2/3 of walking motion removed | `hw_replay.gif` + 71 / 63 / 56 %, "n = 6 (4 at 1.5 m/s)"; "Trials: a 400 Hz controller on the lab machine. Analysis: mine." | 1:30 |
+| 6 | Trade-offs & challenges | More velocity gain barely helped. Why? | "One-wearer pilot: K_d 0.8 → 2.6. Motion reaching the hand near 1 Hz fell:" 38 % predicted, 9 % measured | 0:45 |
+| 7 | Trade-offs & challenges | Best explanation: the velocity arrives 61–71 ms late | delay budget bar + "Velocity error: 2·sin(ωd/2) ≈ 70 % at 1.8 Hz" + "Nothing fitted: beats no-velocity baseline, 6/6 wearers" | 1:50 |
+| 8 | Impact | What it achieved, and what's next | ~2/3 removed; next: faster estimator; unheaded "what transfers" column | 1:15 |
 | 9 | — | Thank you. Questions? | QR codes + links | 0:10 |
 
 Provenance rule: the hardware results come from a 400 Hz Kalman-filtered controller on the
 lab machine; Christian's C++ controller is separate work that did not run those trials. The
-simulation results were run with the safety filter off.
+simulation results were run with the safety filter enabled but never triggered (it stayed
+inactive), so they reflect the controller alone.
 
 ## Building
 
@@ -95,7 +98,10 @@ Sources: `msc_project/README.md`, `docs/hardware-trials.md`, `docs/simulation.md
 - With that measured delay and nothing fitted, the model reproduces the measured response
   (amplitude and phase) better than the no-velocity-term model in **6 of 6** participants.
 - Residual of a d-late velocity estimate: **|1 − e^(−jωd)| = 2 sin(ωd/2)**. At 1.8 Hz and
-  60 ms that is **two thirds**; at 0.9 Hz, a third.
+  60 ms that is **two thirds**; at 0.9 Hz, a third. Across the measured 61–71 ms at 1.8 Hz it
+  is 0.68–0.78, shown as **≈ 70 %**. It is exact as the error of the late signal itself (and so
+  exactly what feedforward leaves uncancelled); inside the feedback loop its effect also
+  depends on the gains.
 - Steps come at roughly **1.8 Hz**.
 
 **Simulation (MuJoCo, Python, 500 Hz, offline)**
@@ -108,6 +114,8 @@ Sources: `msc_project/README.md`, `docs/hardware-trials.md`, `docs/simulation.md
   than no velocity term; at 60 ms both sit at 8.2–8.6 mm.
 - Safety filter: 13 spheres per arm kept outside a cylinder around the wearer; if a
   command violates a barrier constraint, a QP (OSQP) finds the closest safe joint velocity.
+  Enabled in the simulation runs (`config/control.toml`, `[human_safety] enabled = true`)
+  and never triggered, so the results are the controller alone.
 
 **Control law (per arm, per cycle)**
 - Compose world → mount → arm base → end-effector (pose + Jacobian through the mount).
